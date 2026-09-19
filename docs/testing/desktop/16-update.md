@@ -15,11 +15,11 @@
 | --- | --- |
 | 应用更新轮询间隔 10 分钟，启动即检查一次 | `src/layout/index.tsx:21`、`:85-89` |
 | 轮询失败一律静默（不打扰用户） | `src/layout/index.tsx:86` |
-| 「更新可用」chip 紧跟「帮助」右侧，三平台均显示 | `src/layout/components/navbar.tsx:528-541` |
+| 「更新可用」chip 紧跟「帮助」右侧，三平台均显示 | `src/layout/components/navbar.tsx:529-542` |
 | 「帮助 → 检查更新」：有更新才弹框，无更新提示「已是最新」 | `src/layout/components/navbar.tsx:283-295` |
 | 检查失败 → 危险提示「检查失败」（不冒充「已是最新」） | `src/layout/components/navbar.tsx:291-294` |
 | 更新对话框 `DesktopUpdateDialog` | `src/ui/dialog/update.tsx`；`src/layout/components/navbar.tsx:278-280` |
-| 「检查更新」项内的新版本标记 | `src/layout/components/navbar.tsx:483-488` |
+| 「检查更新」项内的新版本标记 | `src/layout/components/navbar.tsx:484-489` |
 | 核心更新提示由 `harnessUpdater.showToast` 触发，仅提示不打断 | `src/layout/index.tsx:128-133` |
 | 「立即更新」先过破坏性更改确认，取消即中止 | `src/layout/index.tsx:135-141`；`src/ui/config/hooks/use-core-breaking-confirm.tsx` |
 | 「应用」面板核心版本旁的新版本链接 | `src/ui/config/debug.tsx:260-269` |
@@ -34,7 +34,7 @@
 [Case ID] TC-DSK-L3-121
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `src/layout/components/navbar.tsx:531-541`；`src/layout/index.tsx:88-89`
+[追踪] `src/layout/components/navbar.tsx:532-542`；`src/layout/index.tsx:88-89`
 [自动化] 待接线（`test/e2e/specs/desktop/16-update.e2e.ts`）
 [前置条件] 已构造「存在更高版本」的更新检查结果；联网
 [测试数据] 选择器 `dsh-navbar-update-chip`

@@ -19,7 +19,7 @@
 | 壳层导航栏高度常量 `SHELL_NAV_HEIGHT = 44` | `src-tauri/src/desktop/builder.rs:44` |
 | 导航栏根元素 `h-11`（与上者同真值，由 Rust 单测守门） | `src/layout/components/navbar.tsx:347` |
 | 壳层根容器 `flex h-screen w-screen` | `src/layout/index.tsx:144` |
-| DEV 标记 Chip 仅在 `import.meta.env.DEV` 下渲染 | `src/layout/components/navbar.tsx:511-515` |
+| DEV 标记 Chip 仅在 `import.meta.env.DEV` 下渲染 | `src/layout/components/navbar.tsx:512-516` |
 | 首次挂载自动启动 harness（StrictMode 去重） | `src/layout/index.tsx:81`、`src/store/modules/harness/store.ts:119-124` |
 | 启动阶段枚举 `checking/installing/starting/preinstall/ready/error` | `src/store/modules/harness/types.ts:4` |
 | Debug 端口常量 `DSH_DEV_PORT = 3081` | `src-tauri/src/config/constants.rs:53` |
@@ -104,7 +104,7 @@
 [Case ID] TC-DSK-L3-006
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
-[追踪] `src/layout/components/navbar.tsx:511-515`
+[追踪] `src/layout/components/navbar.tsx:512-516`
 [自动化] 待接线（同上）
 [前置条件] 运行的是 Debug 构建
 [测试数据] 标记节点 `dsh-navbar-dev-chip`

@@ -36,7 +36,7 @@
 | 前端轮询间隔 `DESKTOP_UPDATE_POLL_INTERVAL = 10 * 60_000`，启动即检查一次 | `src/layout/index.tsx:21`、`:88-89` |
 | 轮询失败静默（`.catch(() => {})`），不打扰用户 | `src/layout/index.tsx:86` |
 | 「帮助 → 检查更新」三态：有更新弹框 / 无更新「已是最新」/ 失败危险提示 | `src/layout/components/navbar.tsx:283-295` |
-| 「更新可用」chip 与帮助菜单打开同一对话框 | `src/layout/components/navbar.tsx:531-541` |
+| 「更新可用」chip 与帮助菜单打开同一对话框 | `src/layout/components/navbar.tsx:532-542` |
 | 静默下载：`check()` 命中即 `void this.download()`，失败只 `console.error` | `src/store/modules/desktop-updater/store.ts:57-64`、`:94-96` |
 | 在途下载单飞（模块级 `downloadTask` 复用） | `src/store/modules/desktop-updater/store.ts:16`、`:82-83` |
 | 进度事件 `desktop-update-progress` 写入 store，仅对话框渲染 | `src/store/modules/desktop-updater/store.ts:168-176`；`src/ui/dialog/update.tsx:71-86` |

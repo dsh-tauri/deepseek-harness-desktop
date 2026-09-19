@@ -36,7 +36,7 @@
 [Case ID] TC-DSK-L3-087
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `src/layout/components/navbar.tsx:544-553`
+[追踪] `src/layout/components/navbar.tsx:545-554`
 [自动化] 待接线（`test/e2e/specs/desktop/12-window-tray.e2e.ts`）
 [前置条件] 窗口处于正常（非最小化）状态；平台非 macOS
 [测试数据] 选择器 `dsh-navbar-window-minimize`
@@ -49,7 +49,7 @@
 [Case ID] TC-DSK-L3-088
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `src/layout/components/navbar.tsx:555-564`
+[追踪] `src/layout/components/navbar.tsx:556-565`
 [自动化] 待接线（同上）
 [前置条件] 窗口非最大化；平台非 macOS
 [测试数据] 选择器 `dsh-navbar-window-maximize`
@@ -62,7 +62,7 @@
 [Case ID] TC-DSK-L3-089
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `src/layout/components/navbar.tsx:566-575`；`src/ui/config/components/close-action.tsx:24`
+[追踪] `src/layout/components/navbar.tsx:567-576`；`src/ui/config/components/close-action.tsx:24`
 [自动化] 待接线（同上）
 [前置条件] 设置中关闭行为为 `tray`（默认）；平台非 macOS
 [测试数据] 选择器 `dsh-navbar-window-background`

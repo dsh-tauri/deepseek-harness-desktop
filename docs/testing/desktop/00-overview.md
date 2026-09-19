@@ -4,7 +4,7 @@
 > 规范来源：[E2E 测试规范](../../specs/desktop.test.md)、[桌面端开发规范](../../specs/agents.desktop.md)
 > 流程来源：[渐进式测试推进规则](../progressive.md)
 > 同构套件：[插件用例集](../plugins/00-overview.md)
-> 状态：提案中（文档已提交，等待授权与运行验证）
+> 状态：批次日进行中——`00` 总览已落地，`01`–`29` 用例文档待接线（见 §8 G2/G3/G4）
 
 ---
 
@@ -249,7 +249,7 @@
 | --- | --- | --- | --- |
 | G1 | 事实 | 前端产物 `dist/` 与 debug 二进制是否最新，取决于最近一次 `pnpm build` / `cargo build` | 二进制陈旧时全部用例的失败不可归因，需先重建 |
 | G2 | 缺口 | `desktop` project 尚未配置（无 `vitest.desktop.config.ts`、无 `test:e2e:desktop` 脚本、`test/e2e/specs/` 不存在） | 全部 273 条用例标注 `[自动化] 待接线`，不得写成可直接运行的 `it()` |
-| G3 | 缺口 | 壳层（`src/`）`data-testid` 数量为 **0**，`test/e2e/support/selectors.ts` 不存在，而 `desktop.test.md` §5 要求 E2E 必须用 `data-testid` | 每个文件末尾的「选择器契约（待补）」即为接线前置；未补齐前无法定位元素 |
+| G3 | 缺口 | `test/e2e/support/selectors.ts` 仍不存在；壳层 `data-testid` 仅 `01` 批次声明的 3 个（`dsh-shell-root`、`dsh-navbar-root`、`dsh-navbar-dev-chip`），`02` 及后续批次所需选择器均待补 | 每个文件末尾的「选择器契约」即为该批次接线前置；未补齐前无法定位元素 |
 | G4 | 缺口 | 桌面端缺少宿主编排：现有 `test/e2e/support/dsh-host.ts` 只编排插件 L2 的 `dsh web` 进程 | L3 用例需另建「拉起真实二进制 + 绑定 WDIO 会话 + 收尾」的编排 |
 | G5 | 冲突 | `desktop.test.md` §6 称 debug 端口固定 `3081` 不可改；实现存在占用递增逻辑（`launch.rs:66`），`capabilities/default.json:4` 亦声明 NOT fixed | 端口前置按「实测空闲」执行，不假设端口恒定 |
 | G6 | 缺口 | 失败产物目录 `test/e2e/.artifacts/` 仅有文档约定与 `.gitignore`，无实现 | 失败定位在接线前只能依赖日志 |

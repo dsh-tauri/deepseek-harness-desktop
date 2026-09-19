@@ -13,18 +13,18 @@
 
 | 事实 | 位置 |
 | --- | --- |
-| 导航栏根元素与 44px 高度 | `src/layout/components/navbar.tsx:344-355` |
-| 「文件」菜单项 id：`new-window`/`new-chat`/`open-folder`/`close`/`quit` | `src/layout/components/navbar.tsx:388-429` |
+| 导航栏根元素与 44px 高度 | `src/layout/components/navbar.tsx:344-356` |
+| 「文件」菜单项 id：`new-window`/`new-chat`/`open-folder`/`close`/`quit` | `src/layout/components/navbar.tsx:389-430` |
 | 「配置」菜单项来自 `CONFIG_TABS`（`application`/`profiles`/`plugins`/`harness`） | `src/layout/components/navbar.tsx:82-87`、`:444-454` |
-| 「帮助」菜单项 id：`copy-run-logs`/`check-update`/`about`/`documentation` | `src/layout/components/navbar.tsx:469-505` |
-| 侧边栏开关仅在 `onToggleSidebar != null && tauriEnabled` 时渲染 | `src/layout/components/navbar.tsx:356` |
+| 「帮助」菜单项 id：`copy-run-logs`/`check-update`/`about`/`documentation` | `src/layout/components/navbar.tsx:470-506` |
+| 侧边栏开关仅在 `onToggleSidebar != null && tauriEnabled` 时渲染 | `src/layout/components/navbar.tsx:357` |
 | `tauriEnabled` 判定：插件列表含 `dsh-tauri` | `src/layout/components/navbar.tsx:70`、`:173` |
-| 「新聊天」「打开文件夹」在回调缺席时 `isDisabled` | `src/layout/components/navbar.tsx:399`、`:410` |
+| 「新聊天」「打开文件夹」在回调缺席时 `isDisabled` | `src/layout/components/navbar.tsx:400`、`:410` |
 | 折叠状态来自 iframe 桥消息 `dsh://sidebar:collapsed` | `src/layout/components/webview.tsx:41-45` |
 | 侧边栏切换向 iframe 发 `dsh://sidebar:toggle` | `src/layout/components/webview.tsx:70` |
 | 拖拽区带 `data-tauri-drag-region`，非 macOS 双击切换最大化 | `src/layout/components/navbar.tsx:190-194`、`:519-524` |
 | macOS 原生全屏时整条导航栏 `hidden` | `src/layout/components/navbar.tsx:97-143`、`:349` |
-| macOS 上「文件」「帮助」不渲染（由原生菜单承载） | `src/layout/components/navbar.tsx:372`、`:543` |
+| macOS 上「文件」「帮助」不渲染（由原生菜单承载） | `src/layout/components/navbar.tsx:373`、`:543` |
 | macOS 原生菜单事件 `macos-menu-action` 复用壳层操作 | `src/layout/components/navbar.tsx:310-342` |
 
 ---
@@ -36,7 +36,7 @@
 [Case ID] TC-DSK-L3-009
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] 批次 02；`src/layout/components/navbar.tsx:344-509`
+[追踪] 批次 02；`src/layout/components/navbar.tsx:344-510`
 [自动化] 待接线（`test/e2e/specs/desktop/02-shell-navigation.e2e.ts`）
 [前置条件] 应用已进入 `ready`；平台非 macOS
 [测试数据] 选择器 `dsh-navbar-root`、`dsh-navbar-menu-file`、`dsh-navbar-menu-config`、`dsh-navbar-menu-help`
@@ -62,7 +62,7 @@
 [Case ID] TC-DSK-L3-011
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `src/layout/components/navbar.tsx:458-508`
+[追踪] `src/layout/components/navbar.tsx:459-509`
 [自动化] 待接线（同上）
 [前置条件] TC-DSK-L3-009 通过
 [测试数据] 期望 id 顺序：`copy-run-logs`、`check-update`、`about`、`documentation`
@@ -75,7 +75,7 @@
 [Case ID] TC-DSK-L3-012
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `src/layout/components/navbar.tsx:377-432`
+[追踪] `src/layout/components/navbar.tsx:378-433`
 [自动化] 待接线（同上）
 [前置条件] TC-DSK-L3-009 通过
 [测试数据] 期望 id 顺序：`new-window`、`new-chat`、`open-folder`、`close`、`quit`
@@ -92,7 +92,7 @@
 [Case ID] TC-DSK-L3-013
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `src/layout/components/webview.tsx:41-45`；`src/layout/components/navbar.tsx:356-371`
+[追踪] `src/layout/components/webview.tsx:41-45`；`src/layout/components/navbar.tsx:357-372`
 [自动化] 待接线（同上）
 [前置条件] 当前档案已安装 `dsh-tauri`；应用处于 `ready`
 [测试数据] 桥消息 `dsh://sidebar:collapsed`，`collapsed` 依次取 `false`、`true`
@@ -118,7 +118,7 @@
 [Case ID] TC-DSK-L3-015
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
-[追踪] `src/layout/components/navbar.tsx:399`、`:410`；`src/layout/components/webview.tsx:68-73`
+[追踪] `src/layout/components/navbar.tsx:400`、`:410`；`src/layout/components/webview.tsx:68-73`
 [自动化] 待接线（同上）
 [前置条件] 应用处于 `preinstall`（无 iframe 回调），导航栏仍渲染
 [测试数据] 菜单项 `new-chat`、`open-folder`
