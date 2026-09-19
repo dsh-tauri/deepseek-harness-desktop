@@ -960,6 +960,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
 // configure tauri builder
 pub fn builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
+        // E2E：内嵌 WebDriver server（仅在 TAURI_WEBDRIVER_PORT 存在时监听）。
+        .plugin(tauri_plugin_wdio_webdriver::init())
         .manage(crate::desktop::pet_mouse::PetMouseStreamState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
