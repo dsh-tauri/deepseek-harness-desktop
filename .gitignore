@@ -15,6 +15,7 @@ src-tauri/resources/internal-plugins/
 .tmp
 .temp/
 release-msi-version.tmp.json
+test/e2e/.artifacts
 
 .agents/skills/
 .claude/skills/
