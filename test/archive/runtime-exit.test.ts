@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runtimeExitMessageKey, shouldAcceptRuntimeExit } from '../src/store/modules/harness/runtime'
+import { runtimeExitMessageKey, shouldAcceptRuntimeExit } from '../../src/store/modules/harness/runtime'
 
 describe('runtime exit acceptance', () => {
   const current = {

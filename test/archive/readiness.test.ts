@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BoundedReloadGate, pollReadiness, SingleFlight, waitForActivityTask } from '../src/store/modules/harness/readiness'
+import { BoundedReloadGate, pollReadiness, SingleFlight, waitForActivityTask } from '../../src/store/modules/harness/readiness'
 
 function noWait(): Promise<void> {
   return Promise.resolve()

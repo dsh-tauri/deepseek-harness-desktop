@@ -1,11 +1,11 @@
-import type { BackupSettings } from '../src/utils/backup-settings'
+import type { BackupSettings } from '../../src/utils/backup-settings'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
 
   normalizeIntervalDays,
   normalizeRetentionCount,
-} from '../src/utils/backup-settings'
+} from '../../src/utils/backup-settings'
 
 describe('backup settings normalization', () => {
   it('keeps a valid interval as-is', () => {

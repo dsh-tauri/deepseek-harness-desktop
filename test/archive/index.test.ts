@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { containsInotifyLimitError, formatLogLine, pickErrorLines } from '../src/components/logs.utils'
+import { containsInotifyLimitError, formatLogLine, pickErrorLines } from '../../src/components/logs.utils'
 
 describe('formatLogLine', () => {
   it('strips the official GitHub release download prefix', () => {

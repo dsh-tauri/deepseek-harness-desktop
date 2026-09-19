@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { activeQueues as queues, toast } from '../src/utils/toast'
+import { activeQueues as queues, toast } from '../../src/utils/toast'
 
 afterEach(() => {
   toast.clear()

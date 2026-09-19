@@ -17,6 +17,8 @@
     "tauri": "tauri",
     "release": "bumpp --pr",
     "test": "vitest",
+    "test:unit": "vitest --project unit",
+    "test:e2e:plugin": "vitest --project e2e",
     "lint": "eslint",
     "knip": "knip",
     "lint:fix": "eslint . --fix",

@@ -1,8 +1,8 @@
-import type { InternalPluginsPhasePayload } from '../src/store/modules/harness'
+import type { InternalPluginsPhasePayload } from '../../src/store/modules/harness'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { INTERNAL_PLUGIN_PHASE_DETAILS } from '../src/store/modules/harness'
-import { internalPluginReason } from '../src/store/modules/harness/utils'
+import { INTERNAL_PLUGIN_PHASE_DETAILS } from '../../src/store/modules/harness'
+import { internalPluginReason } from '../../src/store/modules/harness/utils'
 
 function translate(key: string): string {
   return key

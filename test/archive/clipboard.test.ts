@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { writeClipboardText } from '../src/utils/clipboard'
+import { writeClipboardText } from '../../src/utils/clipboard'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),

@@ -8,7 +8,7 @@ import {
   patchEntryUnresolvedEntries,
   patchLayerErrorDetail,
   quarantineFailureDetail,
-} from '../src/store/modules/harness/patch-layer'
+} from '../../src/store/modules/harness/patch-layer'
 
 /**
  * issue #525：用户手写的 `cordis.patch.yml` 解析失败时，启动失败信息里的真实

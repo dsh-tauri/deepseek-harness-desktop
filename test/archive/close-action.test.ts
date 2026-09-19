@@ -4,7 +4,7 @@ import {
   CLOSE_ACTION_DEFAULT,
   CLOSE_ACTION_OPTIONS,
   normalizeCloseAction,
-} from '../src/utils/close-action'
+} from '../../src/utils/close-action'
 
 describe('close action normalization', () => {
   it('defaults to hiding in tray', () => {

@@ -6,7 +6,7 @@ import {
   zoomActionFromShortcut,
   zoomFactorFromLevel,
   zoomLevelFromFactor,
-} from '../src/utils/zoom'
+} from '../../src/utils/zoom'
 
 function shortcut(
   key: string,
