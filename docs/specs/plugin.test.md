@@ -1,14 +1,8 @@
-这份 E2E 测试规范整体结构清晰、考虑全面，但在**信息冗余度、排版层级、细节表达**上仍有优化空间。
+# 插件测试规范（渐进式）
 
-经过优化后的文档如下。我们在**不改变原意与逻辑**的前提下，去除了重复的描述，统一了术语，强化了表述的精炼度与可读性：
-
----
-
-# 插件 E2E 测试规范（渐进式）
-
-> 配套文档：[spec.md](https://www.google.com/search?q=./spec.md&utm_source=gemini)（桌面端 E2E 总规范）。
+> 配套文档：[desktop.test.md](./desktop.test.md)（桌面端测试总规范）。
 > 本规范专注于**内置插件（`packages/*`）的 E2E 测试**。
-> 用例文档存放于 `docs/testing/plugins/<plugin>.md`；测试代码存放于 `packages/<name>/test/`。
+> 用例文档存放于 `docs/testing/plugins/<序号>-<插件名>.md`；测试代码存放于 `packages/<name>/test/`。
 
 ---
 
@@ -24,7 +18,7 @@
 插件 E2E 包含两个真实宿主层，其价值定位如下：
 
 * **dsh 宿主（默认选型）**：真实 `dsh web` 进程 + 真实浏览器页面。无需 Tauri 与桌面端二进制，具备**启动快、可并行、支持无头模式**的优势，为门禁测试的主要覆盖层。
-* **桌面端宿主（补充选型）**：桌面端壳层嵌 dsh iframe。**仅用于依赖 Tauri 桥的插件**（如 `dsh-tauri-pet` 桌宠窗口、`dsh-tauri-worktree` native 能力、`dsh-tauri-ui` 壳层注入），复用 [spec.md](https://www.google.com/search?q=./spec.md&utm_source=gemini) 的 WebdriverIO 通道。
+* **桌面端宿主（补充选型）**：桌面端壳层嵌 dsh iframe。**仅用于依赖 Tauri 桥的插件**（如 `dsh-tauri-pet` 桌宠窗口、`dsh-tauri-worktree` native 能力、`dsh-tauri-ui` 壳层注入），复用 [desktop.test.md](./desktop.test.md) 的 WebdriverIO 通道。
 
 ---
 
@@ -92,7 +86,7 @@ docs/testing/plugins/<name>.md # 插件测试文档
 
 ```
 1. 构建产物      ──> 执行 pnpm build:plugins（禁止直接测试 TS 源码）
-2. 创建隔离环境  ──> 创建临时目录 DSH_HOME=<tmp>/dsh-e2e-<plugin>-<timestamp>
+2. 创建隔离环境  ──> 创建独立根 DSH_E2E_HOME=<tmp>/dsh-e2e-<suite>-<timestamp>；L2 的 DSH_HOME=<DSH_E2E_HOME>/dsh
 3. 初始化 Profile──> 构建 <DSH_HOME>/profiles/web/{package.json, cordis.patch.yml, pnpm-workspace.yaml}
 4. 挂载插件      ──> [link 模式] 自建软链接至 profile/node_modules + 配置 dsh.profile.bundles
                      [cli 模式]  执行 dsh plugin --profile web add link:<repo>/packages/<name>
@@ -143,14 +137,16 @@ docs/testing/plugins/<name>.md # 插件测试文档
 
 ## 8. 渐进式推进路线
 
+批次号 = `docs/testing/plugins/` 下的文档序号，完整清单见该目录 `00-overview.md` §3。
+
 | 批次 | 目标插件 | 测试内容 | 对应层级 | 前置条件 |
 | --- | --- | --- | --- | --- |
-| **PP0** | 编排骨架 | 脚手架挂载 `dsh-tauri` 并成功启动 `dsh web` 随机端口 | L2 基础设施 | 无 |
-| **PP1** | `dsh-tauri-pet` | SSE 路由 `/api/desktop/dsh-tauri-pet/session/stream` 建立连接并收到首帧 | L2（纯 HTTP） | PP0 |
-| **PP2** | `dsh-tauri-pet` | 页面成功渲染 `data-dsh-tauri-pet` 挂载点且无崩溃报错 | L2（浏览器） | PP1 |
-| **PP3** | `dsh-tauri-worktree` | 面板渲染正常，`/worktree/*` 路由响应正确 | L2 | PP0 |
-| **PP4** | `dsh-tauri-pet` | 桌面端壳层成功创建桌宠窗口 | **L3** | 桌面端 B1 通道 |
-| **PP5+** | 其余插件 | 优先 Host 后 Client，按需补充 | L2 → L3 | 逐项确认 |
+| **1** | 编排骨架 | 脚手架挂载 `dsh-tauri` 并成功启动 `dsh web` 随机端口 | L2 基础设施 | 无 |
+| **2** | `dsh-tauri`（核心桥接） | 共享路由契约：OPTIONS / 405 / 403 / 413 | L2（纯 HTTP） | 1 |
+| **3** | `dsh-tauri-pet` | SSE 路由 `/api/desktop/dsh-tauri-pet/session/stream` 建立连接并收到首帧 | L2（纯 HTTP） | 1 |
+| **3** | `dsh-tauri-pet` | 页面成功渲染 `data-dsh-tauri-pet` 挂载点且无崩溃报错 | L2（浏览器） | 上一条 |
+| **4+** | `04`–`18` | 先 Host 后 Client 逐条补齐；`18` 为跨插件与壳层集成收尾 | L2 → L3 | 逐项确认 |
+| **L3** | `dsh-tauri-pet` | 桌面端壳层成功创建桌宠窗口 | **L3** | 桌面端 `01` 批次通道 |
 
 **准入标准**：连续运行 $\ge 5$ 次无 Flake；失败信息精准定位至具体步骤；文档与 `test()` 一一对应；环境完全隔离独立。
 
@@ -171,8 +167,17 @@ pnpm test:e2e:plugin      # 仅执行 L2 插件 E2E 测试（需先执行 pnpm b
 
 | 环境变量 | 作用描述 | 默认值 / 回退策略 |
 | --- | --- | --- |
+| `DSH_E2E_HOME` | 本次运行独占的独立根，全部测试数据必须落在其下 | `<tmp>/dsh-e2e-<suite>-<timestamp>` |
 | `DSH_E2E_DSH_BIN` | `dsh` 可执行入口路径 (`lib/bin.js`) | 自动解析包路径或回退至桌面端装配目录 |
 | `DSH_E2E_NODE_BIN` | 执行 `dsh` 的 Node 二进制路径 | `process.execPath` |
 | `DSH_E2E_PLUGIN` | `globalSetup` 指定挂载的目标插件 | `dsh-tauri-pet` |
 | `DSH_E2E_MOUNT` | 插件挂载模式 (`link` 或 `cli`) | `link` |
-| `DSH_E2E_KEEP_HOME` | 设置为 `1` 时保留 Scratch 目录以便调试 | 未设置（自动清理） |
+| `DSH_E2E_KEEP_HOME` | 设置为 `1` 时保留独立根以便调试 | 未设置（自动清理） |
+
+### 数据目录约束（强制）
+
+**禁止**读写用户真实 `~/.dsh`、`~/.dsh.dev`，**禁止**读写 `%APPDATA%/io.github.hairyf.deepseek-harness-desktop` 下的真实目录。
+
+* **L2**：`DSH_HOME` 一律指向 `<DSH_E2E_HOME>/dsh`；落在 `DSH_E2E_HOME` 之外的 profile 视为编排缺陷。
+* **L3**：debug 构建的 `get_dsh_data_path` 恒为 `<home>/.dsh.dev` 且忽略 `DSH_HOME`（`src-tauri/src/config/runtime.rs:471`），应用数据目录另由 `app_data_dir()` 决定（`src-tauri/src/config/runtime.rs:17`）。因此启动应用前必须重定向两个根——`USERPROFILE`(Windows)/`HOME`(Unix) → `<DSH_E2E_HOME>/home`，`APPDATA`(Windows)/`XDG_DATA_HOME`(Unix) → `<DSH_E2E_HOME>/appdata`。
+* **失败关闭**：脚手架在启动应用前必须断言解析出的 `data_dir` 与 app-data 根均位于 `DSH_E2E_HOME` 之下；不满足即 Fail，不得降级到真实目录。

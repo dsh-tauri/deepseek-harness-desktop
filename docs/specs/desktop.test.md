@@ -1,7 +1,7 @@
-# E2E 测试规范
+# 桌面端测试规范
 
 > **适用范围**：`deepseek-harness-desktop` 桌面端（`src/` + `src-tauri/`）与内置插件（`packages/*`）。
-> **核心定位**：全仓 E2E 唯一入口规范。[进度台账与协作流程见 progressive.md](./progressive.md)。
+> **核心定位**：测试唯一入口规范。进度台账与协作流程见 [progressive.md](../testing/progressive.md)。
 
 ---
 
@@ -64,9 +64,9 @@ tauri::Builder::default()
 
 ### 3.2 用例文档目录
 
-* `docs/testing/e2e/spec.md`：本规范文档
+* `docs/specs/desktop.test.md`：本规范文档
 * `docs/testing/desktop/<序号>-<测试项>.md`：桌面端用例（如 `01-window-boot.md`）
-* `docs/testing/plugins/<插件名>.md`：插件用例（如 `dsh-tauri-pet.md`）
+* `docs/testing/plugins/<序号>-<插件名>.md`：插件用例（如 `03-dsh-tauri-pet.md`）
 
 ---
 
@@ -112,32 +112,55 @@ E2E 测试**必须**使用 `data-testid` 进行元素定位，严禁依赖 CSS �
 
 | 维度 | 规范约定 |
 | --- | --- |
-| **端口策略** | Debug 构建固定使用 `3081`（Release 为 `3080`），不可动态修改。测试运行前断言 `3081` 端口空闲。 |
-| **数据目录** | Debug 构建强制使用 `~/.dsh.dev`。运行前校验无残留开发实例。 |
+| **端口策略** | Debug 构建默认使用 `3081`（Release 为 `3080`）。测试运行前断言默认端口空闲。 |
+| **数据目录** | **全部测试数据必须落在本次运行独占的独立根 `$E2E_HOME` 之下，严禁读写用户真实的 `~/.dsh`、`~/.dsh.dev` 与 `%APPDATA%/io.github.hairyf.deepseek-harness-desktop`。** |
 | **前置校验** | 测试前检查端口与进程；存在残留直接 Fail，**不自动强杀用户进程**。 |
 | **测试收尾** | 单个 Spec 结束必须主动关闭应用并等待进程平滑退出；异常残留由测试脚本自行清理。 |
 | **运行网络** | 默认允许联网。断网测试需在用例 `[前置条件]` 中单独标注并构造环境。 |
+
+### 6.1 独立根 `$E2E_HOME`（强制）
+
+`$E2E_HOME` = `<tmp>/dsh-e2e-desktop-<时间戳>`，由桌面端宿主编排创建，运行结束递归删除。用例文档中的 `~/.dsh.dev`、`~/.dsh`、`AppData/` 均为其下的相对简写：
+
+| 简写 | 实际路径 |
+| --- | --- |
+| `~/.dsh.dev` | `$E2E_HOME/home/.dsh.dev` |
+| `~/.dsh` | `$E2E_HOME/home/.dsh` |
+| `AppData/` | `$E2E_HOME/appdata/io.github.hairyf.deepseek-harness-desktop/` |
+
+**实现方式**：应用以 `USERPROFILE`(Windows)/`HOME`(Unix) 指向 `$E2E_HOME/home`、以 `APPDATA`(Windows)/`XDG_DATA_HOME`(Unix) 指向 `$E2E_HOME/appdata` 启动。
+
+**失败关闭**：脚手架必须在启动应用前断言解析出的 `data_dir` 与 app-data 根均在 `$E2E_HOME` 之下；不满足即 Fail，不得降级到真实目录。
+
+**为什么不能只设 `DSH_HOME`**：`get_dsh_data_path` 在 debug 构建下恒返回 `<home>/.dsh.dev` 并**忽略** `DSH_HOME`（`src-tauri/src/config/runtime.rs:471`、`:472`）；home 根取自 `USERPROFILE`/`HOME`（`src-tauri/src/config/runtime.rs:455`）。应用数据目录另由 `app_handle.path().app_data_dir()` 决定，debug 再追加 `dev` 子目录（`src-tauri/src/config/runtime.rs:17`、`:22`）。因此只能用上述两个根重定向实现隔离。
+
+**禁止事项**：不得设置 `DSH_HOME` 来「隔离」桌面端；不得在用例中创建或删除 `web`、`tauri`、`safe` 档案。
 
 ---
 
 ## 7. 推进路线图
 
-必须按批次**单条推进**，验证无 Flake 后方可进入下一批次。
+必须按批次**单条推进**，验证无 Flake 后方可进入下一批次。批次号 = `docs/testing/desktop/` 下的文档序号，完整清单见该目录 `00-overview.md` §3。
 
 ### 桌面端路线图
 
-* **B1**：应用启动后主窗口存在且标题正确 (`desktop/01-window-boot.md`)
-* **B2**：壳层根节点渲染且页面无未捕获错误 (`desktop/01-window-boot.md`)
-* **B3**：导航栏存在且折叠/展开按钮响应正常 (`desktop/02-shell-navigation.md`)
-* **B4**：配置对话框的打开与关闭 (`desktop/03-config-dialog.md`)
-* **B5**：语言切换即时生效 (`desktop/04-locale-theme.md`)
-* **B6**：档案列表展示与新建操作 (`desktop/05-profile.md`)
-* **B7**：内置 DSH 界面 Iframe 加载完成 (`desktop/06-harness-embed.md`)
+* **1**：应用启动后主窗口存在且标题正确 (`desktop/01-window-boot.md`)
+* **2**：壳层根节点渲染且页面无未捕获错误 (`desktop/01-window-boot.md`)
+* **3**：导航栏存在且折叠/展开按钮响应正常 (`desktop/02-shell-navigation.md`)
+* **4**：配置对话框的打开与关闭 (`desktop/03-config-dialog.md`)
+* **5**：语言切换即时生效 (`desktop/04-locale-theme.md`)
+* **6**：档案列表展示与新建操作 (`desktop/05-profile.md`)
+* **7**：内置 DSH 界面 Iframe 加载完成 (`desktop/06-harness-embed.md`)
+* **8+**：`07`–`29` 按文档序号逐条推进（服务生命周期、装配、隔离、隐私、错误矩阵、状态机、插件生命周期、更新内部、系统集成）
 
 ### 插件侧路线图
 
-* **P1**：`dsh-tauri-pet` 在真实进程内挂载成功，SSE 路由可连 (`plugins/dsh-tauri-pet.md`)
-* **P2**：`dsh-tauri-worktree` 面板在壳层中正常渲染 (`plugins/dsh-tauri-worktree.md`)
+批次号 = `docs/testing/plugins/` 下的文档序号，清单见该目录 `00-overview.md` §3。
+
+* **1**：编排骨架——脚手架挂载并拉起 `dsh web` 随机端口 (`plugins/01-host-lane-skeleton.md`)
+* **2**：共享路由契约（OPTIONS/405/403/413）(`plugins/02-dsh-tauri-core.md`)
+* **3**：`dsh-tauri-pet` SSE 路由连上并收到首帧，随后客户端挂载与 L3 窗口 (`plugins/03-dsh-tauri-pet.md`)
+* **4+**：`04`–`18` 先 Host 后 Client 逐条推进，`18` 为跨插件与壳层集成收尾
 * **准入标准**：独立运行 ≥ 5 次无 Flake、失败时能精确定位步骤、文档与 `it()` 严格对应、不依赖上一次运行遗留状态。
 
 ---
