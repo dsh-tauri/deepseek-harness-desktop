@@ -88,6 +88,7 @@
     "@types/react-dom": "catalog:types",
     "@types/semver": "catalog:types",
     "@vitejs/plugin-react": "catalog:build",
+    "@wdio/tauri-service": "catalog:testing",
     "babel-plugin-react-compiler": "catalog:build",
     "bumpp": "catalog:release",
     "changelogithub": "catalog:release",
@@ -104,6 +105,7 @@
     "tsx": "catalog:build",
     "typescript": "catalog:cli",
     "vite": "catalog:build",
-    "vitest": "catalog:testing"
+    "vitest": "catalog:testing",
+    "webdriverio": "catalog:testing"
   }
 }

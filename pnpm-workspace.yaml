@@ -1,6 +1,8 @@
 allowBuilds:
   '@tailwindcss/oxide': true
+  edgedriver: false
   esbuild: true
+  geckodriver: false
 
 catalogMode: prefer
 
@@ -100,7 +102,9 @@ catalogs:
     '@tauri-apps/cli': ^2.11.4
     '@tauri-apps/plugin-http': ^2.6.0
   testing:
+    '@wdio/tauri-service': ^1.4.0
     vitest: ^4.1.11
+    webdriverio: ^9.31.9
     yaml: ^2.9.0
   types:
     '@types/lodash-es': ^4.17.12

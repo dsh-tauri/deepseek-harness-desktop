@@ -1,11 +1,711 @@
 {
   "version": 1,
   "skills": {
+    "acceptance-criteria-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/acceptance-criteria-review/SKILL.md",
+      "computedHash": "ba3ef1418d4f761c2b6c6c8159de6ff23204387cadbb1ace6f03926e6927ca07"
+    },
+    "accessibility-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/accessibility-testing/SKILL.md",
+      "computedHash": "369cf5825cf1f9d705e0ef0db0a3e133f2f36a6307b33ffa518164ce50cf50d5"
+    },
+    "agent-failure-recovery-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/agent-failure-recovery-testing/SKILL.md",
+      "computedHash": "0280299a25f2568ba97da89c530f55b3258e2da344883f71841e931531ace8b8"
+    },
+    "agent-long-running-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/agent-long-running-testing/SKILL.md",
+      "computedHash": "bb2c7aeff87f262b2bde052cc56a5963e4ec910544424da7b61c938155fe6ba9"
+    },
+    "agent-loop-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/agent-loop-testing/SKILL.md",
+      "computedHash": "aa60f0c366276c14f967a0c4d8eefb881c6dc9c415c560a1a00293b1a57b0713"
+    },
+    "agent-memory-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/agent-memory-testing/SKILL.md",
+      "computedHash": "ad767c1d84c01a4fe3ccc630ecd7ebf72837a65a1604702254866d83295e6935"
+    },
+    "agent-permission-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/agent-permission-testing/SKILL.md",
+      "computedHash": "856206569d9e16ef988c478257fae5803497829a75150428ee11c5e584680d25"
+    },
+    "agent-tool-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/agent-tool-testing/SKILL.md",
+      "computedHash": "9ec8587e6568bd1c27e0541548bdf9f32499ff75ba38e597f1b0482dedd9b206"
+    },
+    "ai-agent-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ai-agent-testing/SKILL.md",
+      "computedHash": "348ceed72b4cba2b16be2f0cef08944975479eddb1531bccfe6b970fd5b919c4"
+    },
+    "ai-assisted-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ai-assisted-testing/SKILL.md",
+      "computedHash": "ff0d7586038eeb4b925f3d0881661c0c88a6ab40b10148b1f100d829bcb31fb6"
+    },
+    "ai-feature-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ai-feature-testing/SKILL.md",
+      "computedHash": "d9e45ac435c4c9520d45d828cfe6853d9f39f279ba0435904c06407a818bf10b"
+    },
+    "ai-generated-test-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ai-generated-test-review/SKILL.md",
+      "computedHash": "f6972c778fc9596222a81eccc87229f9d64ccd9e469502474ae7bdb6006dc749"
+    },
+    "ai-safety-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ai-safety-testing/SKILL.md",
+      "computedHash": "a6d0621ae322ab05741c373f78c8c7e444eba9899d6c1ef649c71355f136deb5"
+    },
+    "api-contract-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-contract-testing/SKILL.md",
+      "computedHash": "39ced89a9a70cab23877a2d6a0bbcd1dfc68b9d506e34269ba59ea2521e07460"
+    },
+    "api-design-quality-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-design-quality-review/SKILL.md",
+      "computedHash": "a4b4ee4b9af64e96d0d17c5a9ac19c2b8ed08bda8eba34748b1faebab6a662b9"
+    },
+    "api-error-contract-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-error-contract-testing/SKILL.md",
+      "computedHash": "d44c5c4a4fc49b203d79f822138b8550f76cddff73e81d36d7a06ebd50db3383"
+    },
+    "api-idempotency-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-idempotency-testing/SKILL.md",
+      "computedHash": "3b3e37fc7a7eb975014461c1762a850b373bcd00f041ab3261a5b3892ae14b8a"
+    },
+    "api-negative-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-negative-testing/SKILL.md",
+      "computedHash": "8909aab03b6765f4472538dd2487829b2e05dc7a1b01982647bfe3dba2818c4c"
+    },
+    "api-pagination-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-pagination-testing/SKILL.md",
+      "computedHash": "6623489504bada34ae68b36fcf4e164a60593bd5fd18c52b93bfd813ea4f6ce0"
+    },
+    "api-rate-limit-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-rate-limit-testing/SKILL.md",
+      "computedHash": "ab568b0cd2ccd31805b56c129ab669a29ad65f50d1871d2462b09cca76cf1ab1"
+    },
+    "api-schema-validation": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-schema-validation/SKILL.md",
+      "computedHash": "2241910c983ca068402027d3b5edb9994fe82ae67f9f5515c675ffe7676280d9"
+    },
+    "api-security-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-security-testing/SKILL.md",
+      "computedHash": "2f1f5725bad3fa760cce87d2bd3072776b32df1e6b582116c74b04d07b10f24d"
+    },
+    "api-test-bruno": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-test-bruno/SKILL.md",
+      "computedHash": "596f55716b3942d4e82fefaec48bb9b810a33a26c29e7bdda46737f8f81efb70"
+    },
+    "api-test-postman": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-test-postman/SKILL.md",
+      "computedHash": "c883990cd480c4113160216f4adbc1636de4f0ce513d25e532a723ce808bd523"
+    },
+    "api-test-pytest": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-test-pytest/SKILL.md",
+      "computedHash": "ab2f664e55d96272a4f8c2e5688667b801f67ae77d8fbcc9722249474de597e3"
+    },
+    "api-test-restassure": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-test-restassure/SKILL.md",
+      "computedHash": "19db356044eebb023f721562c18f29cb46eefb79a4e6615b305647e200be48a8"
+    },
+    "api-test-supertest": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-test-supertest/SKILL.md",
+      "computedHash": "cabd6c37a7454a1cb1240cb8897e5a571c87df5568cde292504a3076880cdf6a"
+    },
+    "api-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-testing/SKILL.md",
+      "computedHash": "7a2f40a52490e2d258d3dcab40c049fdba56d104429cda0b125e3a88d8035fa1"
+    },
+    "api-version-compatibility-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/api-version-compatibility-testing/SKILL.md",
+      "computedHash": "f0a6c25496ad97f15c946339d4008d5baf15df5bdbc0426bddd087a51d9aea6b"
+    },
+    "authentication-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/authentication-testing/SKILL.md",
+      "computedHash": "83fa8940b7729340cab3533375639f8abc15581c34323b612792cb807aef74cc"
+    },
+    "authorization-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/authorization-testing/SKILL.md",
+      "computedHash": "95ce73c6eef2c30f7434e9c317e4cc2107eb4a1f2f1e931a9dc7b57fca0fec86"
+    },
+    "automation-roi-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/automation-roi-analysis/SKILL.md",
+      "computedHash": "429cc6e66d3e90d0db18b5516c8dc2a19a9f52ab251896fd01fbbbf9f06441df"
+    },
+    "automation-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/automation-testing/SKILL.md",
+      "computedHash": "862cec8c4f97728be221ce6611d75bc62bfbdfb983571e82532cff2f1395ebdf"
+    },
+    "boundary-value-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/boundary-value-testing/SKILL.md",
+      "computedHash": "2f6ce665bd78591f9360ad4e25ca9de79b064f77d31bf0fb86df729b49ef1875"
+    },
+    "bug-reporting": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/bug-reporting/SKILL.md",
+      "computedHash": "c39a6c38533a9e25f96e223b4c24f1a57dac8235e2a7c807170de2a0d060fde4"
+    },
+    "business-rule-extraction": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/business-rule-extraction/SKILL.md",
+      "computedHash": "e5b21abb757e1296a3667b4c2dfc81968c230adad748504d84e37a9b0654e51c"
+    },
+    "capacity-planning-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/capacity-planning-analysis/SKILL.md",
+      "computedHash": "7bb49a03d36c36321c531b68d888450a9afadb90796aa1cd55ca82f618514989"
+    },
+    "change-impact-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/change-impact-analysis/SKILL.md",
+      "computedHash": "4f3bb3f4ed643642f45eb46cb020feb030b76d2698e32e114cc0e744d7723c3b"
+    },
+    "chaos-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/chaos-testing/SKILL.md",
+      "computedHash": "63b1a0cb35be745827a65d831c37d4661188d7b73dcdff41e2e7046a778fb23c"
+    },
+    "ci-test-optimization": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ci-test-optimization/SKILL.md",
+      "computedHash": "05d83874ca4d3e5a3999688e246d791ddce6c3f38027174a0fcc7dd51c4f6e5b"
+    },
+    "circuit-breaker-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/circuit-breaker-testing/SKILL.md",
+      "computedHash": "9372175e03153a7abb0a8de3158e8cabf8685479e2edf0fe18e48f7ef776c9f3"
+    },
+    "code-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/code-review/SKILL.md",
+      "computedHash": "114eea3eaa6faa5656f2f12cf6aca5a1f378b65eb3e53a210d180b11e4dbf9d7"
+    },
+    "combinatorial-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/combinatorial-testing/SKILL.md",
+      "computedHash": "24e6ba28082b4f88d51eccdab098c2cece37abe89bca8a8f8661556216ab470c"
+    },
+    "cross-browser-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/cross-browser-testing/SKILL.md",
+      "computedHash": "7962fc54ab1d5db3ed17675fe452a9c05bffc24eede7091c68b26dd32d9d5a34"
+    },
+    "daily-testing-workflow": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/daily-testing-workflow/SKILL.md",
+      "computedHash": "92e49fd397aa5e9ed82b670e41c4586518d70073fbc5098e08f9f16177e01827"
+    },
+    "database-design-quality-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/database-design-quality-review/SKILL.md",
+      "computedHash": "397dcf20b2b7841369b35d4d6d35de47f47dd5cf189727ce3550f75049072d9c"
+    },
+    "decision-table-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/decision-table-testing/SKILL.md",
+      "computedHash": "2a93a78ca894c4c4ff8c7693bcd8bc14681281ebed35af07d5186a4fc1610c63"
+    },
+    "dependency-failure-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/dependency-failure-testing/SKILL.md",
+      "computedHash": "4027f6bc1c5803557e34e1f2b925c3ab34f2ecf2423d9390aef84b5e554c5710"
+    },
+    "disaster-recovery-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/disaster-recovery-testing/SKILL.md",
+      "computedHash": "efc682e2da6afdab72fc9026d483a61b1a43fce948cfdc464bb68c3cd73c59e6"
+    },
+    "discover-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/discover-testing/SKILL.md",
+      "computedHash": "5066a96f12f833c82d5927fb40d6d01ede33a7be46941fd29d2d8583576dabe3"
+    },
+    "distributed-trace-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/distributed-trace-analysis/SKILL.md",
+      "computedHash": "e446e62bd2cf80028b1d6aa9e88bc17f0d91482a505fa2ee4fbc003ca339d002"
+    },
+    "edge-case-discovery": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/edge-case-discovery/SKILL.md",
+      "computedHash": "9af0437492ae5a7d3fcfd2de327693f940d3e9a04887b5088da3639d2af96ce8"
+    },
+    "equivalence-partitioning": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/equivalence-partitioning/SKILL.md",
+      "computedHash": "8448212496b595c306d67f6602fb367d9d400caa50beb126f7fe601591f7fd7e"
+    },
+    "error-handling-design-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/error-handling-design-review/SKILL.md",
+      "computedHash": "bcf2b4e0d4578e101f61d5d922a4c421927abf665a06d8822e615e622f6b447d"
+    },
+    "failover-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/failover-testing/SKILL.md",
+      "computedHash": "2657020de1c1e8d8e3fecf6b71d58ed1dd8f788a4c8f0d35fad184deb64457b1"
+    },
+    "flaky-test-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/flaky-test-analysis/SKILL.md",
+      "computedHash": "22fd99085c2c8e7d7feff59d737090a6c509f5907d7d9a81b2626925b0d84c7d"
+    },
+    "functional-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/functional-testing/SKILL.md",
+      "computedHash": "8f01d324f0ce48c268a2e2637a6d031be21562bdd530f570f6b41dc02d4855a3"
+    },
     "heroui-react": {
       "source": "heroui-inc/heroui",
       "sourceType": "github",
       "skillPath": "skills/heroui-react/SKILL.md",
       "computedHash": "c3633cb324aef2a51a9828c96776897ec2273d8d092cfcfb4dfa754006c7b8df"
+    },
+    "llm-consistency-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/llm-consistency-testing/SKILL.md",
+      "computedHash": "3c8b36873f9333b7ac6279c688fa9ed69aec5943bdec3780a8c97884bdc3b986"
+    },
+    "llm-evaluation-design": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/llm-evaluation-design/SKILL.md",
+      "computedHash": "1916fb2d575a728fb1e12183233b66eb86447929fccd85dc76c9b9c9445ff32f"
+    },
+    "llm-hallucination-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/llm-hallucination-testing/SKILL.md",
+      "computedHash": "f9d65bf90d51904da7af8f2d4c70402b7860a7a4ac641f789edaf2585f4d0ed9"
+    },
+    "llm-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/llm-testing/SKILL.md",
+      "computedHash": "a75c8dfbd7c8545cecf7cea913636dcd4ece44e157fb52926baacd1ec7d5755f"
+    },
+    "log-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/log-analysis/SKILL.md",
+      "computedHash": "b0255d95d0782f0aeef35721d9fc9e28445f2dd596f63348cc90e240d9d2281b"
+    },
+    "manual-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/manual-testing/SKILL.md",
+      "computedHash": "965bdadb73f1e6d68071a16f379c3627c4824dbef3565d13ee43b9eb5fa4d156"
+    },
+    "metamorphic-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/metamorphic-testing/SKILL.md",
+      "computedHash": "fe5ce6b5213885083631c6b48322fd016018775228b27969f57ad11eec0d3998"
+    },
+    "metrics-anomaly-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/metrics-anomaly-analysis/SKILL.md",
+      "computedHash": "7f2029e3f0de681b9a1708f01ffa31987b54064219f3f8450b733f4b6708a1d2"
+    },
+    "mobile-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/mobile-testing/SKILL.md",
+      "computedHash": "0c845a95808089893a165b23c1fecff7a4570e4827106868b4d70a9ea5ca15a3"
+    },
+    "mock-quality-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/mock-quality-review/SKILL.md",
+      "computedHash": "a70238d4c40dd593d50d2a579a1b134c97f8b3623db984d6d08060847c9d10db"
+    },
+    "model-based-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/model-based-testing/SKILL.md",
+      "computedHash": "a9ab5f7bca61aa68aa4771e97f298de4c297a002fcb7e062ee16a71201cab34a"
+    },
+    "multi-agent-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/multi-agent-testing/SKILL.md",
+      "computedHash": "a74e275ce8dd945b3676a319e2669827026c027ac803782d92e4e0e871600e38"
+    },
+    "multi-role-quality-synthesis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/multi-role-quality-synthesis/SKILL.md",
+      "computedHash": "6aa2f726bcea543f483ece368f4ef7bf1c2bd037c3c21eae271e7e5d24ff116a"
+    },
+    "mutation-testing-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/mutation-testing-analysis/SKILL.md",
+      "computedHash": "d704dbad1c3fc5c6f6a9c532415c198c276cf85d36299e6f0f58f07dffbe2a6b"
+    },
+    "negative-scenario-discovery": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/negative-scenario-discovery/SKILL.md",
+      "computedHash": "8582615e06aa13c67923b8b9126c9fc029effd5376fc92651209f26cce047b31"
+    },
+    "observability-design-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/observability-design-review/SKILL.md",
+      "computedHash": "8304ca7633a193ab9ffc9e3d816b04c9fce97b6f7b35bb0bfa257abdf27a210e"
+    },
+    "pairwise-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/pairwise-testing/SKILL.md",
+      "computedHash": "810a9ac17ecc406037abff1a4246dc2bc3873661e6f6f8c36135db8972166bc1"
+    },
+    "performance-bottleneck-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-bottleneck-analysis/SKILL.md",
+      "computedHash": "7214a4d5e2dde1a2ff89268d30c43c161dd2e73bc1c06454f64d021d8589c717"
+    },
+    "performance-regression-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-regression-analysis/SKILL.md",
+      "computedHash": "12351a3e9480df3bd590f9fa1703507724f90a935a157f7e341e031f5085d80b"
+    },
+    "performance-result-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-result-analysis/SKILL.md",
+      "computedHash": "6182a7d2cbea55ac4c4de5843ea4da25c1961bdca001c817e9968827c2bf8764"
+    },
+    "performance-test-gatling": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-test-gatling/SKILL.md",
+      "computedHash": "92488d21c977520c8ee1260facdc8312eb4c9054c415d668e7e5332a3a3e6a25"
+    },
+    "performance-test-jmeter": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-test-jmeter/SKILL.md",
+      "computedHash": "77466faea2efa92519a5fb6870e29921f8c159323c1f049ca4c3ee669548a698"
+    },
+    "performance-test-k6": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-test-k6/SKILL.md",
+      "computedHash": "8c025426cd935e83e9351308e9331e97afec5a1258982216ca2467b94d0f3c55"
+    },
+    "performance-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-testing/SKILL.md",
+      "computedHash": "fc5b86d00614468c49b323ca56fa22a79348a8de1a2946d204753bf2202a6076"
+    },
+    "performance-workload-modeling": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/performance-workload-modeling/SKILL.md",
+      "computedHash": "1078a97c3be2650c425b1dab611061dffde7997adbb87168015f51ade0064b13"
+    },
+    "pr-test-impact-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/pr-test-impact-analysis/SKILL.md",
+      "computedHash": "481d6e87cf3a2172db30fea9301190b9249d79968686b04288f82d5a6d2d5c02"
+    },
+    "product-quality-perspective": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/product-quality-perspective/SKILL.md",
+      "computedHash": "b2a57f9371fdb8c292e42db4d451334d61ac6dd198c40fd4eaf3c47e34f55d80"
+    },
+    "production-incident-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/production-incident-analysis/SKILL.md",
+      "computedHash": "5f6ae62277d77c538131b125a9dce770a9696906b9d75a10d228e6dbc1f475a1"
+    },
+    "production-verification": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/production-verification/SKILL.md",
+      "computedHash": "2620f2ecc5e9ae1c955943fb571f0b840e57c869e7f5fa101a7b01ebc1b1e4e5"
+    },
+    "project-delivery-perspective": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/project-delivery-perspective/SKILL.md",
+      "computedHash": "e7817ffc2f47275e752746d8fe43c63cb6857b6d5ae77b7565782dbd84adf016"
+    },
+    "prompt-injection-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/prompt-injection-testing/SKILL.md",
+      "computedHash": "538e26a0d5a330593a9ce0cdb9b426f887125c0b74ec8c878189ecceb26953a5"
+    },
+    "prompt-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/prompt-testing/SKILL.md",
+      "computedHash": "ee3f557c114f2251700e4faa146760d165bdafdfa7eb0ef080163dfbb09e489f"
+    },
+    "property-based-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/property-based-testing/SKILL.md",
+      "computedHash": "fff4b7c80f4f7a8f673c83c80c9dccb6fe12a5cfe7ab748eb310a5654c6ea3e1"
+    },
+    "qa-quality-perspective": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/qa-quality-perspective/SKILL.md",
+      "computedHash": "ec271caf528b334928351635f11229ef1f980159008e291eafa4286d6ce7edbf"
+    },
+    "quality-dashboard-design": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/quality-dashboard-design/SKILL.md",
+      "computedHash": "72c991ed58d077fbeeb3a64fcbf86ea7ca8b8d5998518cbbd25c0cf0d33b1f52"
+    },
+    "quality-debt-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/quality-debt-analysis/SKILL.md",
+      "computedHash": "f4eab3b6a096bf09bae9603a7f9204504be31ba71e6a0ae93e731ae6023cf704"
+    },
+    "quality-gate-design": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/quality-gate-design/SKILL.md",
+      "computedHash": "95f87f41f0caa71e2025b53e4c5e0476f8676d48e18a01faef859deea62e321b"
+    },
+    "quality-maturity-assessment": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/quality-maturity-assessment/SKILL.md",
+      "computedHash": "43d74f087324b53167e5ef52672e8b8c7f2918a1a76a2ab1a33711049be3b464"
+    },
+    "quality-metrics-design": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/quality-metrics-design/SKILL.md",
+      "computedHash": "797fdd224ef6742c9d9772c6e7f0e44cc09335cd40230fbbf6025feb329389db"
+    },
+    "quality-productivity-metrics": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/quality-productivity-metrics/SKILL.md",
+      "computedHash": "56f750733dd41467ee014741910286e85ee4001ca5d73fa8ab3ca3c7efe65eb8"
+    },
+    "quality-risk-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/quality-risk-analysis/SKILL.md",
+      "computedHash": "b39be124d327ed9cbb86180b854f2d5f990781aeff697a223f268ab8cf1c31a2"
+    },
+    "rag-quality-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/rag-quality-testing/SKILL.md",
+      "computedHash": "c7e9f83f226c2d82db63166f370b551d6569598b15ab9574fdc93f2989eb23a8"
+    },
+    "rag-retrieval-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/rag-retrieval-testing/SKILL.md",
+      "computedHash": "f66eab0dbe953003ed00a79449d10022645b6bd8a01a14b240de857ceeaf00bb"
     },
     "reause-functions": {
       "source": "hairyf/reause",
@@ -13,11 +713,445 @@
       "skillPath": "skills/reause-functions/SKILL.md",
       "computedHash": "6af682cfe55d986d4e2460807844afe687fa93062a9646a4d7a076b07cfc4e60"
     },
+    "recovery-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/recovery-testing/SKILL.md",
+      "computedHash": "2fb833bf0387c7c016b867b6ee9ee0ea41a69cb7e555067bf0b74299e8c8c4b5"
+    },
+    "regression-optimization": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/regression-optimization/SKILL.md",
+      "computedHash": "9cac60b224a8644c1cf5f107a5f9360812e1d6826f61f1c6120f73843d5b408c"
+    },
+    "regression-scope-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/regression-scope-analysis/SKILL.md",
+      "computedHash": "e01d69c1add10d64f998d8697fcd9cea59ef75a343844d23c8dace1a825e3307"
+    },
+    "regression-test-selection": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/regression-test-selection/SKILL.md",
+      "computedHash": "c0a150806742a3cfecb5ed3144df3ac81a4fd1b175309ef87e3eeb9770e3e90c"
+    },
+    "release-testing-workflow": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/release-testing-workflow/SKILL.md",
+      "computedHash": "27f4b2c9f76eee11f2d5eabdc60415a95ed0fd627b8c8eaba2e7e6bcbe515a58"
+    },
+    "reliability-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/reliability-testing/SKILL.md",
+      "computedHash": "233caf280e85bcac03e69d4af01cf03df2e30b240e9724fc1140a1f2b179f116"
+    },
+    "requirement-ambiguity-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirement-ambiguity-analysis/SKILL.md",
+      "computedHash": "d6da09bf897e85410dc2410ee8a944aaec8bf614ab42e61cd985241c551a31c1"
+    },
+    "requirement-conflict-detection": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirement-conflict-detection/SKILL.md",
+      "computedHash": "f56c0f91381add758a5a41d4c499d92b102607485ece07a83fd65c2bc4985d6f"
+    },
+    "requirement-consistency-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirement-consistency-analysis/SKILL.md",
+      "computedHash": "6824920d12ae123c561d6344e5ad2a3acb6109b4d73f7b1f39e8b4920c749927"
+    },
+    "requirement-gap-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirement-gap-analysis/SKILL.md",
+      "computedHash": "f8aa3497ba7762e4bec6009dd0ea83ca653c961bfd9d5d0e5f511ab22af7b4ec"
+    },
+    "requirement-quality-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirement-quality-review/SKILL.md",
+      "computedHash": "7ab98c31057c759249e5da2bf9703e9bad7eb093de0586ad820faa88b6c56a58"
+    },
+    "requirement-traceability-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirement-traceability-analysis/SKILL.md",
+      "computedHash": "05829a8d4242ba9e13610a280ac04ee4392acaf022296dd3973c1a0b8fc3f013"
+    },
+    "requirements-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirements-analysis/SKILL.md",
+      "computedHash": "18e21d3015908b2dfd817f86472b3ef6a7394e9991c8f1ccdc6d57e1b0287d49"
+    },
+    "requirements-analysis-plus": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/requirements-analysis-plus/SKILL.md",
+      "computedHash": "6f167146a91021b3c08bea798087677fd0a79551fd6a2ddca4ef2331af026c1a"
+    },
+    "resilience-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/resilience-testing/SKILL.md",
+      "computedHash": "aa644900a5bc556195dd7d6b19b3ac83855734af6bd02d8239085421061cdb45"
+    },
+    "retry-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/retry-testing/SKILL.md",
+      "computedHash": "9c250908ce028c113f6ac1e2dbc768e1285590998bb939ae3081299806ed44ee"
+    },
+    "risk-based-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/risk-based-testing/SKILL.md",
+      "computedHash": "cfe518c4b227a3e9db5e4848290d5e17c0405e977023799c3f62a95683a8855b"
+    },
+    "root-cause-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/root-cause-analysis/SKILL.md",
+      "computedHash": "020fa5371988f112dec8071e14fa21044a2b32ea2826cf09174dfdfe0c9aa018"
+    },
+    "secrets-exposure-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/secrets-exposure-review/SKILL.md",
+      "computedHash": "e5721d7867d4f3dd29cde0a9d20d958fbc2b6498bdd6e4ee371389ea502e55a7"
+    },
+    "security-requirement-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/security-requirement-review/SKILL.md",
+      "computedHash": "fd87bdc0794c8d3f5ceaaccf537f5af9c3d4e57f511b23cca7c7b3694fd78a1e"
+    },
+    "security-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/security-testing/SKILL.md",
+      "computedHash": "2aa785d65916731860b1cf7ce060cb59c62cef4010c340d353b4ed2f0365f16d"
+    },
+    "session-security-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/session-security-testing/SKILL.md",
+      "computedHash": "12551626a1c90a9fea5b3a3d261d3f54584a0c9a7e0a49d063eba4a1084399a0"
+    },
+    "skill-change-verification": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/skill-engineering/skill-change-verification/SKILL.md",
+      "computedHash": "9c2caebb705272f98738dacad9ad4dbbacbb097d6dd8607a6a2549e6529e1008"
+    },
+    "skill-prose-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/skill-engineering/skill-prose-review/SKILL.md",
+      "computedHash": "328f952ec9ab40d0efcdcbc420773f803a2810feadca9d771cf3a09d8ed828d8"
+    },
+    "skill-prose-trim": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/skill-engineering/skill-prose-trim/SKILL.md",
+      "computedHash": "3b230961eb540e85782769864f7be4f5569c68c2f625cc3655b16fba91aa0cc9"
+    },
+    "sprint-testing-workflow": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/sprint-testing-workflow/SKILL.md",
+      "computedHash": "e4eb64bf546f39d930fc78174a8053f315608508c836fa7e412a2985b48609b3"
+    },
+    "state-transition-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/state-transition-testing/SKILL.md",
+      "computedHash": "d2251c661d9d7307095e70e67166cb60c84e805c7db6fdc6784698036f162fb4"
+    },
+    "technical-design-quality-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/technical-design-quality-review/SKILL.md",
+      "computedHash": "8d97a8ca7f3d347c814d4f3c4a29117d9cfe60db0cd17a122570185959eca325"
+    },
+    "technical-quality-perspective": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/technical-quality-perspective/SKILL.md",
+      "computedHash": "ae6c34123e1f8126b57a5ef2db4afffa8ebf65f2a051cb2d1a11ef9af4ad0047"
+    },
+    "test-case-reviewer": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-case-reviewer/SKILL.md",
+      "computedHash": "4c0f7ff721cc50a4afe504f9c1513bc4196a2490bf9a119b5949fe36d692efec"
+    },
+    "test-case-reviewer-plus": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-case-reviewer-plus/SKILL.md",
+      "computedHash": "8aaaf37fad7589186b2e03d4e2487e291a7276b2e80dedba3c962bfd00fa71e1"
+    },
+    "test-case-writing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-case-writing/SKILL.md",
+      "computedHash": "080fa007eb8164b373a3d23e2a962c8f217b07ffc2958b98a6f3b7bbe13512f9"
+    },
+    "test-code-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-code-review/SKILL.md",
+      "computedHash": "28fe6b077575abc0ad4482a33de9d20e162786eda8cf25687a49e51481272d5d"
+    },
+    "test-data-generation": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-data-generation/SKILL.md",
+      "computedHash": "1c1973a2cc31c983245f88ef64bfed23279f55a0e0d609ce0a58b86819c25639"
+    },
+    "test-data-requirement-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-data-requirement-analysis/SKILL.md",
+      "computedHash": "aa37ed73f8323d7145f80338ebafe1e35c8fc2bff43de16c48988529af9579c8"
+    },
+    "test-effectiveness-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-effectiveness-analysis/SKILL.md",
+      "computedHash": "f5bcf1e62c9ce4bc41772ec5b6b4ceee6204592b9cd250de340b7ad1bcc9eb30"
+    },
+    "test-gap-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-gap-analysis/SKILL.md",
+      "computedHash": "e54d6402f18881c2bcb4f7b5913e31206b32ca0a934db7ee1aff047436b74e01"
+    },
+    "test-maintenance-cost-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-maintenance-cost-analysis/SKILL.md",
+      "computedHash": "1e5f859a691af39c2166389e2510dec04c62b41b8fd47747133d8cd9e4f1507b"
+    },
+    "test-report-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-report-review/SKILL.md",
+      "computedHash": "d8aaf961341c23b12fb24a20405bd54ac6270720c39c7d2117c6fb17d28285be"
+    },
+    "test-reporting": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-reporting/SKILL.md",
+      "computedHash": "827c097a4ecb9b4bde7df28298f29eca0ae2e7ffcab553c8bb5959a7cbefd878"
+    },
+    "test-runtime-optimization": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-runtime-optimization/SKILL.md",
+      "computedHash": "8ccb84abf8de38c8d7056a9c333c311f40d850de6853b28cd8b0132b741d647e"
+    },
+    "test-scope-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-scope-analysis/SKILL.md",
+      "computedHash": "660c553be44724f2c51218a674cece31db779ef6ee5e2629d1347198d07c7706"
+    },
+    "test-strategy": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-strategy/SKILL.md",
+      "computedHash": "315da313b114cb17876e84e2ca2993b0fb462b6d7eafe7418ecb08d3ec7d516c"
+    },
+    "test-strategy-plus": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-strategy-plus/SKILL.md",
+      "computedHash": "9f07489b8bdbc8374916336abb5d5fa63f521cf88903759b6c8a84197e581150"
+    },
+    "test-strategy-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-strategy-review/SKILL.md",
+      "computedHash": "a023e1c3f66a0d8978cda173da8f38babd63ebb8f40f8fb9560e2b8ca008fec1"
+    },
+    "test-suite-health-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/test-suite-health-analysis/SKILL.md",
+      "computedHash": "b6b004220354aa9210786564a9955654f97f7a95bac811132e977162f8d4c8a5"
+    },
+    "testability-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/testability-analysis/SKILL.md",
+      "computedHash": "65a4716b8589c14c49097b88e10163bbb3286feb6851d7c36d2982750593f1b8"
+    },
+    "testcase-writer-plus": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/testcase-writer-plus/SKILL.md",
+      "computedHash": "4f6cb9507ddbe8d60e8974ea08ac12abd5ae883f9b482a99b102b4396c843867"
+    },
+    "testing-bottleneck-analysis": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/testing-bottleneck-analysis/SKILL.md",
+      "computedHash": "8cfa4a6b63e099f655e64ec325a68c8a61e835f58e61cd948def4ea4454026b5"
+    },
+    "threat-modeling": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/threat-modeling/SKILL.md",
+      "computedHash": "5950a9cf5cda0837676f24eb7a92e062a8aff06149b12476cd2c0d12a1cf8d7a"
+    },
+    "timeout-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/timeout-testing/SKILL.md",
+      "computedHash": "1d2a4add146ab9177d6dc12f01a21ce671411a39cee163a94aac47381cf76cc7"
+    },
+    "ui-test-cypress": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-cypress/SKILL.md",
+      "computedHash": "a9cccbd0d9f9aa881f030151e808ac6d24bbe93d5987cfb2c9935b84c416538c"
+    },
+    "ui-test-playwright": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-playwright/SKILL.md",
+      "computedHash": "71b398705b21a3390abe0ba58576c903a1a0dda13d30b69a99f2e2b66d8bf551"
+    },
+    "ui-test-puppeteer": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-puppeteer/SKILL.md",
+      "computedHash": "03159d78ca02e28ce43a24ba9c23dc438d037f19879025cc3f22dc5cb1ebc609"
+    },
+    "ui-test-selector-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-selector-review/SKILL.md",
+      "computedHash": "a0b1e2bf4b09452fd7f2ec6649cc36c2683015cf726e315a2cd0e3adcf52be23"
+    },
+    "ui-test-selenium": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-selenium/SKILL.md",
+      "computedHash": "861040f0a3eb4214dbf464468f23095afb62672bfc0d32c27150b5ce014d1665"
+    },
+    "ui-test-strategy": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-strategy/SKILL.md",
+      "computedHash": "2f2adb79e0ea8c4d4513f03bca319ca55c5f88b0241bd4332f962b5a05afb228"
+    },
+    "ui-test-testcafe": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-testcafe/SKILL.md",
+      "computedHash": "67550e3c4dbd37d8516eca212223911185090c0c5402fa17bcd5e5b8257a851f"
+    },
+    "ui-test-wait-strategy-review": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-wait-strategy-review/SKILL.md",
+      "computedHash": "904e70d7ce629dbb4a9a1df349a74731406e31c97e34482ae2481c633a50c070"
+    },
+    "ui-test-webdriverio": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/ui-test-webdriverio/SKILL.md",
+      "computedHash": "9e59c1ec94a5c74bec086d27d77ea229c23faf875f3d5c13bd0ffcd191438854"
+    },
+    "ux-quality-perspective": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-workflows/ux-quality-perspective/SKILL.md",
+      "computedHash": "d584ba3bafb04a1ed993312aff9d7ed32a1251a833fdf64d6c065980ea2d02b2"
+    },
     "valtio-define": {
       "source": "hairyf/valtio-define",
       "sourceType": "github",
       "skillPath": "skills/valtio-define/SKILL.md",
       "computedHash": "f6ddb65919ff631433113733ce28ae605655340cefd64059f402a873924d2f40"
+    },
+    "visual-regression-testing": {
+      "source": "naodeng/awesome-qa-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/zh/testing-types/visual-regression-testing/SKILL.md",
+      "computedHash": "b700e8b12660c3b0f6aac59d0439f970cfa36afa675fb541d59625bd36d5ac9c"
     }
   }
 }
