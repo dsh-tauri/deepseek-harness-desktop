@@ -1,7 +1,7 @@
 /**
  * client/utils/format.ts — 纯函数：计数文本、文件名、卡片状态判定、文件清单裁剪。
  *
- * 全部为纯函数，便于单测直接锁定（AGENTS.plugins.md「优先测试纯函数」）。
+ * 全部为纯函数，便于单测直接锁定（agents.plugins.md「优先测试纯函数」）。
  * 计数文本供 `ChangeCounts` 的 `title` 使用：视觉是分开着色的两个 span，
  * 但读屏/悬浮提示要拿到同一条「+N -M」文本。
  */

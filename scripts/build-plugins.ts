@@ -91,7 +91,7 @@ function verifyMaterialized(root: string): void {
 /**
  * DSH 运行时自行下发的包：`resources/node_modules` 之外还有一份由 src-tauri 服务层
  * 按 local/npm/global 布局单独准备，插件侧只需 `loader.import()` 动态取用
- * （见 docs/AGENTS.desktop.md「host 禁止静态引用 @deepseek-ai/*」）。整段排除即可，
+ * （见 docs/specs/agents.desktop.md「host 禁止静态引用 @deepseek-ai/*」）。整段排除即可，
  * 不必逐个删——它们只被 @deepseek-ai 自身互相引用。
  */
 const RUNTIME_PROVIDED_SCOPES = ['@deepseek-ai'] as const

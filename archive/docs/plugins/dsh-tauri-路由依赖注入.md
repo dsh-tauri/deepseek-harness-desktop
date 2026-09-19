@@ -237,7 +237,7 @@ export function defineRoutes<Deps = undefined>(setup: RoutesSetup): RoutesRegist
 而不是上线后 handler 里抛 `路由依赖未随注册传入`。若团队不接受条件类型，退化为
 `(ctx: RoutesContext, deps?: Deps) => () => void`，代价是失去这层静态保护。
 
-**类型放哪**：deps 接口属于宿主共享类型，按 `docs/AGENTS.plugins.md:320`
+**类型放哪**：deps 接口属于宿主共享类型，按 `docs/specs/agents.plugins.md:320`
 （「宿主类型放 `src/host/types/`」）应落在 `src/host/types/index.ts`；
 现有的 `routes/index.type.ts` 中，`RouteDeps` / `ResolvedRouteDeps` 随之删除，
 而 turnrewind 的 `LiveStateReader` / `TurnPendingReader` 是领域读面，也一并移入 `host/types/`。
@@ -322,7 +322,7 @@ export function defineRoutes<Deps = undefined>(setup: RoutesSetup): RoutesRegist
    更新 `docs/plugins/dsh-tauri-设计重构迁移.md` 第 1 条，补上「有 apply 期依赖时经
    `routes(ctx, deps)` 传入、handler 经 `routeDeps(event)` 取回」这句协议。
 
-每步都应满足 `docs/AGENTS.plugins.md:309-316` 的四连：
+每步都应满足 `docs/specs/agents.plugins.md:309-316` 的四连：
 `pnpm run lint --fix` / `pnpm run typecheck` / `pnpm run test -- --run` / `pnpm run build`。
 
 ## 9. 测试迁移
@@ -406,11 +406,11 @@ return routes(harness.ctx, { engine: createEngineStub() })
 1. **`spec §2` 没有可指向的源文件。** `packages/dsh-tauri-turnrewind/src/host/routes/index.type.ts:5`
    与 `packages/dsh-tauri-panel-scheduler/src/host/routes/index.type.ts:7` 都引用了
    「spec §2：能用 `dshContextOf` 拿到的依赖才不要走工厂」，但全仓库检索 `§2` / `走工厂`
-   找不到对应文档（`docs/DEVELOPMENT.spec.md` 是小节编号无关的通用规范）。
+   找不到对应文档（`docs/specs/devlopment.md` 是小节编号无关的通用规范）。
    需要确认它指的是哪份 spec —— 方案 B 正是让 apply 期依赖也变成「能从事件拿到」，
    从而**满足**这条规则，但规则原文的出处应当补齐。
 2. **字段名**：`event.context.dshDeps` 还是 `event.context.dsh.deps`。前者与既有 `dsh` 平级、
    不改 `dshContextOf` 契约；后者更聚合但会破坏 `event.context.dsh` 即宿主 ctx 的既有语义。本文用前者。
-3. **deps 类型归属**：本文按 `docs/AGENTS.plugins.md:320` 建议放 `src/host/types/`，
+3. **deps 类型归属**：本文按 `docs/specs/agents.plugins.md:320` 建议放 `src/host/types/`，
    与现状（`routes/index.type.ts`）不同；若团队偏好最小改动，可保留在原文件。
 4. `RoutesRegistration` 的条件类型（第 6 节）是否接受，或退化为可选参数。
