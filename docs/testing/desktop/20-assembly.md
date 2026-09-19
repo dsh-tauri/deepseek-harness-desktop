@@ -1,9 +1,9 @@
 # 首次装配与依赖安装
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/20-assembly.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/20-assembly.e2e.ts`（待建立）
 > 前置：`07-harness-lifecycle.md` 通过；可构造全新装配态（store `installed=false`）
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/20-assembly.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/20-assembly.e2e.ts`（待配置，见 G2）
 
 首次装配是桌面端唯一「带真实下载、解压、落盘、校验」的流程，也是首次启动体验的全部。本文件覆盖任务编排、进度事件、复用与跳过、失败恢复四类行为。
 
@@ -80,7 +80,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/lifecycle.rs:86`、`:234`；`src-tauri/src/service/workflow/install.rs:53`
-[自动化] 待接线（`test/e2e/specs/desktop/20-assembly.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/20-assembly.e2e.ts`）
 [前置条件] 全新装配态（store `installed=false`，`$E2E_HOME/home/.dsh.dev` 下无 `dependencies/dsh`）；联网
 [测试数据] 选择器 `dsh-setup-root`；启动阶段键 `status.installing`
 [测试步骤] 1. 拉起应用并读取初始 `get_dsh_status`。2. 等待装配完成与服务健康。3. 读取最终状态与 `runtime_ready`。

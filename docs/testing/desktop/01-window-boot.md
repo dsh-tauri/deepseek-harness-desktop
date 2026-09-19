@@ -1,9 +1,9 @@
 # 窗口启动
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/01-window-boot.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/01-window-boot.e2e.ts`（待建立）
 > 前置：见 `00-overview.md` §5.1；`dist/` 与 debug 二进制已按最新源码重建
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/01-window-boot.e2e.ts`（`desktop` project 待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/01-window-boot.e2e.ts`（`desktop` project 待配置，见 G2）
 
 本文件是全部用例的地基：窗口能起来、壳层能渲染、前置校验能拦住不该跑的运行。任何一条失败都意味着后续用例的失败不可归因。
 
@@ -36,7 +36,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] 批次 01；`src-tauri/src/desktop/builder.rs:484`
-[自动化] 待接线（`test/e2e/specs/desktop/01-window-boot.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/01-window-boot.e2e.ts`）
 [前置条件] 二进制存在；默认端口实测空闲；无残留桌面实例
 [测试数据] 期望标题 `Deepseek Harness Desktop`
 [测试步骤] 1. 拉起应用并建立 WDIO 会话。2. 读取窗口句柄集合与当前窗口标题。

@@ -1,9 +1,9 @@
 # 多窗口与缩放
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/19-multi-window.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/19-multi-window.e2e.ts`（待建立）
 > 前置：`12-window-tray.md` 通过
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/19-multi-window.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/19-multi-window.e2e.ts`（待配置，见 G2）
 
 「文件 → 新建窗口」以同一 `index.html` 再开一个独立 webview；所有窗口共享同一数据目录与同一 DSH 服务实例。缩放有两条入口：壳层快捷键（焦点在导航栏等壳层元素时）与 iframe 内转发的桥消息（跨源 iframe 内的快捷键不会冒泡到壳层）。
 
@@ -37,7 +37,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/layout/components/navbar.tsx:239-247`、`:388-395`；`src-tauri/src/desktop/window.rs:144-149`
-[自动化] 待接线（`test/e2e/specs/desktop/19-multi-window.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/19-multi-window.e2e.ts`）
 [前置条件] 应用处于 `ready`；当前仅 1 个窗口；平台非 macOS
 [测试数据] 菜单项 id `new-window`；期望标题 `Deepseek Harness Desktop`
 [测试步骤] 1. 记录窗口句柄集合。2. 打开「文件」菜单并点击「新建窗口」。3. 等待新窗口出现。4. 读取句柄集合与各窗口标题。

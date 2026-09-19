@@ -1,9 +1,9 @@
 # 核心版本管理：错误码与回滚矩阵
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/25-core-error-matrix.e2e.ts`（待建立）
 > 前置：`14-core-management.md` 通过；配置对话框可打开在「核心」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/25-core-error-matrix.e2e.ts`（待配置，见 G2）
 
 本文件把 `version.rs` 与 `local.rs` 的错误码逐条映射为可观察结果，重点在**切换失败必须回滚**：目录互换第二步失败时激活位要还原，而不是留下半切换的核心。列表渲染与入口可见性归 `14-core-management.md`。
 
@@ -38,7 +38,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/version.rs:380`、`:552`、`:409`、`:564`、`:354`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 配置对话框打开在「核心」面板；`dependencies/` 下不存在这些槽位
 [测试数据] id `not-a-core`、`app`（用于卸载）、`app-dsh-0.0.0-ghost`、`local`（无本地 CLI 核心时）
 [测试步骤] 1. 用 `not-a-core` 切换核心。2. 用 `app` 卸载。3. 用 `app-dsh-0.0.0-ghost` 切换。4. 用 `app-dsh-0.0.0-ghost` 卸载。5. 在无本地 CLI 核心的环境用 `local` 切换。
@@ -51,7 +51,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/core/version.rs:500`、`:594`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] `dependencies/<tag>` 已存在完整槽位；可断网或拦截网络请求
 [测试数据] 已下载 tag `dsh-<已存在版本>`
 [测试步骤] 1. 在可拦截网络的环境下对该 tag 触发下载。2. 读取返回的核心行与槽位目录内容。3. 记录网络请求情况。
@@ -68,7 +68,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/core/version.rs:443`、`:404`、`:421`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 已下载 tag 为 `dsh-<v2>` 的槽位；当前激活核心为另一版本
 [测试数据] 目标 tag `dsh-<v2>`
 [测试步骤] 1. 记录切换前 `dependencies/dsh` 对应的版本与 `dependencies/dsh-<v1>` 的存在性。2. 切换到 `app-dsh-<v2>`。3. 读取 `get_cores` 中 `active` 为真的行与磁盘槽位。
@@ -81,7 +81,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/version.rs:443`、`:463`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 已下载目标 tag 槽位；可在互换窗口内制造目标目录重命名失败（占用或权限）
 [测试数据] 目标 tag `dsh-<v2>`；制造失败的手段：占用目标槽位目录句柄或临时改权限
 [测试步骤] 1. 记录切换前激活核心版本。2. 制造目标目录重命名失败条件后切换到 `app-dsh-<v2>`。3. 读取返回错误与 `dependencies/dsh` 的内容。4. 读取 `get_cores` 的 `active` 行。
@@ -94,7 +94,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/version.rs:455`、`:443`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 当前激活版本有 tag 记录；同名残留备份槽位存在且无法删除
 [测试数据] 备份槽位名 = 当前激活版本记录的 tag；制造不可删条件：占用备份目录句柄或改权限
 [测试步骤] 1. 记录激活核心版本与激活目录内容。2. 制造备份槽位不可删条件。3. 切换到另一已下载 tag。4. 读取错误与激活目录内容。
@@ -107,7 +107,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/core/version.rs:330`、`:421`、`:339`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 服务处于运行中；存在一个不在 `.harness.pid` 标记中的残留 Harness 进程
 [测试数据] 目标 tag `dsh-<v2>`；残留进程由外部强杀应用后遗留
 [测试步骤] 1. 记录受管 Harness 进程与残留进程的 pid。2. 触发核心切换。3. 读取两个 pid 的存活状态与切换结果。4. 制造停服失败后重复切换并读取错误。
@@ -120,7 +120,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/workflow/process.rs:127`、`:135`；`src-tauri/src/service/core/version.rs:347`、`:404`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 可人为长时间持有核心转换锁（例如卡住的启动或另一个未完成的切换）
 [测试数据] 持锁时长 > 15 秒；目标 `local` 与 `app-<tag>`
 [测试步骤] 1. 制造一次持续超过 15 秒的持锁。2. 在持锁期间请求切换到 `local`。3. 在持锁期间请求切换到 `app-<tag>`。4. 读取两次返回的错误与耗时。
@@ -137,7 +137,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/version.rs:512`、`:514`、`:530`、`:531`、`:542`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 可拦截或改写下载链路（元数据接口、资产地址、摘要）
 [测试数据] 一个合法但未下载的 tag；四种故障注入：元数据不可用、摘要缺失、下载中断、摘要不匹配
 [测试步骤] 1. 注入元数据不可用后下载。2. 注入摘要缺失后下载。3. 注入下载中断（含镜像兜底也失败）后下载。4. 注入摘要不匹配后下载，并复查槽位目录。
@@ -150,7 +150,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/version.rs:560`、`:564`、`:574`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 已下载并激活 tag 为 `dsh-<v2>` 的版本；另有非激活的已下载 tag `dsh-<v3>`
 [测试数据] `app-dsh-<v2>`（激活）、`app-dsh-<v3>`（非激活）
 [测试步骤] 1. 卸载 `app-dsh-<v2>`。2. 在非激活槽位上制造删除失败（占用目录句柄）后卸载 `app-dsh-<v3>`。3. 解除占用后再次卸载 `app-dsh-<v3>`。
@@ -163,7 +163,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/version.rs:360`；`src-tauri/src/service/core/source.rs:107`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 已安装低于内置插件基线的本地 CLI 核心；记录 store 中 `active_core` 原值
 [测试数据] 低于 `recommended` 基线的本地 dsh 版本
 [测试步骤] 1. 调用切换到 `local`。2. 读取返回错误文本。3. 读取 store 中的 `active_core`。4. 调用 `get_cores` 读取本地行与激活行。
@@ -176,7 +176,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/local.rs:274`、`:322`、`:339`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 存在本地 CLI 核心；可拦截或替换包管理器命令
 [测试数据] 无本地核心的环境；更新命令失败（非零退出）的注入；更新成功的正常路径
 [测试步骤] 1. 在无本地 CLI 核心的环境触发更新。2. 注入包管理器非零退出后触发更新。3. 注入 `spawn_blocking` 失败后触发更新。4. 恢复环境后正常触发更新并回读版本。
@@ -189,7 +189,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/core/local.rs:247`、`:281`、`:314`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 可切换本地核心的全局安装布局；可观察派生进程与命令行
 [测试数据] npm 布局；pnpm 布局；两种布局同时命中的混合布局
 [测试步骤] 1. 在 npm 布局下触发更新，记录程序名与参数。2. 在 pnpm 布局下触发更新，记录程序名与参数。3. 在混合布局下触发更新。4. 记录 Windows 下派生进程的窗口创建标志。
@@ -202,7 +202,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/core/source.rs:43`；`src-tauri/src/bridge/core.rs:12`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 配置对话框打开在「核心」面板；本地核心与至少一个已下载的预打包版本可用
 [测试数据] `get_cores` 返回值；含一个预览版 tag 与一个高于推荐版本的 tag
 [测试步骤] 1. 调用 `get_cores` 并读取字段名。2. 读取 `local` 行的 `source`、`id` 与 `present`。3. 读取已下载预打包行的 `id`、`tag`、`present` 与 `active`。4. 读取预览版行与高于推荐版本行的 `preview`、`aboveRecommended` 与 `recommendedVersion`。
@@ -215,7 +215,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/core/version.rs:390`
-[自动化] 待接线（`test/e2e/specs/desktop/25-core-error-matrix.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/25-core-error-matrix.e2e.ts`）
 [前置条件] 可调用切换命令；可在切换返回前的窗口内删除或移走激活槽位
 [测试数据] 目标 `app-<tag>`；在切换成功后立即移走 `dependencies/dsh`
 [测试步骤] 1. 触发切换到 `app-<tag>`。2. 在切换落盘后、列表查询前的窗口内移走激活目录。3. 读取返回错误。4. 复查磁盘槽位与 `active_core` 设置。

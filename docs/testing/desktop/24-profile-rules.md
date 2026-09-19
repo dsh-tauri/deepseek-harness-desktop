@@ -1,9 +1,9 @@
 # 档案名称规则、初始化形态与隔离性
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/24-profile-rules.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/24-profile-rules.e2e.ts`（待建立）
 > 前置：`05-profile.md` 通过；配置对话框可打开在「档案」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/24-profile-rules.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/24-profile-rules.e2e.ts`（待配置，见 G2）
 
 本文件只覆盖**后端规则面**：名称规范化、创建与克隆的校验顺序及错误码、初始化落盘的四个文件、以及档案之间的隔离边界。界面呈现与写操作反馈归 `05-profile.md`，此处不重复断言。
 
@@ -47,7 +47,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/profile/mod.rs:289`；`src-tauri/src/service/profile/mod.rs:1043`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 配置对话框打开在「档案」面板；`$E2E_HOME/home/.dsh.dev/profiles` 可写（§5.3）
 [测试数据] 名称 `My Work Space`、`  dev--stage  `、`a_b-c`
 [测试步骤] 1. 依次用三个名称新建档案。2. 每次创建后读取 `get_profiles` 返回行的 `id`。3. 复查 `profiles/` 下的目录名。
@@ -60,7 +60,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/profile/mod.rs:289`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 配置对话框打开在「档案」面板；`profiles/` 为空或与测试名无冲突
 [测试数据] 名称 `a.b/c`、`A+B`、`中文档案`
 [测试步骤] 1. 用 `a.b/c` 新建并读取 `id`。2. 用 `A+B` 新建并读取 `id`。3. 用 `中文档案` 新建。
@@ -77,7 +77,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/profile/mod.rs:308`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 可调用 `create_profile` 命令（界面或命令层）
 [测试数据] 名称 `   `（三个空格）、`中文档案`、`...`
 [测试步骤] 1. 用纯空白名请求创建。2. 用 `中文档案` 请求创建。3. 用 `...` 请求创建。
@@ -90,7 +90,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/profile/mod.rs:308`、`:320`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] `profiles/` 下不存在同名档案
 [测试数据] 名称 64 个 `a`；名称 65 个 `a`；名称 64 个 `a` 加一个 `.`（原始 65 字符）
 [测试步骤] 1. 用 64 个 `a` 创建。2. 用 65 个 `a` 创建。3. 用 64 个 `a` 加 `.` 创建。
@@ -103,7 +103,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/profile/mod.rs:320`、`:324`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 已存在一个档案 `dev-check`，其 `package.json` 内容已记录
 [测试数据] 名称 `web`、`WEB`、`dev-check`
 [测试步骤] 1. 用 `web` 请求创建。2. 用 `WEB` 请求创建。3. 用 `dev-check` 请求创建并复查该档案的 `package.json`。
@@ -116,7 +116,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 低频
 [追踪] `src-tauri/src/service/profile/mod.rs:42`、`:51`、`:59`、`:569`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 使用全新的 `$E2E_HOME/home/.dsh.dev`（§5.3），`profiles/` 下不存在 `tauri` 与 `safe`
 [测试数据] 名称 `tauri`、`safe`；克隆对话框显式名 `Web`
 [测试步骤] 1. 用 `tauri` 创建。2. 用 `safe` 创建。3. 在克隆对话框用显式名 `Web` 克隆任一档案。
@@ -133,7 +133,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/profile/mod.rs:879`、`:707`、`:888`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 配置对话框打开在「档案」面板；`profiles/init-check` 不存在
 [测试数据] 名称 `init-check`
 [测试步骤] 1. 新建档案 `init-check`。2. 读取该档案目录下的文件清单。3. 读取 `package.json` 的 `name`/`private`/`dependencies`/`dsh.profile.bundles`。4. 读取 `cordis.patch.yml`、`pnpm-workspace.yaml`、`.npmrc`。
@@ -146,7 +146,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/profile/mod.rs:879`、`:888`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 存在一个已初始化的档案；可触发一次初始化（启动链路或插件操作链路）
 [测试数据] 手工改写后的 `cordis.patch.yml`、`pnpm-workspace.yaml`、`package.json`
 [测试步骤] 1. 改写该档案的 `cordis.patch.yml`、`pnpm-workspace.yaml` 与 `package.json`。2. 触发一次档案初始化。3. 复查三个文件内容。
@@ -159,7 +159,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/profile/mod.rs:884`、`:732`、`:879`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 可手工构造档案目录；可调整目录属主/权限
 [测试数据] 仅含 `@deepseek-ai/dsh-base` 的 `package.json` 的目录；无 `package.json` 的目录；当前用户不可写的目录
 [测试步骤] 1. 构造只有 `dsh-base` 的档案目录并触发初始化，读取 `dsh.profile.bundles`。2. 构造无 `package.json` 的目录并触发初始化，读取目录内容。3. 构造当前用户不可写的目录并触发初始化。
@@ -176,7 +176,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/profile/mod.rs:99`；`src-tauri/src/service/plugin/installed.rs:37`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 配置对话框打开在「档案」面板；网络或本地包源可用
 [测试数据] 档案 `iso-a`、`iso-b`；同一个插件包
 [测试步骤] 1. 新建 `iso-a` 与 `iso-b`。2. 在 `iso-a` 下安装该插件后读取两个档案的 `package.json` 与 `node_modules`。3. 在 `iso-a` 为活动档案时记录插件操作解析到的目录，切到 `iso-b` 后重复。
@@ -189,7 +189,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/profile/mod.rs:211`、`:337`、`:532`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 记录当前 `active_profile` 原值；存在一个活动档案
 [测试数据] store 中 `active_profile` 置为 空串 / `web` / 不存在的 `ghost`
 [测试步骤] 1. 把 `active_profile` 置为空串后读取活动档案。2. 置为 `web` 后读取。3. 置为 `ghost` 后读取，并调用 `set_active_profile('ghost')`。4. 分别对 `web` 与当前活动档案请求删除。
@@ -202,7 +202,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/bridge/lifecycle.rs:349`
-[自动化] 待接线（`test/e2e/specs/desktop/24-profile-rules.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/24-profile-rules.e2e.ts`）
 [前置条件] 存在两个可用档案；`$E2E_HOME/home/.dsh.dev/cordis.patch.yml` 可写且已备份（§5.3）
 [测试数据] home 层 `$E2E_HOME/home/.dsh.dev/cordis.patch.yml` 中一条可解析的补丁条目
 [测试步骤] 1. 在 `$E2E_HOME/home/.dsh.dev/cordis.patch.yml` 写入一条可解析补丁条目。2. 在普通档案下启动服务并确认该条目生效。3. 切到安全档案 `safe` 后启动服务并确认该条目是否生效。

@@ -1,9 +1,9 @@
 # 插件升级/卸载/恢复与内置插件自愈
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`（待建立）
 > 前置：`09-plugin-panel.md` 与 `10-plugin-recovery.md` 通过；具备可写档案夹具
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/27-plugin-lifecycle.e2e.ts`（待配置，见 G2）
 
 本文件覆盖插件生命周期的**写路径**：升级、卸载、禁用/启用、快照与还原、异常注册表、恢复卸载，以及启动期的内置插件自愈与文件监控。核心约定是「不报虚假成功」——升级未落地、卸载未生效、启用仍被覆盖时都必须如实失败。
 
@@ -82,7 +82,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/plugin.rs:148`；`src-tauri/src/service/plugin/install/single.rs:49`、`:353`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 存在确有更新的第三方插件；服务健康；registry 可达
 [测试数据] 命令 `update_dsh_plugin`（入参 `{id}`）；事件 `preinstall-log`、`dsh-plugins-updated`
 [测试步骤] 1. 记录该插件当前版本。2. 调用 `update_dsh_plugin`。3. 读取命令返回与 `preinstall-log` 中的 pnpm 输出。4. 等待收敛后读取 `get_dsh_plugins` 的版本、`error` 与服务状态。
@@ -95,7 +95,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/plugin/install/single.rs:365`、`:370`、`:376`、`:74`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 某已安装插件的 spec 被 catalog 条目钉死，使 pnpm 以 0 退出但依赖指纹不变
 [测试数据] 命令 `update_dsh_plugin`；日志标记 `PLUGIN_UPDATE_NO_CHANGE`
 [测试步骤] 1. 记录升级前的依赖指纹（lock 中 `specifier @ version`）。2. 调用 `update_dsh_plugin`。3. 读取命令错误返回。4. 重新记录该插件的依赖指纹与 `get_dsh_plugins` 中的 `error`。
@@ -108,7 +108,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/plugin.rs:157`；`src-tauri/src/service/plugin/install/single.rs:116`、`:143`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 存在第三方可卸载插件且已创建过快照；服务健康
 [测试数据] 命令 `remove_dsh_plugin`、`snapshot_plugin`、`get_plugin_backup`
 [测试步骤] 1. 对该插件创建快照并读回 `exists`。2. 调用 `remove_dsh_plugin`。3. 读取命令返回。4. 读取 `get_dsh_plugins` 与 `get_plugin_backup`。
@@ -121,7 +121,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/bridge/plugin.rs:157`；`src-tauri/src/service/plugin/install/single.rs:116`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 使用一个既不在 profile `dependencies` 也无 `node_modules` 入口的 id
 [测试数据] 命令 `remove_dsh_plugin`（入参 `{id: "dsh-nonexistent-probe"}`）
 [测试步骤] 1. 记录当前插件集合。2. 调用 `remove_dsh_plugin`。3. 读取命令返回。4. 再次读取插件集合。
@@ -138,7 +138,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/plugin/disable.rs:274`、`:303`、`:299`、`:382`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 存在非内置、已安装、未被禁用的第三方插件
 [测试数据] 命令 `disable_dsh_plugin`、`enable_dsh_plugin`、`get_dsh_plugins`
 [测试步骤] 1. 调用 `disable_dsh_plugin` 并读取 profile 两个文件。2. 读取 `get_dsh_plugins` 中该插件字段。3. 调用 `enable_dsh_plugin`（不传确认标志）。4. 再次读取 profile 两个文件与列表字段。
@@ -151,7 +151,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/plugin/disable.rs:370`、`:368`、`:375`、`:376`、`:132`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 某插件在 `cordis.patch.yml` 中有 `disabled: true` 的顶层条目
 [测试数据] 命令 `enable_dsh_plugin`（先后以缺省与 `true` 传 `clearConfigOverride`）
 [测试步骤] 1. 读取该插件 `patchDisabled` 与 `cordis.patch.yml` 内容。2. 调用 `enable_dsh_plugin` 不传确认标志。3. 读取错误返回与 `cordis.patch.yml`。4. 传 `clearConfigOverride: true` 再次调用，并读取该文件与 `bundles`。
@@ -166,7 +166,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/plugin/snapshot.rs:358`、`:376`、`:440`、`:476`、`:481`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 存在第三方已安装插件；`$E2E_HOME/home/.dsh.dev/.plugin-backups` 下无该 id 的归档（§5.3）
 [测试数据] 命令 `snapshot_plugin`、`get_plugin_backup`、`delete_plugin_backup`、`get_dsh_plugins`
 [测试步骤] 1. 调用 `snapshot_plugin` 并读取返回。2. 再次调用 `snapshot_plugin`（覆盖）。3. 读取 `get_plugin_backup` 与列表中的 `hasSnapshot`。4. 调用 `delete_plugin_backup` 两次后读取 `get_plugin_backup`。
@@ -179,7 +179,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/plugin/snapshot.rs:586`、`:650`、`:655`、`:665`、`:680`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 已对某第三方插件创建快照；之后该插件升级到更高版本
 [测试数据] 命令 `restore_plugin`、`get_dsh_plugins`、`get_plugin_backup`
 [测试步骤] 1. 记录快照态版本与快照 `created`。2. 升级该插件并确认版本已变高。3. 调用 `restore_plugin`。4. 读取插件版本、profile 清单引用与快照存在性。
@@ -192,7 +192,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/plugin/snapshot.rs:596`、`:588`、`:590`；`src-tauri/src/service/plugin/recovery/mod.rs:49`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 存在一个无快照的第三方插件；另有一个 `@deepseek-ai/` 前缀的核心包
 [测试数据] 命令 `restore_plugin`、`snapshot_plugin`
 [测试步骤] 1. 对无快照插件调用 `restore_plugin`。2. 读取错误返回。3. 对核心包调用 `snapshot_plugin`。4. 对核心包调用 `restore_plugin` 并读取错误返回。
@@ -209,7 +209,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/bridge/plugin.rs:166`、`:172`、`:178`、`:186`；`src-tauri/src/service/plugin/errors.rs:31`、`:53`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 应用处于 `ready`；某已安装插件可被构造运行期异常
 [测试数据] 命令 `report_plugin_error`（入参 `{id, error, action}`）；事件 `plugin-recovery-required`、`dsh-plugins-updated`
 [测试步骤] 1. 调用 `report_plugin_error`。2. 读取桌面数据目录下的 `plugin-errors.json`。3. 读取两个事件。4. 重启应用后再次读取 `get_dsh_plugins` 中该插件的 `error`。
@@ -222,7 +222,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/plugin.rs:195`、`:207`；`src-tauri/src/service/plugin/recovery/mod.rs:118`、`:124`、`:161`、`:163`、`:176`、`:185`、`:186`；`src-tauri/src/service/plugin/recovery/ownership.rs:217`、`:244`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 存在一个可卸的第三方插件（已安装、在 `bundles` 中、且在 `cordis.patch.yml` 中有条目）；profile 清单存在
 [测试数据] 命令 `detect_plugin_recovery`（入参 `{logs}`）、`recover_plugin`（先后取核心包 id 与第三方 id）
 [测试步骤] 1. 构造一组启动日志，错误特征唯一归属到该第三方插件。2. 调用 `detect_plugin_recovery` 并读取 `PluginRecoveryInfo`。3. 构造归属不唯一（同一错误可被两个根插件解释）的日志，再次调用。4. 对核心包 id 调用 `recover_plugin`。5. 对第三方插件 id 调用 `recover_plugin`。6. 读取 profile 清单、`node_modules` 入口、`cordis.patch.yml` 与 `pnpm-lock.yaml`。
@@ -235,7 +235,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/plugin/internal/mod.rs:241`、`:628`、`:632`、`:633`、`:505`、`:491`；`src-tauri/src/service/workflow/launch.rs:474`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 可写档案；某内置插件（`internal == true`）先被用户从面板卸载，其捆绑目录仍存在
 [测试数据] 命令 `remove_dsh_plugin`、`ensure_internal_plugins`、`get_dsh_plugins`；事件 `internal-plugins-phase`；日志标记 `INTERNAL_PLUGIN_NEEDS_REINSTALL`
 [测试步骤] 1. 卸载该内置插件并确认其已离开列表与 `bundles`。2. 重启应用并等待启动完成。3. 读取启动日志与自愈阶段事件序列。4. 读取 `get_dsh_plugins` 中该条目的 `internal`、`bundled` 与 `node_modules` 入口状态。
@@ -248,7 +248,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/plugin/internal/mod.rs:624`、`:630`、`:707`、`:709`；`src-tauri/src/service/plugin/preset.rs:315`、`:317`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 某内置插件已安装，但 profile 中其 `link:`/`file:` 声明指向的旧捆绑目录已不存在（模拟应用升级移动资源目录）
 [测试数据] 命令 `ensure_internal_plugins`；日志标记 `INTERNAL_PLUGIN_ENTRY_HEALTHY`
 [测试步骤] 1. 读取 profile 中该插件的依赖声明值。2. 读取 `bundled_plugin_dir` 解析出的当前捆绑目录与预期 spec。3. 触发 `ensure_internal_plugins`。4. 读取自愈后的声明值与 `node_modules` 入口状态。
@@ -265,7 +265,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/plugin/watch.rs:30`、`:320`、`:333`、`:338`、`:345`、`:26`、`:357`；`src-tauri/src/service/scheduler/mod.rs:16`、`:24`
-[自动化] 待接线（`test/e2e/specs/desktop/27-plugin-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/27-plugin-lifecycle.e2e.ts`）
 [前置条件] 监控轮询运行中；可连续多次改写 profile 插件文件（模拟 pnpm 连续写盘）
 [测试数据] 事件 `dsh-plugins-updated`；改写目标：profile `package.json`、插件 `package.json`、`cordis.patch.yml`、`disabled-plugins.json`
 [测试步骤] 1. 订阅 `dsh-plugins-updated` 并清空历史。2. 在 2 秒窗口内连续多次改写 profile `package.json` 的依赖版本。3. 读取事件次数、时间戳与载荷。4. 仅改写 `disabled-plugins.json`，再读取事件次数与内容。

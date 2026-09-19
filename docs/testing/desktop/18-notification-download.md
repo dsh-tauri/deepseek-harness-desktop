@@ -1,9 +1,9 @@
 # 通知与下载
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/18-notification-download.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/18-notification-download.e2e.ts`（待建立）
 > 前置：`06-harness-embed.md` 通过；应用处于 `ready`
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/18-notification-download.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/18-notification-download.e2e.ts`（待配置，见 G2）
 
 三条桥都发生在 **iframe → 宿主**方向：原生通知、下载完成提示、剪贴板图片回退（Linux/WebKitGTK 下 iframe 的 paste 事件拿不到图片，走原生通路）。系统表面的实际呈现无法在页面内断言，因此多数用例止于「桥接层成功返回」。
 
@@ -37,7 +37,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/layout/components/iframe.tsx:88-92`、`:130-140`；`src-tauri/src/desktop/window.rs:110-138`
-[自动化] 待接线（`test/e2e/specs/desktop/18-notification-download.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/18-notification-download.e2e.ts`）
 [前置条件] 应用处于 `ready`；通知权限已在页面加载时注册
 [测试数据] 桥消息 `{ type: 'dsh://native-notification', title, body, tag, sessionId, requireInteraction }`
 [测试步骤] 1. 由 iframe 侧发出通知桥消息。2. 等待宿主处理。3. 读取控制台错误收集器。

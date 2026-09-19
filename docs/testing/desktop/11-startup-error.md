@@ -1,9 +1,9 @@
 # 启动失败与恢复
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/11-startup-error.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/11-startup-error.e2e.ts`（待建立）
 > 前置：`07-harness-lifecycle.md` 通过；可构造各类非插件类启动失败
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/11-startup-error.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/11-startup-error.e2e.ts`（待配置，见 G2）
 
 本文件的错误页指 `recovery.required == false` 的 `Setup` 错误态；插件异常导致的全屏恢复页归 `10`。启动失败有三种**互斥**的针对性提示（补丁层语法错误、补丁层悬空条目、插件路由冲突），必须按失败特征二选一或三选一呈现，不能同时出现。
 
@@ -38,7 +38,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/layout/components/webview.tsx:50-54`；`src/layout/components/setup.tsx:58-62`、`:82`
-[自动化] 待接线（`test/e2e/specs/desktop/11-startup-error.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/11-startup-error.e2e.ts`）
 [前置条件] 构造服务启动失败且不触发插件恢复（如核心不可用）
 [测试数据] 选择器 `dsh-setup-error`、`dsh-setup-error-message`
 [测试步骤] 1. 拉起应用并等待进入 `error`。2. 读取错误页标题与错误信息节点。

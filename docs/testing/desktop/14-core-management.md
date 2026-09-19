@@ -1,9 +1,9 @@
 # 核心版本管理
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/14-core-management.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/14-core-management.e2e.ts`（待建立）
 > 前置：`13-application-settings.md` 通过；配置对话框可打开在「核心」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/14-core-management.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/14-core-management.e2e.ts`（待配置，见 G2）
 
 「核心」面板管理 DSH 引擎来源：`local`（用户 CLI 全局安装）与 `app-<tag>`（预打包发布）。本地核心**低于内置插件基线时不参与「本地优先」**（issue #596），此时桌面端自动改用预打包核心并拒绝激活入口——这是本文件最关键的一条异常路径。
 
@@ -41,7 +41,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/ui/config/core.tsx:52-56`、`:92-106`、`:318-452`
-[自动化] 待接线（`test/e2e/specs/desktop/14-core-management.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/14-core-management.e2e.ts`）
 [前置条件] 应用处于 `ready`
 [测试数据] 选择器 `dsh-core-row`、`dsh-core-row-local`、`dsh-core-row-app`
 [测试步骤] 1. 打开「核心」面板。2. 读取核心行数量与每行版本文本。3. 读取本地核心行与预打包行的标记与相对顺序。

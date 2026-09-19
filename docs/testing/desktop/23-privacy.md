@@ -1,9 +1,9 @@
 # 隐私、本地监听与运行时信息
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/23-privacy.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/23-privacy.e2e.ts`（待建立）
 > 前置：`07-harness-lifecycle.md` 通过；应用处于 `ready`；测试侧可读取 `get_runtime_info`、`proxy_health_check`、`read_run_logs` 的返回值并可枚举本机监听地址
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/23-privacy.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/23-privacy.e2e.ts`（待配置，见 G2）
 
 本文件验证三条对外承诺：宿主只与本机回环地址通信、不向任何远端上传遥测、运行时信息与日志只在本机留存并以最小必要范围暴露。断言只取外部可观察事实（监听地址、子进程环境、命令返回值、落盘文件），不采信代码注释里的意图陈述。
 
@@ -45,7 +45,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/config/constants.rs:48`；`src-tauri/src/config/format.rs:4`；`src-tauri/src/service/workflow/launch.rs:640`、`:753`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 服务处于运行中；已具备枚举本机监听地址的手段
 [测试数据] 当前服务端口 `3081`；观察点：本机所有网卡的监听列表
 [测试步骤] 1. 读取当前服务端口。2. 枚举该端口上的全部监听地址。3. 从非回环网卡地址请求该端口。
@@ -58,7 +58,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/workflow/utils.rs:15`、`:32`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 服务处于运行中；启动应用前已设置指向不可达地址的 `HTTP_PROXY` 与 `ALL_PROXY`
 [测试数据] `HTTP_PROXY=http://127.0.0.1:1`、`ALL_PROXY=http://127.0.0.1:1`
 [测试步骤] 1. 在上述代理变量下启动应用并等待服务运行中。2. 调用 `proxy_health_check`。3. 读取返回值语义。
@@ -71,7 +71,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/task/tick_check_dsh_process/mod.rs:16`；`src-tauri/src/service/workflow/utils.rs:130`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 服务已停止（本应用不持有服务进程）；测试侧在 store 端口上启动一个返回 HTTP 200 的本地 Web 服务
 [测试数据] 测试侧服务响应 `/` 为 HTTP 200；store 端口 `3081`
 [测试步骤] 1. 停止应用的服务并确认不再持有进程。2. 在 `3081` 上启动测试侧 HTTP 服务。3. 读取界面连接状态与 `proxy_health_check` 返回值。
@@ -88,7 +88,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/workflow/launch.rs:510`；`src-tauri/src/service/plugin/install/env.rs:39`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 服务处于运行中；已具备读取服务子进程环境块的手段
 [测试数据] 期望 `DSH_TELEMETRY_DISABLED=1`
 [测试步骤] 1. 读取服务子进程的环境变量集合。2. 在同一环境块中查找遥测相关变量的取值。
@@ -101,7 +101,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/config/runtime.rs:587`；`src-tauri/src/bridge/system_os.rs:21`；`src/ui/config/debug.tsx:21`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 应用处于 `ready`；服务处于运行中
 [测试数据] 期望字段集：`app_version`、`dsh_version`、`node_version`、`service_url`、`data_dir`、`log_path`、`platform`、`arch`
 [测试步骤] 1. 调用 `get_runtime_info` 并读取返回对象的键集合。2. 读取 `service_url`、`data_dir`、`platform` 与 `arch` 的值。3. 在返回对象中查找凭据类字段。
@@ -114,7 +114,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/bridge/system_os.rs:239`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 应用处于 `ready`；可经测试编排直接调用 `open_external_url`
 [测试数据] 非法值：`file:///C:/Windows/System32/calc.exe`、`javascript:alert(1)`、`ftp://127.0.0.1/x`、空串
 [测试步骤] 1. 依次以每个非法值调用 `open_external_url`。2. 读取每次的错误返回。3. 读取系统上是否出现由这些调用拉起的新进程。
@@ -127,7 +127,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/bridge/system_os.rs:55`、`:66`；`src-tauri/src/bridge/guard.rs:18`、`:50`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 应用处于 `ready`；已存在允许根内的一个真实文件与一个真实目录，以及允许根外的一个真实文件与一个真实目录
 [测试数据] 允许根内 `<allowed_root>/<file>`、`<allowed_root>/<dir>`；允许根外 `<system_dir>/<file>`、`<system_dir>/<dir>`
 [测试步骤] 1. 以允许根内的文件调用 `reveal_in_folder`。2. 以允许根外的文件调用 `reveal_in_folder`。3. 以允许根内的目录调用 `open_dir`。4. 以允许根外的目录调用 `open_dir`。
@@ -144,7 +144,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/system_os.rs:164`、`:165`、`:167`、`:198`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 服务处于运行中；本次会话已产生过服务日志与前端日志
 [测试数据] 期望四段标题：`### 环境信息`、`### 服务日志`、`### 前台日志`、`### 后台日志`
 [测试步骤] 1. 调用 `read_run_logs` 并读取返回文本。2. 按标题切分文本，核对段数与顺序。3. 读取环境段内容。4. 对照磁盘上的三个日志文件路径。
@@ -157,7 +157,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/bridge/system_os.rs:164`、`:165`、`:167`
-[自动化] 待接线（`test/e2e/specs/desktop/23-privacy.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/23-privacy.e2e.ts`）
 [前置条件] 服务处于运行中；服务日志与前端日志均已超过 100 行
 [测试数据] `MAX_LINES = 100`；前端段期望上限 50 行
 [测试步骤] 1. 令前端产生多于 100 行日志。2. 调用 `read_run_logs`。3. 分别统计「服务日志」段与「前台日志」段的文本行数。

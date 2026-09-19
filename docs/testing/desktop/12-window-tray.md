@@ -1,9 +1,9 @@
 # 窗口控制与托盘
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/12-window-tray.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/12-window-tray.e2e.ts`（待建立）
 > 前置：`01-window-boot.md` 通过
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/12-window-tray.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/12-window-tray.e2e.ts`（待配置，见 G2）
 
 本文件区分两种「关闭」语义：**后台化**（隐藏到托盘，服务保持运行）与**退出**（完整退出，触发服务回收与几何保存）。`close_action` 设置决定右上角关闭按钮走哪一条；托盘菜单与「文件」菜单始终提供显式退出。
 
@@ -37,7 +37,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/layout/components/navbar.tsx:545-554`
-[自动化] 待接线（`test/e2e/specs/desktop/12-window-tray.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/12-window-tray.e2e.ts`）
 [前置条件] 窗口处于正常（非最小化）状态；平台非 macOS
 [测试数据] 选择器 `dsh-navbar-window-minimize`
 [测试步骤] 1. 点击最小化按钮。2. 等待窗口状态变化。3. 读取窗口最小化状态与进程存活状态。

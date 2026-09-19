@@ -1,9 +1,9 @@
 # 插件管理面板
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/09-plugin-panel.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/09-plugin-panel.e2e.ts`（待建立）
 > 前置：`07-harness-lifecycle.md` 通过；配置对话框可打开在「插件」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/09-plugin-panel.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/09-plugin-panel.e2e.ts`（待配置，见 G2）
 
 插件面板是「插件出问题时」的修复入口，同时承担禁用/启用/快照/还原/卸载。**所有写操作都会停掉并重新拉起服务**，因此每条写用例都必须独立复位到「服务健康 + 面板已打开」。
 
@@ -40,7 +40,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/ui/config/plugin.tsx:58-61`、`:427-486`
-[自动化] 待接线（`test/e2e/specs/desktop/09-plugin-panel.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/09-plugin-panel.e2e.ts`）
 [前置条件] 应用处于 `ready`；已安装至少 1 个内置插件与 1 个非内置插件
 [测试数据] 选择器 `dsh-plugin-row`、`dsh-plugin-row-builtin`
 [测试步骤] 1. 打开「插件」面板。2. 读取插件行数量与名称。3. 读取带「内置」标记的行及其位置。

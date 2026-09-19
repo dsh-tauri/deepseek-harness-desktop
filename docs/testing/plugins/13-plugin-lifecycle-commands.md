@@ -1,7 +1,7 @@
 # 插件生命周期命令：禁用 / 启用 / 升级 / 卸载 / 快照
 
 > 层级：L3 桌面端宿主 E2E（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/plugin-lifecycle.e2e.ts`（待接线，见 `00-overview.md` G4）
+> 自动化：`test/e2e/plugins/plugin-lifecycle.e2e.ts`（待接线，见 `00-overview.md` G4）
 > 前置：应用已启动；配置对话框可打开在「插件」面板；测试档案可写
 > 运行：待接线（`desktop` project 未配置，见 `00-overview.md` G4）
 

@@ -1,7 +1,7 @@
 # dsh-tauri-ui：壳层注入（设置侧栏 / 触发器 / 续跑补丁）
 
 > 层级：L2 插件宿主 E2E → L3 桌面端宿主 E2E
-> 自动化：`packages/dsh-tauri-ui/test/resume-route.e2e.ts`（待建立）；客户端与 L3 见各用例标注
+> 自动化：`test/e2e/plugins/resume-route.e2e.ts`（待建立）；客户端与 L3 见各用例标注
 > 前置：`pnpm build:plugins`；L3 另需 debug 二进制 + 空闲端口
 > 运行：L2 `pnpm test:e2e:plugin`；L3 见 `00-overview.md` §5.2
 
@@ -35,7 +35,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 异常
 [追踪] `packages/dsh-tauri-ui/src/host/routes/session/resume/post.ts:10`
-[自动化] 是（`packages/dsh-tauri-ui/test/resume-route.e2e.ts`）
+[自动化] 是（`test/e2e/plugins/resume-route.e2e.ts`）
 [前置条件] 插件已构建并挂载
 [测试数据] `POST /session/resume`，body `{}`
 [测试步骤] 1. 发起请求。2. 读状态码与响应体。

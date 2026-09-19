@@ -55,7 +55,7 @@
 | 批次 | 用例 / 基础设施 | 对应文档 | 状态 | 备注 |
 | --- | --- | --- | --- | --- |
 | 00 | 总览、前置与追踪矩阵 | `00-overview.md` | 已验证 | 索引/前置/矩阵/缺口已核对；G3 选择器事实随 `01` 批次同步 |
-| 01 | 窗口启动、几何约束、启动前置校验 | `01-window-boot.md` | 提案中 | 8 条 |
+| 01 | 窗口启动、几何约束、启动前置校验 | `01-window-boot.md` | 已实现 | 7 条已接线并跑通；005 改手工（G-D01-4） |
 | 02 | 壳层导航栏与条件渲染 | `02-shell-navigation.md` | 提案中 | 9 条 |
 | 03 | 配置对话框打开/定位/切换/关闭 | `03-config-dialog.md` | 提案中 | 7 条 |
 | 04 | 语言即时切换与持久化、主题自适应 | `04-locale-theme.md` | 提案中 | 6 条 |
@@ -85,7 +85,7 @@
 | 28 | 静默下载、退出自动安装、版本护栏、更新摘要与路径守卫 | `28-desktop-update-internals.md` | 提案中 | 12 条 |
 | 29 | 系统操作集成、路径守卫、跨平台打包、Windows 极简模式 | `29-system-integration.md` | 提案中 | 14 条 |
 
-合计 `01`–`29` 共 **273** 条用例。`desktop` project 与 `test/e2e/specs/desktop/` 均未建立，全部批次尚无自动化产物。
+合计 `01`–`29` 共 **273** 条用例。`desktop` project 已建立，用例落在 `test/e2e/desktop/`；`01` 批次 7 条已接线，其余批次尚无自动化产物。
 
 ### 4.2 插件 (`docs/testing/plugins/`)
 
@@ -94,7 +94,7 @@
 | 00 | 总览、前置与追踪矩阵 | `00-overview.md` | 提案中 | 不承载用例本体 |
 | 01 | 编排骨架（scratch 宿主 + 挂载 + 随机端口） | `01-host-lane-skeleton.md` | 提案中 | 编排代码 `test/e2e/support/dsh-host.ts` 已落地，用例文件待建 |
 | 02 | 共享路由契约（OPTIONS/405/403/413） | `02-dsh-tauri-core.md` | 提案中 | - |
-| 03 | `dsh-tauri-pet`（SSE → 客户端 → 桌面端窗口） | `03-dsh-tauri-pet.md` | 提案中 | SSE 首帧用例 `session-stream.e2e.ts` 已落地；客户端与 L3 待接线 |
+| 03 | `dsh-tauri-pet`（SSE → 客户端 → 桌面端窗口） | `03-dsh-tauri-pet.md` | 已实现 | SSE 首帧用例已迁至 `test/e2e/plugins/`；客户端与 L3 待接线 |
 | 04 | `dsh-tauri-rightclick` | `04-dsh-tauri-rightclick.md` | 提案中 | - |
 | 05 | `dsh-tauri-session` | `05-dsh-tauri-session.md` | 提案中 | - |
 | 06 | `dsh-tauri-worktree` | `06-dsh-tauri-worktree.md` | 提案中 | - |

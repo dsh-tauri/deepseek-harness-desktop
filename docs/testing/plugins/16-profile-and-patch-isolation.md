@@ -1,7 +1,7 @@
 # 档案隔离与补丁层治理
 
 > 层级：L3 桌面端宿主 E2E（真实 Tauri 窗口）；部分断言可在 L2 完成
-> 自动化：`test/e2e/specs/desktop/profile-plugin-isolation.e2e.ts`（待接线，见 `00-overview.md` G4）
+> 自动化：`test/e2e/plugins/profile-plugin-isolation.e2e.ts`（待接线，见 `00-overview.md` G4）
 > 前置：应用已启动；可创建/切换 scratch 档案；补丁层可写
 > 运行：待接线（`desktop` project 未配置，见 `00-overview.md` G4）
 

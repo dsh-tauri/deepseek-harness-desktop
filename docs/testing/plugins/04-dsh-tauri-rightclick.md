@@ -1,7 +1,7 @@
 # dsh-tauri-rightclick：外部打开接口与自绘右键菜单
 
 > 层级：L2 插件宿主 E2E → L3 桌面端宿主 E2E
-> 自动化：`packages/dsh-tauri-rightclick/test/open-routes.e2e.ts`（待建立）、客户端与 L3 见各用例标注
+> 自动化：`test/e2e/plugins/open-routes.e2e.ts`（待建立）、客户端与 L3 见各用例标注
 > 前置：`pnpm build:plugins`；L3 另需 debug 二进制 + 空闲端口
 > 运行：L2 `pnpm test:e2e:plugin`；L3 见 `00-overview.md` §5.2
 
@@ -36,7 +36,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 正向
 [追踪] `packages/dsh-tauri-rightclick/src/host/routes/open/url/post.ts:22`
-[自动化] 是（`packages/dsh-tauri-rightclick/test/open-routes.e2e.ts`）
+[自动化] 是（`test/e2e/plugins/open-routes.e2e.ts`）
 [前置条件] 插件已构建并挂载；执行环境允许拉起系统浏览器
 [测试数据] `POST /open/url`，body `{ "url": "https://example.com" }`，`content-type: application/json`
 [测试步骤] 1. 发起请求。2. 读状态码与响应体。

@@ -1,7 +1,7 @@
 # 插件清单与文件监控
 
 > 层级：L3 桌面端宿主 E2E（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/plugin-inventory.e2e.ts`（待接线，见 `00-overview.md` G4）
+> 自动化：`test/e2e/plugins/plugin-inventory.e2e.ts`（待接线，见 `00-overview.md` G4）
 > 前置：应用已启动；配置对话框可打开在「插件」面板；`<DSH_E2E_HOME>/home/.dsh.dev` 可写
 > 运行：待接线（`desktop` project 未配置，见 `00-overview.md` G4）
 

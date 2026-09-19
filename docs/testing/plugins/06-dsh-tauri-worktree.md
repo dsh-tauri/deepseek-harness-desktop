@@ -1,7 +1,7 @@
 # dsh-tauri-worktree：工作树路由、面板与模式选择
 
 > 层级：L2 插件宿主 E2E → L3 桌面端宿主 E2E
-> 自动化：`packages/dsh-tauri-worktree/test/worktree-routes.e2e.ts`（待建立）；客户端与 L3 见各用例标注
+> 自动化：`test/e2e/plugins/worktree-routes.e2e.ts`（待建立）；客户端与 L3 见各用例标注
 > 前置：`pnpm build:plugins`；涉及真实 git 的用例另需临时仓库
 > 运行：L2 `pnpm test:e2e:plugin`；L3 见 `00-overview.md` §5.2
 
@@ -36,7 +36,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 正向
 [追踪] `packages/dsh-tauri-worktree/src/host/routes/bindings/get.ts:8`
-[自动化] 是（`packages/dsh-tauri-worktree/test/worktree-routes.e2e.ts`）
+[自动化] 是（`test/e2e/plugins/worktree-routes.e2e.ts`）
 [前置条件] scratch `DSH_HOME` 全新；插件已挂载
 [测试数据] `GET /api/desktop/dsh-tauri-worktree/bindings`
 [测试步骤] 1. 发起请求。2. 读状态码与响应体。

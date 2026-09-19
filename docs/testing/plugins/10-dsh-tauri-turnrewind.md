@@ -1,7 +1,7 @@
 # dsh-tauri-turnrewind：回合级撤销的三个端点
 
 > 层级：L2 插件宿主 E2E → L3 桌面端宿主 E2E
-> 自动化：`packages/dsh-tauri-turnrewind/test/turnrewind-routes.e2e.ts`（待建立）；客户端与 L3 见各用例标注
+> 自动化：`test/e2e/plugins/turnrewind-routes.e2e.ts`（待建立）；客户端与 L3 见各用例标注
 > 前置：`pnpm build:plugins`；真实撤销链路另需 git 仓库与会话数据
 > 运行：L2 `pnpm test:e2e:plugin`；L3 见 `00-overview.md` §5.2
 
@@ -35,7 +35,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 异常
 [追踪] `packages/dsh-tauri-turnrewind/src/host/routes/live/get.ts:15`、`packages/dsh-tauri-turnrewind/src/host/routes/summary/get.ts:22`、`packages/dsh-tauri-turnrewind/src/host/routes/turns/undo/post.ts:25`
-[自动化] 是（`packages/dsh-tauri-turnrewind/test/turnrewind-routes.e2e.ts`）
+[自动化] 是（`test/e2e/plugins/turnrewind-routes.e2e.ts`）
 [前置条件] 插件已构建并挂载
 [测试数据] `GET /summary`、`GET /live`（不带查询串）；`POST /turns/undo`，body `{ "turn": 1 }`
 [测试步骤] 1. 逐一发起请求。2. 每次读状态码与 `error` 文案。

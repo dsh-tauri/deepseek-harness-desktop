@@ -1,9 +1,9 @@
 # 桌宠窗口
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/17-pet-window.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/17-pet-window.e2e.ts`（待建立）
 > 前置：`13-application-settings.md` 通过；已安装 `dsh-tauri-pet` 插件
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/17-pet-window.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/17-pet-window.e2e.ts`（待配置，见 G2）
 
 桌宠是一个**独立的透明置顶窗口**（`pet.html`），由插件侧状态驱动显示与尺寸，几何持久化到独立 store 键 `pet_window_state`。窗口内可交互面只有命中箱，其余区域按矩形整体穿透。
 
@@ -39,7 +39,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/desktop/pet.rs:293-310`、`:441-447`；`src/pet/app.tsx:29`
-[自动化] 待接线（`test/e2e/specs/desktop/17-pet-window.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/17-pet-window.e2e.ts`）
 [前置条件] 桌宠当前为禁用；应用处于 `ready`；已安装 `dsh-tauri-pet`
 [测试数据] 桌宠入口 `pet.html`
 [测试步骤] 1. 记录当前窗口数量与窗口 URL 集合。2. 启用桌宠。3. 等待新窗口出现。4. 读取窗口数量与 URL 集合。

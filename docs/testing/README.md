@@ -1,6 +1,6 @@
 # 测试文档索引
 
-本目录是桌面端与内置插件的测试用例与推进台账的唯一入口。测试代码在 `test/` 与 `packages/*/test/`，本目录只放**规范、用例文档与进度**。
+本目录是桌面端与内置插件的测试用例与推进台账的唯一入口。测试代码在 `test/e2e/`（`plugins/` 与 `desktop/` 两条通道），本目录只放**规范、用例文档与进度**。
 
 ---
 
@@ -25,8 +25,8 @@
 | 层 | 用例位置 | 运行器 | 驱动 / 宿主 |
 | --- | --- | --- | --- |
 | **L1** 单元 | `packages/<name>/src/**/*.test.ts` | Vitest `unit` project | 无宿主，允许 Mock |
-| **L2** 插件宿主 E2E | `packages/<name>/test/*.e2e.ts` | Vitest `e2e` project | 真实 `dsh web` 进程；需浏览器时用 Playwright 库 API |
-| **L3** 桌面端宿主 E2E | `test/e2e/specs/desktop/*.e2e.ts` | Vitest `desktop` project | 真实 Tauri 窗口；WebdriverIO + `@wdio/tauri-service` |
+| **L2** 插件宿主 E2E | `test/e2e/plugins/*.e2e.ts` | Vitest `e2e` project | 真实 `dsh web` 进程；需浏览器时用 Playwright 库 API |
+| **L3** 桌面端宿主 E2E | `test/e2e/desktop/*.e2e.ts` | Vitest `desktop` project | 真实 Tauri 窗口；WebdriverIO + `@wdio/tauri-service` |
 
 全仓**只有一个测试运行器**（Vitest，通过 `test.projects` 分层）。WebdriverIO 与 Playwright 只作为**驱动库**被用例调用，不引入各自的 runner。
 
@@ -39,8 +39,9 @@ test/
 ├── unit/                     # L1 桌面端单元测试
 ├── e2e/
 │   ├── global-setup.ts       # e2e project 生命周期：起停真实 dsh
-│   ├── support/              # 共享编排与选择器常量
-│   └── specs/desktop/        # L3 桌面端用例
+│   ├── support/              # 共享编排（dsh-host / desktop-host）与选择器常量
+│   ├── plugins/              # L2 插件宿主用例
+│   └── desktop/              # L3 桌面端用例
 ├── archive/                  # 历史用例归档，任何 project 都不收
 vitest.config.ts              # 根：projects 清单与全局别名
 vitest.unit.config.ts

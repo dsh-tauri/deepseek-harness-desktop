@@ -1,9 +1,9 @@
 # 档案管理
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/05-profile.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/05-profile.e2e.ts`（待建立）
 > 前置：`03-config-dialog.md` 通过；配置对话框可打开在「档案」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/05-profile.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/05-profile.e2e.ts`（待配置，见 G2）
 
 档案 = `$DSH_HOME/profiles/<id>`（测试中为 `$E2E_HOME/home/.dsh.dev/profiles/<id>`，见 `00-overview.md` §5.3），与官方 dsh CLI 的 profile 语义一致；桌面端把「当前档案」持久化在 store 的 `active_profile`，服务启动与插件管理都以它为准。本文件的重点是**写操作的可见反馈**与**失败不静默**。
 
@@ -35,7 +35,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] 批次 05；`src/ui/config/profile.tsx:34-40`、`:254-269`
-[自动化] 待接线（`test/e2e/specs/desktop/05-profile.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/05-profile.e2e.ts`）
 [前置条件] 应用处于 `ready`；至少存在 1 个档案
 [测试数据] 选择器 `dsh-profile-row`、`dsh-profile-row-default-desc`
 [测试步骤] 1. 打开「档案」面板。2. 读取档案行数量与每行名称。3. 读取带默认标记的行。

@@ -1,9 +1,9 @@
 # 配置对话框
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/03-config-dialog.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/03-config-dialog.e2e.ts`（待建立）
 > 前置：`02-shell-navigation.md` 通过；应用处于 `ready`
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/03-config-dialog.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/03-config-dialog.e2e.ts`（待配置，见 G2）
 
 配置对话框是四个面板（应用 / 档案 / 插件 / 核心）的唯一容器，`04`–`16` 的多数用例都以「对话框已打开在某个面板」为前置。本文件只验证**容器的行为**，各面板的内部行为归各自文件。
 
@@ -33,7 +33,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] 批次 03；`src/ui/dialog/config.tsx:45`、`:51`
-[自动化] 待接线（`test/e2e/specs/desktop/03-config-dialog.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/03-config-dialog.e2e.ts`）
 [前置条件] 对话框当前未打开
 [测试数据] 选择器 `dsh-config-dialog`、`dsh-config-nav-application`、`dsh-config-panel-title`
 [测试步骤] 1. 点击导航栏「配置」并选择「应用」。2. 读取对话框可见性。3. 读取「应用」导航项选中态。4. 读取当前面板标题。

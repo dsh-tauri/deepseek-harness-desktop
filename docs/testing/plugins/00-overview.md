@@ -32,7 +32,7 @@
 | `docs/specs/desktop.test.md` | 用例文档字段与优先级口径、`data-testid` 规范、端口/数据目录隔离、目录归属 |
 | `docs/testing/progressive.md` | 单批单卡、状态定义与台账位置 |
 | 源码事实 | `packages/*/src/**`、`src/**`、`src-tauri/src/**`、`test/e2e/support/**` |
-| 现有测试 | `packages/dsh-tauri-pet/test/session-stream.e2e.ts`（SSE 首帧已落地） |
+| 现有测试 | `test/e2e/plugins/session-stream.e2e.ts`（SSE 首帧已落地） |
 
 **已记录的冲突与取舍**：
 

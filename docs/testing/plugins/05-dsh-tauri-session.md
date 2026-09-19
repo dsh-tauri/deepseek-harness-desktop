@@ -1,7 +1,7 @@
 # dsh-tauri-session：会话归档资源与工作区菜单补丁
 
 > 层级：L2 插件宿主 E2E → L3 桌面端宿主 E2E
-> 自动化：`packages/dsh-tauri-session/test/archive-routes.e2e.ts`（待建立）；客户端与 L3 见各用例标注
+> 自动化：`test/e2e/plugins/archive-routes.e2e.ts`（待建立）；客户端与 L3 见各用例标注
 > 前置：`pnpm build:plugins`；L3 另需 debug 二进制 + 空闲端口
 > 运行：L2 `pnpm test:e2e:plugin`；L3 见 `00-overview.md` §5.2
 
@@ -36,7 +36,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 正向
 [追踪] `packages/dsh-tauri-session/src/host/routes/session/archive/get.ts:5`
-[自动化] 是（`packages/dsh-tauri-session/test/archive-routes.e2e.ts`）
+[自动化] 是（`test/e2e/plugins/archive-routes.e2e.ts`）
 [前置条件] scratch `DSH_HOME` 全新（无历史归档）
 [测试数据] `GET /api/desktop/dsh-tauri-session/session/archive`
 [测试步骤] 1. 发起请求。2. 读状态码与响应体 JSON。

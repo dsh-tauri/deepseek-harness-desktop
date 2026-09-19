@@ -1,7 +1,7 @@
 # dsh-tauri-pet：从 SSE 路由到桌面端桌宠窗口
 
 > 层级：L2 插件宿主 E2E → L3 桌面端宿主 E2E
-> 自动化：`packages/dsh-tauri-pet/test/session-stream.e2e.ts`（L2，SSE 首帧已落地）、`packages/dsh-tauri-pet/test/pet-client.e2e.ts`（客户端，待接线）、`test/e2e/specs/desktop/pet-window.e2e.ts`（L3，待接线）
+> 自动化：`test/e2e/plugins/session-stream.e2e.ts`（L2，SSE 首帧已落地）、`test/e2e/plugins/pet-client.e2e.ts`（客户端，待接线）、`test/e2e/plugins/pet-window.e2e.ts`（L3，待接线）
 > 前置：`pnpm build:plugins`；L3 另需 debug 二进制 + `3081` 空闲 + `TAURI_WEBDRIVER_PORT`
 > 编排：`test/e2e/support/dsh-host.ts`；L3 通道见 `test/e2e/support/wdio-probe.mjs`
 > 运行：L2 `pnpm test:e2e:plugin`；L3 见 `00-overview.md` §5.2
@@ -41,7 +41,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 正向
 [追踪] `packages/dsh-tauri-pet/src/host/routes/session/stream/get.ts:24`；`plugin.test.md` §8 批次 3
-[自动化] 是（`packages/dsh-tauri-pet/test/session-stream.e2e.ts:37`）
+[自动化] 是（`test/e2e/plugins/session-stream.e2e.ts:37`）
 [前置条件] 插件已构建并挂载进 scratch profile；宿主已就绪
 [测试数据] `GET /api/desktop/dsh-tauri-pet/session/stream`，`accept: text/event-stream`
 [测试步骤] 1. 发起请求。2. 读状态码与 `content-type`。3. 读响应体前 4 个字符后中止流。
@@ -54,7 +54,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 异常
 [追踪] `packages/dsh-tauri/src/host/routes/index.ts:275`
-[自动化] 是（`packages/dsh-tauri-pet/test/session-stream.e2e.ts:49`）
+[自动化] 是（`test/e2e/plugins/session-stream.e2e.ts:49`）
 [前置条件] 同 TC-PET-L2-001
 [测试数据] 同路径 `POST`，body `{}`
 [测试步骤] 1. 发起请求。2. 读状态码与 `allow` 头。

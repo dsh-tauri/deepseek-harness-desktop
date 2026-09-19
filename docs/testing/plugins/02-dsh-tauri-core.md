@@ -1,7 +1,7 @@
 # dsh-tauri 核心桥：宿主路由的共享契约
 
 > 层级：L2 插件宿主 E2E（真实 `dsh web` 进程；无浏览器、无 Tauri）
-> 自动化：`packages/dsh-tauri/test/routes-contract.e2e.ts`（待建立）
+> 自动化：`test/e2e/plugins/routes-contract.e2e.ts`（待建立）
 > 前置：`pnpm build:plugins` 已产出 `packages/dsh-tauri/dist` 与至少一个带路由的插件产物
 > 编排：`test/e2e/support/dsh-host.ts`（`DSH_E2E_PLUGIN=dsh-tauri`，需要代表路由时用 `DSH_E2E_ALSO` 另挂一个插件）
 > 运行：`pnpm test:e2e:plugin`
@@ -42,7 +42,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 正向
 [追踪] `packages/dsh-tauri/src/host/routes/index.ts:270`
-[自动化] 是（`packages/dsh-tauri/test/routes-contract.e2e.ts`）
+[自动化] 是（`test/e2e/plugins/routes-contract.e2e.ts`）
 [前置条件] 宿主已挂载 `dsh-tauri-pet`（提供代表路由）；`DSH_E2E_MOUNT=link`
 [测试数据] `DSH_E2E_PLUGIN=dsh-tauri`；`DSH_E2E_ALSO=dsh-tauri-pet`
 [测试步骤] 1. 对代表路由发起 `OPTIONS`（不带 body）。2. 读状态码与 `allow` 头。

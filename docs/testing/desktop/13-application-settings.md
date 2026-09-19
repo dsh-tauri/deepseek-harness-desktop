@@ -1,9 +1,9 @@
 # 应用设置
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/13-application-settings.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/13-application-settings.e2e.ts`（待建立）
 > 前置：`03-config-dialog.md` 通过；配置对话框可打开在「应用」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/13-application-settings.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/13-application-settings.e2e.ts`（待配置，见 G2）
 
 「应用」面板是设置真值的写入口。设置由前端与 Rust **共享同一份 `.store.dat`**，因此本文件的断言以「运行期回读」为准，不直接读文件。写操作分两类：走 `update_app_config`（端口、关闭行为）与走独立命令（开机自启、CLI link）。
 
@@ -43,7 +43,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/ui/config/debug.tsx:141-171`；issue #91
-[自动化] 待接线（`test/e2e/specs/desktop/13-application-settings.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/13-application-settings.e2e.ts`）
 [前置条件] 服务处于运行中
 [测试数据] 端口 `3099`（合法且未占用）
 [测试步骤] 1. 在端口输入框填入 `3099`。2. 点击「保存」。3. 读取提示内容与提示中的操作入口。4. 读取已保存的端口值。

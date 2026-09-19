@@ -2,7 +2,7 @@
 
 > 配套文档：[desktop.test.md](./desktop.test.md)（桌面端测试总规范）。
 > 本规范专注于**内置插件（`packages/*`）的 E2E 测试**。
-> 用例文档存放于 `docs/testing/plugins/<序号>-<插件名>.md`；测试代码存放于 `packages/<name>/test/`。
+> 用例文档存放于 `docs/testing/plugins/<序号>-<插件名>.md`；测试代码存放于 `test/e2e/plugins/`。
 
 ---
 
@@ -27,8 +27,8 @@
 | 层级 | 代码位置 | 驱动/运行器 | 断言对象 | 必选场景 |
 | --- | --- | --- | --- | --- |
 | **L1 单元测试** | `packages/<name>/src/**/*.test.ts` | Vitest (`unit` project) | 纯函数、路由 Handler、注册表契约 | 无条件必选 |
-| **L2 插件宿主 E2E** | `packages/<name>/test/*.e2e.ts` | Vitest (`e2e` project) + Playwright API | 真实 `dsh web` 进程：路由响应、客户端挂载点、崩溃防护 | 每个产品可见插件 |
-| **L3 桌面端宿主 E2E** | `test/e2e/specs/desktop/*.e2e.ts` | Vitest (`desktop` project) + WebdriverIO | 桌面端壳层 + 内嵌 dsh iframe | 仅依赖 Tauri 桥的插件 |
+| **L2 插件宿主 E2E** | `test/e2e/plugins/*.e2e.ts` | Vitest (`e2e` project) + Playwright API | 真实 `dsh web` 进程：路由响应、客户端挂载点、崩溃防护 | 每个产品可见插件 |
+| **L3 桌面端宿主 E2E** | `test/e2e/desktop/*.e2e.ts` | Vitest (`desktop` project) + WebdriverIO | 桌面端壳层 + 内嵌 dsh iframe | 仅依赖 Tauri 桥的插件 |
 
 > **分工原则**：L1 允许 Mock 宿主；L2/L3 下游全真，仅允许 Mock 外部服务（网络、模型、时钟）。
 
@@ -59,23 +59,24 @@
 ```text
 packages/<name>/
 ├── src/**/*.test.ts          # L1 单元测试（保持原位）
-├── test/
-│   ├── *.e2e.ts              # L2 插件宿主 E2E（由 e2e project 匹配）
-│   └── support/              # 插件专属 Fixture / Stub
+└── test/support/             # 插件专属 Fixture / Stub
 test/e2e/
 ├── global-setup.ts           # e2e project 的 globalSetup（启动 dsh web 并传递地址）
-├── support/dsh-host.ts       # 共享环境脚手架（Scratch DSH_HOME、挂载、启动、清理）
-└── specs/desktop/*.e2e.ts    # L3 桌面端宿主 E2E
+├── support/
+│   ├── dsh-host.ts           # 共享环境脚手架（Scratch DSH_HOME、挂载、启动、清理）
+│   └── desktop-host.ts       # L3 桌面端宿主编排
+├── plugins/*.e2e.ts          # L2 插件宿主 E2E（由 e2e project 匹配）
+└── desktop/*.e2e.ts          # L3 桌面端宿主 E2E（由 desktop project 匹配）
 test/archive/*                # 历史用例归档（只读参考，不被任何 project 匹配）
 vitest.config.ts              # 根配置：包含 Projects 清单与全局别名
 vitest.unit.config.ts         # unit project 配置
 vitest.e2e.config.ts          # e2e project 配置（插件 L2）
-docs/testing/plugins/<name>.md # 插件测试文档
-
+vitest.desktop.config.ts      # desktop project 配置（桌面端 L3）
+docs/testing/plugins/<序号>-<插件名>.md # 插件测试文档
 ```
 
-* **命名约定**：L2 文件必须使用 `*.e2e.ts`，与 L1 的 `*.test.ts` / `*.spec.ts` 严格区分。
-* **匹配策略**：`unit` 匹配 `*.{test,spec}.*`（自动排他 `.e2e.ts`）；`e2e` 显式指定 `packages/*/test/**/*.e2e.ts`。
+* **命名约定**：L2/L3 文件必须使用 `*.e2e.ts`，与 L1 的 `*.test.ts` / `*.spec.ts` 严格区分。
+* **匹配策略**：`unit` 匹配 `*.{test,spec}.*`（自动排他 `.e2e.ts`）；`e2e` 显式指定 `test/e2e/plugins/**/*.e2e.ts`，`desktop` 指定 `test/e2e/desktop/*.e2e.ts`。
 * **映射关系**：文档中的每条用例条目必须与代码中的 `test()` 一一对应。
 
 ---

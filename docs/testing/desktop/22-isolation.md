@@ -1,9 +1,9 @@
 # 端口与数据隔离
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/22-isolation.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/22-isolation.e2e.ts`（待建立）
 > 前置：`13-application-settings.md` 通过；应用处于 `ready`；测试侧可占用/释放 `127.0.0.1` 端口并读取 app-data 根与数据目录路径
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/22-isolation.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/22-isolation.e2e.ts`（待配置，见 G2）
 
 桌面端以构建类型（debug / release）为界，把端口、数据目录、store 文件与可执行核心目录逐层切开，使开发版与已安装版本可以并存而不互写。本文件验证这条边界是外部可观察的事实：默认端口、占用回退、残留清扫与目录归属都必须能由窗口、命令返回值与落盘路径证明，而不是只存在于注释的意图里。
 
@@ -42,7 +42,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/config/setting.rs:149`；`src-tauri/src/config/constants.rs:53`
-[自动化] 待接线（`test/e2e/specs/desktop/22-isolation.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/22-isolation.e2e.ts`）
 [前置条件] Debug 二进制；`$E2E_HOME` 下无历史 store（首次启动）
 [测试数据] 期望端口 `3081`
 [测试步骤] 1. 启动应用并等待 `ready`。2. 读取 `get_runtime_info().service_url`。3. 读取已保存的 `port`。

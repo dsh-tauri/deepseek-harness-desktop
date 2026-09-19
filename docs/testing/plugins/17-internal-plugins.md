@@ -1,7 +1,7 @@
 # 内置插件：离线物化、自愈与弃用清理
 
 > 层级：L3 桌面端宿主 E2E（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/internal-plugins.e2e.ts`（待接线，见 `00-overview.md` G4）
+> 自动化：`test/e2e/plugins/internal-plugins.e2e.ts`（待接线，见 `00-overview.md` G4）
 > 前置：应用已启动；`resources/node_modules/` 内已随包分发内置插件产物；档案可写
 > 运行：待接线（`desktop` project 未配置，见 `00-overview.md` G4）
 

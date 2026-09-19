@@ -1,7 +1,7 @@
 # 插件异常定位、修复与安全模式
 
 > 层级：L3 桌面端宿主 E2E（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/plugin-recovery-backend.e2e.ts`（待接线，见 `00-overview.md` G4）
+> 自动化：`test/e2e/plugins/plugin-recovery-backend.e2e.ts`（待接线，见 `00-overview.md` G4）
 > 前置：应用已启动；可构造插件异常态与损坏的补丁层
 > 运行：待接线（`desktop` project 未配置，见 `00-overview.md` G4）
 

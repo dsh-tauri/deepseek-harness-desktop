@@ -1,9 +1,9 @@
 # 服务生命周期
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/07-harness-lifecycle.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/07-harness-lifecycle.e2e.ts`（待建立）
 > 前置：`06-harness-embed.md` 通过；应用处于 `ready`
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/07-harness-lifecycle.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/07-harness-lifecycle.e2e.ts`（待配置，见 G2）
 
 DSH 服务是一个由宿主拉起的子进程，壳层通过健康检查与进程退出事件维护它的状态。本文件的重点是**状态不漂移**：界面显示的运行状态必须与服务真实状态一致，且重复触发必须收敛为一次。
 
@@ -36,7 +36,7 @@ DSH 服务是一个由宿主拉起的子进程，壳层通过健康检查与进�
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/store/modules/harness/store.ts:630`；`src/ui/config/debug.tsx:238`
-[自动化] 待接线（`test/e2e/specs/desktop/07-harness-lifecycle.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/07-harness-lifecycle.e2e.ts`）
 [前置条件] 配置对话框打开在「应用」面板；服务处于运行中
 [测试数据] 选择器 `dsh-config-restart`
 [测试步骤] 1. 记录当前服务地址。2. 点击「重启」。3. 等待服务重新健康。4. 读取服务地址与连接状态。

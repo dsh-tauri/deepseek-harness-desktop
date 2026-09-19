@@ -1,9 +1,9 @@
 # 服务状态机、健康检查与进程韧性
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/26-service-state-machine.e2e.ts`（待建立）
 > 前置：`07-harness-lifecycle.md` 通过；应用处于 `ready`
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/26-service-state-machine.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/26-service-state-machine.e2e.ts`（待配置，见 G2）
 
 后端用五态枚举描述服务，判定权在「是否持有进程」与「端口是否可探活」两个条件上，前端事件只是它的投影。本文件验证状态不漂移、后端 5 秒轮询与前端 1 秒起退避这两套时间常数不被混淆、以及进程意外退出后的复位路径。
 
@@ -51,7 +51,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/lifecycle.rs:122`、`:123`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 运行时依赖缺失（Node/dsh 未就绪），或可走 Git-only 补丁路径
 [测试数据] 命令 `install_dependencies`、`get_dsh_status`；事件 `dsh-status-updated`
 [测试步骤] 1. 调用 `install_dependencies`。2. 在安装进行中读取 `get_dsh_status`。3. 读取 `dsh-status-updated` 的最新载荷。
@@ -64,7 +64,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/workflow/launch.rs:187`、`:190`、`:199`、`:201`；`src-tauri/src/task/tick_check_dsh_process/mod.rs:21`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 运行时依赖已就绪；当前无被持有的服务进程
 [测试数据] 命令 `start_harness`、`get_dsh_status`；事件 `dsh-status-updated`
 [测试步骤] 1. 触发 `start_harness`。2. 读取 `dsh-status-updated` 的事件序列。3. 等待健康 tick 命中后读取 `get_dsh_status`。4. 在持有进程期间再次触发 `start_harness`。
@@ -77,7 +77,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/bridge/lifecycle.rs:46`、`:234`、`:247`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 可构造 `install_dependencies` 失败（依赖源不可达或包体校验失败）
 [测试数据] 命令 `install_dependencies`、`get_dsh_status`
 [测试步骤] 1. 构造使安装失败的前置。2. 调用 `install_dependencies`。3. 读取命令的错误返回。4. 读取 `get_dsh_status` 与 `dsh-status-updated` 的最新载荷。
@@ -90,7 +90,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/workflow/process.rs:477`、`:478`；`src-tauri/src/service/workflow/launch.rs:199`、`:201`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 服务处于 `Running`
 [测试数据] 命令 `restart_harness`、`get_dsh_status`；事件 `dsh-status-updated`
 [测试步骤] 1. 触发 `restart_harness`。2. 读取事件序列中的状态值。3. 等待收敛。4. 读取 `get_dsh_status`。
@@ -107,7 +107,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/lifecycle.rs:48`、`:123`、`:235`；`src-tauri/src/service/workflow/launch.rs:190`、`:201`；`src-tauri/src/service/workflow/process.rs:184`、`:478`；`src-tauri/src/task/tick_check_dsh_process/mod.rs:23`、`:31`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 服务处于 `Running`
 [测试数据] 事件 `dsh-status-updated`；命令 `restart_harness`、`get_dsh_status`
 [测试步骤] 1. 订阅 `dsh-status-updated` 并清空历史。2. 触发一次重启。3. 读取每个事件的 `payload` 形态与取值。4. 读取收敛后的 `get_dsh_status`。
@@ -120,7 +120,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/workflow/health.rs:60`、`:90`、`:55`；`src-tauri/src/task/tick_check_dsh_process/mod.rs:11`、`:16`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 服务已启动且被本应用持有
 [测试数据] 命令 `proxy_health_check`、`get_dsh_status`
 [测试步骤] 1. 等待服务启动完成。2. 调用 `proxy_health_check`。3. 读取返回文本中的 `ready`/`total`。4. 读取 `get_dsh_status`。
@@ -133,7 +133,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/workflow/health.rs:47`、`:60`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 服务已停止且无被持有进程
 [测试数据] 命令 `proxy_health_check`、`start_harness`
 [测试步骤] 1. 停止服务并确认无被持有进程。2. 调用 `proxy_health_check`。3. 触发启动并在启动守卫仍持有时再次调用 `proxy_health_check`。
@@ -146,7 +146,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src/store/modules/harness/constants.ts:11`；`src/store/modules/harness/utils.ts:44`、`:132`；`src-tauri/src/service/workflow/utils.rs:129`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 服务未就绪，可观察探测请求的时间戳序列
 [测试数据] 触发方式：启动过程中采集健康探测请求时间戳与目标 URL
 [测试步骤] 1. 采集服务未就绪期间的探测时间戳序列。2. 计算相邻间隔。3. 等待服务就绪。4. 读取单次探测的超时上限与目标地址。
@@ -163,7 +163,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/workflow/process.rs:183`、`:185`；`src-tauri/src/service/workflow/launch.rs:721`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 服务处于 `Running`；可在应用外部终止该服务进程
 [测试数据] 事件 `harness-process-exited`、`dsh-status-updated`；命令 `get_dsh_status`
 [测试步骤] 1. 记录被持有进程的 pid 并订阅两个事件。2. 在应用外部终止该进程。3. 读取 `harness-process-exited` 的载荷与次数。4. 读取 `get_dsh_status`。
@@ -176,7 +176,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/scheduler/mod.rs:5`、`:16`；`src-tauri/src/task/tick_check_dsh_process/mod.rs:11`、`:16`、`:21`、`:31`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 可占用服务端口并让其返回 200，且该进程不被本应用持有
 [测试数据] 触发方式：用非 Harness 的 HTTP 服务占用端口；注入「状态为 Running 但无被持有进程」的残留态
 [测试步骤] 1. 记录后端 tick 周期与每轮执行内容。2. 在无被持有进程时让端口可返回 200。3. 等待至少两个 tick 后读取状态。4. 构造状态已为 `Running` 但无被持有进程的残留态，再等待一个 tick。
@@ -189,7 +189,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/workflow/launch.rs:283`、`:287`、`:294`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 服务处于 `Running`；可读取服务日志与进程列表
 [测试数据] 命令 `start_harness`；触发方式：在启动进行中并发触发第二次启动
 [测试步骤] 1. 在已持有进程时触发 `start_harness`。2. 读取返回结果与日志。3. 在启动仍进行时并发触发第二次 `start_harness`。4. 读取返回结果、日志与进程数量。
@@ -202,7 +202,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 低频
 [追踪] `src-tauri/src/service/workflow/process.rs:357`；`src-tauri/src/service/workflow/sweep.rs:34`；`src-tauri/src/desktop/builder.rs:102`；`src-tauri/src/service/workflow/launch.rs:304`；`src-tauri/src/service/workflow/install.rs:40`；`src-tauri/src/service/core/version.rs:336`、`:437`
-[自动化] 待接线（`test/e2e/specs/desktop/26-service-state-machine.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/26-service-state-machine.e2e.ts`）
 [前置条件] 可构造残留的 node 服务进程（同 dsh 入口路径）；分别具备 debug 与 release 构建
 [测试数据] 触发方式：残留进程 + 应用重启 + 一次核心切换
 [测试步骤] 1. 记录清扫被触发的调用点。2. 构造一个指向 dsh 入口路径的残留 node 进程。3. 在 debug 构建下重启应用，读取残留进程是否存活。4. 在 release 构建下重复并读取结果。

@@ -1,7 +1,7 @@
 # 预装引导与预设指纹
 
 > 层级：L3 桌面端宿主 E2E（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/plugin-preinstall.e2e.ts`（待接线，见 `00-overview.md` G4）
+> 自动化：`test/e2e/plugins/plugin-preinstall.e2e.ts`（待接线，见 `00-overview.md` G4）
 > 前置：首次启动态可构造（`preinstall_done` 未置位）；网络可用（安装类用例）
 > 运行：待接线（`desktop` project 未配置，见 `00-overview.md` G4）
 

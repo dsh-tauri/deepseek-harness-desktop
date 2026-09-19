@@ -1,7 +1,7 @@
 # 编排骨架（批次 01）：真实 dsh 宿主能否被一行代码拉起
 
 > 层级：L2 插件宿主 E2E（真实 `dsh web` 进程；无浏览器、无 Tauri）
-> 自动化：`packages/dsh-tauri/test/host-lane.e2e.ts`（待建立；本文件是它的用例来源）
+> 自动化：`test/e2e/plugins/host-lane.e2e.ts`（待建立；本文件是它的用例来源）
 > 前置：`pnpm build:plugins` 已产出 `packages/*/dist`；`DSH_E2E_DSH_BIN` 或桌面端装配目录内存在 `@deepseek-ai/dsh/lib/bin.js`
 > 编排：`test/e2e/support/dsh-host.ts`；全局生命周期：`test/e2e/global-setup.ts`
 > 运行：`pnpm test:e2e:plugin`（= `vitest --project e2e`）
@@ -40,7 +40,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 正向
 [追踪] `docs/specs/plugin.test.md` §8 批次 1；`test/e2e/support/dsh-host.ts:307`
-[自动化] 是（`packages/dsh-tauri/test/host-lane.e2e.ts`）
+[自动化] 是（`test/e2e/plugins/host-lane.e2e.ts`）
 [前置条件] `pnpm build:plugins` 已执行；`DSH_E2E_PLUGIN`（默认 `dsh-tauri-pet`）指向的包已构建；系统临时目录可写；`@deepseek-ai/dsh` 入口可解析
 [测试数据] `DSH_E2E_PLUGIN=dsh-tauri`；`DSH_E2E_MOUNT=link`（默认）
 [测试步骤] 1. 调用 `startDshHost({ plugin: 'dsh-tauri' })`。2. 读返回的 `url` / `baseUrl` / `home` / `mounted`。3. 对 `baseUrl` 发起 `GET /`。4. 读 `home/dsh-web.log` 末尾内容。

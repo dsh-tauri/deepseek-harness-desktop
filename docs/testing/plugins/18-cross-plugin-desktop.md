@@ -1,7 +1,7 @@
 # 跨插件与桌面端壳层集成
 
 > 层级：L3 桌面端宿主 E2E（辅以一条 L2 多插件用例）
-> 自动化：`test/e2e/specs/desktop/plugin-integration.e2e.ts`（待建立）
+> 自动化：`test/e2e/plugins/plugin-integration.e2e.ts`（待建立）
 > 前置：debug 二进制 + `dist/`；`<DSH_E2E_HOME>/home/.dsh.dev` 无残留实例；WebDriver 端口空闲
 > 运行：待接线（`desktop` project 未配置，见 `00-overview.md` G4）
 
@@ -127,7 +127,7 @@
 [层级] L2（真实 dsh 进程）
 [类型] 边界
 [追踪] `packages/dsh-tauri/src/host/routes/index.ts:135`
-[自动化] 是（`packages/dsh-tauri/test/routes-contract.e2e.ts` 扩展）
+[自动化] 是（`test/e2e/plugins/routes-contract.e2e.ts` 扩展）
 [前置条件] 一次挂载多个插件
 [测试数据] `DSH_E2E_PLUGIN=dsh-tauri-pet`，`DSH_E2E_ALSO=dsh-tauri-rightclick,dsh-tauri-session`
 [测试步骤] 1. 启动宿主。2. 分别请求三个插件各自的一条路由。3. 读状态码。

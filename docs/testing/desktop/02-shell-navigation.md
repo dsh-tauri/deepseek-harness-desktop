@@ -1,9 +1,9 @@
 # 壳层导航栏
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/02-shell-navigation.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/02-shell-navigation.e2e.ts`（待建立）
 > 前置：`01-window-boot.md` 通过
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/02-shell-navigation.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/02-shell-navigation.e2e.ts`（待配置，见 G2）
 
 导航栏是本应用唯一常驻的壳层控件，同时承担窗口控制与三个下拉菜单。本文件的重点是**条件渲染的正确性**：依赖 iframe 或插件状态的入口在接收方缺席时必须消失或禁用，而不是留一个点了没反应的死按钮。
 
@@ -37,7 +37,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] 批次 02；`src/layout/components/navbar.tsx:344-510`
-[自动化] 待接线（`test/e2e/specs/desktop/02-shell-navigation.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/02-shell-navigation.e2e.ts`）
 [前置条件] 应用已进入 `ready`；平台非 macOS
 [测试数据] 选择器 `dsh-navbar-root`、`dsh-navbar-menu-file`、`dsh-navbar-menu-config`、`dsh-navbar-menu-help`
 [测试步骤] 1. 读取导航栏根容器。2. 依次读取三个菜单触发器。

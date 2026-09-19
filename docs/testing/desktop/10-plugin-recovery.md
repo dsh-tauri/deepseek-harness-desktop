@@ -1,9 +1,9 @@
 # 插件异常修复
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/10-plugin-recovery.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/10-plugin-recovery.e2e.ts`（待建立）
 > 前置：`09-plugin-panel.md` 通过；可构造插件异常态
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/10-plugin-recovery.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/10-plugin-recovery.e2e.ts`（待配置，见 G2）
 
 插件异常分两种呈现：**启动崩溃**走全屏恢复页（替换错误页内容），**运行期异常**走醒目对话框（不阻断使用）。本文件验证两者的区分、原因映射、以及三条恢复动作。
 
@@ -40,7 +40,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/layout/components/webview.tsx:50-55`；`src/ui/plugin/recovery.tsx:86-99`
-[自动化] 待接线（`test/e2e/specs/desktop/10-plugin-recovery.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/10-plugin-recovery.e2e.ts`）
 [前置条件] 构造使服务启动失败且 `recovery.required` 为真的插件（如 UI 槽位冲突）
 [测试数据] 选择器 `dsh-recovery-root`、`dsh-recovery-fullscreen`
 [测试步骤] 1. 拉起应用并等待进入 `error`。2. 读取恢复页根节点与其全屏标记。3. 读取 `Setup` 错误内容是否存在。

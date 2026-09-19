@@ -1,9 +1,9 @@
 # 语言与主题
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/04-locale-theme.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/04-locale-theme.e2e.ts`（待建立）
 > 前置：`03-config-dialog.md` 通过；配置对话框可打开在「应用」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/04-locale-theme.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/04-locale-theme.e2e.ts`（待配置，见 G2）
 
 语言与主题是壳层的两个全局状态。语言的写入有三条通路（`localStorage`、setting store、后端 `set_language`），主题的真值来自后端 `get_dsh_theme` 并由系统偏好折算。本文件验证**即时生效**与**跨重启持久化**两条主线。
 
@@ -33,7 +33,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] 批次 04；`src/ui/config/debug.tsx:355-372`；`src/i18n/index.ts:9-21`
-[自动化] 待接线（`test/e2e/specs/desktop/04-locale-theme.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/04-locale-theme.e2e.ts`）
 [前置条件] 应用处于 `ready`；配置对话框已打开在「应用」面板；当前语言为 `zh-CN`
 [测试数据] 目标语言 `en-US`；观察点 `dsh-navbar-menu-config` 的无障碍标签
 [测试步骤] 1. 读取观察点标签。2. 在语言下拉中选择 `en-US`。3. 再次读取同一标签。4. 读取语言下拉当前值。

@@ -1,9 +1,9 @@
 # CLI 集成：shim 与 PATH
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/21-cli-integration.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/21-cli-integration.e2e.ts`（待建立）
 > 前置：`13-application-settings.md` 通过；可观察 shim 目录与用户 PATH
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/21-cli-integration.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/21-cli-integration.e2e.ts`（待配置，见 G2）
 
 CLI 集成的产物是「用户新终端里能直接敲 `dsh`」。它由 shim 文件与 PATH 注册两部分组成，两者都必须幂等、可回滚、且**不覆盖用户自己的同名命令**。Debug 构建刻意只写 pnpm shim、不注册 PATH，以免污染开发机。
 
@@ -47,7 +47,7 @@ CLI 集成的产物是「用户新终端里能直接敲 `dsh`」。它由 shim �
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/cli/core.rs:48`、`:29`；`src-tauri/src/bridge/config.rs:91`
-[自动化] 待接线（`test/e2e/specs/desktop/21-cli-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/21-cli-integration.e2e.ts`）
 [前置条件] 当前 CLI link 为关闭；可读写 shim 目录与用户 PATH（非 debug 构建验证注册）
 [测试数据] 选择器 `dsh-config-cli-link`
 [测试步骤] 1. 读取 `get_cli_link_status`。2. 打开开关并等待命令返回。3. 再次读取 `get_cli_link_status` 与磁盘上的 shim。

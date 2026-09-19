@@ -1,9 +1,9 @@
 # 备份与还原
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/15-backup-restore.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/15-backup-restore.e2e.ts`（待建立）
 > 前置：`05-profile.md` 通过；配置对话框可打开在「档案」面板
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/15-backup-restore.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/15-backup-restore.e2e.ts`（待配置，见 G2）
 
 备份子视图从「档案」面板的「备份」Chip 进入。**还原会改写 profile 目录**，因此先停服务、轮询确认已停止、再还原、最后自动拉起服务。本文件覆盖创建、还原（覆盖 / 为新档案）、删除三条写路径。
 
@@ -36,7 +36,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/ui/config/profile.tsx:241-245`、`:285-294`
-[自动化] 待接线（`test/e2e/specs/desktop/15-backup-restore.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/15-backup-restore.e2e.ts`）
 [前置条件] 「档案」面板已渲染
 [测试数据] 选择器 `dsh-profile-backup`、`dsh-backup-back`
 [测试步骤] 1. 点击某档案行的「备份」Chip。2. 读取备份视图根节点与返回入口。

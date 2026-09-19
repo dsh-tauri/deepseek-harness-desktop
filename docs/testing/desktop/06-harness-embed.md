@@ -1,9 +1,9 @@
 # DSH 界面嵌入
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/06-harness-embed.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/06-harness-embed.e2e.ts`（待建立）
 > 前置：`01-window-boot.md` 通过；DSH 服务可正常启动
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/06-harness-embed.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/06-harness-embed.e2e.ts`（待配置，见 G2）
 
 壳层通过一个跨源 `iframe` 承载 DSH 界面，两者靠 `postMessage` 桥通信。本文件验证**渲染条件**（何时挂 iframe、何时挂占位）、**加载状态机**（完成 / 失败 / 重试）与**boot 桥**三条主线。
 
@@ -37,7 +37,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] 批次 06；`src/layout/components/iframe.tsx:186-203`
-[自动化] 待接线（`test/e2e/specs/desktop/06-harness-embed.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/06-harness-embed.e2e.ts`）
 [前置条件] 应用已进入 `ready`；`serviceHealthy` 为真
 [测试数据] 选择器 `dsh-shell-iframe`；期望源 `get_runtime_info().service_url`
 [测试步骤] 1. 等待 iframe 节点出现。2. 读取 iframe 的 `src`。3. 读取运行期服务地址。4. 比对两者。

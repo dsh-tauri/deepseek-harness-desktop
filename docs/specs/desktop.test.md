@@ -56,10 +56,10 @@ tauri::Builder::default()
 
 * `test/unit/*`：桌面端单元测试 (`unit` project)
 * `test/archive/*`：归档历史测试（仅作只读参考，不纳入任何 project）
-* `test/e2e/support/*`：E2E 共享工具（宿主编排 `dsh-host.ts`、选择器常量等）
+* `test/e2e/support/*`：E2E 共享工具（宿主编排 `dsh-host.ts`、`desktop-host.ts`、选择器常量等）
 * `test/e2e/global-setup.ts`：E2E 全局生命周期管理（启动/关闭宿主进程）
-* `test/e2e/specs/desktop/*`：桌面端 E2E 用例 (`desktop` project)
-* `packages/<name>/test/*.e2e.ts`：插件真实进程 E2E 用例 (`e2e` project)
+* `test/e2e/desktop/*.e2e.ts`：桌面端 E2E 用例 (`desktop` project)
+* `test/e2e/plugins/*.e2e.ts`：插件真实进程 E2E 用例 (`e2e` project)
 * `packages/<name>/src/**/*.test.ts`：插件源码同级单元测试（保持原位）
 
 ### 3.2 用例文档目录
@@ -78,7 +78,7 @@ tauri::Builder::default()
 # 窗口启动
 
 > 层级：E2E（真实）
-> 自动化：`test/e2e/specs/desktop/01-window-boot.e2e.ts`
+> 自动化：`test/e2e/desktop/01-window-boot.e2e.ts`
 > 前置：桌面端 Debug 二进制已构建；3081 端口空闲；无 Dev 实例运行
 
 ## [P1] 验证应用启动后主窗口存在且标题正确
@@ -197,8 +197,8 @@ vitest --project unit -- <file> # 运行指定单文件测试
 <br>`test/**`<br>
 
 <br>`src/**/*.test.ts` | 排除 `test/archive/**` |
-| `e2e` | `vitest.e2e.config.ts` | `packages/*/test/**/*.e2e.ts` | `globalSetup` 拉起真实 DSH；设置 `fileParallelism: false` |
-| `desktop` | *(待配置)* | `test/e2e/specs/desktop/**/*.e2e.ts` | 驱动真实 Tauri 桌面窗口 |
+| `e2e` | `vitest.e2e.config.ts` | `test/e2e/plugins/**/*.e2e.ts` | `globalSetup` 拉起真实 DSH；设置 `fileParallelism: false` |
+| `desktop` | `vitest.desktop.config.ts` | `test/e2e/desktop/*.e2e.ts` | 驱动真实 Tauri 桌面窗口 |
 
 ### 8.3 CI 与产物管理
 

@@ -1,9 +1,9 @@
 # 系统集成、路径守卫、跨平台与 Windows 极简模式
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/29-system-integration.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/29-system-integration.e2e.ts`（待建立）
 > 前置：`01-window-boot.md` 通过；应用处于 `ready`；Windows 用例需 Windows 宿主
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/29-system-integration.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/29-system-integration.e2e.ts`（待配置，见 G2）
 
 壳层与操作系统的接触面由 `bridge/system_os.rs` 收口：唤起浏览器与文件管理器、读写日志、代理健康检查、透传前端日志。本文件的重点是**这些接触面同时是安全边界**——来自可被第三方插件注入脚本操纵的 iframe 的路径参数必须被白名单限制，越界即拒绝；其次是 Windows 极简模式的落盘修复与平台门控。
 
@@ -82,7 +82,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/system_os.rs:52-58`；`src-tauri/src/bridge/guard.rs:18-34`；`src/layout/index.tsx:113-118`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；系统下载目录内存在一个普通文件
 [测试数据] 路径 = `<系统下载目录>/<已存在文件>`
 [测试步骤] 1. 调用 `reveal_in_folder` 传入该路径。2. 读取返回结果与系统文件管理器唤起记录。
@@ -95,7 +95,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/bridge/system_os.rs:55-57`；`src-tauri/src/bridge/guard.rs:50-61`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；可在系统临时目录（不在任何允许根内）放置一个文件
 [测试数据] 路径 = `<系统临时目录>/dsh-guard-probe.txt`
 [测试步骤] 1. 调用 `reveal_in_folder` 传入该路径。2. 读取错误文本。3. 读取文件管理器唤起记录。
@@ -108,7 +108,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/bridge/system_os.rs:66-68`；`src-tauri/src/bridge/guard.rs:50-61`；`src/ui/config/core.tsx:216-226`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；系统临时目录存在（不在任何允许根内）
 [测试数据] 路径 = `<系统临时目录>`；选择器 `dsh-config-core-open-dir`
 [测试步骤] 1. 调用 `open_dir` 传入该目录。2. 读取错误文本。3. 从「核心」面板点击「打开目录」并读取界面提示。
@@ -121,7 +121,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/system_os.rs:74-95`；`src/ui/config/debug.tsx:173-179`、`:280-289`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；`get_runtime_info` 已可返回 `data_dir`；该目录可被临时改名为不存在
 [测试数据] 选择器 `dsh-config-reveal-data-dir`；观察点：`data_dir` 指向的目录
 [测试步骤] 1. 记录 `data_dir` 并把该目录改名为不存在。2. 点击「打开数据目录」。3. 读取命令返回与目录存在性。
@@ -134,7 +134,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/bridge/system_os.rs:239-242`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`
 [测试数据] URL = `file:///C:/Windows/System32/calc.exe`（方案非 http(s)）
 [测试步骤] 1. 调用 `open_external_url` 传入该 URL。2. 读取错误文本。3. 用合法 `https://` URL 再调用一次并读取返回。
@@ -151,7 +151,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/system_os.rs:164`、`:165`、`:167`、`:198-210`、`:216-222`；`src/layout/components/setup.tsx:28`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；`logs/desktop.log` 与 `logs/desktop.frontdesk.log` 均存在且行数分别超过 100 与 50；服务日志存在
 [测试数据] 调用 `read_run_logs` 的返回文本
 [测试步骤] 1. 调用 `read_run_logs`。2. 读取返回文本中的段标题。3. 分段统计行数并读取环境段字段。
@@ -164,7 +164,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/system_os.rs:122-138`、`:132`、`:111-118`；`src/ui/config/debug.tsx:69-73`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；服务日志文件大于 64 KiB 且含中文（多字节）字符
 [测试数据] 默认调用（不传 `maxBytes`）与显式 `maxBytes: 16384`（`LOG_TAIL_MAX_BYTES`，`src/store/modules/harness/constants.ts:28`）
 [测试步骤] 1. 读取日志文件字节数。2. 调用 `read_service_logs` 不传上限并读取返回长度与首字符。3. 传 `maxBytes: 16384` 再调用一次并读取返回长度。
@@ -177,7 +177,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/bridge/system_os.rs:142-145`、`:127-129`；`src/ui/config/debug.tsx:98-108`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；服务日志文件非空；配置对话框打开在「应用」面板
 [测试数据] 选择器 `dsh-config-clear-service-logs`、`dsh-config-service-logs`
 [测试步骤] 1. 读取日志面板内容确认非空。2. 点击清空按钮。3. 等待回读周期后读取日志面板与日志文件。
@@ -190,7 +190,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 异常
 [追踪] `src-tauri/src/service/workflow/health.rs:47-53`、`:60-63`；`src-tauri/src/bridge/system_os.rs:15-18`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready` 后主动停止 Harness，或在新实例启动瞬间探测
 [测试数据] 两种状态：无持有进程且 `launch` 已结束；`launch` 仍在进行（守卫未释放）
 [测试步骤] 1. 在「无持有进程且启动已结束」状态下调用 `proxy_health_check` 并读取错误文本。2. 在「启动进行中」状态下再次调用并读取错误文本。3. 对比两次前缀。
@@ -207,7 +207,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/workflow/win_inspector.rs:398-406`、`:410-418`；`src-tauri/src/service/plugin/install/single.rs:391-395`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] Windows 宿主；活动核心版本 ≥ `0.1.0-rc.8`；活动档案的 `cordis.patch.yml` 内含本插件的遗留 `- insert:` 块
 [测试数据] 观察点：`$E2E_HOME/home/.dsh.dev/profiles/<档案>/cordis.patch.yml`（§5.3）、桌面端日志
 [测试步骤] 1. 读取 patch 文件并确认遗留块存在。2. 触发一次会调用 `win_inspector::apply` 的流程（启动自愈或插件操作）。3. 重新读取 patch 文件与日志。
@@ -220,7 +220,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src-tauri/src/service/workflow/win_inspector.rs:45-49`、`:419-427`、`:328-333`、`:369-395`；`src-tauri/src/service/plugin/install/mod.rs:387-391`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] Windows 宿主；活动核心版本为 `0.1.0-rc.6` 或 `0.1.0-rc.7`；profile `package.json` 的 `dependencies` 含 `dsh-win-terminal-inspector`；`${DSH_HOME}/.agent-presets/minimal-win/` 不存在；`DSH_GIT_BASH_PATH` 指向存在的 `bash.exe`
 [测试数据] 环境变量 `DSH_GIT_BASH_PATH`；观察点 patch 文件与 `${DSH_HOME}/.agent-presets/minimal-win/`
 [测试步骤] 1. 触发一次会调用 `win_inspector::apply` 的流程。2. 读取 patch 文件中的挂载块。3. 读取 preset 目录内的两个文件内容。
@@ -233,7 +233,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/workflow/win_inspector.rs:106-134`、`:224-228`、`:600-626`（单元测试 `ensure_patch_upgrades_existing_bare_name_entry`）
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] Windows 宿主；旧核心版本；插件已装入；patch 内本插件块的 `name` 为裸包名 `dsh-win-terminal-inspector`
 [测试数据] patch 文件预置内容：`- insert:` + `id: win-terminal-inspector` + `name: dsh-win-terminal-inspector`
 [测试步骤] 1. 触发 `win_inspector::apply`。2. 读取 patch 文件全文并记录。3. 再次触发 `apply` 并再次读取全文。
@@ -250,7 +250,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/workflow/win_inspector.rs:695-706`、`:712-714`、`:716-724`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] macOS 或 Linux 宿主；应用处于 `ready`
 [测试数据] 观察点：`win_inspector::apply` 返回值与档案目录改动、`git_bash_bin_dirs` 返回值
 [测试步骤] 1. 触发一次会调用 `win_inspector::apply` 的流程。2. 对比触发前后活动档案目录的文件清单与 patch 内容。3. 读取 `git_bash_bin_dirs` 的返回。
@@ -263,7 +263,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 边界
 [追踪] `src-tauri/src/service/profile/mod.rs:123-152`、`:164-171`、`:191-202`；`src-tauri/src/service/plugin/install/mod.rs:213`
-[自动化] 待接线（`test/e2e/specs/desktop/29-system-integration.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/29-system-integration.e2e.ts`）
 [前置条件] 应用处于 `ready`；活动档案的 `pnpm-workspace.yaml` 已被改写成含 `---` 分隔符的多文档 YAML（前后两份都是映射，含同名键）
 [测试数据] 文件内容示例：`packages:\n  - .\n---\nnodeLinker: hoisted\n`
 [测试步骤] 1. 写入多文档内容并记录。2. 触发一次会调用 `ensure_profile_pnpm_policy` 的流程（插件安装）。3. 读取文件全文与桌面端日志。

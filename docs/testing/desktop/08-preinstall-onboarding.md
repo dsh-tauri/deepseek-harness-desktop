@@ -1,9 +1,9 @@
 # 预装插件引导
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/08-preinstall-onboarding.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/08-preinstall-onboarding.e2e.ts`（待建立）
 > 前置：`07-harness-lifecycle.md` 通过；可构造首次启动态（预装标记未完成）
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/08-preinstall-onboarding.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/08-preinstall-onboarding.e2e.ts`（待配置，见 G2）
 
 首次启动（或老版本升级）后，应用先进入预装引导页，由用户确认要安装/卸载哪些推荐插件，再继续启动服务。本文件的重点是**默认勾选的推导**与**失败后的可见反馈**——引导页是用户遇到的第一屏，静默失败会直接卡死首次体验。
 
@@ -38,7 +38,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/layout/components/webview.tsx:56-57`；`src/layout/components/setup-preinstall.tsx:157-159`
-[自动化] 待接线（`test/e2e/specs/desktop/08-preinstall-onboarding.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/08-preinstall-onboarding.e2e.ts`）
 [前置条件] 应用处于 `preinstall` 状态（首次启动）
 [测试数据] 选择器 `dsh-preinstall-root`、`dsh-preinstall-row`
 [测试步骤] 1. 等待引导页根节点出现。2. 读取插件行数量与每行名称。

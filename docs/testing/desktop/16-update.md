@@ -1,9 +1,9 @@
 # 更新
 
 > 层级：L3（真实 Tauri 窗口）
-> 自动化：`test/e2e/specs/desktop/16-update.e2e.ts`（待建立）
+> 自动化：`test/e2e/desktop/16-update.e2e.ts`（待建立）
 > 前置：`02-shell-navigation.md` 通过
-> 运行：`vitest --project desktop -- test/e2e/specs/desktop/16-update.e2e.ts`（待配置，见 G2）
+> 运行：`vitest --project desktop -- test/e2e/desktop/16-update.e2e.ts`（待配置，见 G2）
 
 桌面端自更新有两条独立链路：**应用自身更新**（`desktopUpdater`，低频轮询 + 导航栏 chip）与**核心更新**（`harnessUpdater`，toast 提示）。本文件覆盖检测、提示、对话框与破坏性更改确认。
 
@@ -35,7 +35,7 @@
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
 [追踪] `src/layout/components/navbar.tsx:532-542`；`src/layout/index.tsx:88-89`
-[自动化] 待接线（`test/e2e/specs/desktop/16-update.e2e.ts`）
+[自动化] 待接线（`test/e2e/desktop/16-update.e2e.ts`）
 [前置条件] 已构造「存在更高版本」的更新检查结果；联网
 [测试数据] 选择器 `dsh-navbar-update-chip`
 [测试步骤] 1. 触发一次更新检查。2. 等待检查结果写入。3. 读取导航栏更新入口存在性与文案。
