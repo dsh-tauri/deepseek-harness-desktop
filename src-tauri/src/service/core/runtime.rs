@@ -257,7 +257,7 @@ impl NativeProbe {
     //    pkg 在固定 Node 大版本下构建，捆绑运行时与之对齐，因此先验证捆绑运行时；
     //    探测通过则本进程内固定使用它（config::set_prefer_bundled_node_runtime）。
     if probe.has_abi_mismatch() && !is_bundled_runtime_node(&node, app_handle) {
-        if let Some(bundled) = crate::config::bundled_node_binary(app_handle) {
+        if let Some(bundled) = crate::config::runtime_node_binary(app_handle) {
             if probe_native_modules(&bundled, &core_root).await.is_ready() {
                 log::warn!(
                     "CORE_NATIVE_ABI_MISMATCH: {:?} cannot load under {}; switching to the bundled Node.js runtime {}",
@@ -788,7 +788,7 @@ fn parse_native_probe_failures(stdout: &str) -> Option<Vec<NativeProbeFailure>> 
 
 /// 当前 node 是否就是捆绑运行时（用于避免重复尝试同一个运行时）
 fn is_bundled_runtime_node(node: &Path, app_handle: &AppHandle) -> bool {
-    crate::config::bundled_node_binary(app_handle).is_some_and(|bundled| {
+    crate::config::runtime_node_binary(app_handle).is_some_and(|bundled| {
         bundled == node
             || bundled
                 .to_string_lossy()

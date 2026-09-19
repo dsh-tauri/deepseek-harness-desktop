@@ -1,0 +1,157 @@
+name: Prepare offline bundle resources
+description: >-
+  Download and unpack the Node.js runtime, the packaged dsh core and pnpm into
+  src-tauri/resources so `tauri build` produces an offline installer that needs
+  no download on first launch.
+
+inputs:
+  platform:
+    description: Target platform (windows | macos | linux)
+    required: true
+  arch:
+    description: Target architecture (x64 | arm64)
+    required: true
+  dsh-tag:
+    description: deepseek-harness-pkg release tag bundled as the built-in core
+    required: true
+  dsh-commit:
+    description: Commit / build id recorded for the bundled core
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Download and unpack bundled runtimes
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        ARCH: ${{ inputs.arch }}
+        DSH_TAG: ${{ inputs.dsh-tag }}
+        DSH_COMMIT: ${{ inputs.dsh-commit }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
+
+        sha256_of() {
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$1" | awk '{print $1}'
+          else
+            shasum -a 256 "$1" | awk '{print $1}'
+          fi
+        }
+
+        fetch() {
+          local url="$1" out="$2" attempt
+          for attempt in 1 2 3 4; do
+            if curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 3600 -o "$out" "$url"; then
+              return 0
+            fi
+            echo "download failed (attempt ${attempt}/4): ${url}"
+            sleep 10
+          done
+          echo "::error::failed to download ${url}"
+          return 1
+        }
+
+        verify() {
+          local file="$1" expected="$2" label="$3" actual
+          if [ -z "$expected" ]; then
+            echo "::error::no trusted SHA-256 available for ${label}"
+            return 1
+          fi
+          actual="$(sha256_of "$file")"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::${label} SHA-256 mismatch: expected ${expected}, got ${actual}"
+            return 1
+          fi
+          echo "${label} SHA-256 verified"
+        }
+
+        extract() {
+          local archive="$1" dest="$2"
+          mkdir -p "$dest"
+          case "$archive" in
+            *.zip)
+              if command -v unzip >/dev/null 2>&1; then
+                (cd "$dest" && unzip -q "$archive")
+              else
+                (cd "$dest" && tar -xf "$archive")
+              fi
+              ;;
+            *)
+              (cd "$dest" && tar -xzf "$archive")
+              ;;
+          esac
+        }
+
+        # 与 Rust `download::utils::flatten_directory` 一致：解压结果只有唯一一层
+        # 子目录时把内容上提，保证 resources/<name> 就是运行时目录本身。
+        flatten() {
+          local dir="$1" entries=()
+          while IFS= read -r entry; do entries+=("$entry"); done < <(find "$dir" -mindepth 1 -maxdepth 1)
+          if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then
+            shopt -s dotglob
+            mv "${entries[0]}"/* "$dir"/
+            shopt -u dotglob
+            rmdir "${entries[0]}"
+          fi
+        }
+
+        install_tree() {
+          local from="$1" to="$2"
+          rm -rf "$to"
+          mkdir -p "$to"
+          cp -a "$from/." "$to/"
+        }
+
+        # 刻意不用关联数组：macOS runner 的 /bin/bash 是 3.2（`declare -A` 需要 bash 4），
+        # 而 `shell: bash` 会解析到它，用了会让 macOS 离线包构建在下载前就失败。
+        node_name=''; node_url=''; node_sha_url=''
+        dsh_name=''; dsh_url=''
+        pnpm_name=''; pnpm_url=''; pnpm_sha=''
+        while IFS='|' read -r key name url sha sha_url; do
+          [ -n "${key:-}" ] || continue
+          case "$key" in
+            node) node_name="$name"; node_url="$url"; node_sha_url="$sha_url" ;;
+            dsh) dsh_name="$name"; dsh_url="$url" ;;
+            pnpm) pnpm_name="$name"; pnpm_url="$url"; pnpm_sha="$sha" ;;
+          esac
+        done < <(node scripts/bundle-metadata.mjs --assets --platform "$PLATFORM" --arch "$ARCH")
+
+        # Node.js 运行时：摘要取自官方 SHASUMS256.txt，与 assets 同源同版本。
+        fetch "$node_url" "${workdir}/${node_name}"
+        fetch "$node_sha_url" "${workdir}/SHASUMS256.txt"
+        verify "${workdir}/${node_name}" \
+          "$(awk -v asset="${node_name}" '$2 == asset { print $1 }' "${workdir}/SHASUMS256.txt")" \
+          "Node.js ${node_name}"
+        extract "${workdir}/${node_name}" "${workdir}/node"
+        flatten "${workdir}/node"
+        install_tree "${workdir}/node" "src-tauri/resources/node"
+
+        # dsh 内核：摘要来自同一 release 的 GitHub API，缺失即中止（无法校验完整性的
+        # 内容不进离线包）。
+        fetch "$dsh_url" "${workdir}/${dsh_name}"
+        dsh_digest="$(gh api "repos/dsh-tauri-desk/deepseek-harness-pkg/releases/tags/${DSH_TAG}" \
+          --jq ".assets[] | select(.name == \"${dsh_name}\") | .digest" 2>/dev/null \
+          | sed 's/^sha256://' | head -n 1)"
+        verify "${workdir}/${dsh_name}" "$dsh_digest" "dsh core ${dsh_name}"
+        extract "${workdir}/${dsh_name}" "${workdir}/dsh"
+        flatten "${workdir}/dsh"
+        install_tree "${workdir}/dsh" "src-tauri/resources/dsh"
+
+        # pnpm：纯 JS 发行，摘要取自 constants.rs 的固定值。
+        fetch "$pnpm_url" "${workdir}/${pnpm_name}"
+        verify "${workdir}/${pnpm_name}" "$pnpm_sha" "pnpm ${pnpm_name}"
+        extract "${workdir}/${pnpm_name}" "${workdir}/pnpm"
+        flatten "${workdir}/pnpm"
+        install_tree "${workdir}/pnpm" "src-tauri/resources/pnpm"
+
+        node scripts/bundle-metadata.mjs --manifest --platform "$PLATFORM" --arch "$ARCH"
+
+        echo "--- bundled resources ---"
+        du -sh src-tauri/resources/node src-tauri/resources/dsh src-tauri/resources/pnpm
+        cat src-tauri/resources/bundle.json

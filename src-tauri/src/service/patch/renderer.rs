@@ -25,7 +25,7 @@ use crate::utils::{patch_dsh, PatchOutcome};
 const ANCHOR_KEYWORD: &str = "return module.exports;";
 
 /// 相对活动核心安装目录的 renderer `lib/client.js` 包内路径。
-const RENDERER_CLIENT_JS: &str = "node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js";
+pub(super) const RENDERER_CLIENT_JS: &str = "node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js";
 
 /// 幂等补丁逻辑的纯函数部分（便于单测，不触碰文件系统）。
 ///

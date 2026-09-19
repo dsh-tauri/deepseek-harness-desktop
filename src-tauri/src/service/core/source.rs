@@ -67,6 +67,10 @@ pub struct HarnessCore {
     pub above_recommended: bool,
     /// 本地存在但远程 pkg 仓库已不再提供的历史槽位。
     pub orphaned: bool,
+    /// 是否为离线安装包随包分发的内置核心（`resources/dsh`，版本取自
+    /// `resources/bundle.json`）：核心面板把它固定置顶、标注「内置核心」，
+    /// 且不允许卸载（见 `service::bundle`）。
+    pub bundled: bool,
     /// 资源清单中的推荐版本，用于切换前风险提示。
     pub recommended_version: Option<String>,
     pub error: Option<String>,
@@ -115,6 +119,10 @@ fn warn_unsupported_local_core(app_handle: &AppHandle, version: &str) {
 /// 本地核心低于内置插件基线时不参与优先，一律回退预打包核心：内置插件是桌面壳的
 /// 组成部分，装上也无法加载，只会把启动卡在插件阶段（issue #596）。持久化的
 /// `active_core` 设置不改写——用户升级本地核心后自动恢复「本地优先」。
+///
+/// 离线安装包（`resources/bundle.json`）在自动模式下改为**内置核心优先**：随包
+/// 内核与随包 Node 由同一次构建产出、版本匹配有保证，而内网机器上的本地 dsh 往往
+/// 是任意版本，没有理由让它盖过随包内核。用户显式选择的来源仍然照旧生效。
 pub fn active_source(app_handle: &AppHandle) -> CoreSource {
     let setting = config::get_store_dat_setting(app_handle);
     let local = local_core(app_handle);
@@ -134,9 +142,11 @@ pub fn active_source(app_handle: &AppHandle) -> CoreSource {
         Some(CoreSource::App) => CoreSource::App,
         // 显式选择本地但本地已失效/低于基线 → 回退预打包
         Some(CoreSource::Local) if local_usable => CoreSource::Local,
-        // 未设置（自动）或显式本地不可用：本地可用时优先
+        // 未设置（自动）或显式本地不可用：离线包用内置核心，否则本地可用时优先
         _ => {
-            if local_usable {
+            if config::is_offline_bundle(app_handle) {
+                CoreSource::App
+            } else if local_usable {
                 CoreSource::Local
             } else {
                 CoreSource::App

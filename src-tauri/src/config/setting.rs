@@ -44,7 +44,8 @@ pub struct Setting {
     #[serde(default)]
     pub desktop_profile_ready: bool,
     /// 活动核心的显式选择：`Some("local")` = 用户 CLI 安装的本地核心，
-    /// `Some("app")` = 桌面端预打包核心；`None` = 自动（本地核心存在时优先）。
+    /// `Some("app")` = 桌面端预打包核心；`None` = 自动（离线包用内置核心，
+    /// 否则本地核心存在时优先）。
     #[serde(default)]
     pub active_core: Option<String>,
     /// 用户手动设置的服务端口（设置页「端口」输入，见 bridge::config）。

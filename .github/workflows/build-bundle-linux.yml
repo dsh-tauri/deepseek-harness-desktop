@@ -1,0 +1,92 @@
+name: Reusable Linux Offline Bundle Build
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      dsh_tag:
+        required: true
+        type: string
+      dsh_commit:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build offline bundle (linux)
+    # 22.04 的 glibc/WebKitGTK 产物兼容 Ubuntu 22.04 及更新版本。
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          apt_ok=0
+          for i in {1..3}; do
+            if timeout 180 sudo apt-get update \
+              -o Acquire::Retries=5 \
+              -o Acquire::http::Timeout=60 \
+              -o Acquire::https::Timeout=60 \
+              -o Acquire::ftp::Timeout=60; then
+              apt_ok=1
+              break
+            fi
+            echo "apt-get update 失败，准备重试 ($i/3)..."
+            sleep 10
+          done
+          [ "$apt_ok" = "1" ] || { echo "apt-get update 连续 3 次失败，中止"; exit 1; }
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf unzip
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare bundled resources
+        uses: ./.github/actions/prepare-bundle-resources
+        with:
+          platform: linux
+          arch: x64
+          dsh-tag: ${{ inputs.dsh_tag }}
+          dsh-commit: ${{ inputs.dsh_commit }}
+
+      # 只出 deb：AppImage 由 linuxdeploy 打包，而离线包往 AppDir 里塞了 392 MiB /
+      # 一万余文件（node 205M + dsh 167M + pnpm 20M），linuxdeploy 在这种规模的 AppDir
+      # 上直接失败（`failed to run linuxdeploy`，实测 18s 即退出），普通安装包没有这份
+      # 资源所以不受影响。内网离线部署本来也以 deb 为主。AppImage 的支持留作后续单独排查。
+      - name: Build offline packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --bundles deb
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-bundle-linux
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7

@@ -30,6 +30,8 @@ import { toast } from '@/utils/toast'
  *   `app-<tag>` = deepseek-harness-pkg 各发布版本（GitHub releases 拉取失败时
  *   降级为 git tags / 磁盘扫描，仅显示已下载版本）。预览版（Pre-release label
  *   或 tag 命名）照常列出、可下载安装，但带「预览版」标签、不参与更新提示。
+ *   离线安装包随包分发的内置核心（`bundled`，版本来自 `resources/bundle.json`）
+ *   固定置顶、标注「内置核心」且不提供卸载入口。
  * - 切换核心：持久化后**自动重启**服务（需求 5），重启走 harness store 的
  *   restart 流程（停止 → 重新启动 → 健康检查）。
  * - 下载版本：拉指定 tag 的发布资产到历史槽位（不激活），随后可切换；
@@ -88,10 +90,12 @@ export function ConfigCore() {
 
   // 本地核心未检测到时不渲染 local 行（保留 local_missing_hint 提示）
   // 后端列表在部分缓存/旧版本返回路径中可能仍保持远程顺序，前端统一按版本从高到低排序。
-  // 本地核心固定放在版本列表前，预打包核心按 SemVer 排序。
+  // 离线安装包的内置核心固定在最顶部（`bundled`），随后是本地核心，最后是预打包版本。
   const rows = cores
     .filter(core => !(core.source === 'local' && !core.present))
     .sort((a, b) => {
+      if (a.bundled !== b.bundled)
+        return a.bundled ? -1 : 1
       if (a.source !== b.source)
         return a.source === 'local' ? -1 : 1
       if (a.source === 'local')
@@ -101,8 +105,9 @@ export function ConfigCore() {
       return -compareVersions(a.version || a.tag, b.version || b.tag)
     })
   const localCore = cores.find(c => c.source === 'local')
-  const currentRows = rows.filter(core => !core.orphaned)
-  const orphanRows = rows.filter(core => core.orphaned)
+  // 内置核心即使不在远程发布列表里也保持在主列表（不被归入「已废弃」分区）。
+  const currentRows = rows.filter(core => !core.orphaned || core.bundled)
+  const orphanRows = rows.filter(core => core.orphaned && !core.bundled)
   const displayRows = [...currentRows, ...orphanRows]
 
   // 本地核心是否有新版可更新：仅当存在更新的预打包发布时才显示「更新本地核心」。
@@ -334,12 +339,18 @@ export function ConfigCore() {
                         {t('core.local')}
                       </Chip>
                     </If>
-                    <If cond={core.source === 'app'}>
+                    {/* 离线安装包的内置核心：随包分发、固定置顶、不可卸载 */}
+                    <If cond={core.bundled}>
+                      <Chip size="sm" variant="soft" color="success" className="shrink-0 font-medium">
+                        {t('core.bundled')}
+                      </Chip>
+                    </If>
+                    <If cond={core.source === 'app' && !core.bundled}>
                       <Chip size="sm" variant="soft" color="default" className="shrink-0 font-medium">
                         {t('core.app')}
                       </Chip>
                     </If>
-                    <If cond={core.orphaned}>
+                    <If cond={core.orphaned && !core.bundled}>
                       <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">
                         {t('core.orphaned')}
                       </Chip>
@@ -413,8 +424,9 @@ export function ConfigCore() {
                         {t('core.download')}
                       </Button>
                     </If>
-                    {/* 已下载且非激活（app 版本）：卸载入口 */}
-                    <If cond={core.present && !core.active && core.source === 'app'}>
+                    {/* 已下载且非激活（app 版本）：卸载入口。内置核心随包分发、
+                        删掉后离线环境将再无可用核心，因此不提供卸载。 */}
+                    <If cond={core.present && !core.active && core.source === 'app' && !core.bundled}>
                       <Button
                         size="sm"
                         variant="tertiary"

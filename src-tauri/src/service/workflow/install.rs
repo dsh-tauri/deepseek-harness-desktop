@@ -92,8 +92,12 @@ pub async fn install(
     }
     // Windows Sandbox 等空白环境没有 Git；仅 Windows 加入第 4 项，若系统 Git
     // 可真实执行则 Installable 会跳过，不重复下载也不修改系统 PATH。
+    // 离线安装包不随包分发 MinGit，也不加入该任务：内网补装必然失败，只会把整个
+    // 安装流程拖到超时（Git 依赖判定见 bridge::lifecycle::git_dependency_ready）。
     #[cfg(windows)]
-    tasks.push(Box::new(download::Git));
+    if !crate::config::is_offline_bundle(app_handle) {
+        tasks.push(Box::new(download::Git));
+    }
     // 每项均有下载/解压两个阶段，按实际平台任务数计算，避免进度提前到 100%。
     let mut tracker = download::ProgressTracker::new(&window, tasks.len() * 2);
     log::info!("Task list created, {} tasks total", tasks.len());

@@ -41,6 +41,40 @@ fn install_lock() -> &'static tokio::sync::Mutex<()> {
     INSTALL_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+/// 离线安装包内置核心落位互斥：`runtime_ready` 与 `install_dependencies` 会在启动
+/// 路径上先后调用，避免两路并发重建同一份链接层。
+static BUNDLE_LINK_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+/// 把离线安装包随带的内置核心以零拷贝链接层落位到应用数据目录。
+///
+/// 幂等：普通安装包没有 `resources/bundle.json`，直接空转；离线包只在首次启动或
+/// 安装包升级（内置核心版本变化）时真正重建。失败只告警不阻断——后续
+/// `Installable::check_installed` 仍为 false，会走原有下载路径。
+async fn materialize_bundled_core(app_handle: &AppHandle) {
+    let lock = BUNDLE_LINK_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+    let _guard = lock.lock().await;
+    let handle = app_handle.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::service::bundle::materialize(&handle)
+    })
+    .await;
+    match result {
+        Ok(Ok(true)) => log::info!("bundled core link layer materialized"),
+        Ok(Ok(false)) => {}
+        Ok(Err(e)) => log::warn!("bundled core materialization failed: {e}"),
+        Err(e) => log::warn!("bundled core materialization task failed: {e}"),
+    }
+}
+
+/// Git 依赖是否已满足。
+///
+/// 离线安装包**不随包分发 MinGit**：内网环境补装必然失败，把 Git 判定为「已满足」
+/// 以免用户卡在启动安装界面（`workflow::install` 对离线包也不再加入 Git 任务）。
+/// git 托管的插件安装会在真正使用时给出明确失败，而不是让应用起不来。
+fn git_dependency_ready(app_handle: &AppHandle) -> bool {
+    config::git_runtime_ready(app_handle) || config::is_offline_bundle(app_handle)
+}
+
 /// 安装失败后把状态从 Installing 复位，避免后续调用被“正在安装”卡死。
 /// 仅在失败路径调用；成功路径保持原有状态语义（由前端随后 launch 续接）。
 fn reset_install_status(app_handle: &AppHandle) {
@@ -81,6 +115,10 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
         return Ok(false);
     };
 
+    // 离线安装包：先把内置核心以零拷贝链接层落位，再判定「已就绪」。命中后下面的
+    // node/dsh/pnpm 检查全部为 true，启动路径不会产生任何下载。
+    materialize_bundled_core(&app_handle).await;
+
     // 以实际安装状态为准：本地安装与 GitHub 最新 release 的 commit hash
     // 不一致时，说明上游 pkg 有更新/修复，需要自动重新下载。
     let node_ok = download::Nodejs.check_installed(&app_handle);
@@ -90,8 +128,8 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
     // 需一并纳入"已就绪"判定，缺失时由 workflow::install 按任务补齐。
     let pnpm_ok = download::Pnpm.check_installed(&app_handle);
     // Windows 空白环境还必须有可执行的 Git，才能安装 github:/git+ssh: 插件。
-    // 非 Windows 返回 true，保持原有依赖集合不变。
-    let git_ok = config::git_runtime_ready(&app_handle);
+    // 非 Windows 与离线包返回 true，保持原有依赖集合不变（见 git_dependency_ready）。
+    let git_ok = git_dependency_ready(&app_handle);
 
     // 启动自愈捷径：记录显示未安装、但运行时文件已全部在盘。常见于桌面端自更新
     // 安装器强杀进程，或上次启动时核心文件短暂缺失被 workflow::start 复位
@@ -421,12 +459,17 @@ pub fn get_dsh_status() -> workflow::status::Status {
 /// （MSI 强杀进程）后 store 可能被复位或损坏显示「未安装」，但运行时文件其实
 /// 已就绪——此时前端跳过安装/下载界面，交给 install_dependencies 内部自愈
 /// 补记 installed 后直接启动，避免自动重开时闪现误导用户的安装界面。
+///
+/// 离线安装包（`resources/bundle.json`）在这里先把内置核心以零拷贝链接层落位到
+/// 应用数据目录：前端启动路径第一件事就是本命令，落位完成后即返回 true，用户直接
+/// 进入页面、看不到下载流程。
 #[tauri::command]
-pub fn runtime_ready(app_handle: AppHandle) -> bool {
+pub async fn runtime_ready(app_handle: AppHandle) -> bool {
+    materialize_bundled_core(&app_handle).await;
     download::Nodejs.check_installed(&app_handle)
         && download::Dsh.check_installed(&app_handle)
         && download::Pnpm.check_installed(&app_handle)
-        && config::git_runtime_ready(&app_handle)
+        && git_dependency_ready(&app_handle)
 }
 
 #[cfg(test)]

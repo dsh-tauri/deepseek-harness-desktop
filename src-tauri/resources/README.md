@@ -15,6 +15,64 @@ directory (the Tauri app-data dir for identifier
 
 No manual Node.js or pnpm installation is required.
 
+## Offline bundle resources
+
+Alongside the regular installers, `.github/workflows/release-bundle.yml` publishes
+an **offline** build (`Deepseek.Harness.Desktop_Bundle_<version>.<ext>`) for
+machines without internet access. That build ships the runtime pieces the regular
+installer would otherwise download, under this same directory:
+
+- `node/` — the extracted Node.js distribution (`v22.22.0` and friends, see
+  `NODE_VERSION` in `src-tauri/src/config/constants.rs`)
+- `dsh/` — the extracted recommended dsh core, i.e. the built-in engine
+  (`resources/version-recommend.json`)
+- `pnpm/` — the extracted pnpm distribution
+- `bundle.json` — build-time manifest (`node`, `pnpm`, `dsh.version`,
+  `dsh.tag`, `dsh.commit`)
+
+They are produced by `.github/actions/prepare-bundle-resources` and are **not**
+committed (see `.gitignore`). Detecting `bundle.json` switches the app into
+offline mode (`src-tauri/src/config/bundle.rs`):
+
+- **Node and pnpm are used in place** — `resources/node` and `resources/pnpm`
+  directly, skipping the local PATH install and the app-data copies. Both are
+  read-only consumers, so nothing is copied.
+- **The dsh core is materialized into `dependencies/dsh` with no bulk copy**
+  (`src-tauri/src/service/bundle`), in one of two modes, re-decided on every launch
+  by probing whether the bundled core directory is writable:
+
+  - **Link** (writable — a Windows per-user install lands in `%LOCALAPPDATA%`):
+    `dependencies/dsh` *is* a directory link to `resources/dsh`. The patch layer
+    writes straight through into `resources/dsh`, so the file that gets loaded is
+    the very file that was rewritten — zero extra disk, no patched-copy/core skew.
+  - **Layer** (read-only — macOS `.app`, Linux AppImage/deb): a link layer whose
+    patched subtrees are real copies and whose remaining directories are links.
+
+  `src-tauri/src/service/patch::patched_paths()` is the single source of truth for
+  what must be writable: `service::bundle::real_dirs()` derives the Layer's real
+  directories from it, and both modes are verified right after materialization — if
+  any patch target ends up behind a directory link, or cannot be opened for
+  writing, materialization fails loudly instead of letting patches silently no-op.
+  Layer mode costs ~1.4 MiB on top of `resources/dsh`; Link mode costs nothing.
+
+  Core switching (`dependencies/dsh` ↔ `dependencies/<tag>`) is untouched — both
+  forms rename fine. A user-downloaded core is never overwritten: when the active
+  slot already holds a real core, the bundled one lands in its own tag slot as a
+  normal switchable version instead.
+- **The Node and pnpm directories are linked whole** (`{app_data}/runtime`,
+  `{app_data}/dependencies/pnpm`): both are read-only consumers (pnpm keeps its
+  store in `$DSH_HOME`), so one link each satisfies every existing convention —
+  including the paths hardcoded in the generated CLI shims.
+
+Windows MinGit is deliberately **not** bundled: the offline build treats the Git
+dependency as satisfied and never tries to fetch it (`config::is_offline_bundle`),
+so a machine without Git still boots normally — only plugin installs from
+`github:`/`git+ssh:` specs fail, at the point of use, instead of blocking startup.
+
+`bundle.json` also drives the core panel: the version it names is pinned to the
+top of the「核心引擎」list with a **内置核心 / Built-in** chip and cannot be
+uninstalled, so an offline machine always keeps a usable engine.
+
 ## `$DSH_HOME` — shared with the official Node.js install
 
 The user data directory (`$DSH_HOME`) used by the running `dsh` process follows

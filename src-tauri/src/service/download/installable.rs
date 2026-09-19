@@ -42,11 +42,15 @@ impl Installable for Nodejs {
         config::get_node_install_path(app)
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
+        // 离线安装包：随包运行时就是唯一来源，直接可用即视为已安装。
+        if config::bundled_node_binary(app).is_some() {
+            return config::is_runtime_compatible(app);
+        }
         // 原生模块 ABI 探测已判定本地 node 无法加载核心的原生模块（issue #441）：
         // 此时不能再以"本机有版本兼容的 node"为由跳过捆绑运行时，否则服务进程仍会
         // 用那个 ABI 不匹配的运行时启动。
         if config::prefer_bundled_node_runtime() {
-            return config::bundled_node_binary(app).is_some() && config::is_runtime_compatible(app);
+            return config::runtime_node_binary(app).is_some() && config::is_runtime_compatible(app);
         }
         if let Some(local_node) = config::get_local_node_path() {
             log::info!(
@@ -99,6 +103,10 @@ impl Installable for Pnpm {
         config::get_pnpm_install_path(app)
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
+        // 离线安装包：直接使用随包 pnpm，完全跳过本地 pnpm 探测。
+        if config::bundled_pnpm_binary(app).is_some() {
+            return true;
+        }
         // "有则跳过"：用户 PATH 中已有 pnpm 时不再安装捆绑版
         if crate::service::cli::find_user_pnpm(app).is_some() {
             log::info!("Detected user-installed pnpm, skipping bundled pnpm");

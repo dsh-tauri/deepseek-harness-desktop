@@ -1,0 +1,218 @@
+name: Reusable macOS Offline Bundle Build
+
+on:
+  workflow_call:
+    inputs:
+      platform_filter:
+        required: false
+        type: string
+        default: all
+      source_ref:
+        required: true
+        type: string
+      dsh_tag:
+        required: true
+        type: string
+      dsh_commit:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+      APPLE_CERTIFICATE:
+        required: true
+      APPLE_CERTIFICATE_PASSWORD:
+        required: true
+      APPLE_ID:
+        required: true
+      APPLE_PASSWORD:
+        required: true
+      APPLE_TEAM_ID:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build offline bundle (${{ matrix.id }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos-aarch64
+            target: aarch64-apple-darwin
+            arch: arm64
+          - id: macos-x86_64
+            target: x86_64-apple-darwin
+            arch: x64
+    runs-on: macos-latest
+    timeout-minutes: 180
+    steps:
+      - name: Filter target architecture
+        id: check
+        shell: bash
+        env:
+          PLATFORM_FILTER: ${{ inputs.platform_filter }}
+          PLATFORM_ID: ${{ matrix.id }}
+        run: |
+          should_run=true
+          if [ "$PLATFORM_FILTER" != "all" ] && [ "$PLATFORM_FILTER" != "$PLATFORM_ID" ]; then
+            should_run=false
+          fi
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        if: steps.check.outputs.should_run == 'true'
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install Rust stable
+        if: steps.check.outputs.should_run == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        if: steps.check.outputs.should_run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare bundled resources
+        if: steps.check.outputs.should_run == 'true'
+        uses: ./.github/actions/prepare-bundle-resources
+        with:
+          platform: macos
+          arch: ${{ matrix.arch }}
+          dsh-tag: ${{ inputs.dsh_tag }}
+          dsh-commit: ${{ inputs.dsh_commit }}
+
+      # 离线包把 Node 运行时与原生模块（sharp / koffi / node-pty 的 `.node`、`@img` 的
+      # `.dylib`）一起塞进了 .app。Apple 的公证要求包里**每一个** Mach-O 都带 Developer ID
+      # 签名与安全时间戳，而 tauri 只签自己产出的可执行文件（`--deep` 按 Apple 的定义会
+      # 跳过 `Contents/Resources/**`），于是公证会逐条报
+      # 「The binary is not signed with a valid Developer ID certificate」。
+      # 这里先把随包资源里的 Mach-O 全部签掉，再交给 tauri 打包与公证。
+      - name: Sign bundled Mach-O binaries
+        if: steps.check.outputs.should_run == 'true'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/bundle-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/bundle-cert.p12"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/bundle-cert.p12" -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | awk -F'"' '/Developer ID Application/{print $2; exit}')"
+          if [ -z "$identity" ]; then
+            echo "::error::no Developer ID Application identity found in the imported certificate"
+            exit 1
+          fi
+
+          # 只挑可能是 Mach-O 的候选（可执行位或已知扩展名）再用 file 确认，避免对上万个
+          # 文件逐个调用 file。
+          #
+          # 已经是 Developer ID 签名的（nodejs.org 的 node 二进制自带签名与 JIT 相关
+          # entitlement）原样保留：重签会丢掉 entitlement，节点进程在 hardened runtime
+          # 下会因 JIT 被拒直接崩。其余 ad-hoc / 未签名的才补签，并在存在 entitlement 时
+          # 一并保留。
+          signed=0
+          kept=0
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$(file -b "$file")" in
+              *Mach-O*) ;;
+              *) continue ;;
+            esac
+            authority="$(codesign -dv --verbose=2 "$file" 2>&1 | awk -F= '/^Authority=/{print $2; exit}' || true)"
+            if [ "${authority#Developer ID Application}" != "$authority" ]; then
+              kept=$((kept + 1))
+              continue
+            fi
+            preserve=""
+            if codesign -d --entitlements - "$file" 2>/dev/null | grep -q '<key>'; then
+              preserve="--preserve-metadata=entitlements"
+            fi
+            codesign --force --options runtime --timestamp $preserve \
+              --keychain "$keychain" --sign "$identity" "$file"
+            signed=$((signed + 1))
+          done < <(find src-tauri/resources -type f \
+            \( -name '*.node' -o -name '*.dylib' -o -name '*.so' -o -perm -100 \) -print)
+          echo "signed $signed Mach-O binaries under src-tauri/resources ($kept already Developer ID signed)"
+          [ "$signed" -gt 0 ] || { echo "::error::no unsigned Mach-O binaries found under src-tauri/resources"; exit 1; }
+
+      - name: Validate signing secrets
+        if: steps.check.outputs.should_run == 'true'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -z "${!name}" ] && missing+=("$name")
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::Missing macOS signing secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      # 必须同时产出 app：只给 `--bundles dmg` 时 tauri 会把 .app 当中间产物，打完 dmg
+      # 就删掉它（日志里的 `Cleaning .../bundle/macos/<name>.app`），后面的签名/公证
+      # 校验步骤便找不到目标。普通安装包不带 --bundles、走 targets: all，两者都产出。
+      - name: Build offline package
+        if: steps.check.outputs.should_run == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app,dmg
+
+      - name: Verify signature and notarization
+        if: steps.check.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          app_path="$(find "src-tauri/target/${{ matrix.target }}/release/bundle/macos" -type d -name '*.app' -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo '::error::Built macOS app bundle was not found'
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=4 "$app_path"
+
+      - name: Upload build output
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-bundle-${{ matrix.id }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7

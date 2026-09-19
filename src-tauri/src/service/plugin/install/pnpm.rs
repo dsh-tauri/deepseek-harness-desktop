@@ -739,12 +739,12 @@ fn parse_store_major_from_modules_yaml(content: &str) -> Option<u32> {
     major.parse().ok()
 }
 
-/// 捆绑版 pnpm 的主版本（读 `dependencies/pnpm/package.json` 的 version 字段）；
-/// 未安装或清单缺失返回 None。
+/// 捆绑版 pnpm 的主版本（读 pnpm 目录 `package.json` 的 version 字段，离线安装包
+/// 为随包 `resources/pnpm`）；未安装或清单缺失返回 None。
 ///
 /// 供 [`ensure_pnpm`] 选版与 [`crate::service::plugin::verify`] 的修复选版共用（store 主版本匹配）。
 pub(crate) fn bundled_pnpm_major(app_handle: &AppHandle) -> Option<u32> {
-    let manifest = config::get_pnpm_install_path(app_handle).join("package.json");
+    let manifest = config::get_pnpm_runtime_dir(app_handle).join("package.json");
     let content = std::fs::read_to_string(manifest).ok()?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
     value

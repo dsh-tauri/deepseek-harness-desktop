@@ -287,6 +287,7 @@
   "core.remove_confirm_title": "卸载版本",
   "core.remove_confirm_desc": "确定卸载 {{version}} 吗？将移除本机的该引擎副本（其余副本不受影响）。",
   "core.app": "预打包",
+  "core.bundled": "内置核心",
   "core.orphaned_title": "本地已废弃的 pkg",
   "core.orphaned": "已废弃",
   "core.preview": "预览版",

@@ -4,6 +4,9 @@ dist
 src-tauri/target
 src-tauri/gen
 src-tauri/resources/node
+src-tauri/resources/dsh
+src-tauri/resources/pnpm
+src-tauri/resources/bundle.json
 src-tauri/resources/preset-plugins/
 src-tauri/resources/internal-plugins/
 *.log

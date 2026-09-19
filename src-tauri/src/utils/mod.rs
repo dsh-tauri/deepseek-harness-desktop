@@ -38,6 +38,12 @@ fn active_core_install_dir(app_handle: &tauri::AppHandle) -> PathBuf {
 /// 统一处理「定位文件 → 读取 → 打补丁 → 写回」与对应的日志。文件缺失、已打过、
 /// 锚点变更均静默跳过并返回 Ok；只有真实读/写失败才返回 Err（不阻断启动的调用方
 /// 据此仅告警）。活动核心的判定与 [`active_core_install_dir`] 一致。
+///
+/// **离线安装包**：活动核心目录是随包内核的落位产物，写入落在哪里由落位方式决定
+/// （见 `service::bundle`）——随包目录可写时是它的目录链接，补丁直接改写
+/// `resources/dsh` 里**被加载的那份文件**；只读时才落到应用数据目录的真实副本。
+/// 补丁自身不需要关心这件事，只需保证 [`crate::service::patch::patched_paths`] 里
+/// 登记了目标路径。
 pub fn patch_dsh(
     app_handle: &tauri::AppHandle,
     rel_path: &str,

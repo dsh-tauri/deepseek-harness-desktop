@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager, Runtime};
 
+use super::bundle::{bundled_node_binary, bundled_pnpm_dir};
 use super::constants::*;
 use super::format::get_dsh_service_url;
 use super::utils::search_node_binary;
@@ -218,8 +219,8 @@ pub fn set_prefer_bundled_node_runtime(prefer: bool) {
     PREFER_BUNDLED_NODE_RUNTIME.store(prefer, Ordering::Relaxed);
 }
 
-/// 已安装的捆绑运行时 node 二进制（未安装时返回 None）
-pub fn bundled_node_binary(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
+/// 已下载到应用数据目录的捆绑运行时 node 二进制（未安装时返回 None）
+pub fn runtime_node_binary(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
     let runtime_dir = get_node_install_path(app_handle);
     // 使用 cfg 宏在编译时确定文件名
     let (rel_path, bin_name) = if cfg!(windows) {
@@ -238,8 +239,9 @@ pub fn bundled_node_binary(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
 
 /// Node.js 二进制路径
 ///
-/// 优先级：ABI 探测要求捆绑运行时（原生模块不匹配时的兜底）> 本地版本兼容的
-/// Node.js 环境 > 已安装的捆绑运行时
+/// 优先级：离线安装包的随包运行时（唯一来源，见 [`bundled_node_binary`]）>
+/// ABI 探测要求捆绑运行时（原生模块不匹配时的兜底）> 本地版本兼容的
+/// Node.js 环境 > 应用数据目录中已下载的捆绑运行时
 pub fn get_node_binary_path(app_handle: &tauri::AppHandle) -> PathBuf {
     let runtime_dir = get_node_install_path(app_handle);
     let (rel_path, bin_name) = if cfg!(windows) {
@@ -247,7 +249,15 @@ pub fn get_node_binary_path(app_handle: &tauri::AppHandle) -> PathBuf {
     } else {
         ("bin", "node")
     };
-    let bundled = bundled_node_binary(app_handle);
+
+    // 离线安装包：随包运行时与随包核心由同一次构建产出、ABI 天然对齐，直接使用并
+    // 完全跳过本地 node 与 AppData 副本，避免版本选择引入不必要的分支。
+    if let Some(bundled) = bundled_node_binary(app_handle) {
+        log::debug!("Using bundled Node.js runtime: {}", bundled.display());
+        return bundled;
+    }
+
+    let bundled = runtime_node_binary(app_handle);
 
     if prefer_bundled_node_runtime() {
         if let Some(bundled) = bundled.clone() {
@@ -286,16 +296,23 @@ pub fn get_dsh_binary_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     get_dsh_install_path(app_handle).join(DSH_ENTRY_RELATIVE)
 }
 
-/// pnpm 安装目录
+/// pnpm 安装目录（应用数据目录中已下载的捆绑 pnpm）
 pub fn get_pnpm_install_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     get_base_dir(app_handle)
         .join("dependencies")
         .join(PNPM_CORE_DIR)
 }
 
-/// 捆绑 pnpm CLI 入口（纯 JS 发行，用 node 运行）
+/// 当前使用的 pnpm 目录：离线安装包的随包 pnpm 优先，其次应用数据目录。
+pub fn get_pnpm_runtime_dir<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
+    bundled_pnpm_dir(app_handle).unwrap_or_else(|| get_pnpm_install_path(app_handle))
+}
+
+/// 当前使用的 pnpm CLI 入口（纯 JS 发行，用 node 运行）。
+///
+/// 离线安装包直接使用 `resources/pnpm`，完全跳过本地 pnpm 与 AppData 副本。
 pub fn get_pnpm_binary_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
-    get_pnpm_install_path(app_handle).join(PNPM_ENTRY_RELATIVE)
+    get_pnpm_runtime_dir(app_handle).join(PNPM_ENTRY_RELATIVE)
 }
 
 /// pnpm 官方/镜像下载前缀：国内走 npmmirror registry，其他直连 npmjs.org

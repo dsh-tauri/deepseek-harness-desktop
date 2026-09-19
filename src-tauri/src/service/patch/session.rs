@@ -19,7 +19,7 @@ const INSERTION: &str = r#"/** Remove one live session by id and run its officia
 	/** Remove one exact entered session and emit its paired disposal when announced. */"#;
 
 /// 相对活动核心安装目录的 session `lib/index.js` 包内路径。
-const SESSION_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-session/lib/index.js";
+pub(super) const SESSION_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-session/lib/index.js";
 
 fn patch_source(source: &str) -> PatchOutcome {
     if source.contains(PATCH_MARKER) {

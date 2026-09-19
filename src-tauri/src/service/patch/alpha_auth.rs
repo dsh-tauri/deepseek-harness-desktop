@@ -30,7 +30,7 @@ use crate::utils::{dsh_rel_contains, patch_dsh, PatchOutcome};
 const PATCH_MARKER: &str = "dsh-tauri-desktop: alpha embedded auth --skip-auth flag";
 
 // ── dsh-web-app/lib/startup.js ────────────────────────────────────────────────
-const WEB_STARTUP_REL: &str = "node_modules/@deepseek-ai/dsh-web-app/lib/startup.js";
+pub(super) const WEB_STARTUP_REL: &str = "node_modules/@deepseek-ai/dsh-web-app/lib/startup.js";
 const STARTUP_OPTION_ANCHOR: &str =
     ".option(\"--no-open\", \"do not open the Web UI in the default browser\")";
 const STARTUP_OPTION_REPLACEMENT: &str = ".option(\"--no-open\", \"do not open the Web UI in the default browser\")\n\t\t.option(\"--skip-auth\", \"skip the browser-session token/cookie exchange; keeps the Host/Origin trust fence (for embedded UIs)\")";
@@ -38,7 +38,7 @@ const STARTUP_ACTION_ANCHOR: &str = "\t\tconst options = program.opts();";
 const STARTUP_ACTION_REPLACEMENT: &str = "\t\tconst options = program.opts();\n\t\t/* dsh-tauri-desktop: alpha embedded auth --skip-auth flag */\n\t\tif (options.skipAuth) process.env.DSH_SKIP_AUTH = \"1\";";
 
 // ── dsh-client-connection/lib/index.js ────────────────────────────────────────
-const CONNECTION_INDEX_JS: &str =
+pub(super) const CONNECTION_INDEX_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-connection/lib/index.js";
 const REJECTION_ANCHOR: &str = "\trequestRejection(request) {\n\t\tif (!isTrustedApiRequest(request, this.trustedHosts)) return 403;\n\t\treturn this.browserAuth.isAuthenticated(request) ? void 0 : 401;\n\t}";
 const REJECTION_PATCHED: &str = "\trequestRejection(request) {\n\t\tif (!isTrustedApiRequest(request, this.trustedHosts)) return 403;\n\t\tif (process.env.DSH_SKIP_AUTH === \"1\") return void 0;\n\t\treturn this.browserAuth.isAuthenticated(request) ? void 0 : 401;\n\t} /* dsh-tauri-desktop: alpha embedded auth --skip-auth flag */";

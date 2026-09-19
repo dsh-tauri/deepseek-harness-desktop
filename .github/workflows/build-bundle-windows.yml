@@ -1,0 +1,70 @@
+name: Reusable Windows Offline Bundle Build
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      dsh_tag:
+        required: true
+        type: string
+      dsh_commit:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build offline bundle (windows)
+    runs-on: windows-latest
+    # 离线包要下载 Node/dsh/MinGit 并压缩数百 MB 资源，远慢于普通构建。
+    timeout-minutes: 180
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare bundled resources
+        uses: ./.github/actions/prepare-bundle-resources
+        with:
+          platform: windows
+          arch: x64
+          dsh-tag: ${{ inputs.dsh_tag }}
+          dsh-commit: ${{ inputs.dsh_commit }}
+
+      # 只出 NSIS：离线包资源有数万个文件，WiX/MSI 既慢又受 2 GB cab 上限约束。
+      - name: Build offline installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --bundles nsis
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-bundle-windows
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7

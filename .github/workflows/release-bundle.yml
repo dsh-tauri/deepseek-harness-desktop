@@ -1,0 +1,307 @@
+name: Build & Release (Offline Bundle)
+
+# 离线安装包：在普通发布流程（release.yml）成功后追加一次带资源构建。
+# 产物把 Node.js 运行时、推荐 dsh 内核、pnpm 随安装包分发，首次启动直接落地到应用
+# 数据目录，全程不联网。
+#
+# 手动触发有两条路：
+# - 留空 `tag`：试跑。构建当前 ref，发一个 `test-<ref>-<run>` 测试预发布，不碰任何
+#   已发布的 release（与 release.yml 的手动触发约定一致）。
+# - 指定 `tag`：为已有 release 补构建。必须**从该 tag 指向的提交**触发（ref 选对应
+#   tag），因为构建源恒为触发提交，而产物是 `--clobber` 上传的。
+on:
+  workflow_run:
+    workflows: ['Build & Release']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      platform_filter:
+        description: 选择需要打包的平台
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - macos-aarch64
+          - macos-x86_64
+          - windows
+          - linux
+      tag:
+        description: 目标 release tag（留空 = 发测试预发布；指定时需从该 tag 的提交触发）
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  # 写权限只给真正上传产物的 finalize；prepare 与三个可复用构建只需要读。
+  contents: read
+
+concurrency:
+  group: release-bundle-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Offline Bundle
+    # workflow_run 会为 release.yml 的每一次结束（含失败/取消/全部 job 被跳过）触发。
+    # 被跳过的 job 报告的是 success，因此只看 conclusion 会接受「fork PR 被关闭但未合并」
+    # 那种整轮全跳过的运行——那样下面就会 checkout 到 fork 的 head_sha，并在带写权限与
+    # 签名密钥的构建里执行它。必须同时要求触发运行来自本仓库。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.release.outputs.should_build }}
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      version: ${{ steps.release.outputs.version }}
+      source_ref: ${{ steps.release.outputs.source_ref }}
+      dsh_tag: ${{ steps.meta.outputs.dsh_tag }}
+      dsh_commit: ${{ steps.meta.outputs.dsh_commit }}
+    steps:
+      - name: Checkout triggering commit
+        uses: actions/checkout@v7
+        with:
+          # 构建源恒为触发提交：workflow_run 用触发运行时的 head_sha（release.yml 真正
+          # 构建的提交），手动触发用所选 ref。真实发布路径下 tag 必须指向同一个提交
+          # （见 Resolve release tag），因此工作区、元数据、产物版本天然同源。
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          # 不把仓库写令牌留在 .git/config 里（后续步骤不需要 push）。
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Resolve release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TAG_INPUT: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          SOURCE_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          tag="$TAG_INPUT"
+          prerelease=false
+          manual=false
+          [ "$EVENT_NAME" = "workflow_dispatch" ] && manual=true
+
+          emit() {
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+            echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          }
+          # 自动路径（workflow_run 为每一次成功运行都触发，含测试发布）只跳过并告警；
+          # 手动指定了 tag 说明用户有明确目标，静默跳过会让人以为构建成功。
+          skip() {
+            emit
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::$1"
+            exit 0
+          }
+          reject() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          if [ "$manual" = true ] && [ -z "$tag" ]; then
+            # 手动触发且未指定 tag = 试跑：不碰任何已发布的 release，按 release.yml
+            # 的手动触发约定发一个测试预发布。
+            tag="test-${REF_NAME}-${RUN_NUMBER}"
+            prerelease=true
+            emit
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "offline bundle test release: $tag ($version) from $SOURCE_REF"
+            exit 0
+          fi
+
+          if [ -z "$tag" ] && [[ "$RUN_HEAD_BRANCH" == v* ]]; then
+            tag="$RUN_HEAD_BRANCH"
+          fi
+          if [ -z "$tag" ]; then
+            tag="v$version"
+          fi
+
+          gh release view "$tag" >/dev/null 2>&1 \
+            || skip "release $tag does not exist, skipping the offline bundle build"
+
+          # 构建源恒为触发提交，而 finalize 是 `gh release upload --clobber`：必须确认
+          # 目标 release 的 tag 正好指向这个提交，否则就会用别的提交构建的产物覆盖该版本
+          # 已发布的离线包。tag 解析不到也算不安全——GitHub 会在 tag ref 被删除后保留
+          # release 记录，那时 `gh release view` 成功而 `git rev-parse` 失败。
+          tag_commit="$(git rev-parse --verify --quiet "${tag}^{commit}" || true)"
+          if [ -z "$tag_commit" ]; then
+            hint="cannot resolve tag $tag locally"
+          elif [ "$tag_commit" != "$SOURCE_REF" ]; then
+            hint="tag $tag points at $tag_commit but this run builds $SOURCE_REF"
+          else
+            emit
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "offline bundle target release: $tag ($version) from $SOURCE_REF"
+            exit 0
+          fi
+
+          if [ "$manual" = true ]; then
+            reject "$hint; dispatch this workflow from the release commit (pick the $tag tag as the ref), or clear the tag input to publish a test prerelease instead"
+          fi
+          skip "$hint; skipping the offline bundle build"
+
+      - name: Resolve bundle metadata
+        id: meta
+        if: steps.release.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/bundle-metadata.mjs
+
+  build-macos:
+    name: Build macOS Offline Bundle
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       startsWith(inputs.platform_filter, 'macos-'))
+    uses: ./.github/workflows/build-bundle-macos.yml
+    with:
+      platform_filter: ${{ github.event_name == 'workflow_dispatch' && inputs.platform_filter || 'all' }}
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
+      dsh_commit: ${{ needs.prepare.outputs.dsh_commit }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  build-windows:
+    name: Build Windows Offline Bundle
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       inputs.platform_filter == 'windows')
+    uses: ./.github/workflows/build-bundle-windows.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
+      dsh_commit: ${{ needs.prepare.outputs.dsh_commit }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  build-linux:
+    name: Build Linux Offline Bundle
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       inputs.platform_filter == 'linux')
+    uses: ./.github/workflows/build-bundle-linux.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
+      dsh_commit: ${{ needs.prepare.outputs.dsh_commit }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  finalize:
+    name: Publish Offline Installers
+    needs: [prepare, build-macos, build-windows, build-linux]
+    if: >-
+      always() && needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      ((github.event_name != 'workflow_dispatch' &&
+        needs.build-macos.result == 'success' &&
+        needs.build-windows.result == 'success' &&
+        needs.build-linux.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' &&
+        (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
+        (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
+        (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build outputs
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-bundle-*
+          path: release-assets
+
+      # 统一命名为 Deepseek.Harness.Desktop_Bundle_<version>.<ext>：与普通安装包
+      # （Tauri 默认名）区分，且同一 release 内不会重名。macOS 两个架构的产物
+      # 扩展名相同，必须带架构后缀才不会互相覆盖。
+      - name: Rename offline installers
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          shopt -s nullglob
+          for dir in release-assets/*/; do
+            artifact="$(basename "$dir")"
+            suffix=""
+            case "$artifact" in
+              *macos-aarch64*) suffix="_aarch64" ;;
+              *macos-x86_64*) suffix="_x64" ;;
+            esac
+            for file in "$dir"*; do
+              [ -f "$file" ] || continue
+              base="$(basename "$file")"
+              ext="${base##*.}"
+              cp "$file" "upload/Deepseek.Harness.Desktop_Bundle_${VERSION}${suffix}.${ext}"
+            done
+          done
+          find upload -type f -print | sort
+
+      - name: Verify offline installers
+        run: |
+          set -euo pipefail
+          [ -n "$(find upload -type f -print -quit)" ] || {
+            echo '::error::No offline installers were produced'
+            exit 1
+          }
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # finalize 未 checkout，gh 无法从 .git 推断仓库，需显式指定。
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # 试跑路径的 test-* release 还不存在，按 release.yml 的手动触发约定新建；
+          # 真实发布路径的 release 由 release.yml 的 finalize 建好，这里只上传。
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --title "Deepseek Harness Desktop $RELEASE_TAG"
+          fi
+          mapfile -d '' assets < <(find upload -type f -print0)
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          if [ "$PRERELEASE" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          fi
+          {
+            echo "### Offline bundle assets"
+            for asset in "${assets[@]}"; do
+              echo "- \`$(basename "$asset")\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

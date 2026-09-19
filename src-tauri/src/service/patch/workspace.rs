@@ -18,7 +18,7 @@ const MUTATE_ORIGINAL: &str = "const sessionIds = changed.sessionIds.filter((id)
 const MUTATE_PATCHED: &str = "const sessionIds = changed.sessionIds; /* dsh-tauri-worktree: relaxed explicit workspace membership */";
 
 /// 相对活动核心安装目录的 workspace `lib/index.js` 包内路径。
-const WORKSPACE_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-workspace/lib/index.js";
+pub(super) const WORKSPACE_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-workspace/lib/index.js";
 
 fn patch_source(source: &str) -> PatchOutcome {
     if source.contains(PATCH_MARKER) {

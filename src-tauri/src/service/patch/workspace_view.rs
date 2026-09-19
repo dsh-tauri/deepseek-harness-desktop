@@ -40,7 +40,7 @@ const SESSION_UPDATED_AT_PATCHED: &str =
     "d.sessionUpdatedAtByAccount = Object.fromEntries(Object.entries(d.sessionUpdatedAtByAccount ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
 
 /// 相对活动核心安装目录的 workspace 客户端 `lib/client.js` 包内路径。
-const WORKSPACE_CLIENT_JS: &str =
+pub(super) const WORKSPACE_CLIENT_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js";
 
 fn patch_source(source: &str) -> PatchOutcome {

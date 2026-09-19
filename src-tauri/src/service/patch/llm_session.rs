@@ -24,7 +24,7 @@ use crate::utils::{patch_dsh, PatchOutcome};
 const PATCH_MARKER: &str = "dsh-tauri-desktop: OpenCode Go session header";
 
 /// 相对活动核心安装目录的 pi-ai 适配器包内路径。
-const PI_AI_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js";
+pub(super) const PI_AI_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js";
 
 /// 原始 `requestHeaders` 定义：单参数、直接取 attribution。
 const HEADERS_ANCHOR: &str =
