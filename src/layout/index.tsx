@@ -141,7 +141,7 @@ export function App() {
   }
 
   return (
-    <div className="flex h-screen w-screen">
+    <div className="flex h-screen w-screen" data-testid="dsh-shell-root">
       <Webview />
       <If cond={status === 'ready'}>
         {coreBreakingHolder}

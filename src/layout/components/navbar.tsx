@@ -352,6 +352,7 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
         },
       )}
       style={{ background: dshStyle.sidebar?.background }}
+      data-testid="dsh-navbar-root"
     >
       <If cond={onToggleSidebar != null && tauriEnabled}>
         <Button
@@ -509,7 +510,7 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
         </div>
       </If>
       <If cond={import.meta.env.DEV}>
-        <Chip size="sm" variant="primary" color="warning" className="text-xs text-background ml-1">
+        <Chip size="sm" variant="primary" color="warning" className="text-xs text-background ml-1" data-testid="dsh-navbar-dev-chip">
           {t('app.dev_env')}
         </Chip>
       </If>
