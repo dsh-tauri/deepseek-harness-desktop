@@ -81,6 +81,13 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
         return Ok(false);
     };
 
+    // 自动下载被禁用（手动常量开关或 E2E 运行）：不装环境、不查版本、不下载核心。
+    // 返回 `false` 与「已是最新」同语义——前端据此不重启服务，直接用盘上运行时。
+    if config::auto_download_disabled() {
+        log::info!("Auto download disabled, skipping dependency installation");
+        return Ok(false);
+    }
+
     // 以实际安装状态为准：本地安装与 GitHub 最新 release 的 commit hash
     // 不一致时，说明上游 pkg 有更新/修复，需要自动重新下载。
     let node_ok = download::Nodejs.check_installed(&app_handle);

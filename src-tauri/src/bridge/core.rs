@@ -3,6 +3,7 @@
 //! 管理本地 CLI 核心与预打包的各个发布版本，支持切换活动核心、下载历史版本
 //! 到槽位、卸载已下载的历史版本，以及通过用户包管理器 CLI 更新本地核心。
 
+use crate::config;
 use crate::service::core;
 use tauri::AppHandle;
 
@@ -30,6 +31,9 @@ pub async fn download_core(
     app_handle: AppHandle,
     tag: String,
 ) -> Result<core::HarnessCore, String> {
+    if config::auto_download_disabled() {
+        return Err("AUTO_DOWNLOAD_DISABLED: 自动下载已被禁用，无法下载核心".to_string());
+    }
     core::download_version(&app_handle, &tag).await
 }
 

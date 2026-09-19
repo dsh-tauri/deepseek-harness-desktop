@@ -18,7 +18,7 @@
 //! - `always_on_top` 在 Windows 上 Tauri 原生 API 即可保持置顶（BongoCat 为
 //!   额外稳定性用 SetWindowPos 循环轮询，本项目暂不做该平台特定加固）。
 
-use crate::config::{self, STORE_PET_WINDOW_STATE_KEY};
+use crate::config::{store_dat_file_name, STORE_PET_WINDOW_STATE_KEY};
 use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
@@ -57,14 +57,6 @@ pub struct PetWindowPosition {
     /// 非 None 时恢复物理位置；None 表示用户从未拖动过，走系统默认（居中靠下）。
     pub x: Option<i32>,
     pub y: Option<i32>,
-}
-
-fn store_dat_file_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        config::STORE_DAT_DEV_FILE
-    } else {
-        config::STORE_DAT_FILE
-    }
 }
 
 /// 读取上次保存的桌宠窗口位置；无记录时返回默认（None，位置未定）。

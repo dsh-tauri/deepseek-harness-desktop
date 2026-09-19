@@ -13,7 +13,8 @@ import { defineProject } from 'vitest/config'
  * （clone/checkout/discard），全量并行时与其他文件的 git 操作竞争系统资源，
  * 偶发 5s 超时 flake；限制 maxWorkers 后单独复跑稳定通过。
  *
- * E2E 用例（插件 `test` 目录下的 `.e2e.ts`）由 `vitest.e2e.config.ts` 负责，本 project 不收。
+ * E2E 用例（`test/e2e/desktop` 与 `test/e2e/plugins` 下的 `.e2e.ts`）由
+ * `vitest.desktop.config.ts` / `vitest.e2e.config.ts` 负责，本 project 不收。
  */
 export default defineProject({
   test: {

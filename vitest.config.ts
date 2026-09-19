@@ -21,6 +21,7 @@ export default defineConfig({
     projects: [
       './vitest.unit.config.ts',
       './vitest.e2e.config.ts',
+      './vitest.desktop.config.ts',
     ],
   },
 })

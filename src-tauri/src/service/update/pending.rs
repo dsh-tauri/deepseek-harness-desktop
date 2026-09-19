@@ -14,17 +14,8 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
-use crate::config::{STORE_DAT_DEV_FILE, STORE_DAT_FILE, STORE_PENDING_INSTALLER_KEY};
+use crate::config::{store_dat_file_name, STORE_PENDING_INSTALLER_KEY};
 use crate::service::workflow;
-
-/// Store 持久化文件名：debug 构建与生产隔离，语义同 `config::setting`。
-fn store_dat_file_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        STORE_DAT_DEV_FILE
-    } else {
-        STORE_DAT_FILE
-    }
-}
 
 /// 「待安装」标记：安装包路径 + 它对应的版本号。
 ///

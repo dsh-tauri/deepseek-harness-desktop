@@ -106,7 +106,8 @@
 | 应用二进制 | `src-tauri/target/debug/deepseek-harness-desktop.exe` | `src-tauri/Cargo.toml:2` |
 | 前端产物 | `dist/`（缺失时 cargo 构建无法嵌入前端） | `src-tauri/tauri.conf.json:10` |
 | 应用端口 | Debug 默认 `3081`（Release `3080`）；被占用时逐级递增 | `src-tauri/src/config/constants.rs:50`、`:53`、`src-tauri/src/service/workflow/launch.rs:66` |
-| 数据目录 | Debug 恒为 `<home>/.dsh.dev`，Store 为 `.store.dev.dat`；**测试中 `<home>` 必须被重定向到 `$E2E_HOME/home`**（见 §5.3） | `src-tauri/src/config/runtime.rs:471`、`:482`；`src-tauri/src/config/setting.rs:191` |
+| 数据目录 | Debug 恒为 `<home>/.dsh.dev`；**测试中 `<home>` 由 `USERPROFILE` 重定向到 `$E2E_HOME/home`**（见 §5.3） | `src-tauri/src/config/runtime.rs:455`、`:471`、`:482` |
+| Store 文件 | 生产 `.store.dat` / 开发 `.store.dev.dat` / **E2E `.store.test.dat`**（按 `TAURI_WEBDRIVER_PORT` 判定） | `src-tauri/src/config/setting.rs`（`store_dat_file_name`）；常量在 `config/constants.rs` |
 | 窗口标题 | `Deepseek Harness Desktop` | `src-tauri/src/desktop/builder.rs:484` |
 | 窗口初始/最小尺寸 | `1280×840` / `860×620` | `src-tauri/src/desktop/builder.rs:485`、`:486` |
 | 壳层导航栏高度 | `44`（`SHELL_NAV_HEIGHT`，与 `h-11` 同真值） | `src-tauri/src/desktop/builder.rs:44`、`src/layout/components/navbar.tsx:347` |
@@ -126,18 +127,29 @@
 | 二进制存在且可执行 | 不存在即 Fail，不尝试构建 |
 | 端口空闲 | 按「默认 3081 + 实测空闲」判定；被占用即 Fail |
 | 无残留桌面实例 | 按进程名匹配；存在残留即 Fail，**不自动强杀用户进程** |
-| 数据目录归属 | 解析出的 `data_dir` 与 app-data 根必须落在 `$E2E_HOME` 之下 |
+| 数据目录归属 | 解析出的 `data_dir` 必须落在 `$E2E_HOME/home` 之下 |
 | 收尾 | 每个 Spec 结束主动关闭应用并等待平滑退出；异常残留由脚本自行清理 |
 
 ### 5.3 数据目录隔离
 
-以 `docs/specs/desktop.test.md` §6 为准。本目录用例中的所有数据路径均为 `$E2E_HOME` 之下的相对简写：
+以 `docs/specs/desktop.test.md` §6.1 为准。两类落盘位置同源于 home 根，重定向 `USERPROFILE`(Windows)/`HOME`(Unix) 即可一并隔离：
+
+| 落盘位置 | 隔离方式 |
+| --- | --- |
+| dsh 数据目录 | home 重定向（`get_dsh_data_path` 读 `USERPROFILE`/`HOME`） |
+| 应用数据目录（Store） | 同源派生；Store 另按 `TAURI_WEBDRIVER_PORT` 选用 `.store.test.dat` 作第二道防线 |
+
+**启动前提**：必须预建 `<home>/AppData/Local` 与 `<home>/AppData/Roaming`，否则 `plugin-http` 初始化失败、应用启动即 panic（exit 101）。
+
+本目录用例中的数据路径简写：
 
 | 简写 | 实际路径 |
 | --- | --- |
 | `~/.dsh.dev` | `$E2E_HOME/home/.dsh.dev` |
 | `~/.dsh` | `$E2E_HOME/home/.dsh` |
-| `AppData/` | `$E2E_HOME/appdata/io.github.hairyf.deepseek-harness-desktop/` |
+| `AppData/` | `$E2E_HOME/home/AppData/Roaming/io.github.hairyf.deepseek-harness-desktop/`（Store 为 `.store.test.dat`） |
+
+**前置清空**：脚手架必须在启动前删除 `<app-data>/.store.test.dat`，否则窗口几何等状态会从上一次运行继承。
 
 ### 5.4 平台约定
 

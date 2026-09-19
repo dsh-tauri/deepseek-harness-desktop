@@ -93,6 +93,34 @@ pub const STORE_DAT_FILE: &str = ".store.dat";
 /// active_core 等设置跨版本互写（生产默认 3080、开发默认 3081，共用一份
 /// store 会让两边端口一路漂移并相互污染状态）。
 pub const STORE_DAT_DEV_FILE: &str = ".store.dev.dat";
+/// E2E 构建的 Store 持久化文件名：与开发/生产三方隔离。
+///
+/// 测试跑的是 debug 二进制，若复用 `.store.dev.dat`，用例写入的窗口几何会覆盖
+/// 用户正在使用的开发版配置（且 `app_data_dir()` 由 `SHGetKnownFolderPath` 解析，
+/// 重定向 `APPDATA`/`USERPROFILE` 环境变量**无法**把它引到 scratch 目录）。
+pub const STORE_DAT_TEST_FILE: &str = ".store.test.dat";
+/// E2E 信号环境变量：与 `tauri-plugin-wdio-webdriver` 的门控同源——该插件只在
+/// 此变量存在时监听，应用也据此切到测试 Store，二者不会各走各的。
+pub const E2E_PORT_ENV_VAR: &str = "TAURI_WEBDRIVER_PORT";
+
+/// 手动开关：为 `true` 时禁用环境（Node/pnpm/Git）与 Harness 核心的自动下载。
+///
+/// 默认 `false`——正常使用不受影响。置 `true` 后 `install_dependencies` 直接返回
+/// 「未安装」、`download_core` 拒绝执行，应用只能使用已落盘的运行时与预打包核心。
+/// 想临时省流量又不想改代码时，用 `E2E_DISABLE_DOWNLOAD_ENV_VAR`。
+pub const DISABLE_AUTO_DOWNLOAD: bool = false;
+
+/// 运行期选择禁用自动下载的环境变量：值为 `1` / `true` 时生效。
+///
+/// 供 E2E 按需选择：只验壳层行为的用例可置位以跳过一次联网核对；需要覆盖
+/// 启动装配流程的用例则保持不置位，让应用正常走安装路径。
+pub const E2E_DISABLE_DOWNLOAD_ENV_VAR: &str = "DSH_E2E_DISABLE_DOWNLOAD";
+
+/// 下载缓存根的环境变量：覆盖 `<app-data>[/dev]` 这个基础目录。
+///
+/// 环境（Node/pnpm/Git）与核心都装在该根下。E2E 每次使用全新 scratch home，
+/// 若不覆盖就会反复重下；把它指向一个稳定目录即可让首次下载在后续运行中复用。
+pub const DOWNLOAD_CACHE_ENV_VAR: &str = "DSH_DOWNLOAD_CACHE_DIR";
 pub const STORE_SETTING_KEY: &str = "setting";
 /// Store 中记录主窗口几何（位置/大小/最大化）的键
 pub const STORE_WINDOW_STATE_KEY: &str = "window_state";

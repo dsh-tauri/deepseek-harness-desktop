@@ -176,8 +176,8 @@ pnpm test:e2e:plugin      # 仅执行 L2 插件 E2E 测试（需先执行 pnpm b
 
 ### 数据目录约束（强制）
 
-**禁止**读写用户真实 `~/.dsh`、`~/.dsh.dev`，**禁止**读写 `%APPDATA%/io.github.hairyf.deepseek-harness-desktop` 下的真实目录。
+**禁止**读写用户真实的 `~/.dsh`、`~/.dsh.dev`，**禁止**改写用户真实的 `.store.dev.dat` / `.store.dat`。
 
 * **L2**：`DSH_HOME` 一律指向 `<DSH_E2E_HOME>/dsh`；落在 `DSH_E2E_HOME` 之外的 profile 视为编排缺陷。
-* **L3**：debug 构建的 `get_dsh_data_path` 恒为 `<home>/.dsh.dev` 且忽略 `DSH_HOME`（`src-tauri/src/config/runtime.rs:471`），应用数据目录另由 `app_data_dir()` 决定（`src-tauri/src/config/runtime.rs:17`）。因此启动应用前必须重定向两个根——`USERPROFILE`(Windows)/`HOME`(Unix) → `<DSH_E2E_HOME>/home`，`APPDATA`(Windows)/`XDG_DATA_HOME`(Unix) → `<DSH_E2E_HOME>/appdata`。
-* **失败关闭**：脚手架在启动应用前必须断言解析出的 `data_dir` 与 app-data 根均位于 `DSH_E2E_HOME` 之下；不满足即 Fail，不得降级到真实目录。
+* **L3**：重定向 `USERPROFILE`(Windows)/`HOME`(Unix) 到 `<DSH_E2E_HOME>/home` 即可同时隔离 dsh 数据目录（`get_dsh_data_path` 读该环境变量，`src-tauri/src/config/runtime.rs:455`；debug 下恒为 `<home>/.dsh.dev` 且忽略 `DSH_HOME`，`:471`）与 app-data 目录（`app_data_dir()` = `dirs::data_dir()/<identifier>`，由 home 派生）。**必须预建 `<home>/AppData/Local` 与 `AppData/Roaming`**，否则 `plugin-http` 初始化失败导致应用 panic。Store 另按 `TAURI_WEBDRIVER_PORT` 选用 `.store.test.dat`（`config::setting::store_dat_file_name()`）作第二道防线。
+* **前置清空**：L3 脚手架必须在启动前删除 `<app-data>/.store.test.dat`，否则会继承上一次运行的窗口几何等状态。

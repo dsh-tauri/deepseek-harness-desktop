@@ -182,14 +182,44 @@ impl Default for Setting {
     }
 }
 
-/// Store 持久化文件名：debug 构建与生产隔离（各自独立文件）。
+/// 当前是否为 E2E 运行（内嵌 WebDriver server 被请求）。
+pub fn is_e2e_run() -> bool {
+    std::env::var_os(E2E_PORT_ENV_VAR).is_some_and(|v| !v.is_empty())
+}
+
+/// 是否禁用环境与核心的自动下载：编译期常量开关，或运行期环境变量选择。
 ///
-/// store（端口、installed、active_core 等）属于「应用数据」而非共用核心——
-/// 生产默认 3080、开发默认 3081，共用一份 store 会让两边端口一路漂移
-/// （release 读到开发写入的 3081 后把 3080 让出，开发下次又从 3081 漂走）
-/// 并相互污染安装/核心等状态。
-fn store_dat_file_name() -> &'static str {
-    if cfg!(debug_assertions) {
+/// **不随 E2E 自动生效**——是否禁用由测试按需选择：只验壳层的用例置位以省流量，
+/// 覆盖启动装配流程的用例保持不置位。
+pub fn auto_download_disabled() -> bool {
+    DISABLE_AUTO_DOWNLOAD || env_flag(E2E_DISABLE_DOWNLOAD_ENV_VAR)
+}
+
+/// 读取布尔型环境变量：`1` / `true`（忽略大小写）为真，其余（含未设置）为假。
+fn env_flag(key: &str) -> bool {
+    std::env::var(key).is_ok_and(|v| {
+        let v = v.trim();
+        v == "1" || v.eq_ignore_ascii_case("true")
+    })
+}
+
+/// 当前进程应使用的 Store 持久化文件名（生产 / 开发 / E2E 三方隔离的唯一真值）。
+///
+/// store（端口、installed、active_core、窗口几何等）属于「应用数据」而非共用核心：
+/// 生产默认 3080、开发默认 3081，共用一份 store 会让两边端口一路漂移并相互污染状态；
+/// E2E 若复用开发文件，用例写入的窗口几何会覆盖用户正在使用的开发版配置。
+///
+/// 注意 `app_data_dir()` 在 Windows 上由 `SHGetKnownFolderPath` 解析，重定向
+/// `APPDATA` 环境变量**无法**把 store 引到 scratch 目录——三方隔离只能靠换文件名。
+pub fn store_dat_file_name() -> &'static str {
+    resolve_store_dat_file(is_e2e_run(), cfg!(debug_assertions))
+}
+
+/// `store_dat_file_name` 的纯函数内核：把「是否 E2E」「是否 debug」映射到文件名。
+fn resolve_store_dat_file(e2e: bool, debug: bool) -> &'static str {
+    if e2e {
+        STORE_DAT_TEST_FILE
+    } else if debug {
         STORE_DAT_DEV_FILE
     } else {
         STORE_DAT_FILE
@@ -345,8 +375,28 @@ pub fn set_dsh_pkg_tag(app_handle: &AppHandle, tag: String) {
 mod tests {
     use super::{
         default_close_action, default_zoom_factor, normalize_close_action, normalize_zoom_factor,
-        preserve_persisted_fields, Setting, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
+        preserve_persisted_fields, resolve_store_dat_file, Setting, STORE_DAT_DEV_FILE,
+        STORE_DAT_FILE, STORE_DAT_TEST_FILE, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
+
+    #[test]
+    fn store_dat_file_name_isolates_the_three_modes() {
+        assert_eq!(resolve_store_dat_file(true, true), STORE_DAT_TEST_FILE);
+        assert_eq!(resolve_store_dat_file(true, false), STORE_DAT_TEST_FILE);
+        assert_eq!(resolve_store_dat_file(false, true), STORE_DAT_DEV_FILE);
+        assert_eq!(resolve_store_dat_file(false, false), STORE_DAT_FILE);
+    }
+
+    /// 三方文件名必须互不相同：任何一处塌缩都会让某一方改写另一方的用户状态。
+    #[test]
+    fn store_dat_file_names_are_pairwise_distinct() {
+        let names = [STORE_DAT_FILE, STORE_DAT_DEV_FILE, STORE_DAT_TEST_FILE];
+        for (i, a) in names.iter().enumerate() {
+            for b in names.iter().skip(i + 1) {
+                assert_ne!(a, b, "Store 文件名重复：{a} 与 {b}");
+            }
+        }
+    }
 
     #[test]
     fn zoom_factor_defaults_for_legacy_settings() {

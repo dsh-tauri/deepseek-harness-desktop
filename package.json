@@ -19,6 +19,7 @@
     "test": "vitest",
     "test:unit": "vitest --project unit",
     "test:e2e:plugin": "vitest --project e2e",
+    "test:e2e:desktop": "vitest --project desktop",
     "lint": "eslint",
     "knip": "knip",
     "lint:fix": "eslint . --fix",

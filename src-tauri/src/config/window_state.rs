@@ -17,7 +17,8 @@ use tauri::{
 };
 use tauri_plugin_store::StoreExt;
 
-use super::constants::{STORE_DAT_DEV_FILE, STORE_DAT_FILE, STORE_WINDOW_STATE_KEY};
+use super::constants::STORE_WINDOW_STATE_KEY;
+use super::setting::store_dat_file_name;
 
 /// 主窗口默认尺寸（逻辑像素，首次启动/无历史时由 builder 采用）
 pub const DEFAULT_WINDOW_WIDTH: f64 = 1280.0;
@@ -89,16 +90,6 @@ impl Drop for GeometryRestoreGuard {
 /// 当前是否处于启动几何恢复窗口（采样门控用）。
 fn is_restoring_geometry() -> bool {
     RESTORING_GEOMETRY.load(Ordering::SeqCst)
-}
-
-/// Store 持久化文件名：debug 构建与生产隔离（各自独立文件），语义同
-/// `config::setting` 的 store 文件选择，保证开发版与发布版窗口几何不互相污染。
-fn store_dat_file_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        STORE_DAT_DEV_FILE
-    } else {
-        STORE_DAT_FILE
-    }
 }
 
 /// 读取上次保存的窗口状态；无记录时返回默认值（首次启动）。

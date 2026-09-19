@@ -17,7 +17,7 @@
 | --- | --- |
 | `default_port()` = `cfg!(debug_assertions) ? DSH_DEV_PORT(3081) : DSH_PORT(3080)` | `src-tauri/src/config/setting.rs:149`；`src-tauri/src/config/constants.rs:50`、`:53` |
 | `get_dsh_data_path`：debug 恒 `$E2E_HOME/home/.dsh.dev`（忽略 `DSH_HOME`）；release 优先非空 `DSH_HOME`，否则 `<home>/.dsh` | `src-tauri/src/config/runtime.rs:471`、`:455`、`:482` |
-| Store 文件名：debug `.store.dev.dat` / release `.store.dat`，位于 tauri store 的 AppData 根（不在 `dev` 子目录）；首装检测同源同文件名 | `src-tauri/src/config/setting.rs:191`、`:214`、`:230`；`src-tauri/src/config/constants.rs:91`、`:95` |
+| Store 文件名：生产 `.store.dat` / 开发 `.store.dev.dat` / **E2E `.store.test.dat`**，位于 tauri store 的 AppData 根（不在 `dev` 子目录）；首装检测同源同文件名 | `src-tauri/src/config/setting.rs`（`store_dat_file_name`）、`:214`、`:230`；常量在 `config/constants.rs` |
 | `get_base_dir` = debug `AppData/dev` : release `AppData`；其下放核心可执行物（`runtime`、`dependencies/dsh`、`dependencies/pnpm`、`dependencies/git`、`logs`） | `src-tauri/src/config/runtime.rs:17`、`:273`、`:491`；`src-tauri/src/config/constants.rs:63` |
 | 端口回退 `find_available_port_by` 从 start 起 `checked_add(1)` 找首个空闲；`u16::MAX` 仍占用报 `PORT_EXHAUSTED: no available TCP port after the configured port` | `src-tauri/src/service/workflow/launch.rs:66`、`:75`、`:85` |
 | `is_port_in_use` = 绑 `127.0.0.1:port` 失败即占用；调用前 `wait_for_port_release`（≤1500ms） | `src-tauri/src/service/workflow/utils.rs:154`；`src-tauri/src/service/workflow/launch.rs:48` |

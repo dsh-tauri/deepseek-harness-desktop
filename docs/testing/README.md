@@ -68,9 +68,9 @@ vitest --project desktop -- <file>   # 单条 L3 用例
 | 层 | 隔离根 | 关键点 |
 | --- | --- | --- |
 | L2 | `DSH_E2E_HOME` | `DSH_HOME` 指向其下的 scratch profile，独立端口 |
-| L3 | `$E2E_HOME` | 重定向 `USERPROFILE`/`HOME` 与 `APPDATA`（debug 构建忽略 `DSH_HOME`） |
+| L3 | `$E2E_HOME` | 重定向 `USERPROFILE`/`HOME` 一并隔离 dsh 数据与 app-data；须预建 `<home>/AppData/Local` 与 `AppData/Roaming`；Store 另用 `.store.test.dat` |
 
-**禁止**读写用户真实的 `~/.dsh`、`~/.dsh.dev` 与 `%APPDATA%/io.github.hairyf.deepseek-harness-desktop`。脚手架必须在启动前断言解析出的数据目录位于隔离根之下，不满足即 Fail，不降级到真实目录。端口或进程残留同样直接 Fail，**不自动强杀用户进程**。
+**禁止**读写用户真实的 `~/.dsh`、`~/.dsh.dev` 与 `.store.dev.dat` / `.store.dat`。L3 的隔离根是 home：`~/.dsh.dev` 与 `app_data_dir()`（`dirs::data_dir()/<identifier>`）都由它派生。端口或进程残留直接 Fail，**不自动强杀用户进程**。
 
 ---
 

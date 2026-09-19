@@ -26,3 +26,4 @@ test/e2e/.artifacts
 source/
 .gitmodules
 .tmp-alpha-inspect
+.dsh.dev

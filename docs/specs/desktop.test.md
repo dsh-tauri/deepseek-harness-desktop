@@ -113,28 +113,37 @@ E2E 测试**必须**使用 `data-testid` 进行元素定位，严禁依赖 CSS �
 | 维度 | 规范约定 |
 | --- | --- |
 | **端口策略** | Debug 构建默认使用 `3081`（Release 为 `3080`）。测试运行前断言默认端口空闲。 |
-| **数据目录** | **全部测试数据必须落在本次运行独占的独立根 `$E2E_HOME` 之下，严禁读写用户真实的 `~/.dsh`、`~/.dsh.dev` 与 `%APPDATA%/io.github.hairyf.deepseek-harness-desktop`。** |
+| **数据目录** | 重定向 home 根即可同时隔离 dsh 数据与应用数据；Store 另用 `.store.test.dat` 作第二道防线。**严禁读写用户真实的 `~/.dsh`、`~/.dsh.dev` 与 `.store.dev.dat` / `.store.dat`。** 详见 §6.1。 |
 | **前置校验** | 测试前检查端口与进程；存在残留直接 Fail，**不自动强杀用户进程**。 |
 | **测试收尾** | 单个 Spec 结束必须主动关闭应用并等待进程平滑退出；异常残留由测试脚本自行清理。 |
 | **运行网络** | 默认允许联网。断网测试需在用例 `[前置条件]` 中单独标注并构造环境。 |
 
-### 6.1 独立根 `$E2E_HOME`（强制）
+### 6.1 隔离机制（强制）
 
-`$E2E_HOME` = `<tmp>/dsh-e2e-desktop-<时间戳>`，由桌面端宿主编排创建，运行结束递归删除。用例文档中的 `~/.dsh.dev`、`~/.dsh`、`AppData/` 均为其下的相对简写：
+两类落盘位置**同源于 home 根**，重定向 `USERPROFILE`(Windows)/`HOME`(Unix) 到 `$E2E_HOME/home` 即可一并隔离：
+
+| 落盘位置 | 解析方式 |
+| --- | --- |
+| dsh 数据目录 `~/.dsh.dev` | `get_dsh_data_path` 读 `USERPROFILE`/`HOME`（`src-tauri/src/config/runtime.rs:455`、`:457`） |
+| 应用数据目录（Store / 日志 / 依赖） | `app_data_dir()` = `dirs::data_dir()/<identifier>`（`tauri-2.11.5/src/path/desktop.rs:247`）；Windows 上由 home 派生 `<home>\AppData\Roaming` |
+
+实测确认：home 重定向后 Store 落在 `$E2E_HOME/home/AppData/Roaming/io.github.hairyf.deepseek-harness-desktop/`，用户真实的 `.store.dev.dat` / `.store.dat` / `~/.dsh.dev` 时间戳均不变。
+
+**启动前提**：`<home>/AppData/Local` 与 `<home>/AppData/Roaming` 必须**预先存在**。`tauri-plugin-http` 的 setup 调用 `app_cache_dir()`，解析不到即 `UnknownPath`，应用于 `lib.rs` 的 `expect` 处 panic（exit 101）。缺这两个目录时表现为「应用启动即崩溃」，容易被误判为二进制损坏。
+
+**Store 三方隔离**：应用以 `TAURI_WEBDRIVER_PORT` 是否存在判定 E2E 运行（与 `tauri-plugin-wdio-webdriver` 的门控同源），据此选用 `.store.test.dat`；生产用 `.store.dat`、开发用 `.store.dev.dat`。判定收敛在 `config::setting::store_dat_file_name()`（`src-tauri/src/config/setting.rs`，常量在 `config/constants.rs`），由 Rust 单测守门三方文件名互不相同。home 重定向已足以隔离，独立 Store 是第二道防线：即使有人在未重定向 home 的情况下用 WebDriver 拉起应用，也不会改写开发版状态。
 
 | 简写 | 实际路径 |
 | --- | --- |
 | `~/.dsh.dev` | `$E2E_HOME/home/.dsh.dev` |
 | `~/.dsh` | `$E2E_HOME/home/.dsh` |
-| `AppData/` | `$E2E_HOME/appdata/io.github.hairyf.deepseek-harness-desktop/` |
+| `AppData/` | `$E2E_HOME/home/AppData/Roaming/io.github.hairyf.deepseek-harness-desktop/`（Store 为 `.store.test.dat`） |
 
-**实现方式**：应用以 `USERPROFILE`(Windows)/`HOME`(Unix) 指向 `$E2E_HOME/home`、以 `APPDATA`(Windows)/`XDG_DATA_HOME`(Unix) 指向 `$E2E_HOME/appdata` 启动。
+**前置清空**：脚手架必须在启动前删除 `<app-data>/.store.test.dat`，保证几何、端口等状态从默认值起步；否则会读到上一次运行留下的窗口几何（`01` 批次 TC-004 因此失败过）。
 
-**失败关闭**：脚手架必须在启动应用前断言解析出的 `data_dir` 与 app-data 根均在 `$E2E_HOME` 之下；不满足即 Fail，不得降级到真实目录。
+**为什么不能只设 `DSH_HOME`**：`get_dsh_data_path` 在 debug 构建下恒返回 `<home>/.dsh.dev` 并**忽略** `DSH_HOME`（`src-tauri/src/config/runtime.rs:471`、`:472`）。
 
-**为什么不能只设 `DSH_HOME`**：`get_dsh_data_path` 在 debug 构建下恒返回 `<home>/.dsh.dev` 并**忽略** `DSH_HOME`（`src-tauri/src/config/runtime.rs:471`、`:472`）；home 根取自 `USERPROFILE`/`HOME`（`src-tauri/src/config/runtime.rs:455`）。应用数据目录另由 `app_handle.path().app_data_dir()` 决定，debug 再追加 `dev` 子目录（`src-tauri/src/config/runtime.rs:17`、`:22`）。因此只能用上述两个根重定向实现隔离。
-
-**禁止事项**：不得设置 `DSH_HOME` 来「隔离」桌面端；不得在用例中创建或删除 `web`、`tauri`、`safe` 档案。
+**禁止事项**：不得设置 `DSH_HOME` 来「隔离」桌面端；不得在用例中创建或删除 `web`、`tauri`、`safe` 档案；不得删除用户真实的 `.store.dev.dat` / `.store.dat`。
 
 ---
 
@@ -185,7 +194,7 @@ vitest --project unit -- <file> # 运行指定单文件测试
 | --- | --- | --- | --- |
 | `unit` | `vitest.unit.config.ts` | `packages/**/*.{test,spec}.*`<br>
 
-<br>`test/unit/**`<br>
+<br>`test/**`<br>
 
 <br>`src/**/*.test.ts` | 排除 `test/archive/**` |
 | `e2e` | `vitest.e2e.config.ts` | `packages/*/test/**/*.e2e.ts` | `globalSetup` 拉起真实 DSH；设置 `fileParallelism: false` |

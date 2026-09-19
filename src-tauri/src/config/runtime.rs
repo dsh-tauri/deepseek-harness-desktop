@@ -14,7 +14,16 @@ use super::{detect_region, Region};
 ///
 /// debug 与 release 不能共用核心安装目录：更新或切换 debug 核心时，可能替换
 /// release 正在加载的 Node 原生模块。用户数据目录另由 `get_dsh_data_path` 隔离。
+///
+/// 环境与核心都装在本根之下。`DOWNLOAD_CACHE_ENV_VAR` 可覆盖它——E2E 每次使用
+/// 全新 scratch home，不覆盖就会反复重下；指向稳定目录即可让首次下载在后续
+/// 运行中复用（清空该目录即回到「首次装配」状态，用于测启动 setup 流程）。
 pub fn get_base_dir<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
+    if let Some(dir) = env::var_os(DOWNLOAD_CACHE_ENV_VAR) {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     let base = app_handle
         .path()
         .app_data_dir()
