@@ -58,7 +58,7 @@
 - 侧栏扩展的路由前缀随桌面统一为 `/api/desktop/dsh-tauri-panel-extension/*`，不改为上游的 `/dsh-plugin-capabilities/*`。
 - MCP 管理继续写入当前扩展约定的 profile / DSH home 路径。
 - 不移植上游设置页的“技能与 MCP”一级标题。
-- 不移植上游 Market（技能市场 / MCP 市场）模块；扩展面板新增的「市场」标签页（`src/client/components/market-tab.tsx`）不来自该上游，而是直接消费 `dshmarket` 经 `ctx.provide('market')` 发布的 `render()` 面板，详见 `docs/UPSTREAM_SYNC.spec.md` §5。
+- 不移植上游 Market（技能市场 / MCP 市场）模块；扩展面板新增的「市场」标签页（`src/client/components/market-tab.tsx`）不来自该上游，而是直接消费 `dshmarket` 经 `ctx.provide('market')` 发布的 `render()` 面板，详见 `docs/specs/upstram.sync.md` §5。
 - 技能仓库仍沿用侧栏扩展的精简“导入仓库”流程。
 - 侧栏扩展既有的 JSON / 表单双模式 MCP 编辑器保留。
 
