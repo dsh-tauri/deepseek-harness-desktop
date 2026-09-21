@@ -31,3 +31,19 @@ export function readMarket(ctx: ClientContext): MarketFace | undefined {
     return undefined
   return typeof (service as MarketFace).render === 'function' ? service as MarketFace : undefined
 }
+
+/**
+ * 本宿主是否收编市场面板。
+ *
+ * 同一份 profile 也服务普通浏览器标签：桌面壳层把 dsh 页面嵌在跨域 iframe 里，
+ * 只有那种情形才由本面板接管；浏览器直接访问时面板不出「市场」标签页，市场自带
+ * 的设置页入口照旧保留。判据与 `dsh-tauri-ui` 的 `im-panel` 相同。
+ */
+export function hostsMarketPanel(scope: { parent: unknown } | undefined): boolean {
+  return scope !== undefined && scope.parent !== scope
+}
+
+/** 当前页面的窗口；非浏览器环境为 undefined。 */
+export function currentScope(): { parent: unknown } | undefined {
+  return typeof window === 'undefined' ? undefined : window
+}

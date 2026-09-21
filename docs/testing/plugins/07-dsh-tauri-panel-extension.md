@@ -25,7 +25,9 @@
 | 导入：`GET /import/scan`、`POST /import/apply` | `packages/dsh-tauri-panel-extension/src/host/routes/import/scan/get.ts:6` |
 | 技能根：`GET/POST/DELETE /roots` | `packages/dsh-tauri-panel-extension/src/host/routes/roots/get.ts:5` |
 | 宿主重启：403 `untrusted origin`、409 由壳层接管 | `packages/dsh-tauri-panel-extension/src/host/routes/host/restart/post.ts:18`、`packages/dsh-tauri-panel-extension/src/host/routes/host/restart/post.ts:24` |
-| 面板：`definePanel` order 20，落 `sidebar.panellist` + `main` | `packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:39` |
+| 面板：`definePanel` order 20，落 `sidebar.panellist` + `main` | `packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:44` |
+| 面板归属：仅桌面 iframe 收编市场（`hostsMarketPanel` / `currentScope`） | `packages/dsh-tauri-panel-extension/src/client/service/market.ts:42`、`packages/dsh-tauri-panel-extension/src/client/service/market.ts:47` |
+| 市场设置页入口：收编时撤下，撤下前记住原状态，服务撤下或插件卸载时还原 | `packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:18` |
 | 标签页 market / skills / mcp，`role="tab"` + `aria-selected` | `packages/dsh-tauri-panel-extension/src/client/components/extension-panel.tsx:30`、`packages/dsh-tauri-panel-extension/src/client/components/extension-panel.tsx:54` |
 | 输入区预填槽位 `conversation.input.left`（id `.skill-prefill`） | `packages/dsh-tauri-panel-extension/src/client/constants/index.ts:10` |
 
@@ -152,9 +154,54 @@
 
 ---
 
-## 3. L2：客户端（真实浏览器页面，未接线）
+## 3. 客户端
 
-### [P1] 验证扩展面板渲染并按顺序激活首个标签
+### 3.1 L1：纯函数（`unit` project，已接线）
+
+> 回归背景（`#658`）：同一份 profile 也服务普通浏览器标签页。面板无条件收编市场时，浏览器里市场自带的设置页入口被一并撤下，市场只剩「扩展管理 → 市场」一条路径；而面板自身在浏览器里同样注册，于是入口位置被静默改变。面板归属改为与 `dsh-tauri-ui` 的 `im-panel` 同一判据：只有桌面 iframe 接管。
+
+#### [P1] 桌面 iframe 由扩展面板收编市场
+
+[Case ID] TC-EXT-U-07-001
+[层级] L1（`unit` project 纯函数）
+[类型] 正向
+[追踪] `packages/dsh-tauri-panel-extension/src/client/service/market.ts:42`
+[自动化] 是（`packages/dsh-tauri-panel-extension/src/client/service/market.test.ts`）
+[前置条件] 无（纯函数）
+[测试数据] `scope = { parent: {} }`（`parent` 不是自身，即桌面跨域 iframe）
+[测试步骤] 1. 调用 `hostsMarketPanel(scope)`。
+[预期结果] 1. 返回 `true`：市场收进面板，其设置页重复入口被撤下。
+[清理] 无
+
+#### [P1] 独立浏览器标签页不收编市场并保留其设置页入口
+
+[Case ID] TC-EXT-U-07-002
+[层级] L1（`unit` project 纯函数）
+[类型] 正向
+[追踪] `packages/dsh-tauri-panel-extension/src/client/service/market.ts:42`
+[自动化] 是（`packages/dsh-tauri-panel-extension/src/client/service/market.test.ts`）
+[前置条件] 无（纯函数）
+[测试数据] `scope.parent === scope`（顶层窗口）
+[测试步骤] 1. 调用 `hostsMarketPanel(scope)`。
+[预期结果] 1. 返回 `false`：面板不出「市场」标签页，市场自带的设置页入口保留。
+[清理] 无
+
+#### [P3] [反向] 无窗口的非浏览器环境不收编
+
+[Case ID] TC-EXT-U-07-003
+[层级] L1（`unit` project 纯函数）
+[类型] 边界
+[追踪] `packages/dsh-tauri-panel-extension/src/client/service/market.ts:42`、`packages/dsh-tauri-panel-extension/src/client/service/market.ts:47`
+[自动化] 是（`packages/dsh-tauri-panel-extension/src/client/service/market.test.ts`）
+[前置条件] 无（纯函数）
+[测试数据] `scope = undefined`
+[测试步骤] 1. 调用 `hostsMarketPanel(undefined)`。
+[预期结果] 1. 返回 `false`，且不抛错。
+[清理] 无
+
+### 3.2 L2：真实浏览器页面（未接线）
+
+#### [P1] 验证扩展面板渲染并按顺序激活首个标签
 
 [Case ID] TC-EXT-C-07-001
 [层级] L2（真实浏览器页面，未接线）
@@ -167,7 +214,7 @@
 [预期结果] 1. tablist 存在。2. 至少包含 `skills` 与 `mcp` 两个标签。3. 恰有一个 `aria-selected="true"`，且为列表中的第一个可见标签。
 [清理] 关闭面板
 
-### [P2] 验证技能页空态与主要入口可见
+#### [P2] 验证技能页空态与主要入口可见
 
 [Case ID] TC-EXT-C-07-002
 [层级] L2（真实浏览器页面，未接线）
@@ -180,7 +227,7 @@
 [预期结果] 1. 三个入口均存在。2. 卡片列表为空。
 [清理] 关闭面板
 
-### [P3] [反向] 验证市场插件缺席时市场标签不出现且不报错
+#### [P3] [反向] 验证市场插件缺席时市场标签不出现且不报错
 
 [Case ID] TC-EXT-C-07-003
 [层级] L2（真实浏览器页面，未接线）
@@ -193,6 +240,19 @@
 [预期结果] 1. 标签集合不含市场项。2. `pageerror` 为空（缺席被静默处理，不是抛错）。
 [清理] 关闭面板
 
+#### [P1] 验证独立浏览器标签页不出市场标签且保留市场设置页入口
+
+[Case ID] TC-EXT-C-07-004
+[层级] L2（真实浏览器页面，未接线）
+[类型] 正向
+[追踪] `packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:13`、`packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:52`
+[自动化] 未接线（G2）
+[前置条件] 已安装提供 `market.render` 的市场插件；页面为顶层窗口（`window.parent === window`）
+[测试数据] 无
+[测试步骤] 1. 打开扩展面板。2. 统计 `[role="tab"]` 的文案集合。3. 打开 dsh 设置，读导航项集合。4. 收集 `pageerror`。
+[预期结果] 1. 标签集合不含「市场」。2. 设置导航含「插件市场」。3. `pageerror` 为空。
+[清理] 关闭面板
+
 ---
 
 ## 4. L3：桌面端宿主（真实 Tauri 窗口）
@@ -202,12 +262,25 @@
 [Case ID] TC-EXT-L3-07-001
 [层级] L3（真实 Tauri 窗口）
 [类型] 正向
-[追踪] `packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:39`
+[追踪] `packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:44`
 [自动化] 待接线（`desktop` project 未配置，`00-overview.md` G4）
 [前置条件] 应用就绪；`get_dsh_plugins` 返回中包含本插件
 [测试数据] 无
 [测试步骤] 1. 建 WebDriver 会话并切到 iframe。2. 打开扩展面板。3. 依次点击 `skills` 与 `mcp` 标签。
 [预期结果] 1. 面板容器 `.dshp-extension__tabs` 存在。2. 每次点击后对应 `[role="tabpanel"]` 从 `hidden` 变为可见，且被点标签 `aria-selected="true"`。3. 应用日志无 `dsh://plugin-error`。
+[清理] `DELETE /session/<id>`
+
+### [P1] 验证桌面端 iframe 内市场由面板收编且撤下设置页重复入口
+
+[Case ID] TC-EXT-L3-07-002
+[层级] L3（真实 Tauri 窗口）
+[类型] 正向
+[追踪] `packages/dsh-tauri-panel-extension/src/client/register/extension-panel.tsx:18`
+[自动化] 待接线（`desktop` project 未配置，`00-overview.md` G4）
+[前置条件] 应用就绪；已安装提供 `market.render` 的市场插件；帧内 `window.parent !== window`
+[测试数据] 无
+[测试步骤] 1. 建 WebDriver 会话并切到 iframe。2. 打开扩展面板，读 `[role="tab"]` 文案集合与首项 `aria-selected`。3. 打开 dsh 设置，读导航项集合。
+[预期结果] 1. 标签集合含「市场」，且恰有一个 `aria-selected="true"` 落在该列表首项。2. 设置导航**不含**「插件市场」（重复入口已撤下）。
 [清理] `DELETE /session/<id>`
 
 ---
@@ -225,6 +298,9 @@
 | `/host/restart` 双重拒绝 | TC-EXT-L2-07-008、TC-EXT-L2-07-009 | 异常 | 409「由壳层接管」分支只在壳层内触发，**未覆盖** |
 | 面板与标签 | TC-EXT-C-07-001、TC-EXT-C-07-002、TC-EXT-L3-07-001 | 正向 | 依赖浏览器驱动 / `desktop` project |
 | 市场标签缺席 | TC-EXT-C-07-003 | 异常 | 依赖未安装市场插件的前置 |
+| 面板归属判据（`hostsMarketPanel`） | TC-EXT-U-07-001 ～ TC-EXT-U-07-003 | 正向 / 边界 | 已由 `unit` project 覆盖（`#658`：浏览器保留市场设置页入口） |
+| 浏览器端市场入口归属 | TC-EXT-C-07-004 | 正向 | 依赖浏览器驱动与已装市场，**未接线** |
+| 桌面端市场收编与重复入口撤下 | TC-EXT-L3-07-002 | 正向 | 依赖 `desktop` project，**未接线** |
 | 技能写入 / 只读 403 / 422 | — | — | **未覆盖**：会改用户技能目录，留待带备份的专项批次 |
 
 ---

@@ -5,12 +5,14 @@
  * 但没有 `render`）不能被当成可用**——收不进面板，就更不能顺手把它自带的设置页
  * 入口藏掉，否则市场会彻底没有入口；**注册表读取抛错时静默**。
  *
+ * 另守面板归属：只有桌面 iframe 收编市场，普通浏览器标签页保留市场自带的设置页入口。
+ *
  * 判据都是能力探测，不是版本号。
  */
 
 import type { ClientContext } from 'dsh-tauri/client'
 import { describe, expect, it } from 'vitest'
-import { readMarket } from './market'
+import { hostsMarketPanel, readMarket } from './market'
 
 /** 最小上下文替身：只提供能力探测真正读到的 `reflect.get`。 */
 function contextWith(service: unknown, options: { throws?: boolean } = {}): ClientContext {
@@ -69,5 +71,21 @@ describe('readMarket', () => {
     expect(readMarket(ctx)).toBeDefined()
     service = undefined
     expect(readMarket(ctx)).toBeUndefined()
+  })
+})
+
+describe('hostsMarketPanel', () => {
+  it('桌面 iframe：parent 不是自身 → 收编市场面板', () => {
+    expect(hostsMarketPanel({ parent: {} })).toBe(true)
+  })
+
+  it('独立浏览器标签页：parent 是自身 → 不收编，市场设置页入口保留', () => {
+    const scope: { parent: unknown } = { parent: undefined }
+    scope.parent = scope
+    expect(hostsMarketPanel(scope)).toBe(false)
+  })
+
+  it('没有窗口（非浏览器环境）→ 不收编', () => {
+    expect(hostsMarketPanel(undefined)).toBe(false)
   })
 })

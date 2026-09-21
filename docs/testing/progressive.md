@@ -68,12 +68,12 @@
 | 04 | `dsh-tauri-session` | `04-dsh-tauri-session.md` | 提案中 | - |
 | 05 | `dsh-tauri-worktree` | `05-dsh-tauri-worktree.md` | 已实现 | 宿主路由 6 例待接线；新增 §3.1 四条 L1 用例（`TC-WT-U-05-001`–`004`）覆盖 `#648` 的「`isGit` 三态可见性 + 发送拦截同条件」回归，`unit` project 17 例全绿；`TC-WT-C-05-004`（创建失败回落 `local`）待接线 |
 | 06 | `dsh-tauri-ui` | `06-dsh-tauri-ui.md` | 提案中 | - |
-| 07 | `dsh-tauri-panel-extension` | `07-dsh-tauri-panel-extension.md` | 提案中 | - |
+| 07 | `dsh-tauri-panel-extension` | `07-dsh-tauri-panel-extension.md` | 提案中 | 新增 §3.1 三条 L1 用例（`TC-EXT-U-07-001`–`003`，已接线）覆盖 `#658` 的面板归属判据（仅桌面 iframe 收编市场），另加 `TC-EXT-C-07-004` 与 `TC-EXT-L3-07-002`（未接线）；宿主路由用例与 L3 其余用例待接线 |
 | 08 | `dsh-tauri-panel-scheduler` | `08-dsh-tauri-panel-scheduler.md` | 提案中 | - |
 | 09 | `dsh-tauri-turnrewind` | `09-dsh-tauri-turnrewind.md` | 提案中 | - |
 | 10 | `dsh-tauri-model-config` | `10-dsh-tauri-model-config.md` | 提案中 | - |
 
-合计 `01`–`10` 共 **113** 条用例。L2 运行前需先跑一次 `pnpm build:plugins`，插件产物当前未构建。
+合计 `01`–`10` 共 **118** 条用例。L2 运行前需先跑一次 `pnpm build:plugins`，插件产物当前未构建。
 
 ---
 
