@@ -123,3 +123,56 @@ export function endpointOf(profile: unknown, override: string | undefined): stri
 export function modelsListingUrl(baseURL: string): string {
   return `${baseURL.replace(/\/+$/, '')}/models`
 }
+
+function stringHeaders(source: Record<string, unknown>): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const [name, value] of Object.entries(source)) {
+    if (typeof value === 'string')
+      headers[name] = value
+  }
+  return headers
+}
+
+function storedHeaders(profile: unknown): Record<string, string> {
+  if (!isRecord(profile) || !isRecord(profile.headers))
+    return {}
+  return stringHeaders(profile.headers)
+}
+
+/** 表单带来的头。缺省或不是对象时返回 undefined，调用方改读 profile。 */
+function headerOverride(raw: string | undefined): Record<string, string> | undefined {
+  if (raw === undefined || raw.trim().length === 0)
+    return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed))
+      return undefined
+    return stringHeaders(parsed)
+  }
+  catch {
+    return undefined
+  }
+}
+
+/**
+ * 清单请求的头。
+ *
+ * 表单当前值盖过 profile 里已保存的头。随后强制 `accept`，有密钥时再强制 `authorization`，
+ * 避免自定义头把清单本身改成非 JSON，或盖掉这次解析出来的密钥。非法条目跳过，不让整次读取变成网络错误。
+ */
+export function listingHeaders(profile: unknown, overrideRaw: string | undefined, apiKey: string | undefined): Headers {
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(headerOverride(overrideRaw) ?? storedHeaders(profile))) {
+    try {
+      headers.set(name, value)
+    }
+    catch (error) {
+      if (!(error instanceof TypeError))
+        throw error
+    }
+  }
+  headers.set('accept', 'application/json')
+  if (apiKey !== undefined)
+    headers.set('authorization', `Bearer ${apiKey}`)
+  return headers
+}

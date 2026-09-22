@@ -5,6 +5,7 @@ import {
   apiKeyRefOf,
   endpointOf,
   getPath,
+  listingHeaders,
   modelsListingUrl,
   normalizeEndpointModels,
   parseProfilePath,
@@ -19,6 +20,8 @@ export interface EndpointModelsInput {
   baseURL?: string
   /** 已输入但尚未保存的密钥；为空时用 profile 指向的已存凭证。 */
   apiKey?: string
+  /** 表单当前的自定义请求头，JSON 对象。缺省时用 profile 里已保存的 `headers`。 */
+  headers?: string
 }
 
 export type EndpointModelsResult
@@ -81,10 +84,7 @@ export const endpointModels = defineService({
     try {
       const response = await fetch(url, {
         method: 'GET',
-        headers: {
-          accept: 'application/json',
-          ...apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` },
-        },
+        headers: listingHeaders(profile, input.headers, apiKey),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
       if (!response.ok) {

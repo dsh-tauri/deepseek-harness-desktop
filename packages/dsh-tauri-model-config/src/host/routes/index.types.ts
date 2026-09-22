@@ -28,6 +28,8 @@ export interface GetEndpointModelsQuery {
   baseURL?: string
   /** 已输入但尚未保存的密钥；为空时用 profile 指向的已存凭证。 */
   apiKey?: string
+  /** 表单当前的自定义请求头（JSON 对象）。缺省时用 profile 里已保存的 `headers`。 */
+  headers?: string
 }
 
 export interface EndpointModelsResponse {

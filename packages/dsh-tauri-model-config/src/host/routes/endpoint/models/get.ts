@@ -10,6 +10,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<EndpointModelsRes
     profilePath: typeof query.profilePath === 'string' ? query.profilePath : undefined,
     baseURL: typeof query.baseURL === 'string' ? query.baseURL : undefined,
     apiKey: typeof query.apiKey === 'string' ? query.apiKey : undefined,
+    headers: typeof query.headers === 'string' ? query.headers : undefined,
   })
   if (!result.ok) {
     event.res.status = 502

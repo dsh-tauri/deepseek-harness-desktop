@@ -7,6 +7,7 @@ import type {
 } from '../types/remotes.ts'
 import type { en } from './locales.ts'
 import type { ModelsOperations } from './operations.ts'
+import type { RequestHeaders } from './requestHeaders.ts'
 import type { SettingsSchemaOperations } from './schema-operations.ts'
 import { useEffect, useMemo, useState } from 'react'
 import { loadModelCapacities } from '../service/model-config.ts'
@@ -20,6 +21,8 @@ import {
 } from './DeepSeekModelsEditor.tsx'
 import { EditorFooter } from './EditorFooter.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
+import { requestHeadersOf } from './requestHeaders.ts'
+import { RequestHeadersDialog } from './RequestHeadersDialog.tsx'
 import { deriveKeyRef, protocolChoices } from './store.ts'
 import { modelStyles as styles } from './styles.ts'
 
@@ -125,6 +128,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [configBusy, setConfigBusy] = useState(false)
+  const [headersOpen, setHeadersOpen] = useState(false)
   const [configNotice, setConfigNotice] = useState<string | undefined>(undefined)
   const [configFailure, setConfigFailure] = useState<string | undefined>(undefined)
 
@@ -143,6 +147,10 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     () => layout === 'pi-ai' ? protocolChoices(namespace, schema) : [],
     [layout, namespace, schema],
   )
+
+  const draftHeaders = requestHeadersOf(schema.getPath(draft, ['headers']))
+  const headerCount = Object.keys(draftHeaders).length
+  const canEditHeaders = props.credentialOnly !== true && layout === 'pi-ai'
 
   useEffect(() => {
     let stale = false
@@ -168,6 +176,11 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
       ? schema.deletePath(current, [key])
       : schema.setPath(current, [key], value))
   }
+  const setHeaders = (next: RequestHeaders): void => {
+    setDraft(current => Object.keys(next).length === 0
+      ? schema.deletePath(current, ['headers'])
+      : schema.setPath(current, ['headers'], next))
+  }
 
   const modelFailure = validateDeepSeekModels(schema.getPath(draft, ['models']))
   const keyFailure = apiKeyFailure(keyDraft)
@@ -183,8 +196,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const probeBaseURL = stringAt(draft, 'baseURL') ?? stringAt(fallback, 'baseURL')
   const probe = {
     settingsNs: namespace.ns,
-
+    profilePath: settingsPath,
     provider: props.provider,
+    ...layout === 'pi-ai' ? { headers: draftHeaders } : {},
     ...probeBaseURL === undefined ? {} : { baseURL: probeBaseURL },
     ...probeApi === undefined ? {} : { api: probeApi },
     ...keyValue.length === 0 ? {} : { apiKey: keyValue },
@@ -302,6 +316,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
             settingsNs: namespace.ns,
             profilePath: settingsPath,
             provider: props.provider,
+            ...layout === 'pi-ai' ? { headers: draftHeaders } : {},
             ...probeBaseURL === undefined ? {} : { baseURL: probeBaseURL },
             ...probeApi === undefined ? {} : { api: probeApi },
             ...keyValue.length === 0 ? {} : { apiKey: keyValue },
@@ -435,13 +450,35 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
 
   return (
     <div className={props.credentialOnly === true ? styles.addBlock : styles.editor}>
-      {props.hideTitle === true
+      {props.hideTitle === true && !canEditHeaders
         ? null
         : (
             <div className={styles.editorHeader}>
-              <span className={styles.editorTitle}>{props.displayName}</span>
-              {props.provider !== props.displayName
-                ? <span className={styles.editorRoute}>{props.provider}</span>
+              {props.hideTitle === true
+                ? null
+                : (
+                    <>
+                      <span className={styles.editorTitle}>{props.displayName}</span>
+                      {props.provider !== props.displayName
+                        ? <span className={styles.editorRoute}>{props.provider}</span>
+                        : null}
+                    </>
+                  )}
+              {canEditHeaders
+                ? (
+                    <button
+                      type="button"
+                      className={`${styles.linkButton} ${styles.headerSettingsButton}`}
+                      title={t('requestHeadersHint')}
+                      data-dsh-model-header-settings=""
+                      disabled={disabled}
+                      onClick={() => { setHeadersOpen(true) }}
+                    >
+                      {headerCount === 0
+                        ? t('requestHeaders')
+                        : `${t('requestHeaders')} (${String(headerCount)})`}
+                    </button>
+                  )
                 : null}
             </div>
           )}
@@ -469,6 +506,20 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
         onCancel={() => { props.onClose(false) }}
         onSubmit={() => { void apply() }}
       />
+      {headersOpen
+        ? (
+            <RequestHeadersDialog
+              headers={draftHeaders}
+              disabled={disabled}
+              t={t}
+              onClose={() => { setHeadersOpen(false) }}
+              onSubmit={(next) => {
+                setHeadersOpen(false)
+                setHeaders(next)
+              }}
+            />
+          )
+        : null}
     </div>
   )
 }

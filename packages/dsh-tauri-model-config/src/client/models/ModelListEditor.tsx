@@ -5,6 +5,7 @@ import type { en } from './locales.ts'
 import type { ModelsOperations } from './operations.ts'
 import { Button, Modal, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useState } from 'react'
+import { loadModelCapacities } from '../service/model-config.ts'
 import {
   declaredThinkingLevels,
   enableThinking,
@@ -37,6 +38,8 @@ export interface ProbeTarget {
 
   settingsNs: string
 
+  profilePath: readonly string[]
+
   provider?: string
 
   baseURL?: string
@@ -44,6 +47,8 @@ export interface ProbeTarget {
   api?: string
 
   apiKey?: string
+
+  headers?: Record<string, string>
 }
 
 export interface ModelListEditorProps {
@@ -227,14 +232,17 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     setBusy(true)
     setFailure(undefined)
     try {
-      const answer = await operations.discoverModels(probe.settingsNs, {
+      const answer = await loadModelCapacities({
+        settingsNs: probe.settingsNs,
+        profilePath: probe.profilePath,
         ...probe.provider === undefined ? {} : { provider: probe.provider },
         ...probe.baseURL === undefined || probe.baseURL.length === 0 ? {} : { baseURL: probe.baseURL },
         ...probe.api === undefined ? {} : { api: probe.api },
         ...probe.apiKey === undefined ? {} : { apiKey: probe.apiKey },
-      })
-      if (answer.kind === 'refused') {
-        setFailure(answer.message)
+        ...probe.headers === undefined ? {} : { headers: probe.headers },
+      }, operations)
+      if (!answer.ok) {
+        setFailure(answer.error)
         return
       }
       const found = answer.models

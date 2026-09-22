@@ -1,6 +1,6 @@
 # dsh-tauri-model-config
 
-本仓库维护的内置扩展，并非 DeepSeek 官方插件：接管 DSH 的「模型」设置页，在官方页面的基础上补齐官方不支持的配置项（上下文、图片输入、思考模式），并让模型上限可以从提供方端点直接读取。
+本仓库维护的内置扩展，并非 DeepSeek 官方插件：接管 DSH 的「模型」设置页，在官方页面的基础上补齐官方不支持的配置项（上下文、图片输入、思考模式、自定义请求头），并让模型上限可以从提供方端点直接读取。
 
 ## 为什么是 fork
 
@@ -10,7 +10,8 @@
 
 - 上游：`@deepseek-ai/dsh-client-ui-settings-models`（`deepseek-ai/deepseek-harness`，`packages/client/ui-settings-models`，tag `dsh-v0.1.5-rc.1`）
 - 落点：`src/client/models/`（逐文件对应上游 `src/client/`，行为保持一致）
-- 本地改动：`ModelListEditor` / `DeepSeekModelsEditor`（新增能力）、`ModelsSection`（打开配置文件）、`styles.ts`（样式覆盖）、`locales.ts`（新增文案键）
+- 本地改动：`ModelListEditor` / `DeepSeekModelsEditor`（新增能力）、`ProviderEditor`（提供方高级设置入口）、`ModelsSection`（打开配置文件）、`styles.ts`（样式覆盖）、`locales.ts`（新增文案键）
+- 新增文件：`RequestHeadersDialog.tsx`（请求头编辑弹窗）、`requestHeaders.ts`（请求头归一化与校验，含单测）——上游没有对应文件，同步时不受覆盖影响
 - 上游注释已按仓库规范精简；`styles.ts` 是 `ModelsSection.module.css` 等的哈希化产物，类名前缀与官方一致（`zGbnIq_*` 等）
 
 同步上游时的步骤：以同一 tag 重新取源 → 覆盖 `src/client/models/` 中未被本地改动的文件 → 重放上述改动。
@@ -25,6 +26,7 @@
 | 单个模型行（`.zGbnIq_modelRow`） | **获取配置**：仅在该条目只有 `id`/`name`/`description` 时出现，按 `id` 从提供方端点读取该模型的上下文与输出上限 |
 | 模型目录标题（`.zGbnIq_modelCatalogHeading`） | 追加 `flex: 1`（按钮集中到右侧），并在右侧加入 **自动配置所有模型**；pi-ai 提供方与官方 DeepSeek 模型目录都有这个入口 |
 | 单个模型高级区（`.zGbnIq_modelAdvanced`） | **图片输入** 开关 → `input` 声明；**思考模式** 开关 → `reasoningEfforts` 声明，打开后可按档位勾选；**关闭 Developer 角色** 开关 → `compat` 声明（仅路由显式声明 `openai-completions` 时出现） |
+| 单个提供方卡片标题右侧（`.zGbnIq_editorHeader`） | **高级设置**：打开请求头编辑弹窗，按行增删自定义 Header，写进该提供方 profile 的 `headers`。新建自定义提供方的标题右侧也有这个入口，创建时一并写入。按钮在已有条目时显示条数；只对 pi-ai 路由出现（官方 DeepSeek 的适配器不读 `headers`）。对话请求由 pi-ai 的 `requestHeaders()` 合并这些头并覆盖默认头；模型清单的宿主直连同样带上表单里的头 |
 
 高级区里的开关统一由 `.zGbnIq_modelSwitchRow` 包裹（`display: flex` + `height: 32px` + 垂直居中），与相邻的 32px 文本输入框对齐。
 
@@ -37,7 +39,9 @@ VS Code 和 Cursor 菜单图标随插件内嵌，以 CSS background / mask 显�
 三条通道，先直连再回退（前两条与参考实现 `dsh-llm-capabilities` 的顺序一致）：
 
 1. **宿主直连** `GET /endpoint/models`：宿主按 `settings` 服务里的 profile 解析端点与凭据，请求
-   `{baseURL}/models` 并归一化容量。官方发现通道会把清单收窄，容量字段只有端点原始清单里才有。
+   `{baseURL}/models` 并归一化容量。请求先带上表单当前的自定义头（查询参数 `headers`，缺省时用 profile
+   里已保存的 `headers`），再强制 `accept: application/json`，有密钥时再强制 `authorization`。
+   官方发现通道会把清单收窄，容量字段只有端点原始清单里才有。
 2. **官方发现通道** `remote.llm.discoverModels(settingsNs, probe)`：覆盖端点地址不在用户设置里的提供方
    （例如内置 DeepSeek 官方路由，它的地址只有适配器自己知道）。
 3. **模型能力表** `GET /presets`：端点清单只说容量，不说模态与档位，图片与思考能力来自 LiteLLM 的
@@ -52,7 +56,7 @@ VS Code 和 Cursor 菜单图标随插件内嵌，以 CSS background / mask 显�
    新模型会缺席；该接口也只提供全量，`/models/{model_id}` 之类还需要密钥、且只回答「这个代理自己
    部署了哪些模型」（公开实例上任何厂商 id 都是 404）。
 
-请求事实全部来自表单当前显示的值（`provider` / `baseURL` / `api`，以及已输入未保存的 `apiKey`），
+请求事实全部来自表单当前显示的值（`provider` / `baseURL` / `api`，已输入未保存的 `apiKey`，以及自定义 `headers`），
 插件不认识任何具体部署；凭据只在宿主侧解析，响应里从不回显，也不进 URL。
 
 并入草稿时的优先级：
@@ -128,3 +132,4 @@ compat:
 - 能力表需要一次网络请求（约 2.6 MB 的原始数据集，压成 72 KB 落盘，一天内不再请求）。离线且从未下载过时，只剩家族规则能补图片/思考，容量仍由端点清单提供。
 - 档位只提供官方词表内的勾选，线值固定等于档位名；端点要求特殊线值时改设置文档即可。
 - 「关闭 Developer 角色」写的是一组固定的 `compat`：参数名 `reasoning_effort`、下发格式 `chat-template`。端点要求别的参数名（例如 `enable_thinking`）或别的下发格式时，改设置文档即可；开关只表达它写入的这一组。
+- 自定义请求头只对 pi-ai 路由开放：官方 DeepSeek（`llm-deepseek`）的适配器不读 `headers`，写进去不会生效，因此那一类提供方不出现入口。`user-agent` 由 Harness 的强制归因头最后写入，自定义值会被丢弃，弹窗内以提示呈现而不阻止保存。头名与头值在写入前按 HTTP 头语法校验（token 名、单行 Latin-1 值）。大小写不同的同名头视为重复并拒绝保存，不会静默覆盖。非法条目会让整段提供方配置解析失败。

@@ -43,6 +43,8 @@ export interface GetEndpointModelsQuery {
   profilePath?: string;
   baseURL?: string;
   apiKey?: string;
+  /** 表单当前的自定义请求头（JSON 对象）。缺省时用 profile 里已保存的 headers。 */
+  headers?: string;
 }
 export interface GetPresetsQuery {
   force?: string;

@@ -3,6 +3,7 @@ import type { JsonValue } from '../types/remotes.ts'
 import type { en } from './locales.ts'
 import type { ModelDraft } from './ModelListEditor.tsx'
 import type { ModelsOperations } from './operations.ts'
+import type { RequestHeaders } from './requestHeaders.ts'
 import { useState } from 'react'
 import { loadModelCapacities } from '../service/model-config.ts'
 import { mergeModelCards, modelConfigNotice, withDetail } from '../service/model-config.utils.ts'
@@ -11,6 +12,7 @@ import { apiKeyFailure } from './apiKey.ts'
 import { validateDeepSeekModels } from './DeepSeekModelsEditor.tsx'
 import { EditorFooter } from './EditorFooter.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
+import { RequestHeadersDialog } from './RequestHeadersDialog.tsx'
 import { deriveKeyRef } from './store.ts'
 import { modelStyles as styles } from './styles.ts'
 
@@ -55,6 +57,8 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   const [protocol, setProtocol] = useState(protocols[0] ?? '')
   const [keyDraft, setKeyDraft] = useState('')
   const [models, setModels] = useState<readonly ModelDraft[]>([])
+  const [headers, setHeaders] = useState<RequestHeaders>({})
+  const [headersOpen, setHeadersOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [configBusy, setConfigBusy] = useState(false)
@@ -101,6 +105,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         ...storesKey ? { apiKeyEnv: keyRef } : {},
         api: protocol,
         baseURL: normalizedBaseURL,
+        ...Object.keys(headers).length === 0 ? {} : { headers },
         models: models.map(model => ({ ...model })),
       }
 
@@ -150,6 +155,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
           profilePath: ['providers', route.trim()],
           baseURL: normalizedBaseURL,
           api: protocol,
+          headers,
           ...keyValue.length === 0 ? {} : { apiKey: keyValue },
         }, operations),
         ensurePresets(),
@@ -175,6 +181,18 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
     <div className={styles.editor}>
       <div className={styles.editorHeader}>
         <span className={styles.editorTitle}>{t('customTitle')}</span>
+        <button
+          type="button"
+          className={`${styles.linkButton} ${styles.headerSettingsButton}`}
+          title={t('requestHeadersHint')}
+          data-dsh-model-header-settings=""
+          disabled={profileDisabled}
+          onClick={() => { setHeadersOpen(true) }}
+        >
+          {Object.keys(headers).length === 0
+            ? t('requestHeaders')
+            : `${t('requestHeaders')} (${String(Object.keys(headers).length)})`}
+        </button>
       </div>
       <div className={styles.field}>
         <span className={styles.fieldLabel}>{t('customRoute')}</span>
@@ -252,8 +270,10 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         onChange={setModels}
         probe={{
           settingsNs: NS,
+          profilePath: ['providers', route.trim()],
           baseURL: normalizedBaseURL,
           api: protocol,
+          headers,
           ...keyValue.length === 0 ? {} : { apiKey: keyValue },
         }}
         probeBlocked={baseUrlInvalid
@@ -279,6 +299,20 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         onCancel={() => { props.onClose(committed) }}
         onSubmit={() => { void create() }}
       />
+      {headersOpen
+        ? (
+            <RequestHeadersDialog
+              headers={headers}
+              disabled={profileDisabled}
+              t={t}
+              onClose={() => { setHeadersOpen(false) }}
+              onSubmit={(next) => {
+                setHeadersOpen(false)
+                setHeaders(next)
+              }}
+            />
+          )
+        : null}
     </div>
   )
 }

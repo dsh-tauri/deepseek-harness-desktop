@@ -3,6 +3,7 @@ import {
   apiKeyRefOf,
   endpointOf,
   getPath,
+  listingHeaders,
   modelsListingUrl,
   normalizeEndpointModel,
   normalizeEndpointModels,
@@ -90,5 +91,55 @@ describe('profile resolution', () => {
   it('appends the listing segment without doubling slashes', () => {
     expect(modelsListingUrl('http://127.0.0.1:8000/v1/')).toBe('http://127.0.0.1:8000/v1/models')
     expect(modelsListingUrl('http://127.0.0.1:8000/v1')).toBe('http://127.0.0.1:8000/v1/models')
+  })
+})
+
+function headerRecord(headers: Headers): Record<string, string> {
+  return Object.fromEntries(headers.entries())
+}
+
+describe('listingHeaders', () => {
+  const profile = { headers: { 'X-Custom': 'saved', 'X-Number': 1, 'Accept': 'text/plain' } }
+
+  it('sends stored string headers and forces the listing accept', () => {
+    expect(headerRecord(listingHeaders(profile, undefined, undefined)))
+      .toEqual({ 'x-custom': 'saved', 'accept': 'application/json' })
+  })
+
+  it('lets the form replace stored headers, including clearing them', () => {
+    expect(headerRecord(listingHeaders(profile, '{"X-Draft":"1"}', undefined)))
+      .toEqual({ 'x-draft': '1', 'accept': 'application/json' })
+    expect(headerRecord(listingHeaders(profile, '{}', undefined)))
+      .toEqual({ accept: 'application/json' })
+  })
+
+  it('keeps stored headers when the form value is not an object', () => {
+    expect(headerRecord(listingHeaders(profile, '[]', undefined))['x-custom']).toBe('saved')
+    expect(headerRecord(listingHeaders(profile, '{', undefined))['x-custom']).toBe('saved')
+    expect(headerRecord(listingHeaders(profile, '   ', undefined))['x-custom']).toBe('saved')
+  })
+
+  it('forces authorization from the resolved key over a custom authorization header', () => {
+    expect(headerRecord(listingHeaders(
+      { headers: { Authorization: 'raw' } },
+      undefined,
+      'secret',
+    )).authorization).toBe('Bearer secret')
+  })
+
+  it('keeps a custom authorization header when no key is resolved', () => {
+    expect(headerRecord(listingHeaders(
+      { headers: { Authorization: 'raw' } },
+      undefined,
+      undefined,
+    )).authorization).toBe('raw')
+  })
+
+  it('drops a value the Fetch layer refuses without dropping the rest', () => {
+    expect(headerRecord(listingHeaders(
+      { headers: { 'X-Ok': '1', 'X-Bad': 'a\nb' } },
+      undefined,
+      undefined,
+    ))).toEqual({ 'x-ok': '1', 'accept': 'application/json' })
   })
 })

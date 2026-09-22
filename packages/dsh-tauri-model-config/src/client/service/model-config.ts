@@ -10,6 +10,8 @@ export interface EndpointProbe {
   baseURL?: string
   api?: string
   apiKey?: string
+  /** 表单当前的自定义请求头。传入后盖过 profile 里已保存的头，空对象表示这次不带头。 */
+  headers?: Record<string, string>
 }
 
 export type ModelCapacityFetch
@@ -28,6 +30,7 @@ async function fetchEndpointModels(probe: EndpointProbe): Promise<ModelCapacityF
       profilePath: JSON.stringify([...probe.profilePath]),
       ...probe.baseURL === undefined || probe.baseURL.length === 0 ? {} : { baseURL: probe.baseURL },
       ...probe.apiKey === undefined || probe.apiKey.length === 0 ? {} : { apiKey: probe.apiKey },
+      ...probe.headers === undefined ? {} : { headers: JSON.stringify(probe.headers) },
     })
     if (response.error !== undefined)
       return { ok: false, error: response.error }
