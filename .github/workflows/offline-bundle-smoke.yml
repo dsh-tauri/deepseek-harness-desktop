@@ -1,0 +1,63 @@
+name: Offline bundle smoke test
+
+# 临时测试入口：release-bundle.yml 只有 workflow_run / workflow_dispatch，
+# 而 workflow_dispatch 要求工作流已存在于默认分支；这里用 push 触发直接调用
+# 三个可复用构建，验证离线包的资源下载、清单改写与打包。测试完删除。
+
+on:
+  push:
+    branches: [dsh/ci-test-offline-bundle]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    name: Resolve bundled core tag
+    runs-on: ubuntu-latest
+    outputs:
+      dsh_tag: ${{ steps.meta.outputs.dsh_tag }}
+      dsh_version: ${{ steps.meta.outputs.dsh_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Resolve bundled core
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/bundle-metadata.mjs
+          cat "$GITHUB_OUTPUT"
+
+  windows:
+    name: Smoke - windows
+    needs: meta
+    uses: ./.github/workflows/build-bundle-windows.yml
+    with:
+      source_ref: ${{ github.sha }}
+      dsh_tag: ${{ needs.meta.outputs.dsh_tag }}
+    secrets: inherit
+
+  linux:
+    name: Smoke - linux
+    needs: meta
+    uses: ./.github/workflows/build-bundle-linux.yml
+    with:
+      source_ref: ${{ github.sha }}
+      dsh_tag: ${{ needs.meta.outputs.dsh_tag }}
+    secrets: inherit
+
+  macos:
+    name: Smoke - macos
+    needs: meta
+    uses: ./.github/workflows/build-bundle-macos.yml
+    with:
+      platform_filter: all
+      source_ref: ${{ github.sha }}
+      dsh_tag: ${{ needs.meta.outputs.dsh_tag }}
+    secrets: inherit
