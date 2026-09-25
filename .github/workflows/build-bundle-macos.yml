@@ -110,12 +110,12 @@ jobs:
             exit 1
           fi
 
-      # 离线包只把 Node 运行时 / 内核的**压缩包**随包分发（首次启动解压到 AppData），
-      # 因此 .app 的 `Contents/Resources/**` 里已不再有随包的 Mach-O 原生模块
-      # （sharp / koffi / node-pty 的 `.node`、`@img` 的 `.dylib` 都在压缩包里）。
-      # 这一遍签约保留为安全网：万一 resources/ 下仍有 Mach-O（例如内置插件带了原生
-      # 模块），Apple 的公证会要求它带 Developer ID 签名与安全时间戳，而 tauri 只签
-      # 自己产出的可执行文件（`--deep` 按 Apple 的定义会跳过 `Contents/Resources/**`）。
+      # 离线包只把 Node 运行时 / 内核 / pnpm 的**压缩包**随包分发（首次启动解压到
+      # AppData），但 Apple 的公证会展开 .app 内的压缩包逐个校验 Mach-O（zip 与 tgz
+      # 都会被展开），未签名的随包原生模块（sharp / koffi / reflink 的 `.node`）会让公证
+      # 以 "Archive contains critical validation errors" 失败。因此必须在 tauri 打包前
+      # 把压缩包里的原生模块补签好：解压 → 签约 → 同名原样重打包。
+      # 直接裸放在 resources/ 下的 Mach-O（安全网，例如内置插件带原生模块）同样补签。
       - name: Sign bundled Mach-O binaries
         if: steps.check.outputs.should_run == 'true'
         shell: bash
@@ -124,6 +124,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           keychain="$RUNNER_TEMP/bundle-signing.keychain-db"
           keychain_password="$(openssl rand -base64 32)"
           echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/bundle-cert.p12"
@@ -150,30 +151,68 @@ jobs:
           # entitlement）原样保留：重签会丢掉 entitlement，节点进程在 hardened runtime
           # 下会因 JIT 被拒直接崩。其余 ad-hoc / 未签名的才补签，并在存在 entitlement 时
           # 一并保留。
+          #
+          # `signed` / `kept` 由 sign_tree 直接累加（bash 动态作用域，有意为之）；
+          # 补签文件按相对路径追加到 $2，用于重打包后逐个复验签名存活。
           signed=0
           kept=0
-          while IFS= read -r file; do
-            [ -n "$file" ] || continue
-            case "$(file -b "$file")" in
-              *Mach-O*) ;;
-              *) continue ;;
+          sign_tree() {
+            local root="$1" list="$2" file authority preserve rel
+            while IFS= read -r file; do
+              [ -n "$file" ] || continue
+              case "$(file -b "$file")" in
+                *Mach-O*) ;;
+                *) continue ;;
+              esac
+              authority="$(codesign -dv --verbose=2 "$file" 2>&1 | awk -F= '/^Authority=/{print $2; exit}' || true)"
+              if [ "${authority#Developer ID Application}" != "$authority" ]; then
+                kept=$((kept + 1))
+                continue
+              fi
+              preserve=""
+              if codesign -d --entitlements - "$file" 2>/dev/null | grep -q '<key>'; then
+                preserve="--preserve-metadata=entitlements"
+              fi
+              codesign --force --options runtime --timestamp $preserve \
+                --keychain "$keychain" --sign "$identity" "$file"
+              signed=$((signed + 1))
+              rel="${file#"$root"/}"
+              printf '%s\n' "$rel" >> "$list"
+            done < <(find "$root" -type f \
+              \( -name '*.node' -o -name '*.dylib' -o -name '*.so' -o -perm -100 \) -print)
+          }
+
+          sign_tree src-tauri/resources "$RUNNER_TEMP/signed-direct.txt"
+
+          for archive in src-tauri/resources/*.zip src-tauri/resources/*.tgz src-tauri/resources/*.tar.gz; do
+            name="$(basename "$archive")"
+            before="$RUNNER_TEMP/unpack-before-$name"
+            after="$RUNNER_TEMP/unpack-after-$name"
+            list="$RUNNER_TEMP/signed-$name.txt"
+            rm -rf "$before" "$after" "$list"
+            mkdir -p "$before" "$after"
+            bsdtar -xf "$archive" -C "$before"
+            sign_tree "$before" "$list"
+            rm -f "$archive"
+            case "$name" in
+              *.tar.gz | *.tgz) (cd "$before" && bsdtar -czf "$archive" $(ls -A)) ;;
+              *) (cd "$before" && bsdtar -a -cf "$archive" $(ls -A)) ;;
             esac
-            authority="$(codesign -dv --verbose=2 "$file" 2>&1 | awk -F= '/^Authority=/{print $2; exit}' || true)"
-            if [ "${authority#Developer ID Application}" != "$authority" ]; then
-              kept=$((kept + 1))
-              continue
+            bsdtar -xf "$archive" -C "$after"
+            # 重打包不得改变解压布局（应用按顶层目录解压 + flatten）
+            if ! diff <(cd "$before" && find . | sort) <(cd "$after" && find . | sort) >/dev/null; then
+              echo "::error::repacking $name changed the unpacked layout"
+              exit 1
             fi
-            preserve=""
-            if codesign -d --entitlements - "$file" 2>/dev/null | grep -q '<key>'; then
-              preserve="--preserve-metadata=entitlements"
-            fi
-            codesign --force --options runtime --timestamp $preserve \
-              --keychain "$keychain" --sign "$identity" "$file"
-            signed=$((signed + 1))
-          done < <(find src-tauri/resources -type f \
-            \( -name '*.node' -o -name '*.dylib' -o -name '*.so' -o -perm -100 \) -print)
-          echo "signed $signed Mach-O binaries under src-tauri/resources ($kept already Developer ID signed)"
-          # 离线包正常为 0：随包的运行时原生模块都在压缩包里，公证不会展开压缩包。
+            # 签名必须挺过打包往返
+            while IFS= read -r rel; do
+              [ -n "$rel" ] || continue
+              codesign --verify --strict "$after/$rel"
+            done < "$list"
+            echo "repacked $name ($(du -h "$archive" | cut -f1))"
+          done
+
+          echo "signed $signed Mach-O binaries ($kept already Developer ID signed)"
 
       # 必须同时产出 app：只给 `--bundles dmg` 时 tauri 会把 .app 当中间产物，打完 dmg
       # 就删掉它（日志里的 `Cleaning .../bundle/macos/<name>.app`），后面的签名/公证
