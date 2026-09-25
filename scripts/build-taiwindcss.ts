@@ -12,14 +12,22 @@ const STYLES_DIR = join(PACKAGES_ROOT, PLUGIN_ID, 'src', 'client', 'styles')
 const INPUT_FILE = join(STYLES_DIR, 'index.css')
 const OUTPUT_FILE = join(STYLES_DIR, 'taiwindcss.ts')
 /** 决定产物的配置：plugins 配置是入口，主题与色板继承 tailwind.config.js。 */
-const CONFIG_FILES = [join(REPO_ROOT, 'tailwind.config.js'), join(REPO_ROOT, 'tailwind.plugins.config.js')]
+const CONFIG_FILES = ['tailwind.config.js', 'tailwind.plugins.config.js']
 /** 扫描口径与 tailwind.plugins.config.js 的 content 一致：只认 packages 下各包 src 目录里的源码与样式。 */
 const SOURCE_FILE = /[\\/]src[\\/].*\.(?:css|js|jsx|ts|tsx)$/
 const DEBOUNCE_MS = 120
 
-/** 把 index.css 编译成插件侧 Tailwind 产物。 */
+/**
+ * 把 index.css 编译成插件侧 Tailwind 产物。
+ *
+ * 空结果必须当成失败：`@config` / `content` 解析不出来时 Tailwind 只往 stderr 打日志、
+ * 照常返回空 CSS，直接落盘就会用空样式覆盖上一份产物，而构建仍然「成功」。
+ */
 async function compile(): Promise<string> {
   const result = await postcss([tailwindcss()]).process(readFileSync(INPUT_FILE, 'utf8'), { from: INPUT_FILE })
+  if (result.css.trim() === '') {
+    throw new Error('TAILWIND_EMPTY_OUTPUT: 编译结果为空（多为 @config / content 解析失败），保留上一份产物')
+  }
   return result.css
 }
 
@@ -118,9 +126,13 @@ async function main(): Promise<void> {
     }
     schedule(filename)
   })
-  for (const file of CONFIG_FILES) {
-    watch(file, () => schedule(file))
-  }
+  // 两份配置按「监听仓库根 + 过滤文件名」而不是逐个 watch 文件：编辑器原子替换配置时，
+  // 单文件监听在 Linux/macOS 上仍绑在旧 inode 上，替换后的改动收不到。
+  watch(REPO_ROOT, (_event, filename) => {
+    if (filename !== null && CONFIG_FILES.includes(filename)) {
+      schedule(filename)
+    }
+  })
   console.log(`[build:taiwindcss] watching packages/*/src and ${CONFIG_FILES.length} tailwind configs`)
 }
 
