@@ -182,9 +182,11 @@ jobs:
               \( -name '*.node' -o -name '*.dylib' -o -name '*.so' -o -perm -100 \) -print)
           }
 
-          sign_tree src-tauri/resources "$RUNNER_TEMP/signed-direct.txt"
+          resources="$(pwd)/src-tauri/resources"
+          sign_tree "$resources" "$RUNNER_TEMP/signed-direct.txt"
 
-          for archive in src-tauri/resources/*.zip src-tauri/resources/*.tgz src-tauri/resources/*.tar.gz; do
+          # 压缩包路径必须是绝对路径：重打包要在 `cd "$before"` 的子 shell 里写回同名文件。
+          for archive in "$resources"/*.zip "$resources"/*.tgz "$resources"/*.tar.gz; do
             name="$(basename "$archive")"
             before="$RUNNER_TEMP/unpack-before-$name"
             after="$RUNNER_TEMP/unpack-after-$name"
