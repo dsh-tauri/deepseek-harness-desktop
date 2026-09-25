@@ -1,0 +1,13 @@
+/*
+ * 插件包（packages/*）的 Tailwind 构建入口，只被 scripts/build-taiwindcss.ts 消费。
+ *
+ * - 不引入 preflight：产物会挂进 DSH 控制台所在文档，基础层重置会改掉宿主 UI 的默认样式。
+ * - source(none) 关掉自动内容探测：探测会从本文件一路扫到仓库根，桌面壳 src/** 的类会被
+ *   带进插件产物；源清单由 tailwind.plugins.config.js 的 content 独占决定。
+ */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme) source(none);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+
+@config "../../../../../tailwind.plugins.config.js";

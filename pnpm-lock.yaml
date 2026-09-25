@@ -18,6 +18,9 @@ catalogs:
     babel-plugin-react-compiler:
       specifier: ^1.0.0
       version: 1.0.0
+    postcss:
+      specifier: ^8.5.26
+      version: 8.5.26
     tailwindcss:
       specifier: 4.1.11
       version: 4.1.11
@@ -546,6 +549,9 @@ importers:
       playwright:
         specifier: catalog:testing
         version: 1.63.0
+      postcss:
+        specifier: catalog:build
+        version: 8.5.26
       publint:
         specifier: catalog:cli
         version: 0.3.24
@@ -652,6 +658,9 @@ importers:
       dsh-tauri-session:
         specifier: workspace:*
         version: link:../dsh-tauri-session
+      dsh-tauri-taiwindcss:
+        specifier: workspace:*
+        version: link:../dsh-tauri-taiwindcss
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
@@ -914,6 +923,22 @@ importers:
       '@types/lodash-es':
         specifier: catalog:types
         version: 4.17.12
+      dsh-tauri-tsdown:
+        specifier: workspace:*
+        version: link:../dsh-tauri-tsdown
+      dsh-tauri-ui:
+        specifier: workspace:*
+        version: link:../dsh-tauri-ui
+      tsdown:
+        specifier: catalog:cli
+        version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
+
+  packages/dsh-tauri-taiwindcss:
+    dependencies:
+      dsh-tauri:
+        specifier: workspace:*
+        version: link:../dsh-tauri
+    devDependencies:
       dsh-tauri-tsdown:
         specifier: workspace:*
         version: link:../dsh-tauri-tsdown

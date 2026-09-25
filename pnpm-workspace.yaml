@@ -119,6 +119,7 @@ catalogs:
     '@tailwindcss/vite': 4.1.11
     '@vitejs/plugin-react': ^4.6.0
     babel-plugin-react-compiler: ^1.0.0
+    postcss: ^8.5.26
     tailwindcss: 4.1.11
     tsx: ^4.23.12
     vite: ^7.0.4

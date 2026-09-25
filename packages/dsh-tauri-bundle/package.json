@@ -11,6 +11,7 @@
     "dsh-tauri-rightclick": "workspace:*",
     "dsh-tauri-running-changes": "workspace:*",
     "dsh-tauri-session": "workspace:*",
+    "dsh-tauri-taiwindcss": "workspace:*",
     "dsh-tauri-ui": "workspace:*",
     "dsh-tauri-worktree": "workspace:*"
   }

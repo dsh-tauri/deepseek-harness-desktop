@@ -1,0 +1,67 @@
+{
+  "name": "dsh-tauri-taiwindcss",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Runtime Tailwind CSS for DeepSeek Harness desktop plugin packages: every packages/* source is compiled into one stylesheet and mounted inside the DSH web view so plugin UIs can use Tailwind utilities.",
+  "author": "Hairyf <wwu710632@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dsh-tauri-desk/dsh-tauri-plugins.git"
+  },
+  "bugs": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/issues",
+  "keywords": [
+    "dsh",
+    "plugin",
+    "dsh-plugin",
+    "tailwindcss",
+    "tauri",
+    "desktop",
+    "deepseek-harness"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.cjs",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "cordis.patch.yml",
+    "dist"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "dsh-tauri",
+        "dsh-tauri-ui"
+      ],
+      "external": [
+        "dsh-tauri/client",
+        "dsh-tauri-ui/client"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsx ../../scripts/build-taiwindcss.ts && tsdown",
+    "dev": "tsx ../../scripts/build-taiwindcss.ts --watch & tsdown --watch",
+    "generate": "tsx ../../scripts/build-taiwindcss.ts",
+    "prepublishOnly": "nr build",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "dsh-tauri": "workspace:*"
+  },
+  "devDependencies": {
+    "dsh-tauri-tsdown": "workspace:*",
+    "dsh-tauri-ui": "workspace:*",
+    "tsdown": "catalog:cli"
+  }
+}

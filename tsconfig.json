@@ -23,5 +23,13 @@
     "skipLibCheck": true
   },
   "references": [{ "path": "./tsconfig.node.json" }],
-  "include": ["src", "test", "packages/*/src", "types", "packages/.test/test-utils.ts", "scripts/build-plugins.ts"]
+  "include": [
+    "src",
+    "test",
+    "packages/*/src",
+    "types",
+    "packages/.test/test-utils.ts",
+    "scripts/build-plugins.ts",
+    "scripts/build-taiwindcss.ts"
+  ]
 }
