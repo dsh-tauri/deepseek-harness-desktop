@@ -139,6 +139,13 @@
         "name": "DSH Tauri Model Config",
         "description": "Model selection and parameter configuration for the DeepSeek Harness desktop shell",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-model-config"
+      },
+      {
+        "id": "dsh-tauri-taiwindcss",
+        "spec": "dsh-tauri-taiwindcss",
+        "name": "DSH Tauri Tailwind CSS",
+        "description": "Runtime Tailwind CSS for the desktop plugin packages: every packages/* source is compiled into one stylesheet and mounted inside the DSH web view, so plugin UIs can use Tailwind utilities.",
+        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-taiwindcss"
       }
     ],
     "preset": [

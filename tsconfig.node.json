@@ -7,5 +7,5 @@
     "skipLibCheck": true
   },
   "include": ["vite.config.ts", "scripts/**/*"],
-  "exclude": ["scripts/build-plugins.ts"]
+  "exclude": ["scripts/build-plugins.ts", "scripts/build-taiwindcss.ts"]
 }
