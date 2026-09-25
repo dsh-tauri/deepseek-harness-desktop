@@ -55,28 +55,17 @@ jobs:
           dsh-tag: ${{ inputs.dsh_tag }}
           bundle-git: ${{ inputs.bundle_git }}
 
-      # 内网机器上的 WebView2 只能靠安装包自带：默认的 downloadBootstrapper 会在
-      # 安装时去微软下载运行时，白名单环境里直接失败。offlineInstaller 把完整的
-      # WebView2 安装器打进 exe（约 +130 MB），安装全程不联网。
-      - name: Prepare offline WebView2 config
-        shell: bash
-        run: |
-          cat > offline-webview2.tmp.json <<'EOF'
-          {
-            "bundle": {
-              "windows": {
-                "webviewInstallMode": { "type": "offlineInstaller", "silent": true }
-              }
-            }
-          }
-          EOF
-
+      # 不内置 WebView2：`offlineInstaller` 会把 212 MB 的完整离线运行时打进 exe，
+      # 离线包体积因此从 ~95 MB 涨到 ~300 MB。用 Tauri 默认的 downloadBootstrapper：
+      # 仅当目标机缺 WebView2 时才在安装时去微软拉约 2 MB 引导器，Win11 与已更新的
+      # Win10 默认自带运行时。离线包只负责 Node/dsh/pnpm 运行时，不再背 WebView2。
+      #
       # 只出 NSIS：离线包资源有数万个文件，WiX/MSI 既慢又受 2 GB cab 上限约束。
       - name: Build offline installer
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles nsis --config offline-webview2.tmp.json
+        run: pnpm tauri build --bundles nsis
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
