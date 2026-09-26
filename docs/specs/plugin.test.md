@@ -59,7 +59,7 @@ vitest.plugin.config.ts            # plugin project 配置
 * `unit` project: 匹配 `packages/**/*.{test,spec}.*`、`test/**`、`src/**/*.test.ts`（自动排除 `.e2e.ts`）
 * `test/archive/**`: 任何 project 均不匹配。
 
-* **文件拆分**：允许同一插件拆分不同层级（如桌宠插件：L2/C 位于 `plugins/dsh-tauri-pet.e2e.ts`；桌面端仅保留启动冒烟 `desktop/boot.e2e.ts`，桌宠的 L3 窗口用例已随「设置菜单入口迁到官方账号菜单」一并删除）。
+* **文件拆分**：允许同一插件拆分不同层级（如桌宠插件：L2/C 位于 `plugins/dsh-tauri-pet.e2e.ts`，L3 窗口用例位于 `desktop/pet.e2e.ts`；L3 里依赖「侧栏设置菜单入口」的两条已随入口迁到官方账号菜单删除，仅保留尺寸边界一条）。
 
 ---
 
