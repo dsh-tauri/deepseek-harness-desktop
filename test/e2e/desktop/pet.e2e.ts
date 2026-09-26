@@ -25,10 +25,17 @@ const PET_WEBVIEW = 'pet'
 /** 插件就绪锚点：插件样式元素（`mountStyle` 交给 css-render 落成 `style[cssr-id=…]`）。 */
 const PET_STYLES = 'style[cssr-id="dsh-tauri-pet-styles"]'
 
-/** 设置入口触发器（`packages/dsh-tauri-ui/src/client/ui/trigger.tsx`）。 */
-const SETTINGS_TRIGGER = '.dshp-settings-trigger'
+/**
+ * 菜单入口：桌面载体下由官方账号菜单占据 `settings.launcher` 座位
+ * （`@deepseek-ai/dsh-client-ui-settings-account` 的 `AccountMenu`），
+ * 0.1.7 起侧栏不再有插件自有的 `.dshp-settings-trigger`。
+ *
+ * 锚点取 `aria-haspopup="menu"`：账号触发器是官方 primitives 的 portal `Menu` 锚，
+ * 该属性同时是插件识别菜单的稳定结构（不依赖文案，文案随语言变）。
+ */
+const ACCOUNT_MENU_TRIGGER = 'button[aria-haspopup="menu"]'
 
-/** 设置菜单里的桌宠条目（`packages/dsh-tauri-pet/src/client/constants/index.ts`）。 */
+/** 账号菜单里的桌宠条目（`packages/dsh-tauri-pet/src/client/constants/index.ts`）。 */
 const PET_MENU_ITEM = '[data-dsh-tauri-pet-menu-item="1"]'
 
 /** 桌宠尺寸合法区间（`src-tauri/src/desktop/pet.rs:48-49` 的 50.0 / 200.0）。 */
@@ -118,13 +125,28 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
     await completePreinstall(browser, ASSEMBLY_TIMEOUT_MS)
     await iframe.waitForDisplayed({ timeout: ASSEMBLY_TIMEOUT_MS })
 
-    // 切入 iframe 安装收集器并等待 UI 渲染
+    // 切入 iframe 安装收集器并等待 UI 渲染。
+    //
+    // 就绪锚点必须覆盖「插件真的挂上了菜单入口」这一步：只等桌宠样式就进用例，会让第一条
+    // 用例去和菜单锚的挂载赛跑（CI 上曾整轮输掉这场赛跑）。桌宠条目由插件在菜单展开时才
+    // 克隆出来，这里只能等到入口存在。
     await withIframe(async () => {
       await browser.execute(collectPageErrors)
       await browser.waitUntil(
         () => browser.execute(elementExists, PET_STYLES),
         { timeout: 60_000, timeoutMsg: '内嵌 dsh 界面未渲染出桌宠插件产物（插件 client 未生效）' },
       )
+      try {
+        await browser.waitUntil(
+          () => browser.execute(elementExists, ACCOUNT_MENU_TRIGGER),
+          { timeout: 60_000, timeoutMsg: '菜单入口未渲染（账号菜单锚缺席）' },
+        )
+      }
+      catch (error) {
+        // 入口缺席时把现场钉进失败信息：只看超时文案分不清「插件没挂上」「菜单锚存在但
+        // 触发器没渲染」还是「帧内报错把渲染打断了」，CI 上无从复盘。
+        throw new Error(`${(error as Error).message}\n${await describeSettingsScene()}`)
+      }
     })
 
     await dismissDshModals(browser)
@@ -210,48 +232,38 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
   }
 
   /**
-   * 帧内打开设置入口，并等菜单里出现唯一的桌宠条目。
+   * 帧内打开账号菜单，并等菜单里出现唯一的桌宠条目。
    *
-   * 桌宠条目由插件在「设置」菜单展开时才克隆出来，只有菜单处于展开态才存在；
-   * `.dshp-settings-trigger` / `data-dsh-tauri-pet-menu-item` 都是插件自有的稳定选择器。
+   * 0.1.7 起桌面载体没有插件自有的侧栏设置入口：官方账号菜单占据 `settings.launcher`
+   * 座位（点开即「设置 / 意见反馈 / 退出登录」，桌宠条目由插件插在「设置」之后）。
+   * 桌宠条目只在菜单展开时才克隆出来，所以必须先把菜单打开再断言。
    */
   async function openPetMenu(): Promise<void> {
     const browser = app.browser
     await dismissDshModals(browser)
 
     await withIframe(async () => {
-      try {
-        await browser.waitUntil(
-          () => browser.execute(elementExists, SETTINGS_TRIGGER),
-          { timeout: 60_000, timeoutMsg: '设置入口未渲染（dsh-tauri-ui 未生效）' },
-        )
-      }
-      catch (error) {
-        // 入口缺席时把现场钉进失败信息：只看超时文案分不清「插件没挂上」「侧栏存在但
-        // 触发器没渲染」还是「帧内报错把渲染打断了」，CI 上无从复盘。
-        throw new Error(`${(error as Error).message}\n${await describeSettingsScene()}`)
-      }
-
-      const trigger = await browser.$(SETTINGS_TRIGGER)
+      const trigger = await browser.$(ACCOUNT_MENU_TRIGGER)
       if (await trigger.getAttribute('aria-expanded') !== 'true')
         await trigger.click()
 
       await browser.waitUntil(
         async () => await browser.execute(elementCount, PET_MENU_ITEM) === 1,
-        { timeout: 30_000, timeoutMsg: '设置菜单展开后必须出现唯一的桌宠条目' },
+        { timeout: 30_000, timeoutMsg: '账号菜单展开后必须出现唯一的桌宠条目' },
       )
     })
   }
 
-  /** 帧内设置现场快照：入口/侧栏/根节点是否存在 + 页内错误，用于入口缺席时的定位。 */
+  /** 帧内现场快照：入口/菜单锚/根节点计数与页内错误，用于锚点缺席时的定位。 */
   async function describeSettingsScene(): Promise<string> {
     return await app.browser.execute(() => {
       const host = window as unknown as WindowWithDshErrors
       const count = (selector: string): number => document.querySelectorAll(selector).length
       return JSON.stringify({
         readyState: document.readyState,
-        trigger: count('.dshp-settings-trigger'),
-        sidebarRoot: count('[data-slot-sidebar="dsh-tauri-ui"]'),
+        menuTrigger: count('button[aria-haspopup="menu"]'),
+        legacyTrigger: count('.dshp-settings-trigger'),
+        menu: count('[role="menu"]'),
         sidebarSlot: count('[data-slot="sidebar"]'),
         root: count('#root'),
         petStyles: count('style[cssr-id="dsh-tauri-pet-styles"]'),
@@ -261,7 +273,7 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
     }) as string
   }
 
-  /** 帧内点击设置菜单里的桌宠条目（用户路径的唯一开关入口），随后菜单自行收起。 */
+  /** 帧内点击账号菜单里的桌宠条目（用户路径的唯一开关入口），随后菜单自行收起。 */
   async function togglePet(): Promise<void> {
     const browser = app.browser
     await openPetMenu()
@@ -273,7 +285,7 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
     await dismissDshModals(browser)
   }
 
-  /** 从设置菜单切换桌宠，先断后端状态真的翻转，再等窗口句柄收敛（全部断言 Tauri 原生产物）。 */
+  /** 从账号菜单切换桌宠，先断后端状态真的翻转，再等窗口句柄收敛（全部断言 Tauri 原生产物）。 */
   async function togglePetExpecting(expected: string[], message: string): Promise<void> {
     const before = (await status()).enabled
     expect(before, '切换前必须能读到后端 enabled 状态（否则后端已失联）').toBeTypeOf('boolean')
