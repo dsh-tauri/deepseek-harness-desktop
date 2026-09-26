@@ -1,7 +1,7 @@
 {
   "engines": {
     "dsh": {
-      "recommend": "0.1.7-rc.2",
+      "recommend": "0.1.5-rc.3",
       "minimum": "0.1.5-rc.1"
     },
     "node": {
@@ -43,7 +43,7 @@
     },
     "dsh": {
       "engine": {
-        "recommend": "0.1.7-rc.2",
+        "recommend": "0.1.5-rc.3",
         "minimum": "0.1.5-rc.1"
       },
       "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",
