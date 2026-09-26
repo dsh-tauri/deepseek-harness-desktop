@@ -78,17 +78,27 @@ describe('coreProfileName', () => {
 })
 
 /**
- * 升到任何更新的版本都要提示「破坏性更改 → 请切换档案」：
+ * 只有核心号（`x.y.z`）变大才算「升级 → 请切换档案」：
  * patch 升级同样可能带破坏性更改（用户实测 0.1.5 → 0.1.7 未提示是漏报，见反馈）；
- * 降级、平级与不可解析版本一律放行——误报会把正常切换挡在弹窗后面。
+ * 同一个核心号的预发布标识互换（rc.1 → rc.2、rc.2 → 正式版）共用同一个配套档案，
+ * 不算升级——按 semver 严格比较会把它误报成破坏性更改。
+ * 降级、平级与不可解析版本一律放行：误报会把正常切换挡在弹窗后面。
  */
 describe('isCoreUpgrade', () => {
-  it('任何更新（含 patch、预发布→正式）都算升级', () => {
+  it('核心号变大（含 patch）都算升级', () => {
     expect(isCoreUpgrade('0.1.5', '0.1.7')).toBe(true)
     expect(isCoreUpgrade('0.17.1', '0.18.0')).toBe(true)
     expect(isCoreUpgrade('0.17.1', '1.0.0')).toBe(true)
-    expect(isCoreUpgrade('0.1.5-rc.1', '0.1.5')).toBe(true)
+    expect(isCoreUpgrade('0.17.1', '2.0.0')).toBe(true)
     expect(isCoreUpgrade('0.1.5-rc.1', '0.1.6-alpha.2')).toBe(true)
+  })
+
+  it('同一核心号的预发布标识互换不算升级', () => {
+    expect(isCoreUpgrade('0.1.7-rc.1', '0.1.7-rc.2')).toBe(false)
+    expect(isCoreUpgrade('0.1.7-rc.2', '0.1.7-rc.1')).toBe(false)
+    expect(isCoreUpgrade('0.1.7-rc.2', '0.1.7-alpha.1')).toBe(false)
+    expect(isCoreUpgrade('0.1.5-rc.1', '0.1.5')).toBe(false)
+    expect(isCoreUpgrade('0.1.5', '0.1.5-rc.1')).toBe(false)
   })
 
   it('平级不算升级', () => {
@@ -98,9 +108,9 @@ describe('isCoreUpgrade', () => {
 
   it('降级不算升级', () => {
     expect(isCoreUpgrade('0.1.7', '0.1.5')).toBe(false)
+    expect(isCoreUpgrade('0.1.7-rc.2', '0.1.5-rc.1')).toBe(false)
     expect(isCoreUpgrade('0.18.0', '0.17.1')).toBe(false)
     expect(isCoreUpgrade('1.0.0', '0.9.9')).toBe(false)
-    expect(isCoreUpgrade('0.1.5', '0.1.5-rc.1')).toBe(false)
   })
 
   it('任一侧版本缺失或不可解析时不误报', () => {
@@ -112,5 +122,6 @@ describe('isCoreUpgrade', () => {
 
   it('带 dsh-/src- 前缀的 release tag 按同一版本判定', () => {
     expect(isCoreUpgrade('dsh-0.1.5-rc.8-1', 'src-0.1.7')).toBe(true)
+    expect(isCoreUpgrade('dsh-0.1.7-rc.1-1', 'src-0.1.7-rc.2-2')).toBe(false)
   })
 })

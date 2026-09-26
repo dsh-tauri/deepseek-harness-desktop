@@ -47,11 +47,16 @@ export function coreProfileName(version: string): string {
 }
 
 /**
- * 目标核心是否相对在用核心做了升级（任意新版：大版本/小版本/补丁都算）。
+ * 目标核心是否相对在用核心做了升级（只认 `x.y.z` 核心号变大）。
  *
  * 核心与档案是配套的：换到任何更新的 dsh 版本都可能破坏当前档案里的插件与设置，切换前
- * 先提示用户换配套档案。判据取「目标 > 在用」而非「跨主/次版本」——dsh 在 0.1.x 上持续推进
+ * 先提示用户换配套档案。判据取「核心号变大」而非「跨主/次版本」——dsh 在 0.1.x 上持续推进
  * 破坏性更改（0.1.5 → 0.1.7 就是一次），只跨主/次版本会漏掉这些升级提示。
+ *
+ * 预发布标识不参与判定：同一个 `x.y.z` 的 rc/alpha/beta 之间互换（含 `-rc.1` → `-rc.2`、
+ * `-rc.2` → 正式版）只换预发布序号，插件与设置的配套关系不变，`coreProfileName` 也给它们
+ * 同一个档案名。按 semver 严格比较会把 `0.1.7-rc.2 > 0.1.7-rc.1` 判成升级，让用户每次
+ * 追一个 rc 都被弹「含破坏性更改」——这正是要避免的误报。
  *
  * 不可解析（本地核心版本号缺失、首次切换没有在用核心）一律返回 false——漏提示只是少了
  * 一次提醒，误判会把正常切换挡在弹窗后面。
@@ -61,7 +66,13 @@ export function isCoreUpgrade(from: string, to: string): boolean {
   const target = semver.parse(stripVersionPrefix(to))
   if (!current || !target)
     return false
-  return semver.gt(target, current)
+  const currentCore = [current.major, current.minor, current.patch]
+  const targetCore = [target.major, target.minor, target.patch]
+  for (let index = 0; index < currentCore.length; index += 1) {
+    if (targetCore[index]! !== currentCore[index]!)
+      return targetCore[index]! > currentCore[index]!
+  }
+  return false
 }
 
 /** 判断核心版本（版本串或 release tag）是否高于 rc.2 基准（引入破坏性更改） */
