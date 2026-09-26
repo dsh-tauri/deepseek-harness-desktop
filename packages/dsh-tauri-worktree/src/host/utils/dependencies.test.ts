@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
 import { join } from 'pathe'
@@ -8,8 +8,6 @@ import {
   isDependencyInstallCommand,
   linkWorktreeDependencies,
   normalizeLinkDirectories,
-  normalizeSeedDirectories,
-  seedWorktreeDirectories,
   unlinkWorktreeDependencies,
 } from './dependencies'
 
@@ -28,22 +26,6 @@ async function createFixture(): Promise<{ project: string, worktree: string, mar
   await mkdir(join(project, 'node_modules', 'pkg'), { recursive: true })
   await writeFile(marker, 'shared-dependency\n')
   return { project, worktree, marker }
-}
-
-async function createBuildCacheFixture(): Promise<{ project: string, worktree: string, source: string }> {
-  const project = await temporaryRoot('dsh-seed-project-')
-  const worktree = await temporaryRoot('dsh-seed-worktree-')
-  const artifact = join(project, 'src-tauri', 'target', 'debug', 'deps', 'libdemo.rlib')
-  await mkdir(join(project, 'src-tauri', 'target', 'debug', 'incremental'), { recursive: true })
-  await mkdir(join(project, 'src-tauri', 'target', 'debug', 'deps'), { recursive: true })
-  await writeFile(artifact, 'artifact\n')
-  await writeFile(join(project, 'src-tauri', 'target', 'debug', 'incremental', 'cache.bin'), 'incremental\n')
-  await mkdir(join(project, 'src-tauri', 'target', 'debug', 'build'), { recursive: true })
-  await writeFile(join(project, 'src-tauri', 'target', 'debug', 'build', 'generated.rs'), '// generated\n')
-  const source = join(worktree, 'src-tauri', 'src', 'main.rs')
-  await mkdir(join(worktree, 'src-tauri', 'src'), { recursive: true })
-  await writeFile(source, 'fn main() {}\n')
-  return { project, worktree, source }
 }
 
 async function createSkillsFixture(): Promise<{ project: string, worktree: string, skill: string }> {
@@ -155,60 +137,6 @@ describe('unlinkWorktreeDependencies', () => {
   it('is idempotent when the directory is absent', async () => {
     const worktree = await temporaryRoot('dsh-deps-worktree-')
     await expect(unlinkWorktreeDependencies(worktree, ['node_modules'])).resolves.toEqual([])
-  })
-})
-
-describe('normalizeSeedDirectories', () => {
-  it('falls back to the tauri build cache and keeps nested paths', () => {
-    expect(normalizeSeedDirectories()).toEqual(['src-tauri/target'])
-    expect(normalizeSeedDirectories([])).toEqual(['src-tauri/target'])
-    expect(normalizeSeedDirectories(['src-tauri\\target\\', 'target'])).toEqual(['src-tauri/target', 'target'])
-  })
-
-  it('rejects traversal, absolute and duplicate entries', () => {
-    expect(normalizeSeedDirectories(['../evil', 'src/../../etc', '.', '..', '', '  ', '/etc/passwd', 'C:\\Windows'])).toEqual([])
-    const deduped = normalizeSeedDirectories(['src-tauri/target', 'SRC-TAURI/TARGET'])
-    expect(deduped).toEqual(process.platform === 'win32' ? ['src-tauri/target'] : ['src-tauri/target', 'SRC-TAURI/TARGET'])
-  })
-})
-
-describe('seedWorktreeDirectories', () => {
-  it('copies the build cache, drops incremental state and refreshes local rust sources', async () => {
-    const { project, worktree, source } = await createBuildCacheFixture()
-    await utimes(source, new Date(0), new Date(0))
-    const startedAt = Date.now()
-
-    const result = await seedWorktreeDirectories([project], worktree, ['src-tauri/target'])
-
-    expect(result).toEqual({ seeded: ['src-tauri/target'], skipped: [], touched: 1, errors: [], sources: [project] })
-    expect(await readFile(join(worktree, 'src-tauri', 'target', 'debug', 'deps', 'libdemo.rlib'), 'utf8')).toBe('artifact\n')
-    expect(await readFile(join(worktree, 'src-tauri', 'target', 'debug', 'build', 'generated.rs'), 'utf8')).toBe('// generated\n')
-    await expect(lstat(join(worktree, 'src-tauri', 'target', 'debug', 'incremental'))).rejects.toMatchObject({ code: 'ENOENT' })
-    expect((await stat(source)).mtimeMs).toBeGreaterThanOrEqual(startedAt - 1000)
-  })
-
-  it('keeps the source cache intact and skips missing sources or occupied targets', async () => {
-    const { project, worktree } = await createBuildCacheFixture()
-
-    const emptyProject = await temporaryRoot('dsh-seed-empty-')
-    const missingSource = await seedWorktreeDirectories([emptyProject], worktree, ['src-tauri/target'])
-    expect(missingSource).toEqual({ seeded: [], skipped: ['src-tauri/target'], touched: 0, errors: [], sources: [] })
-
-    await mkdir(join(worktree, 'src-tauri', 'target'), { recursive: true })
-    const occupiedTarget = await seedWorktreeDirectories([project], worktree, ['src-tauri/target'])
-    expect(occupiedTarget).toEqual({ seeded: [], skipped: ['src-tauri/target'], touched: 0, errors: [], sources: [] })
-    expect(await readFile(join(project, 'src-tauri', 'target', 'debug', 'deps', 'libdemo.rlib'), 'utf8')).toBe('artifact\n')
-  })
-
-  it('falls back to the next source root that carries the directory', async () => {
-    const { project, worktree } = await createBuildCacheFixture()
-    const emptyProject = await temporaryRoot('dsh-seed-empty-')
-
-    const result = await seedWorktreeDirectories([emptyProject, project], worktree, ['src-tauri/target'])
-
-    expect(result.seeded).toEqual(['src-tauri/target'])
-    expect(result.sources).toEqual([project])
-    expect(await readFile(join(worktree, 'src-tauri', 'target', 'debug', 'deps', 'libdemo.rlib'), 'utf8')).toBe('artifact\n')
   })
 })
 

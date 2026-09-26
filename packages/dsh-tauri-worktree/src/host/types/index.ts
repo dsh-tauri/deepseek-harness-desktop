@@ -40,8 +40,6 @@ export interface EnsureOptions extends GitOptions {
   carryStaged?: boolean
   linkDependencies?: boolean
   linkDependencyDirectories?: string[]
-  seedDependencies?: boolean
-  seedDependencyDirectories?: string[]
 }
 
 export interface CheckoutOptions extends GitOptions {

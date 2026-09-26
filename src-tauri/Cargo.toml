@@ -128,7 +128,7 @@ tray-icon = { version = "0.25", default-features = false, features = [ "ksni" ] 
 [patch.crates-io]
 tauri-plugin-wdio-webdriver = { path = "vendor/tauri-plugin-wdio-webdriver" }
 
-# 行号表而非完整调试信息：panic 与回溯仍能定位到行，target 体积、链接耗时和新工作树的构建缓存拷贝量都随之下降
+# 行号表而非完整调试信息：panic 与回溯仍能定位到行，target 体积与链接耗时都随之下降
 [profile.dev]
 debug = 1
 

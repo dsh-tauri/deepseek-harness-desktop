@@ -430,7 +430,7 @@ describe('依赖链接', () => {
     expect(created.binding.linkedDependencies).toBeUndefined()
   })
 
-  it('默认把源仓库的构建缓存复制进工作树并刷新本地源码时间戳', async () => {
+  it('不把 src-tauri/target 构建缓存复制进工作树', async () => {
     const repository = createRepository()
     mkdirSync(join(repository, 'src-tauri', 'src'), { recursive: true })
     writeFileSync(join(repository, 'src-tauri', 'src', 'main.rs'), 'fn main() {}\n')
@@ -439,37 +439,19 @@ describe('依赖链接', () => {
     writeFileSync(join(repository, 'src-tauri', 'target', 'debug', 'deps', 'libdemo.rlib'), 'artifact\n')
     git(repository, 'add', '.')
     git(repository, 'commit', '-m', 'rust sources')
-    const sessionId = 'seeded-session'
+    const sessionId = 'unseeded-session'
 
     const created = await worktree.create(repository, sessionId)
     expect(created.ok).toBe(true)
     if (!created.ok)
       return
 
-    const seeded = join(created.binding.worktreePath, 'src-tauri', 'target', 'debug', 'deps', 'libdemo.rlib')
-    expect(readFileSync(seeded, 'utf8')).toBe('artifact\n')
-    const seedLog = created.log.find(line => line.startsWith('Seeded the build cache from '))
-    expect(seedLog).toContain(basename(repository))
-    expect(seedLog).toContain('(src-tauri/target); marked 1 local source file(s) for rebuild')
+    expect(existsSync(join(created.binding.worktreePath, 'src-tauri', 'target'))).toBe(false)
+    expect(created.log.some(line => line.includes('build cache'))).toBe(false)
 
     const removed = await worktree.remove(sessionId)
     expect(removed.ok).toBe(true)
-    expect(existsSync(join(created.binding.worktreePath, 'src-tauri'))).toBe(false)
     expect(existsSync(join(repository, 'src-tauri', 'target', 'debug', 'deps', 'libdemo.rlib'))).toBe(true)
-  })
-
-  it('seedDependencies 为 false 时跳过构建缓存复制', async () => {
-    const repository = createRepository()
-    mkdirSync(join(repository, 'src-tauri', 'target'), { recursive: true })
-    writeFileSync(join(repository, 'src-tauri', 'target', 'marker'), 'x\n')
-    const sessionId = 'unseeded-session'
-
-    const created = await worktree.create(repository, sessionId, { seedDependencies: false })
-    expect(created.ok).toBe(true)
-    if (!created.ok)
-      return
-
-    expect(existsSync(join(created.binding.worktreePath, 'src-tauri', 'target'))).toBe(false)
   })
 
   it('无条件继承 .agents（复制而非链接），即使关闭依赖链接', async () => {

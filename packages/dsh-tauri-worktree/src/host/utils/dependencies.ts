@@ -1,15 +1,10 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
-import { cp, lstat, mkdir, readdir, rm, symlink, utimes } from 'node:fs/promises'
+import { cp, lstat, mkdir, rm, symlink } from 'node:fs/promises'
 import process from 'node:process'
 import { filter, find, get, isEmpty, isString, map, trimEnd, uniqBy } from 'lodash-es'
-import { basename, dirname, resolve } from 'pathe'
+import { resolve } from 'pathe'
 
 const DEFAULT_LINK_DIRECTORIES: readonly string[] = ['node_modules']
-
-const DEFAULT_SEED_DIRECTORIES: readonly string[] = ['src-tauri/target']
-
-// 增量编译目录绑定原路径且体积可观，换路径复用没有意义
-const SEED_EXCLUDED_NAMES: ReadonlySet<string> = new Set(['incremental'])
 
 const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'bash',
@@ -38,17 +33,6 @@ export function normalizeLinkDirectories(directories?: readonly string[]): strin
   const source = isEmpty(directories) ? DEFAULT_LINK_DIRECTORIES : directories ?? []
   const names = map(source, raw => trimEnd(String(raw ?? '').trim(), '/\\'))
   const valid = filter(names, name => Boolean(name) && name !== '.' && name !== '..' && !/[/\\]/.test(name))
-  return uniqBy(valid, name => (process.platform === 'win32' ? name.toLowerCase() : name))
-}
-
-export function normalizeSeedDirectories(directories?: readonly string[]): string[] {
-  const source = isEmpty(directories) ? DEFAULT_SEED_DIRECTORIES : directories ?? []
-  const names = map(source, raw => trimEnd(String(raw ?? '').trim(), '/\\').replace(/\\/g, '/'))
-  const valid = filter(names, name =>
-    Boolean(name)
-    && !name.startsWith('/')
-    && !/^[a-z]:/i.test(name)
-    && !name.split('/').some(segment => segment === '.' || segment === '..'))
   return uniqBy(valid, name => (process.platform === 'win32' ? name.toLowerCase() : name))
 }
 
@@ -94,51 +78,6 @@ export async function linkWorktreeDependencies(
     }
   }
   return { linked, skipped }
-}
-
-/**
- * 把源仓库的构建缓存复制进工作树，让 Rust 依赖不必在新工作树里重编。
- *
- * 必须是复制而不是链接：共享同一个 target 目录时 cargo 会用同一份 `-C metadata` 把两棵树的
- * 同名单元当作同一个，源仓库构建过之后工作树会被判成新鲜，静默跑起源仓库的产物。
- * 复制完成后还要刷新工作树本地源码的时间戳——复制来的指纹比新检出的源码更新，不刷新的话
- * 工作区 crate 同样会被判成新鲜，编译出的应用仍是源仓库那份。
- */
-export async function seedWorktreeDirectories(
-  sourceRoots: readonly string[],
-  worktreePath: string,
-  directories: readonly string[] = DEFAULT_SEED_DIRECTORIES,
-): Promise<{ seeded: string[], skipped: string[], touched: number, errors: string[], sources: string[] }> {
-  const seeded: string[] = []
-  const skipped: string[] = []
-  const errors: string[] = []
-  const sources: string[] = []
-  let touched = 0
-  for (const name of normalizeSeedDirectories(directories)) {
-    const sourceRoot = find(sourceRoots, root => existsSync(resolve(root, name)))
-    const target = resolve(worktreePath, name)
-    if (!sourceRoot || await pathExists(target)) {
-      skipped.push(name)
-      continue
-    }
-    try {
-      await mkdir(dirname(target), { recursive: true })
-      await cp(resolve(sourceRoot, name), target, {
-        recursive: true,
-        preserveTimestamps: true,
-        filter: path => !SEED_EXCLUDED_NAMES.has(basename(path)),
-      })
-      touched += await touchRustSources(dirname(target), target)
-      seeded.push(name)
-      if (!sources.includes(sourceRoot))
-        sources.push(sourceRoot)
-    }
-    catch (error) {
-      await rm(target, { recursive: true, force: true }).catch(() => {})
-      errors.push(`${name}: ${get(error, 'message', String(error))}`)
-    }
-  }
-  return { seeded, skipped, touched, errors, sources }
 }
 
 export async function unlinkWorktreeDependencies(
@@ -208,29 +147,6 @@ export async function copyMissingChildren(sourceDirectory: string, targetDirecto
 }
 
 // --- internal ---
-
-async function touchRustSources(root: string, skip: string): Promise<number> {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
-  let touched = 0
-  for (const entry of entries) {
-    const path = resolve(root, entry.name)
-    if (path === skip)
-      continue
-    if (entry.isDirectory()) {
-      touched += await touchRustSources(path, skip)
-      continue
-    }
-    if (!entry.name.endsWith('.rs'))
-      continue
-    try {
-      const now = new Date()
-      await utimes(path, now, now)
-      touched += 1
-    }
-    catch {}
-  }
-  return touched
-}
 
 async function isSymbolicLink(path: string): Promise<boolean> {
   try {

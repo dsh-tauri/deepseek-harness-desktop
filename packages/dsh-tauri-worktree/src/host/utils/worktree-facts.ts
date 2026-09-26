@@ -17,7 +17,7 @@ export function worktreeSectionText(binding: Binding): string {
     `${worktreeFactsText(binding)}\n\n`
     + `Resolve every path inside the worktree path. The project path is a different checkout: `
     + `do not read from or modify it in this session, even when the inherited history refers to it. `
-    + `Dependency directories (e.g. node_modules) are linked from the source repository, the Rust build cache (src-tauri/target) is seeded with a copy so the backend does not recompile from scratch, and the agent skills directory (.agents) is copied into the worktree, so it works out of the box. `
+    + `Dependency directories (e.g. node_modules) are linked from the source repository and the agent skills directory (.agents) is copied into the worktree, so it works out of the box. The Rust build cache (src-tauri/target) is NOT carried over: the backend recompiles from scratch in this worktree. `
     + `Running a package manager install (e.g. \`pnpm install\`) inside the worktree first detaches that link and materializes an independent copy, `
     + `leaving the source repository untouched. `
     + `checkout_worktree is user-authorized only: call it only after a direct human user explicitly requests or approves checkout. `
