@@ -342,7 +342,7 @@ jobs:
             # 例外：GITHUB_TOKEN 未被授权改动工作流文件，构建提交相对默认分支新增/修改
             # 了 `.github/workflows/**` 时该调用会 404（发布前试跑正是这种情形）。此时退回
             # 不带 target 的创建并告警——产物可追溯性让位于「试跑必须能出包」。
-            title="Deepseek Harness Desktop $RELEASE_TAG"
+            title="Release $RELEASE_TAG"
             if ! gh release create "$RELEASE_TAG" --draft --target "$SOURCE_REF" --title "$title"; then
               echo "::warning::cannot pin $RELEASE_TAG to $SOURCE_REF (workflow-file permission); creating it on the default branch instead"
               gh release create "$RELEASE_TAG" --draft --title "$title"
