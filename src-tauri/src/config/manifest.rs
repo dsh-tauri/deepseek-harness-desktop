@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn shipped_manifest_carries_engines_plugins_pets_and_dependencies() {
         let manifest = shipped_manifest();
-        assert_eq!(manifest.engines.dsh.recommend, "0.1.5-rc.3");
+        assert_eq!(manifest.engines.dsh.recommend, "0.1.7-rc.2");
         assert_eq!(manifest.engines.dsh.minimum, "0.1.5-rc.1");
         assert!(!manifest.plugins.preset.is_empty());
         assert!(!manifest.plugins.built_in.is_empty());

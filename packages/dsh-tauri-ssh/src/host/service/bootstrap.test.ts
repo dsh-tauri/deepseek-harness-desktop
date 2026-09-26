@@ -46,7 +46,7 @@ const profile: MachineProfile = {
 /** A realistic newest-first release list matching the live pkg repository. */
 const RELEASES = [
   { tag: 'dsh-0.2.0-preview.1-32490000001', prerelease: true },
-  { tag: 'dsh-0.1.5-rc.3-35833820356', prerelease: false },
+  { tag: 'dsh-0.1.7-rc.2-36024748146', prerelease: false },
   { tag: 'dsh-0.1.2-rc.1-33729514615', prerelease: false },
   { tag: 'dsh-0.1.1-rc.1-32342588166', prerelease: false },
 ]
@@ -57,7 +57,7 @@ const PKG_REPO = 'dsh-tauri-desk/deepseek-harness-pkg'
 const LINUX_ASSETS = [
   {
     name: 'deepseek-harness-pkg-linux.zip',
-    url: `https://github.com/${PKG_REPO}/releases/download/dsh-0.1.5-rc.3-35833820356/deepseek-harness-pkg-linux.zip`,
+    url: `https://github.com/${PKG_REPO}/releases/download/dsh-0.1.7-rc.2-36024748146/deepseek-harness-pkg-linux.zip`,
     digest: 'sha256:6b7ecfebe3b7d779b459262943b17777427860f1b96dbf3b6f16a5074b1119a7',
   },
 ]
@@ -72,8 +72,8 @@ function healthyFetchers(overrides: Partial<{
     listReleases: () => Promise.resolve(RELEASES),
     listAssets: () => Promise.resolve(LINUX_ASSETS),
     npmDist: () => Promise.resolve({
-      url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz',
-      mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz',
+      url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz',
+      mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz',
       integrity: 'sha512-ZXhhZQ==',
     }),
     ...overrides,
@@ -195,12 +195,12 @@ describe('planRemoteInstall', () => {
     expect(plan.dsh.kind).toBe('pkg-zip')
     if (plan.dsh.kind !== 'pkg-zip')
       throw new Error('expected pkg-zip')
-    expect(plan.dsh.tag).toBe('dsh-0.1.5-rc.3-35833820356')
+    expect(plan.dsh.tag).toBe('dsh-0.1.7-rc.2-36024748146')
     expect(plan.dsh.digest).toBe(LINUX_ASSETS[0]?.digest)
     expect(plan.dsh.urls[0]).toBe(LINUX_ASSETS[0]?.url)
     expect(plan.dsh.urls[1]).toContain('ghfast.top/')
     expect(plan.dshEntry).toBe('node_modules/@deepseek-ai/dsh/lib/bin.js')
-    expect(plan.dshVersion).toBe('0.1.5-rc.3')
+    expect(plan.dshVersion).toBe('0.1.7-rc.2')
     expect(plan.notes).toEqual([])
   })
 
@@ -209,8 +209,8 @@ describe('planRemoteInstall', () => {
     expect(plan.dsh.kind).toBe('npm-tgz')
     if (plan.dsh.kind === 'npm-tgz') {
       expect(plan.dsh.urls).toEqual([
-        'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz',
-        'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz',
+        'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz',
+        'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz',
       ])
       // The SRI digest arrives normalized into the script-verifiable hex form.
       expect(plan.dsh.integrity).toBe(`sha512:${Buffer.from('ZXhhZQ==', 'base64').toString('hex')}`)
@@ -236,7 +236,7 @@ describe('planRemoteInstall', () => {
     }))
     expect(plan.dsh.kind).toBe('npm-tgz')
     if (plan.dsh.kind === 'npm-tgz')
-      expect(plan.dsh.urls[0]).toBe('https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz')
+      expect(plan.dsh.urls[0]).toBe('https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz')
     expect(plan.notes.join('\n')).toContain('未取得')
   })
 
@@ -246,7 +246,7 @@ describe('planRemoteInstall', () => {
     }))
     if (plan.dsh.kind !== 'pkg-zip')
       throw new Error('expected pkg-zip')
-    expect(plan.dsh.tag).toBe('dsh-0.1.5-rc.3-35833820356')
+    expect(plan.dsh.tag).toBe('dsh-0.1.7-rc.2-36024748146')
     expect(plan.notes.join('\n')).toContain('release 列表获取失败')
   })
 
@@ -303,7 +303,7 @@ describe('buildInstallScript', () => {
   it('arm64: assembles node_modules on the remote with registry fallback', async () => {
     const plan = await planRemoteInstall('Linux 5.15 aarch64', {}, healthyFetchers())
     const script = buildInstallScript(plan)
-    expect(script).toContain('https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz')
+    expect(script).toContain('https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz')
     expect(script).toContain(`sha512:${Buffer.from('ZXhhZQ==', 'base64').toString('hex')}`)
     expect(script).toContain('install --prod --silent --registry')
     expect(script).toContain('"$ROOT/dependencies/pnpm/bin/pnpm.cjs"')
@@ -323,7 +323,7 @@ describe('buildInstallScript', () => {
   })
 
   it('dedupes the npm tarball URL pair when the packument already carries the mirror', async () => {
-    const mirrorOnly = 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz'
+    const mirrorOnly = 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz'
     const plan = await planRemoteInstall('Linux 5.15 aarch64', {}, healthyFetchers({
       npmDist: () => Promise.resolve({ url: mirrorOnly, mirrorUrl: mirrorOnly, integrity: 'sha512-ZXhhZQ==' }),
     }))
@@ -496,7 +496,7 @@ describe('install script execution (real POSIX sh)', () => {
     mkdirSync(join(dshStage, 'package', 'lib'), { recursive: true })
     writeFileSync(join(dshStage, 'package', 'package.json'), '{"name":"@deepseek-ai/dsh","version":"0.1.2-rc.1"}\n')
     writeFileSync(join(dshStage, 'package', 'lib', 'bin.js'), '#!/usr/bin/env node\nvoid 0\n')
-    const dshTgz = join(served, 'dsh-0.1.5-rc.3.tgz')
+    const dshTgz = join(served, 'dsh-0.1.7-rc.2.tgz')
     await promisify(execFile)('tar', ['-czf', dshTgz, '-C', dshStage, 'package'])
 
     const digest = (file: string, algorithm: 'sha256' | 'sha512', encoding: 'hex' | 'base64') =>
@@ -505,8 +505,8 @@ describe('install script execution (real POSIX sh)', () => {
 
     const basePlan = await planRemoteInstall('Linux 5.15 aarch64', {}, healthyFetchers({
       npmDist: () => Promise.resolve({
-        url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz',
-        mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz',
+        url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz',
+        mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.1.7-rc.2.tgz',
         // The real SRI form npm serves; the planner normalizes it to hex.
         integrity: `sha512-${digest(dshTgz, 'sha512', 'base64')}`,
       }),

@@ -38,14 +38,14 @@ export interface ResolvedDshTag {
  * verified against); installs pin this version instead of following whatever
  * "latest" happens to be.
  */
-export const RECOMMENDED_DSH_VERSION = '0.1.5-rc.3'
+export const RECOMMENDED_DSH_VERSION = '0.1.7-rc.2'
 
 /**
  * The last known-good packaged release tag, used when version resolution
  * fails (offline, rate-limited, or the recommended version vanished). A
  * concrete tag — never an unknown version.
  */
-export const FALLBACK_DSH_TAG = 'dsh-0.1.5-rc.3-35833820356'
+export const FALLBACK_DSH_TAG = 'dsh-0.1.7-rc.2-36024748146'
 
 /** The official DSH project repository (org verified on GitHub). */
 export const OFFICIAL_INSTALL_REPO = 'https://github.com/deepseek-ai/deepseek-harness.git'
