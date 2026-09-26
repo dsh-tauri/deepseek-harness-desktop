@@ -99,7 +99,7 @@ jobs:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
           git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          pnpm exec changelogithub --draft --to "$RELEASE_TAG" --name "DeepSeek Harness Desktop $RELEASE_TAG"
+          pnpm exec changelogithub --draft --to "$RELEASE_TAG" --name "Release $RELEASE_TAG"
 
       - name: Append Artifacts section to release
         if: steps.meta.outputs.should_release == 'true'
@@ -214,7 +214,7 @@ jobs:
           PRERELEASE: ${{ github.event_name == 'workflow_dispatch' || needs.prepare.outputs.prerelease == 'true' }}
         run: |
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --draft --title "DeepSeek Harness Desktop $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" --draft --title "Release $RELEASE_TAG"
           fi
           mapfile -d '' assets < <(find release-assets -type f -print0)
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
