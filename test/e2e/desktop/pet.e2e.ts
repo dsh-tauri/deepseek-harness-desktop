@@ -103,26 +103,13 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
 
     // 切入 iframe 安装收集器并等待 UI 渲染。
     //
-    // 就绪锚点必须覆盖「插件真的挂上了菜单入口」这一步：只等桌宠样式就进用例，会让第一条
-    // 用例去和菜单锚的挂载赛跑（CI 上曾整轮输掉这场赛跑）。桌宠条目由插件在菜单展开时才
-    // 克隆出来，这里只能等到入口存在。
+    // 就绪锚点只认桌宠插件自己的产物：菜单入口相关用例已删除，这里不再为它们等菜单锚。
     await withIframe(async () => {
       await browser.execute(collectPageErrors)
       await browser.waitUntil(
         () => browser.execute(elementExists, PET_STYLES),
         { timeout: 60_000, timeoutMsg: '内嵌 dsh 界面未渲染出桌宠插件产物（插件 client 未生效）' },
       )
-      try {
-        await browser.waitUntil(
-          () => browser.execute(elementExists, ACCOUNT_MENU_TRIGGER),
-          { timeout: 60_000, timeoutMsg: '菜单入口未渲染（账号菜单锚缺席）' },
-        )
-      }
-      catch (error) {
-        // 入口缺席时把现场钉进失败信息：只看超时文案分不清「插件没挂上」「菜单锚存在但
-        // 触发器没渲染」还是「帧内报错把渲染打断了」，CI 上无从复盘。
-        throw new Error(`${(error as Error).message}\n${await describeSettingsScene()}`)
-      }
     })
 
     await dismissDshModals(browser)
