@@ -115,6 +115,10 @@ jobs:
           - **macOS (Intel)**: 下载 `x64.dmg`
           - **Windows**: 下载 `.exe`
           - **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）
+
+          > 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 Node.js 运行时、pnpm
+          > 与打包好的 dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，
+          > 首次启动时按需下载运行时依赖。
           EOF
           gh release edit "$RELEASE_TAG" --notes-file release_notes.md
 
