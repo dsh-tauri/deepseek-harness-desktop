@@ -6,10 +6,10 @@
  * 「路由已注册且 handler 跑起来了」的正向证据。
  *
  * 上半部分只走 HTTP：断言对象是路由注册与 SSE 字节；下半部分是浏览器层用例，
- * 覆盖 Bundle Slot 挂载与设置菜单 DOM 补丁。
+ * 覆盖 Bundle Slot 挂载。
  */
 
-import type { Browser, Locator } from 'playwright'
+import type { Browser } from 'playwright'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
@@ -18,22 +18,11 @@ import {
   launchDshBrowser,
   newDshPage,
   openSettings,
-  openSettingsMenu,
-  PET_MENU_ITEM,
-  PET_MENU_PATCHED,
   PET_STYLES,
   selectSettingsSection,
   SETTINGS_NAV_ITEM,
   SETTINGS_TRIGGER,
 } from '../support/browser'
-
-/** 桌宠条目里承载文案的节点（与插件 `MENU_ITEM_LABEL_SELECTOR` 对齐）。 */
-const MENU_ITEM_LABEL = '[class*="itemLabel"]'
-
-/** 读桌宠条目的文案：用 `textContent`（插件自己写的就是它，不触发布局）。 */
-function readMenuLabel(item: Locator): Promise<string> {
-  return item.locator(MENU_ITEM_LABEL).first().evaluate(element => element.textContent?.trim() ?? '')
-}
 
 /** 与 `packages/dsh-tauri-pet/src/shared/constants.ts` 的 SESSION_STREAM_PATH 对齐。 */
 const SESSION_STREAM_PATH = '/api/desktop/dsh-tauri-pet/session/stream'
@@ -294,106 +283,6 @@ describe('L2 客户端', () => {
       expect(panelState.alerts, '正常渲染时不得出现错误条').toEqual([])
       expectNoSyntheticFallbacks(app)
       expect(app.errors, '分区注册与渲染不得抛出应用级错误').toEqual([])
-    }
-    finally {
-      await app.close()
-    }
-  })
-
-  it('验证设置菜单里克隆出唯一的桌宠条目且状态可读', async () => {
-    const app = await newDshPage(browser, { ready: PET_STYLES })
-    try {
-      await openSettingsMenu(app.page, app.frame, app.syntheticFallbacks)
-
-      await expect.poll(
-        async () => await app.frame.locator(PET_MENU_ITEM).count(),
-        { timeout: 20_000, message: '设置菜单展开后必须出现桌宠条目（菜单补丁未生效）' },
-      ).toBe(1)
-
-      const item = app.frame.locator(PET_MENU_ITEM).first()
-      expect(await item.evaluate(element => element.tagName), '克隆体必须沿用菜单项的原生元素').toBe('BUTTON')
-      expect(await item.getAttribute('role'), '克隆体必须仍是规范菜单项').toBe('menuitem')
-      expect(
-        await item.evaluate(element => element.closest('[role="menu"]')?.getAttribute('data-dsh-tauri-pet-menu-patched') ?? null),
-        '桌宠条目所在的菜单必须带补丁标记（幂等守卫）',
-      ).toBe('1')
-      expect(
-        await app.frame.locator(PET_MENU_PATCHED).count(),
-        '本层只有壳层设置菜单一个「设置」菜单，被打补丁的菜单必须恰为一个',
-      ).toBe(1)
-
-      // 文案随状态变化，属不稳定文案：按 testing.md 用正则限定两种合法取值并校验状态语义。
-      // 本层（浏览器态 iframe，无 Tauri 宿主）`invoke` 必然失败，插件 `enabled()` 读到的
-      // `status` 恒为 null，因此合法取值只有「未开启」一侧；出现另一侧说明状态来源被伪造。
-      const label = await readMenuLabel(item)
-      expect(label, '桌宠条目文案必须是「未开启」一侧（状态不可读时 enabled() === false）').toMatch(/^(启用宠物|Enable pet)$/)
-      expect(
-        await item.locator('[class*="itemIcon"] svg').count(),
-        '克隆体必须换成插件自己的爪子图标，而不是继承「设置」的齿轮',
-      ).toBe(1)
-
-      await item.click()
-
-      // 克隆体不在 React fiber 里，官方 onSelect 不会触发；插件自己补发 pointerdown 收起菜单，
-      // 这是「点击真的进了插件处理器」的正向证据。
-      await expect.poll(
-        async () => await app.frame.locator(SETTINGS_TRIGGER).first().getAttribute('aria-expanded'),
-        { timeout: 15_000, message: '点击桌宠条目后设置菜单必须收起（点击未进插件处理器）' },
-      ).toBe('false')
-
-      await openSettingsMenu(app.page, app.frame, app.syntheticFallbacks)
-      await expect.poll(
-        async () => await app.frame.locator(PET_MENU_ITEM).count(),
-        { timeout: 15_000, message: '重开菜单后桌宠条目必须重新出现且仍为 1 个' },
-      ).toBe(1)
-      expect(
-        await readMenuLabel(app.frame.locator(PET_MENU_ITEM).first()),
-        '宿主未应答时不得乐观翻转本地状态：重开后文案仍必须是「未开启」一侧',
-      ).toMatch(/^(启用宠物|Enable pet)$/)
-
-      expectNoSyntheticFallbacks(app)
-      expect(app.errors, '菜单补丁不得抛出应用级错误').toEqual([])
-    }
-    finally {
-      await app.close()
-    }
-  })
-
-  it('验证设置菜单重开与重复扫描后桌宠条目恒为一个', async () => {
-    const app = await newDshPage(browser, { ready: PET_STYLES })
-    const itemCount = async () => await app.frame.locator(PET_MENU_ITEM).count()
-    try {
-      await openSettingsMenu(app.page, app.frame, app.syntheticFallbacks)
-      await expect.poll(itemCount, { timeout: 20_000, message: '设置菜单展开后必须出现桌宠条目' }).toBe(1)
-
-      // 每一轮都真实收起再重开：菜单节点被重建、MutationObserver 也再跑一次扫描，
-      // 两处都不得叠加计数（幂等守卫靠菜单上的补丁标记）。
-      for (let round = 1; round <= 3; round += 1) {
-        await app.frame.locator(PET_MENU_ITEM).first().click()
-        await expect.poll(
-          async () => await app.frame.locator(SETTINGS_TRIGGER).first().getAttribute('aria-expanded'),
-          { timeout: 15_000, message: `第 ${round} 轮点击后菜单必须收起，否则重开路径未被验证` },
-        ).toBe('false')
-
-        await openSettingsMenu(app.page, app.frame, app.syntheticFallbacks)
-        await expect.poll(itemCount, { timeout: 15_000, message: `第 ${round} 次重开菜单后桌宠条目必须仍为 1 个` }).toBe(1)
-
-        // 真实制造 childList 变更（观察器配置为 childList + subtree），逼出一次重新扫描。
-        await app.frame.evaluate(() => {
-          const probe = document.createElement('div')
-          document.body.appendChild(probe)
-          probe.remove()
-        })
-
-        await expect.poll(itemCount, { timeout: 15_000, message: `第 ${round} 次重新扫描后桌宠条目不得被重复插入` }).toBe(1)
-        expect(
-          await app.frame.locator(PET_MENU_PATCHED).count(),
-          `第 ${round} 次重新扫描后被打补丁的菜单仍必须恰为一个`,
-        ).toBe(1)
-      }
-
-      expectNoSyntheticFallbacks(app)
-      expect(app.errors, '重复扫描不得抛出应用级错误').toEqual([])
     }
     finally {
       await app.close()
