@@ -16,20 +16,8 @@ const ASSEMBLY_TIMEOUT_MS = 900_000
 /** 桌宠窗口创建/销毁的收敛窗口（Rust 侧建窗是异步的）。 */
 const PET_WINDOW_TIMEOUT_MS = 30_000
 
-/** 主窗口 label，同时也是 WebDriver 的 window handle。 */
-const MAIN_WEBVIEW = 'main'
-
-/** 桌宠独立窗口 label（`src-tauri/src/desktop/pet.rs:29`）。 */
-const PET_WEBVIEW = 'pet'
-
 /** 插件就绪锚点：插件样式元素（`mountStyle` 交给 css-render 落成 `style[cssr-id=…]`）。 */
 const PET_STYLES = 'style[cssr-id="dsh-tauri-pet-styles"]'
-
-/** 设置入口触发器（`packages/dsh-tauri-ui/src/client/ui/trigger.tsx`）。 */
-const SETTINGS_TRIGGER = '.dshp-settings-trigger'
-
-/** 设置菜单里的桌宠条目（`packages/dsh-tauri-pet/src/client/constants/index.ts`）。 */
-const PET_MENU_ITEM = '[data-dsh-tauri-pet-menu-item="1"]'
 
 /** 桌宠尺寸合法区间（`src-tauri/src/desktop/pet.rs:48-49` 的 50.0 / 200.0）。 */
 const PET_SIZE_MIN = 50
@@ -61,11 +49,6 @@ interface WindowWithDshErrors extends Window {
 /** 元素是否存在 */
 function elementExists(selector: string): boolean {
   return document.querySelector(selector) !== null
-}
-
-/** 匹配元素的数量（`browser.$$` 的 `length` 在 WDIO 9 里是 Promise，脚本函数更直接） */
-function elementCount(selector: string): number {
-  return document.querySelectorAll(selector).length
 }
 
 /** 在页面（壳层或帧内）安装报错收集器：三类页面级错误收进 `window.__dshE2eErrors` */
@@ -118,7 +101,9 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
     await completePreinstall(browser, ASSEMBLY_TIMEOUT_MS)
     await iframe.waitForDisplayed({ timeout: ASSEMBLY_TIMEOUT_MS })
 
-    // 切入 iframe 安装收集器并等待 UI 渲染
+    // 切入 iframe 安装收集器并等待 UI 渲染。
+    //
+    // 就绪锚点只认桌宠插件自己的产物：菜单入口相关用例已删除，这里不再为它们等菜单锚。
     await withIframe(async () => {
       await browser.execute(collectPageErrors)
       await browser.waitUntil(
@@ -182,17 +167,6 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
     )
   }
 
-  /** 等窗口句柄集合收敛到期望值 */
-  async function waitHandles(expected: string[], message: string): Promise<void> {
-    await app.browser.waitUntil(
-      async () => {
-        const handles = await app.browser.getWindowHandles()
-        return handles.length === expected.length && expected.every(handle => handles.includes(handle))
-      },
-      { timeout: PET_WINDOW_TIMEOUT_MS, timeoutMsg: message },
-    )
-  }
-
   /** 越界提交必须由命令层拒绝（暂禁 WDIO 500 重试机制） */
   async function expectSizeRejected(outOfRange: number): Promise<void> {
     const browser = app.browser
@@ -209,97 +183,9 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
     }
   }
 
-  /**
-   * 帧内打开设置入口，并等菜单里出现唯一的桌宠条目。
-   *
-   * 桌宠条目由插件在「设置」菜单展开时才克隆出来，只有菜单处于展开态才存在；
-   * `.dshp-settings-trigger` / `data-dsh-tauri-pet-menu-item` 都是插件自有的稳定选择器。
-   */
-  async function openPetMenu(): Promise<void> {
-    const browser = app.browser
-    await dismissDshModals(browser)
-
-    await withIframe(async () => {
-      const trigger = await browser.$(SETTINGS_TRIGGER)
-      await browser.waitUntil(
-        async () => await trigger.isExisting(),
-        { timeout: 30_000, timeoutMsg: '设置入口未渲染（dsh-tauri-ui 未生效）' },
-      )
-
-      if (await trigger.getAttribute('aria-expanded') !== 'true')
-        await trigger.click()
-
-      await browser.waitUntil(
-        async () => await browser.execute(elementCount, PET_MENU_ITEM) === 1,
-        { timeout: 30_000, timeoutMsg: '设置菜单展开后必须出现唯一的桌宠条目' },
-      )
-    })
-  }
-
-  /** 帧内点击设置菜单里的桌宠条目（用户路径的唯一开关入口），随后菜单自行收起。 */
-  async function togglePet(): Promise<void> {
-    const browser = app.browser
-    await openPetMenu()
-
-    await withIframe(async () => {
-      await (await browser.$(PET_MENU_ITEM)).click()
-    })
-
-    await dismissDshModals(browser)
-  }
-
-  /** 从设置菜单切换桌宠，先断后端状态真的翻转，再等窗口句柄收敛（全部断言 Tauri 原生产物）。 */
-  async function togglePetExpecting(expected: string[], message: string): Promise<void> {
-    const before = (await status()).enabled
-    expect(before, '切换前必须能读到后端 enabled 状态（否则后端已失联）').toBeTypeOf('boolean')
-
-    await togglePet()
-
-    expect((await status()).enabled, `点击桌宠条目后后端 enabled 必须从 ${before} 翻转`).toBe(!before)
-    await waitHandles(expected, message)
-  }
-
   // ------------------------------------------
   // 5. 测试用例集
   // ------------------------------------------
-
-  it('TC-PET-L3-02-001 启用后出现独立的桌宠窗口', async () => {
-    await waitHandles([MAIN_WEBVIEW], '复位后窗口句柄必须恰为主窗口')
-
-    await togglePetExpecting([MAIN_WEBVIEW, PET_WEBVIEW], '点击设置菜单里的桌宠条目后必须出现独立的 pet 窗口句柄')
-
-    const state = await status()
-    expect(state.enabled, '创建窗口后状态必须为 enabled:true').toBe(true)
-    expect(state.visible, 'enabled 为真时 visible 必须同为真').toBe(true)
-
-    await togglePetExpecting([MAIN_WEBVIEW], '再次点击桌宠条目后 pet 窗口必须销毁')
-    expect((await status()).enabled, '关闭后状态必须回到 enabled:false').toBe(false)
-
-    await expectNoPageErrors('TC-PET-L3-02-001 建窗/销毁全流程')
-  })
-
-  it('TC-PET-L3-02-002 [反向] 未启用桌宠时不存在桌宠窗口', async () => {
-    await setEnabled(false)
-
-    const state = await status()
-    expect(state.enabled, '关闭态下必需为 false').toBe(false)
-    expect(state.visible, '未启用时不得报告可见').toBe(false)
-    expect(await app.browser.getWindowHandles(), '未启用时窗口句柄必须恰为 [main]').toEqual([MAIN_WEBVIEW])
-  })
-
-  it('TC-PET-L3-02-003 设置菜单桌宠条目切换后窗口随之创建与销毁', async () => {
-    await setEnabled(false)
-    await waitHandles([MAIN_WEBVIEW], '复位后窗口句柄必须恰为主窗口')
-    expect((await status()).enabled, '复位后后端必须停在关闭态').toBe(false)
-
-    await togglePetExpecting([MAIN_WEBVIEW, PET_WEBVIEW], '首次点击后必须出现 pet 窗口')
-    expect((await status()).enabled, '首次点击后状态必须为 enabled:true').toBe(true)
-
-    await togglePetExpecting([MAIN_WEBVIEW], '二次点击后 pet 窗口必须销毁')
-    expect((await status()).enabled, '二次点击后状态必须回到 enabled:false').toBe(false)
-
-    await expectNoPageErrors('TC-PET-L3-02-003 点击切换往返')
-  })
 
   it('TC-PET-L3-02-004 桌宠尺寸边界：范围内接受、越界拒绝且不改状态', async () => {
     await setEnabled(true)

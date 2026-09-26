@@ -1,7 +1,6 @@
 import { defineRegister } from 'dsh-tauri/client'
 import {
   MENU_ITEM_SELECTOR,
-  MENU_ITEM_WRAP_SELECTOR,
   PET_MENU_ITEM_ATTRIBUTE,
   PET_MENU_PATCH_ATTRIBUTE,
 } from '../constants'
@@ -28,13 +27,13 @@ export const settingsMenuFeature = defineRegister((controller) => {
     const menu = settingsItem.closest<HTMLElement>('[role="menu"]')
     if (menu === null || menu.hasAttribute(PET_MENU_PATCH_ATTRIBUTE))
       return
-    menu.setAttribute(PET_MENU_PATCH_ATTRIBUTE, '1')
-    // 只认官方 primitives 条目：其它插件自绘的 role=menuitem 没有 itemWrap 结构。
-    if (settingsItem.closest(MENU_ITEM_WRAP_SELECTOR) === null)
-      return
+    // 是否真的是官方条目由 `decoratePetMenuItem` 判定（它要求存在 `itemLabel` 文案节点）；
+    // 这里不再额外要求 `itemWrap` 祖先——官方菜单的包裹结构随核心版本变过，多一道结构断言
+    // 会让整条注入在结构不匹配时静默失效，而这正是「菜单里没有宠物项」的成因。
     const item = decoratePetMenuItem(settingsItem, enabled() ? locale.text('closePet') : locale.text('enablePet'))
     if (item === null)
       return
+    menu.setAttribute(PET_MENU_PATCH_ATTRIBUTE, '1')
     settingsItem.after(item)
   }
 
