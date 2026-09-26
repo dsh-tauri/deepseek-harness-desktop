@@ -684,7 +684,10 @@ describe('sshManager', () => {
     })
     await expect(manager.connect(MachineId('m1'))).rejects.toThrow()
     expect(manager.status(MachineId('m1')).state).toBe('reconnecting')
-    expect(manager.status(MachineId('m1')).nextRetryAt).toBeGreaterThan(Date.now() - 1)
+    // `nextRetryAt` 是本轮的 `Date.now() + delay`，而这里配置的首次退避只有 1ms；
+    // 断言与调度共用毫秒时钟，慢机器上两者可以落在同一毫秒，写 `- 1` 会让等号也失败。
+    // 留够一个调度周期的余量即可表达「重试已排到未来」的语义。
+    expect(manager.status(MachineId('m1')).nextRetryAt).toBeGreaterThan(Date.now() - 50)
     await untilSettled(manager)
     expect(manager.status(MachineId('m1')).nextRetryAt).toBeUndefined()
   })
