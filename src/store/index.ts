@@ -3,6 +3,7 @@ import { harness } from './modules/harness'
 import { harnessUpdater } from './modules/harness-updater'
 import { preinstall } from './modules/preinstall'
 import { recovery } from './modules/recovery'
+import { remote } from './modules/remote'
 import { setting } from './modules/setting'
 
 /**
@@ -23,4 +24,5 @@ export const store = {
   recovery,
   setting,
   desktopUpdater,
+  remote,
 }

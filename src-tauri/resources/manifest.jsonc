@@ -139,6 +139,20 @@
         "name": "DSH Tauri Model Config",
         "description": "Model selection and parameter configuration for the DeepSeek Harness desktop shell",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-model-config"
+      },
+      {
+        "id": "dsh-tauri-ssh",
+        "spec": "dsh-tauri-ssh",
+        "name": "DSH Tauri SSH",
+        "description": "Remote-machine host kernel for the desktop: SSH connection management with TOFU host keys, ~/.ssh/config discovery, remote dsh web auto-start, loopback tunnels, and the same-origin /api-ssh route.",
+        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh"
+      },
+      {
+        "id": "dsh-tauri-ssh-ui",
+        "spec": "dsh-tauri-ssh-ui",
+        "name": "DSH Tauri SSH UI",
+        "description": "Settings page for SSH remote machines: machine CRUD with per-machine identity colors, connect/test/disconnect through the plugin's /api-ssh route, one-click remote dsh install, and the tunnel popup opener.",
+        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh-ui"
       }
     ],
     "preset": [

@@ -1,0 +1,3 @@
+- insert:
+    - id: ssh-remote
+      name: dsh-tauri-ssh

@@ -1,0 +1,65 @@
+{
+  "name": "dsh-tauri-ssh",
+  "type": "module",
+  "version": "0.6.7",
+  "description": "DSH remote-machine host plugin: SSH connection management, TOFU host keys, remote dsh web auto-start, loopback tunnels, and the same-origin /api-ssh route",
+  "author": "Hairyf <wwu710632@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dsh-tauri-desk/deepseek-harness-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/issues"
+  },
+  "keywords": [
+    "dsh",
+    "plugin",
+    "dsh-plugin",
+    "ssh",
+    "remote",
+    "tauri",
+    "deepseek-harness"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "cordis.patch.yml",
+    "dist"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "nr build",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc",
+    "test:e2e": "vitest run --config e2e.vitest.config.ts"
+  },
+  "dependencies": {
+    "pathe": "catalog:utils",
+    "schemastery": "catalog:utils",
+    "ssh2": "catalog:utils",
+    "yaml": "catalog:testing"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:types",
+    "@types/ssh2": "catalog:types",
+    "dsh-tauri-tsdown": "workspace:*",
+    "tsdown": "catalog:cli",
+    "typescript": "catalog:cli",
+    "vitest": "catalog:testing"
+  }
+}

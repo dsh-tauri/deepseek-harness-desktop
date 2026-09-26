@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["ES2024"],
+    "types": ["node"],
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["src/**/*.ts", "e2e/**/*.ts", "e2e.vitest.config.ts", "../../types/**/*.d.ts"]
+}

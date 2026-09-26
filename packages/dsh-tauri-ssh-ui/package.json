@@ -1,0 +1,87 @@
+{
+  "name": "dsh-tauri-ssh-ui",
+  "type": "module",
+  "version": "0.6.7",
+  "description": "DSH remote-machine client plugin: the Settings page for SSH machines (CRUD through the settings API, connect/test/disconnect and Open through the plugin's /api-ssh route)",
+  "author": "Hairyf <wwu710632@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh-ui",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dsh-tauri-desk/deepseek-harness-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/issues"
+  },
+  "keywords": [
+    "dsh",
+    "plugin",
+    "dsh-plugin",
+    "ssh",
+    "settings",
+    "tauri",
+    "deepseek-harness"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.cjs",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "cordis.patch.yml",
+    "dist"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-locale",
+        "dsh-tauri",
+        "dsh-tauri-ui"
+      ],
+      "external": [
+        "dsh-tauri/client",
+        "dsh-tauri-ui/client"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "nr build",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "dsh-tauri": "workspace:*",
+    "dsh-tauri-ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": "catalog:dsh",
+    "@testing-library/dom": "catalog:testing",
+    "@testing-library/react": "catalog:testing",
+    "@types/node": "catalog:types",
+    "@types/react": "catalog:types",
+    "@types/react-dom": "catalog:types",
+    "anser": "catalog:",
+    "dsh-tauri-tsdown": "workspace:*",
+    "jsdom": "catalog:testing",
+    "react": "catalog:runtime",
+    "react-dom": "catalog:runtime",
+    "shiki": "catalog:",
+    "tsdown": "catalog:cli",
+    "typescript": "catalog:cli",
+    "vitest": "catalog:testing"
+  }
+}

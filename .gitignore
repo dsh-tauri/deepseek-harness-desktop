@@ -1,6 +1,8 @@
 node_modules
 dist
 .build-plugins-tmp
+# exec 技能的隔离 worktree（.worktrees/exec-<任务>/<子任务>）
+.worktrees
 src-tauri/target
 src-tauri/gen
 src-tauri/resources/node

@@ -46,3 +46,8 @@ const unlisten = listen<typeof setting.$state>('setting_updated', async (event) 
   await setting.$persist.rehydrate()
   unlisten.then(unlisten => unlisten())
 })
+
+// 非 Tauri 环境（vitest/jsdom）listen 会 reject（无 invoke/window）；这只是
+// 跨窗口同步通道，建不起来时设置功能本身不受影响，吞掉 rejection 避免
+// unhandled（应用内 listen 失败时同样语义：静默无同步而非崩掉模块加载）。
+unlisten.catch(() => {})

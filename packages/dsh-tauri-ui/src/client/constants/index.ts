@@ -64,6 +64,7 @@ export const SEAT_EFFECT = `${PLUGIN_ID}: shell.overlay seat`
 export const SECTIONS_EFFECT = `${PLUGIN_ID}: settings sections projection`
 export const SETTINGS_EFFECT = `${PLUGIN_ID}: settings panel`
 export const OBSTRUCTIONS_EFFECT = `${PLUGIN_ID}: settings obstructions`
+export const SETTINGS_OPEN_EFFECT = `${PLUGIN_ID}: settings deep-link`
 export const IM_PANEL_EFFECT = `${PLUGIN_ID}: im panel`
 export const HERO_WORKSPACE_EFFECT = `${PLUGIN_ID}: hero workspace picker`
 export const NEW_SESSION_EFFECT = `${PLUGIN_ID}: sidebar new session`

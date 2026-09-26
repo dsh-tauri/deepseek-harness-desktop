@@ -3,6 +3,7 @@ import type { CSSProperties, RefObject } from 'react'
 import { CircleExclamation } from '@gravity-ui/icons'
 import { useEventListener } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
@@ -51,6 +52,13 @@ interface IframeBridgeMessage {
 export interface IframeProps {
   /** iframe 元素 ref（由 `webview.tsx` 创建：导航桥也要用同一个 ref 收发） */
   iframeRef: RefObject<HTMLIFrameElement | null>
+  /**
+   * 远端模式：非空时 iframe 指向该隧道 URL（远端机器的本地回环隧道，见
+   * `store.remote`），不再等本地实例健康；为空维持本地实例语义。
+   */
+  srcOverride?: string | null
+  /** 远端机器勾选「边框着色」时的标识色：给内容区描 inset ring（一眼可辨远端态）。 */
+  borderTint?: string | null
 }
 
 export interface NotificationClickedPayload {
@@ -59,10 +67,18 @@ export interface NotificationClickedPayload {
   tag?: string
 }
 
-export function Iframe({ iframeRef }: IframeProps) {
+export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: IframeProps) {
   const { t } = useTranslation()
   const harness = useStore(store.harness)
   const setting = useStore(store.setting)
+  // 远端模式：非空时 iframe 指向该隧道 URL（远端机器的本地回环隧道，见
+  // `store.remote`），不再等本地实例健康；为空维持本地实例语义。
+  // 远端加载进度：「已落定 URL」派生——换 URL 自动回到加载态，iframe onLoad
+  // 记录落定收起（无 effect、无额外渲染轮次）。
+  const remoteMode = srcOverride !== null && srcOverride !== ''
+  const [loadedUrl, setLoadedUrl] = useState('')
+  const remoteLoading = remoteMode && loadedUrl !== srcOverride
+
   const post = useIframePost(iframeRef)
 
   const [, setDshStyle] = useDshStyle()
@@ -211,24 +227,44 @@ export function Iframe({ iframeRef }: IframeProps) {
   return (
     <div className="relative min-h-0 flex-1">
       <If
-        cond={harness.serviceHealthy}
+        cond={remoteMode || harness.serviceHealthy}
         else={<Loadable subtitle={t(harness.startupStatusKey)} />}
       >
         <iframe
-          key={harness.iframeKey}
+          key={remoteMode ? `remote-${srcOverride}` : harness.iframeKey}
           ref={iframeRef}
           data-testid="dsh-shell-iframe"
           className="h-full w-full"
-          src={harness.iframeSrc}
+          src={remoteMode ? srcOverride : harness.iframeSrc}
           allow="accelerometer; ambient-light-sensor; autoplay; battery; camera; clipboard-read; clipboard-write; display-capture; document-domain; encrypted-media; fullscreen; gamepad; geolocation; gyroscope; hid; idle-detection; keyboard-map; magnetometer; microphone; midi; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; serial; speaker-selection; usb; web-share; xr-spatial-tracking"
           sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-storage-access-by-user-activation"
-          onLoad={store.harness.markIframeLoaded}
+          onLoad={() => {
+            store.harness.markIframeLoaded()
+            if (remoteMode)
+              setLoadedUrl(srcOverride)
+          }}
           onError={store.harness.markIframeError}
           title={t('app.open_editor')}
         />
       </If>
 
-      <If cond={harness.showIframeError}>
+      {/* 远端机器勾选「边框着色」时，用标识色给内容区描边：当前处于远端一眼可辨 */}
+      <If cond={borderTint !== null}>
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-[1]"
+          style={borderTint !== null ? { boxShadow: `inset 0 0 0 2px ${borderTint}` } : undefined}
+        />
+      </If>
+
+      {/* 远端加载覆盖层：切换/首载期间不空屏（iframe 保持挂载） */}
+      <If cond={remoteMode && remoteLoading}>
+        <div className="absolute inset-0 z-[1]">
+          <Loadable subtitle={t('remote.loading')} />
+        </div>
+      </If>
+
+      <If cond={!remoteMode && harness.showIframeError}>
         <div className="absolute inset-0 z-[1]">
           <Loadable
             icon={CircleExclamation}

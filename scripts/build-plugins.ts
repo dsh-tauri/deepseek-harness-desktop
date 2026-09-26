@@ -475,6 +475,10 @@ function verifyRelativeSpecifiers(root: string): number {
       }
       for (const specifier of relativeSpecifiers(readFileSync(file, 'utf8'))) {
         checked++
+        // `.node` 原生绑定是可选加载（ssh2 缺绑定时回退纯 JS，S1 决策显式
+        // 阻断其原生构建），文件缺失不代表部署树不完整，跳过存在性校验。
+        if (specifier.endsWith('.node'))
+          continue
         if (relativeTarget(dirname(file), specifier) === null) {
           missing.push(`${relative(root, file)} -> ${specifier}`)
         }

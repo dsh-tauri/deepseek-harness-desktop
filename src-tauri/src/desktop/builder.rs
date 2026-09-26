@@ -642,22 +642,23 @@ fn apply_window_background(app: &tauri::AppHandle<Wry>, window: &tauri::WebviewW
     }
 }
 
-/// 「文件 → 新建窗口」：以同一 `index.html` 再开一个独立 webview 窗口。
-///
-/// 与主窗口共用同一份平台 chrome、外链/下载接管与（Windows）WebView2 用户数据
-/// 目录，但**不**参与主窗口几何恢复与落盘：`on_window_event` 只对
-/// `MAIN_WINDOW_LABEL` 采样，否则第二个窗口的移动/缩放会覆盖用户保存的主窗口尺寸。
+/// 以壳层 `index.html` 再开一个独立 webview 窗口（`文件 → 新建窗口` 与 SSH 远端
+/// 弹窗共用的建窗真值）：与主窗口共用同一份平台 chrome、外链/下载接管、
+/// （Windows）WebView2 用户数据目录与按窗口注入的桥脚本，但**不**参与主窗口
+/// 几何恢复与落盘（`on_window_event` 只对 `MAIN_WINDOW_LABEL` 采样）。
 ///
 /// 只能在异步运行时的命令任务里调用（与 `pet::ensure_pet_window` 同样的约束：
 /// `WebviewWindowBuilder::build()` 需要主线程事件循环回包，主线程调用会死锁）。
-pub fn build_extra_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::WebviewWindow<Wry>> {
-    let sequence = EXTRA_WINDOW_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-    let label = format!("window-{sequence}");
+pub fn build_shell_window(
+    app: &tauri::AppHandle<Wry>,
+    label: String,
+    title: &str,
+) -> tauri::Result<tauri::WebviewWindow<Wry>> {
     let app_handle = app.clone();
 
     let webview_builder =
         WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
-            .title("Deepseek Harness Desktop")
+            .title(title)
             .inner_size(1280.0, 840.0)
             .min_inner_size(860.0, 620.0)
             .resizable(true);
@@ -732,6 +733,12 @@ pub fn build_extra_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::W
     let _ = window.set_focus();
 
     Ok(window)
+}
+
+/// 「文件 → 新建窗口」：`window-<N>` 序号 label，chrome 全部取 `build_shell_window`。
+pub fn build_extra_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::WebviewWindow<Wry>> {
+    let sequence = EXTRA_WINDOW_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    build_shell_window(app, format!("window-{sequence}"), "Deepseek Harness Desktop")
 }
 
 #[cfg(all(test, windows))]
@@ -838,6 +845,18 @@ mod security_tests {
             scoped,
             vec!["https://*.githubusercontent.com/*".to_string()]
         );
+    }
+
+    #[test]
+    fn remote_popup_windows_are_scoped_by_glob_and_stay_loopback() {
+        let capability = include_str!("../../capabilities/default.json");
+        // 弹窗窗口 label 为 remote-<machineId>（machineId 是 uuid），只能以
+        // glob 覆盖；不接受裸 "remote-" 或 "*" 之类的过度放宽。
+        assert!(capability.contains("\"remote-*\""));
+        assert!(!capability.contains("\"*\""));
+        // remote URL 面仍然只有 loopback 通配（弹窗与主窗口同一约束）。
+        let wildcard_loopback = ["http://127.0.0.1:", "*"].concat();
+        assert!(capability.contains(wildcard_loopback.as_str()));
     }
 
     #[test]
@@ -997,6 +1016,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::get_pet_asset,
         crate::bridge::list_preset_pets,
         crate::desktop::pet_mouse::start_pet_mouse_stream,
+        crate::bridge::remote_bridge_ping,
+        crate::bridge::remote_open_window,
     ]
 }
 

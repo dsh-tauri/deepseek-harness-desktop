@@ -30,7 +30,11 @@ interface InvokeBridgeRequest {
 /**
  * 允许 iframe 桥调用的 Tauri command 白名单（与 dsh-tauri-pet 的
  * client/constants/index.ts 中 `CMD_*` 一一对应）。凡新增可经桥调用的 command 必须在此登记，
- * 防止 iframe 内其他插件借道桥执行任意 Tauri command（越权）。
+ * 防止 iframe 内其他插件借道桥执行任意 Tauri command（越权）。另一类是
+ * SSH 远端机器桥契约（C-BRIDGE）：`remote_bridge_ping` 无参探测（S4 面板
+ * 据此判定桌面环境，纯 web 超时隐藏弹窗按钮）、`remote_open_window`
+ * 打开/聚焦 `remote-<machineId>` 弹窗窗口（URL 由插件传入，命令侧仅接受
+ * 回环 http——见 src-tauri/src/bridge/remote.rs）。
  */
 const ALLOWED_INVOKE_CMDS = new Set([
   // 只读布尔量，供 dsh-tauri-ui 决定是否挂载仅 dev 可见的调试面板。
@@ -50,6 +54,8 @@ const ALLOWED_INVOKE_CMDS = new Set([
   'import_pet',
   'get_pet_asset',
   'list_preset_pets',
+  'remote_bridge_ping',
+  'remote_open_window',
 ])
 
 export function useInvokeIframe(iframeRef: RefObject<HTMLIFrameElement | null>): void {

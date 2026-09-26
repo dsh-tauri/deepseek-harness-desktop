@@ -7,6 +7,7 @@ import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
 import { store } from '@/store'
+import { borderTintOf } from '@/store/modules/remote'
 import { Recovery } from '@/ui/plugin/recovery'
 import { Iframe } from './iframe'
 import { Navbar } from './navbar'
@@ -40,6 +41,11 @@ export function Webview() {
 
   const { status, serviceHealthy } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
+  const { machines, activeId, activeTunnelUrl } = useStore(store.remote)
+  // 远端模式：活动机器的隧道 URL 就绪才切换（不指向空端口）；重连窗口内
+  // store 粘性保留上一次 URL，等待引擎按端口稳定策略恢复
+  const remoteMode = activeTunnelUrl !== ''
+  const borderTint = remoteMode ? borderTintOf(machines.find(machine => machine.id === activeId)) : null
 
   // 2. Iframe 消息通信监听
   useIframeMessage<NavBridgeMessage>(iframeRef, (data) => {
@@ -63,14 +69,20 @@ export function Webview() {
       case 'preinstall':
         return <PreinstallSetup />
       case 'ready':
-        return <Iframe iframeRef={iframeRef} />
+        return (
+          <Iframe
+            iframeRef={iframeRef}
+            srcOverride={remoteMode ? activeTunnelUrl : null}
+            borderTint={borderTint}
+          />
+        )
       default:
         return <Setup />
     }
   }
 
   // iframe 缺席时没有协议接收方，不下发依赖它的回调：导航栏据此隐藏侧边栏开关、
-  // 禁用「新聊天」「打开文件夹」，而不是留死按钮。
+  // 禁用「新聊天」「打开文件夹」「管理机器」，而不是留死按钮。
   // 判定必须与 `renderContent()` 的 iframe 条件完全一致：`status` 回到 `error`
   // （shutdown / 客户端 boot 失败）时 iframe 已卸载，但 `serviceHealthy` 可能仍为
   // true——只看后者会把回调发给已摘除的接收方，按钮点了没反应。

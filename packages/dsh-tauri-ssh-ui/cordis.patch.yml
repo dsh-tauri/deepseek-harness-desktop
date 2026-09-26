@@ -1,0 +1,3 @@
+- insert:
+    - id: ui-ssh
+      name: dsh-tauri-ssh-ui

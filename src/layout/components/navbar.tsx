@@ -29,11 +29,13 @@ import { ConfigDialog } from '@/ui/dialog/config'
 import { DesktopUpdateDialog } from '@/ui/dialog/update'
 import { writeClipboardText } from '@/utils/clipboard'
 import { toast } from '@/utils/toast'
+import { ConnectDialog } from './connect-dialog'
+import { RemoteSwitcher } from './remote-switcher'
 
 /**
  * 壳层窗口顶部导航栏（44px，常驻）：
  *
- *   [侧边栏(展开/收起)] [文件][运行][帮助] [  空白拖拽区  ] [最小化][最大化][后台化(X)]
+ *   [侧边栏(展开/收起)] [文件][运行][帮助] [ 空白拖拽区 ] [更新可用][本地/远端] [最小化][最大化][后台化(X)]
  *
  * - 侧边栏：经 postMessage 操控 iframe 内的 dsh 应用
  *   （`dsh://sidebar:toggle`，由 dsh-tauri 插件的 `client/register/sidebar.ts`
@@ -42,6 +44,8 @@ import { toast } from '@/utils/toast'
  *   导航桥（收回报 + 发命令）在 `iframe.tsx` / `webview.tsx`，本组件只接收状态与回调：
  *   左侧控件只在「dsh-tauri 插件已启用（已安装）」且传入 `onToggleSidebar` 时渲染，
  *   原生桥缺席时控件没有可靠接收方，避免出现点了没反应的死按钮。
+ * - 本地 / 远端：`RemoteSwitcher` 固定在右侧「更新可用」旁边，SSH 功能未启用时
+ *   自身不渲染（见 `remote-switcher.tsx`）。
  * - 文件：新建窗口（Tauri 再开一个 webview）/ 新聊天、打开文件夹（经协议调用 dsh 官方
  *   「新建会话」「添加工作区」，接收方是 dsh-tauri 的 `client/register/navigation.ts`）/
  *   关闭（隐藏到托盘）/ 退出（完整退出）。两条依赖 iframe 的项在回调缺席时禁用。
@@ -231,6 +235,10 @@ export interface NavbarProps { /** iframe 回报的 dsh 侧边栏折叠状态（
   onToggleSidebar?: () => void
   /** 新聊天：向 iframe 发 `dsh://session:new`（dsh 官方「新建会话」）；传入时该项可用 */
   onNewChat?: () => void
+  /** 管理机器：向 iframe 发 `dsh://settings:open` 定位 SSH 分区（统一到设置页） */
+  onOpenMachineManager?: () => void
+  /** 同步到远端：向 iframe 发 `dsh://settings:open` 定位同步分区（与机器管理同级） */
+  onOpenSyncToRemote?: () => void
   /** 打开文件夹：向 iframe 发 `dsh://workspace:add`（dsh 官方「添加工作区」）；传入时该项可用 */
   onOpenFolder?: () => void
   /** 编辑菜单动作：向 iframe 发 `dsh://edit`（dsh-tauri 的 `client/register/shortcuts.ts` 执行） */
@@ -239,7 +247,7 @@ export interface NavbarProps { /** iframe 回报的 dsh 侧边栏折叠状态（
   onOpenShortcuts?: () => void
 }
 
-export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onEditAction, onOpenShortcuts }: NavbarProps) {
+export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onEditAction, onOpenShortcuts, onOpenMachineManager, onOpenSyncToRemote }: NavbarProps) {
   const { t } = useTranslation()
   const isFullscreen = useMacOSFullscreen()
   const isMaximized = useMaximized()
@@ -463,6 +471,9 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
             else={<LayoutSideContent />}
           />
         </Button>
+      </If>
+      <If cond={onToggleSidebar != null}>
+        <ConnectDialog />
       </If>
       <If cond={!IS_MACOS}>
         <div className="ml-1">
@@ -721,6 +732,12 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
         >
           {t('update.chip_available')}
         </Chip>
+      </If>
+
+      {/* 「本地」/ 远端机器切换器：SSH 功能启用后才出现（未启用时组件自身不渲染），
+          位置固定在「更新可用」右侧，与左侧的文件/运行/帮助菜单分列两端。 */}
+      <If cond={onToggleSidebar != null}>
+        <RemoteSwitcher onManage={onOpenMachineManager} onSync={onOpenSyncToRemote} />
       </If>
 
       <If cond={!IS_MACOS}>
