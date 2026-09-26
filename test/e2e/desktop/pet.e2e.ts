@@ -220,12 +220,19 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
     await dismissDshModals(browser)
 
     await withIframe(async () => {
-      const trigger = await browser.$(SETTINGS_TRIGGER)
-      await browser.waitUntil(
-        async () => await trigger.isExisting(),
-        { timeout: 30_000, timeoutMsg: '设置入口未渲染（dsh-tauri-ui 未生效）' },
-      )
+      try {
+        await browser.waitUntil(
+          () => browser.execute(elementExists, SETTINGS_TRIGGER),
+          { timeout: 60_000, timeoutMsg: '设置入口未渲染（dsh-tauri-ui 未生效）' },
+        )
+      }
+      catch (error) {
+        // 入口缺席时把现场钉进失败信息：只看超时文案分不清「插件没挂上」「侧栏存在但
+        // 触发器没渲染」还是「帧内报错把渲染打断了」，CI 上无从复盘。
+        throw new Error(`${(error as Error).message}\n${await describeSettingsScene()}`)
+      }
 
+      const trigger = await browser.$(SETTINGS_TRIGGER)
       if (await trigger.getAttribute('aria-expanded') !== 'true')
         await trigger.click()
 
@@ -234,6 +241,24 @@ describe.skipIf(process.platform !== 'win32')('桌面端桌宠独立窗口', () 
         { timeout: 30_000, timeoutMsg: '设置菜单展开后必须出现唯一的桌宠条目' },
       )
     })
+  }
+
+  /** 帧内设置现场快照：入口/侧栏/根节点是否存在 + 页内错误，用于入口缺席时的定位。 */
+  async function describeSettingsScene(): Promise<string> {
+    return await app.browser.execute(() => {
+      const host = window as unknown as WindowWithDshErrors
+      const count = (selector: string): number => document.querySelectorAll(selector).length
+      return JSON.stringify({
+        readyState: document.readyState,
+        trigger: count('.dshp-settings-trigger'),
+        sidebarRoot: count('[data-slot-sidebar="dsh-tauri-ui"]'),
+        sidebarSlot: count('[data-slot="sidebar"]'),
+        root: count('#root'),
+        petStyles: count('style[cssr-id="dsh-tauri-pet-styles"]'),
+        petMenuItem: count('[data-dsh-tauri-pet-menu-item="1"]'),
+        errors: (host.__dshE2eErrors ?? []).slice(0, 5),
+      })
+    }) as string
   }
 
   /** 帧内点击设置菜单里的桌宠条目（用户路径的唯一开关入口），随后菜单自行收起。 */
