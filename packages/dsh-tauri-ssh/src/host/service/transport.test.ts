@@ -89,14 +89,17 @@ class FakeClient extends EventEmitter {
     const finish = (): void => {
       if (this.mode === 'error') {
         const emitError = (): void => queueMicrotask(() => this.emit('error', new Error(this.errorMessage)))
-        // A real server drives the auth chain before declaring failure, so
-        // the transport's passwordOffered bookkeeping is set by the time the
-        // error lands; the fake mirrors that.
-        if (authHandler === undefined) {
+        if (authHandler === undefined || this.errorMessage !== 'All configured authentication methods failed') {
           emitError()
           return
         }
-        authHandler(null, false, () => emitError())
+        const rejectNext = (): void => authHandler(null, false, (descriptor) => {
+          if (descriptor === false)
+            emitError()
+          else
+            queueMicrotask(rejectNext)
+        })
+        rejectNext()
       }
       else if (authHandler === undefined) {
         queueMicrotask(() => this.emit('ready'))
@@ -671,6 +674,10 @@ describe('classifyConnectFailure', () => {
 })
 
 describe('describeConnectFailure', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('gives each class an operator-distinct, actionable message', () => {
     const refused = Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:22'), { code: 'ECONNREFUSED' })
     const messages = [
@@ -692,7 +699,8 @@ describe('describeConnectFailure', () => {
     await expect(transport.connect(profile, () => true)).rejects.toThrow(/host unreachable: .*ECONNREFUSED/)
   })
 
-  it('keeps the auth-failure message distinguishable when the chain exhausts', async () => {
+  it.each([undefined, '/test/ssh-agent.sock'])('keeps exhausted auth failures distinct with agent %s', async (agent) => {
+    vi.stubEnv('SSH_AUTH_SOCK', agent)
     const { Client } = await import('ssh2')
     vi.mocked(Client).mockImplementationOnce(errorClientOnce('All configured authentication methods failed'))
     const transport = newTransport(stubResolver(), keepalive)
