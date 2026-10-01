@@ -91,12 +91,13 @@ fn main() {
             swift_bridge_build::parse_bridges(bridges)
                 .write_all_concatenated(swift_bridge_out_dir(), env!("CARGO_PKG_NAME"));
 
-            compile_swift();
+            let swift_library_dir = compile_swift();
+            swift_rs::SwiftLinker::new(&macos_deployment_target()).link();
 
             println!("cargo:rustc-link-lib=static=tauri-plugin-notifications");
             println!(
                 "cargo:rustc-link-search={}",
-                swift_library_static_lib_dir()
+                swift_library_dir
                     .to_str()
                     .expect("Swift library path must be valid UTF-8")
             );
@@ -105,7 +106,7 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
-fn compile_swift() {
+fn compile_swift() -> PathBuf {
     let swift_package_dir = manifest_dir().join("macos");
     let target_triple = swift_target_triple();
 
@@ -113,10 +114,6 @@ fn compile_swift() {
 
     cmd.current_dir(&swift_package_dir)
         .arg("build")
-        // Build into OUT_DIR (under target/) instead of the default `.build`
-        // inside the crate source. Source-tree writes don't survive a clean
-        // registry re-extraction / cache restore, which leaves cargo's
-        // fingerprint saying "built" while the linked artifact is gone.
         .args([
             "--scratch-path",
             swift_build_dir()
@@ -155,6 +152,29 @@ Stdout: {}
         String::from_utf8(exit_status.stderr).expect("Stderr must be valid UTF-8"),
         String::from_utf8(exit_status.stdout).expect("Stdout must be valid UTF-8"),
     );
+
+    let bin_path = cmd
+        .arg("--show-bin-path")
+        .output()
+        .expect("Failed to query Swift build output path");
+    assert!(
+        bin_path.status.success(),
+        "Failed to query Swift build output path: {}",
+        String::from_utf8_lossy(&bin_path.stderr)
+    );
+    let library_dir = PathBuf::from(
+        String::from_utf8(bin_path.stdout)
+            .expect("Swift build output path must be valid UTF-8")
+            .trim(),
+    );
+    assert!(
+        library_dir
+            .join("libtauri-plugin-notifications.a")
+            .is_file(),
+        "Swift static library is missing in {}",
+        library_dir.display()
+    );
+    library_dir
 }
 
 #[cfg(target_os = "macos")]
@@ -218,16 +238,4 @@ fn macos_deployment_target() -> String {
 #[cfg(target_os = "macos")]
 fn swift_target_triple() -> String {
     format!("{}-apple-macosx{}", swift_arch(), macos_deployment_target())
-}
-
-#[cfg(target_os = "macos")]
-fn swift_library_static_lib_dir() -> PathBuf {
-    let debug_or_release = if is_release_build() {
-        "release"
-    } else {
-        "debug"
-    };
-
-    let arch_dir = format!("{}-apple-macosx", swift_arch());
-    swift_build_dir().join(format!("{arch_dir}/{debug_or_release}"))
 }

@@ -1,10 +1,23 @@
-# Vendored patch: toast input, activation and permissions (Windows)
+# Vendored patch: native notifications and macOS build output
 
 `tauri-plugin-notifications` **0.5.0-rc.14**, copied verbatim from crates.io and wired in via
-`[patch.crates-io]` in `src-tauri/Cargo.toml`. Every change is confined to
-`#[cfg(target_os = "windows")]` code plus one accessor trio in the shared models. Everything
-else is upstream and should be kept that way, so dropping this directory is a one-line revert
-once upstream ships the features.
+`[patch.crates-io]` in `src-tauri/Cargo.toml`. Changes cover Windows notification behavior,
+shared model accessors, and macOS Swift build output discovery.
+
+## macOS build output
+
+Swift build artifacts remain under Cargo's `OUT_DIR`. The build script queries
+`swift build --show-bin-path` with the same scratch path, target triple and configuration
+used for compilation, then verifies the static library exists before registering the link
+search path. This supports both SwiftPM's architecture directories and newer Xcode build
+layouts such as `out/Products/Debug` without assuming their directory structure.
+
+`swift-rs` discovers the selected toolchain's Swift library search paths so compatibility
+archives required by older macOS deployment targets are available to the Rust linker.
+
+The application's `src-tauri/build.rs` also adds `/usr/lib/swift` to the executable's
+runtime search paths so linked Swift libraries, including concurrency support, are resolved
+from macOS when running the application or Rust tests.
 
 ## Why
 

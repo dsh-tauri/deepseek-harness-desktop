@@ -171,6 +171,10 @@ features = ["async"]
 [target.'cfg(target_os = "macos")'.build-dependencies.swift-bridge-build]
 version = "0.1"
 
+[target.'cfg(target_os = "macos")'.build-dependencies.swift-rs]
+version = "1.0.7"
+features = ["build"]
+
 [target.'cfg(target_os = "windows")'.dependencies.nt-time]
 version = "0.15"
 

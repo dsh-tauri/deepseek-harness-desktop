@@ -5400,6 +5400,7 @@ dependencies = [
  "serde_repr",
  "swift-bridge",
  "swift-bridge-build",
+ "swift-rs",
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.20",
