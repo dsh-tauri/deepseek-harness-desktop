@@ -440,7 +440,7 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
         'relative flex h-11 w-full flex-none select-none items-center gap-0.5 bg-panel',
         {
           'hidden': IS_MACOS && isFullscreen,
-          'pl-20 pr-1.5': IS_MACOS && !isFullscreen,
+          'pl-24 pr-1.5': IS_MACOS && !isFullscreen,
           'px-1.5': !IS_MACOS || isFullscreen,
         },
       )}
