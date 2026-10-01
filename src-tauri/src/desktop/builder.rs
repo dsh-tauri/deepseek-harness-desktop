@@ -268,7 +268,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let config = MenuItem::with_id(
         app,
         "desktop-config",
-        crate::config::i18n::t("menu.application"),
+        crate::config::i18n::t("menu.settings"),
         true,
         Some("CmdOrCtrl+,"),
     )?;
@@ -293,6 +293,13 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let restart = MenuItem::with_id(
+        app,
+        "desktop-restart",
+        crate::config::i18n::t("menu.restart"),
+        true,
+        None::<&str>,
+    )?;
     let run_separator = PredefinedMenuItem::separator(app)?;
     let is_fullscreen = app
         .get_webview_window("main")
@@ -305,49 +312,74 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         "desktop-run-menu",
         crate::config::i18n::t("menu.run"),
         true,
-        &[
-            &config,
-            &profiles,
-            &plugins,
-            &harness,
-            &run_separator,
-            &fullscreen,
-        ],
+        &[&profiles, &plugins, &harness, &run_separator, &restart],
+    )?;
+    let view_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-view-menu",
+        crate::config::i18n::t("menu.view"),
+        true,
+        &[&fullscreen],
     )?;
 
-    let hide = PredefinedMenuItem::hide(app, None)?;
-    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
-    let show_all = PredefinedMenuItem::show_all(app, None)?;
+    let about = MenuItem::with_id(
+        app,
+        "desktop-about",
+        crate::config::i18n::t("menu.about"),
+        true,
+        None::<&str>,
+    )?;
+    let about_separator = PredefinedMenuItem::separator(app)?;
+    let check_update = MenuItem::with_id(
+        app,
+        "desktop-check-update",
+        crate::config::i18n::t("menu.check_update"),
+        true,
+        None::<&str>,
+    )?;
+    let settings_separator = PredefinedMenuItem::separator(app)?;
+    let services =
+        PredefinedMenuItem::services(app, Some(&crate::config::i18n::t("menu.services")))?;
+    let services_separator = PredefinedMenuItem::separator(app)?;
+    let app_name = app
+        .config()
+        .product_name
+        .as_deref()
+        .unwrap_or(&app.package_info().name);
+    let hide_label = format!("{} {}", crate::config::i18n::t("menu.hide"), app_name);
+    let hide = PredefinedMenuItem::hide(app, Some(&hide_label))?;
+    let hide_others =
+        PredefinedMenuItem::hide_others(app, Some(&crate::config::i18n::t("menu.hide_others")))?;
+    let show_all =
+        PredefinedMenuItem::show_all(app, Some(&crate::config::i18n::t("menu.show_all")))?;
     let quit_separator = PredefinedMenuItem::separator(app)?;
-    let quit = PredefinedMenuItem::quit(app, None)?;
-    // macOS 会把首个菜单标题强制显示为应用名称；这里只承载必要的系统动作，
-    // 文件、运行、帮助菜单放在其后，避免被系统改名。
+    let quit_label = format!("{} {}", crate::config::i18n::t("menu.quit"), app_name);
+    let quit = PredefinedMenuItem::quit(app, Some(&quit_label))?;
     let system_application_menu = Submenu::with_id_and_items(
         app,
         "desktop-system-application-menu",
         app.package_info().name.clone(),
         true,
-        &[&hide, &hide_others, &show_all, &quit_separator, &quit],
+        &[
+            &about,
+            &about_separator,
+            &config,
+            &check_update,
+            &settings_separator,
+            &services,
+            &services_separator,
+            &hide,
+            &hide_others,
+            &show_all,
+            &quit_separator,
+            &quit,
+        ],
     )?;
 
     let run_logs = MenuItem::with_id(
         app,
         "desktop-copy-run-logs",
         crate::config::i18n::t("menu.run_logs"),
-        true,
-        None::<&str>,
-    )?;
-    let restart = MenuItem::with_id(
-        app,
-        "desktop-restart",
-        crate::config::i18n::t("menu.restart"),
-        true,
-        None::<&str>,
-    )?;
-    let check_update = MenuItem::with_id(
-        app,
-        "desktop-check-update",
-        crate::config::i18n::t("menu.check_update"),
         true,
         None::<&str>,
     )?;
@@ -359,10 +391,10 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let about = MenuItem::with_id(
+    let keyboard_shortcuts = MenuItem::with_id(
         app,
-        "desktop-about",
-        crate::config::i18n::t("menu.about"),
+        "desktop-keyboard-shortcuts",
+        crate::config::i18n::t("menu.keyboard_shortcuts"),
         true,
         None::<&str>,
     )?;
@@ -372,18 +404,13 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         crate::config::i18n::t("menu.help"),
         true,
         &[
-            &run_logs,
-            &restart,
-            &check_update,
-            &help_separator,
             &documentation,
-            &about,
+            &keyboard_shortcuts,
+            &help_separator,
+            &run_logs,
         ],
     )?;
 
-    // 文件菜单：非 macOS 上同一组项渲染在壳层导航栏（`layout/components/navbar.tsx`）。
-    // 图标化的系统动作（新建窗口/新聊天/打开文件夹/关闭/退出）本身只发动作 id，
-    // 由前端复用壳层实现——新建窗口更必须在异步运行时里建窗（见 desktop::window）。
     let new_window = MenuItem::with_id(
         app,
         "desktop-new-window",
@@ -406,11 +433,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         Some("CmdOrCtrl+O"),
     )?;
     let file_separator_close = PredefinedMenuItem::separator(app)?;
-    // 关闭：走系统 close_window（⌘W）。主窗口的 CloseRequested 由壳层接管为
-    // 「隐藏到托盘」（setting.close_action=tray），语义与导航栏「关闭」一致。
     let close = PredefinedMenuItem::close_window(app, Some(&crate::config::i18n::t("menu.close")))?;
-    let file_separator_quit = PredefinedMenuItem::separator(app)?;
-    let file_quit = PredefinedMenuItem::quit(app, Some(&crate::config::i18n::t("menu.quit")))?;
     let file_menu = Submenu::with_id_and_items(
         app,
         "desktop-file-menu",
@@ -422,16 +445,64 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
             &open_folder,
             &file_separator_close,
             &close,
-            &file_separator_quit,
-            &file_quit,
         ],
+    )?;
+
+    let undo = PredefinedMenuItem::undo(app, Some(&crate::config::i18n::t("menu.undo")))?;
+    let redo = PredefinedMenuItem::redo(app, Some(&crate::config::i18n::t("menu.redo")))?;
+    let edit_separator = PredefinedMenuItem::separator(app)?;
+    let cut = PredefinedMenuItem::cut(app, Some(&crate::config::i18n::t("menu.cut")))?;
+    let copy = PredefinedMenuItem::copy(app, Some(&crate::config::i18n::t("menu.copy")))?;
+    let paste = PredefinedMenuItem::paste(app, Some(&crate::config::i18n::t("menu.paste")))?;
+    let select_all =
+        PredefinedMenuItem::select_all(app, Some(&crate::config::i18n::t("menu.select_all")))?;
+    let edit_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-edit-menu",
+        crate::config::i18n::t("menu.edit"),
+        true,
+        &[
+            &undo,
+            &redo,
+            &edit_separator,
+            &cut,
+            &copy,
+            &paste,
+            &select_all,
+        ],
+    )?;
+
+    let minimize =
+        PredefinedMenuItem::minimize(app, Some(&crate::config::i18n::t("menu.minimize")))?;
+    let zoom = PredefinedMenuItem::maximize(app, Some(&crate::config::i18n::t("menu.zoom")))?;
+    let window_separator = PredefinedMenuItem::separator(app)?;
+    let bring_all_to_front = PredefinedMenuItem::bring_all_to_front(
+        app,
+        Some(&crate::config::i18n::t("menu.bring_all_to_front")),
+    )?;
+    let window_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-window-menu",
+        crate::config::i18n::t("menu.window"),
+        true,
+        &[&minimize, &zoom, &window_separator, &bring_all_to_front],
     )?;
 
     let menu = Menu::with_items(
         app,
-        &[&system_application_menu, &file_menu, &run_menu, &help_menu],
+        &[
+            &system_application_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &run_menu,
+            &window_menu,
+            &help_menu,
+        ],
     )?;
     let _ = app.set_menu(menu)?;
+    window_menu.set_as_windows_menu_for_nsapp()?;
+    help_menu.set_as_help_menu_for_nsapp()?;
     *MACOS_FULLSCREEN_MENU_ITEM
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -1175,6 +1246,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             | "desktop-check-update"
             | "desktop-restart"
             | "desktop-documentation"
+            | "desktop-keyboard-shortcuts"
             | "desktop-new-window"
             | "desktop-new-chat"
             | "desktop-open-folder" => {

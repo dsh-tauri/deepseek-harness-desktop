@@ -419,6 +419,9 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
       case 'desktop-documentation':
         void openDocumentation()
         break
+      case 'desktop-keyboard-shortcuts':
+        onOpenShortcuts?.()
+        break
       case 'desktop-new-window':
         void createWindow()
         break

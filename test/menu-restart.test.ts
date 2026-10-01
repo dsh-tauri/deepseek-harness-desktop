@@ -6,12 +6,10 @@ const i18nSource = readSource('src-tauri/src/config/i18n.rs')
 const navbarSource = readSource('src/layout/components/navbar.tsx')
 
 describe('menu restart backend contract', () => {
-  it('places desktop-restart menu item after run_logs in help submenu', () => {
-    // 源码按项分行，不再是一行字面量：改为断言三者在该子菜单里的相对顺序。
-    const helpMenu = builderSource.slice(builderSource.indexOf('"desktop-help-menu"'))
-    const order = ['&run_logs', '&restart', '&check_update'].map(item => helpMenu.indexOf(item))
-    expect(order.every(index => index >= 0)).toBe(true)
-    expect(order).toEqual([...order].sort((a, b) => a - b))
+  it('places desktop-restart after the configuration tabs in the Run submenu', () => {
+    const runMenu = builderSource.match(/"desktop-run-menu",[\s\S]*?&\[([^\]]+)\]/)
+    expect(runMenu).not.toBeNull()
+    expect(runMenu![1]).toMatch(/&harness,\s*&run_separator,\s*&restart/)
   })
 
   it('emits macos-menu-action for desktop-restart in on_menu_event', () => {
@@ -42,6 +40,7 @@ describe('menu restart frontend contract', () => {
       'desktop-copy-run-logs',
       'desktop-check-update',
       'desktop-restart',
+      'desktop-keyboard-shortcuts',
     ]) {
       expect(navbarSource).toContain(`case '${action}':`)
     }
