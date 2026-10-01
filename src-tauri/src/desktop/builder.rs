@@ -305,6 +305,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         .and_then(|window| window.is_fullscreen().ok())
         .unwrap_or(false);
     let fullscreen_label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));
+    // AppKit 会因标准 toggleFullScreen: 菜单项省略“窗口”中的自动全屏入口。
     let fullscreen = MenuItem::with_id(
         app,
         "desktop-fullscreen",
@@ -1359,8 +1360,10 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                 #[cfg(target_os = "macos")]
                 {
                     if matches!(event, tauri::WindowEvent::Resized(_)) {
+                        // 全屏文案跟随聚焦的壳层窗口，Accessory 切换仍只处理主窗口。
                         sync_macos_fullscreen_menu(window);
                         if window.label() == MAIN_WINDOW_LABEL {
+                            // 退出全屏后补做全屏期间被推迟的 Accessory 切换。
                             crate::desktop::activation::on_window_resized(window);
                         }
                     }
