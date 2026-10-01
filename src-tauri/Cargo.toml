@@ -97,10 +97,16 @@ dunce = "1.0.5"
 auto-launch = "0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "NSWindow",
+  "NSView",
+  "NSButton",
+] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
   "std",
   "NSObject",
   "NSProcessInfo",
+  "NSGeometry",
 ] }
 # CGEventTap 直监听：绕开 rdev 0.5.3 在 macOS 上对 KeyPress 事件无条件调
 # TSMGetInputSourceProperty（必须 main queue）导致的 dispatch_assert_queue SIGTRAP。

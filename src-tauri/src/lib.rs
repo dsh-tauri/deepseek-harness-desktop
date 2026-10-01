@@ -77,6 +77,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::MainEventsCleared => {
+                desktop::builder::sync_macos_titlebars(app_handle);
+            }
             // macOS：关闭按钮只是隐藏窗口（见 builder 的 on_window_event），
             // 点击 Dock 图标时系统回调 applicationShouldHandleReopen 触发
             // RunEvent::Reopen，这里重新显示主窗口，否则窗口会一直隐藏在托盘。

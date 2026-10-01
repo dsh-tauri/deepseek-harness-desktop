@@ -1096,6 +1096,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "objc2-app-kit",
  "objc2-foundation",
  "rayon",
  "rdev",

@@ -8,6 +8,10 @@ use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSWindow, NSWindowButton, NSWindowStyleMask};
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSPoint;
 use tauri::{ipc::Invoke, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, Wry};
 
 #[cfg(windows)]
@@ -38,29 +42,13 @@ use crate::desktop::window::{on_download, on_new_window};
 #[cfg(not(target_os = "linux"))]
 use crate::utils::show_main_window;
 
-/// 壳层（`Navbar`）导航栏高度，单位 CSS px。
-///
-/// 这是「前端高度类 ↔ 后端交通灯纵向位置」的唯一真值入口：前端
-/// `src/layout/components/navbar.tsx` 根元素的 `h-11` 是它的体现（Tailwind 4
-/// 间距刻度 11 × 4px = 44px），macOS 交通灯的纵向位置也由它推导。issue #524
-/// 之前两处各写一份数值（`h-11` 与 `24.0`）互不知情，改一处就会错位；现在由
-/// `shell_nav_height_matches_navbar_height_class` 测试把这份耦合显式化——
-/// 改栏高忘了同步另一边，CI 直接失败。
 pub const SHELL_NAV_HEIGHT: u32 = 44;
 
-/// 交通灯距窗口左边缘的内边距（逻辑像素）。
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHT_INSET_X: f64 = 14.0;
+const TRAFFIC_LIGHT_INSET_X: f64 = 18.0;
 
-/// 交通灯纵向锚点相对「栏高 / 2」的修正量（逻辑像素）。
-///
-/// tao 的 `inset_traffic_lights` 只把标题栏容器高度改成 `close_rect.height + y`，
-/// AppKit 按钮仍贴着容器底边，故传入 y 与按钮视觉圆心近似 1:1 平移（实测 y = 24
-/// 时圆心落在窗口顶端下方 26px）。2x 截图实测：圆心在设备行 54，而栏内 flex 居中
-/// 的折叠/展开按钮圆心在设备行 45（= 栏内容盒中心），低 9 设备像素 = 4.5 逻辑像素，
-/// 故锚点要回退 4.5：44 / 2 + (−2.5) = 19.5。
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHT_VISUAL_OFFSET: f64 = -2.5;
+const TRAFFIC_LIGHT_VISUAL_OFFSET: f64 = 2.0;
 
 /// WebView2 原生拖拽区域所需的参数。
 ///
@@ -672,6 +660,36 @@ fn with_shell_chrome<'a>(
     let _ = app;
 
     Ok(builder)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn sync_macos_titlebars(app: &tauri::AppHandle<Wry>) {
+    for webview in app.webview_windows().into_values() {
+        let Ok(handle) = webview.ns_window() else {
+            continue;
+        };
+        let window = unsafe { &*handle.cast::<NSWindow>() };
+        if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
+            continue;
+        }
+        let Some(button) = window.standardWindowButton(NSWindowButton::CloseButton) else {
+            continue;
+        };
+        let bounds = button.bounds();
+        let center = button.convertPoint_toView(
+            NSPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0),
+            None,
+        );
+        let expected_x = TRAFFIC_LIGHT_INSET_X + bounds.size.width / 2.0;
+        let expected_y = f64::from(SHELL_NAV_HEIGHT) / 2.0;
+        let actual_y = window.frame().size.height - center.y;
+        // AppKit 在布局完成后重置按钮；仅在偏移时重绘 Wry（tauri#15451）。
+        if (center.x - expected_x).abs() > 0.5 || (actual_y - expected_y).abs() > 0.5 {
+            if let Some(content) = window.contentView() {
+                content.display();
+            }
+        }
+    }
 }
 
 #[cfg(not(windows))]
