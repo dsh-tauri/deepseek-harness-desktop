@@ -1,21 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!--
-  合并进 macOS .app 的 Info.plist（issue #214）。
-
-  WKWebView 里 dsh 页面（dsh-ears / dsh-voice-scribe）调用 getUserMedia 时，
-  macOS 的 TCC 只读取宿主 .app 的用途说明：缺少 NSMicrophoneUsageDescription
-  时不会弹授权框，而是直接终止进程（"attempted to access privacy-sensitive
-  data without a usage description"）。浏览器里正常、桌面端必现就是这个原因。
-
-  相机是同类问题：壳层的 iframe allow 与 WebView2 授权都放行 camera，
-  macOS 侧若缺 NSCameraUsageDescription 同样会在采集时被杀进程。
-
-  Tauri 会自动合并 tauri.conf.json 同目录下的 Info.plist，
-  这里仍在 bundle.macOS.infoPlist 里显式声明，便于定位与回归。
--->
 <plist version="1.0">
 <dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
   <key>NSMicrophoneUsageDescription</key>
   <string>Voice input in DeepSeek Harness requires access to the microphone.</string>
   <key>NSCameraUsageDescription</key>

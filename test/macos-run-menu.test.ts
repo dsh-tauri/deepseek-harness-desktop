@@ -12,6 +12,25 @@ function submenuItems(id: string) {
 }
 
 describe('macOS native menu', () => {
+  it('declares English and Simplified Chinese for system-provided menu items', () => {
+    const plist = readFileSync(new URL('../src-tauri/Info.plist', import.meta.url), 'utf8').replace(/<!--[\s\S]*?-->/g, '')
+    const localizations = plist.match(/<key>CFBundleLocalizations<\/key>\s*<array>([\s\S]*?)<\/array>/)
+
+    expect(localizations).not.toBeNull()
+    expect([...localizations![1].matchAll(/<string>(.*?)<\/string>/g)].map(language => language[1])).toEqual(['en', 'zh-Hans'])
+    expect(plist).toMatch(/<key>CFBundleDevelopmentRegion<\/key>\s*<string>en<\/string>/)
+  })
+
+  it('leaves system window actions to AppKit and matches the native bring-to-front label', () => {
+    expect(submenuItems('desktop-window-menu')).toEqual([
+      '&minimize',
+      '&zoom',
+      '&window_separator',
+      '&bring_all_to_front',
+    ])
+    expect(i18nSource).toContain('"menu.bring_all_to_front" => ("全部置于顶层", "Bring All to Front")')
+  })
+
   it('orders File, Edit, View, Run, Window and Help after the macOS application menu', () => {
     const nativeMenuSource = builderSource.slice(builderSource.indexOf('pub fn install_macos_menu('))
     const menu = nativeMenuSource.match(/let menu = Menu::with_items\(\s*app,\s*&\[([^\]]+)\]/)
@@ -58,9 +77,15 @@ describe('macOS native menu', () => {
     expect(i18nSource).toContain('"menu.run" => ("运行", "Run")')
   })
 
-  it('keeps fullscreen as a native action with state-dependent labels', () => {
+  it('toggles the focused shell window from View without suppressing AppKit fullscreen in Window', () => {
     expect(submenuItems('desktop-view-menu')).toEqual(['&fullscreen'])
-    expect(builderSource).toContain('PredefinedMenuItem::fullscreen(app, Some(&fullscreen_label))?')
+    expect(builderSource).not.toContain('PredefinedMenuItem::fullscreen(')
+    expect(builderSource).toMatch(/MenuItem::with_id\(\s*app,\s*"desktop-fullscreen",\s*&fullscreen_label,\s*true,\s*Some\("Ctrl\+Super\+F"\)/)
+    const handler = builderSource.slice(builderSource.indexOf('"desktop-fullscreen" =>'))
+    expect(handler).toContain('window.label() != crate::desktop::pet::PET_WINDOW_LABEL')
+    expect(handler).toContain('window.is_focused().unwrap_or(false)')
+    expect(handler).toContain('.and_then(|is_fullscreen| window.set_fullscreen(!is_fullscreen))')
+    expect(builderSource).toMatch(/tauri::WindowEvent::Focused\(true\) => sync_macos_fullscreen_menu\(window\)/)
     expect(builderSource).toMatch(/fn fullscreen_menu_label_key\(is_fullscreen: bool\) -> &'static str \{\s*if is_fullscreen \{\s*"menu.exit_fullscreen"\s*\} else \{\s*"menu.enter_fullscreen"\s*\}/)
     expect(builderSource).toContain('let fullscreen_label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));')
     expect(builderSource).toContain('let label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));')

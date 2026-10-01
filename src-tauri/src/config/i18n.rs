@@ -53,7 +53,7 @@ pub fn t(key: &str) -> String {
         "menu.window" => ("窗口", "Window"),
         "menu.minimize" => ("最小化", "Minimize"),
         "menu.zoom" => ("缩放", "Zoom"),
-        "menu.bring_all_to_front" => ("前置全部窗口", "Bring All to Front"),
+        "menu.bring_all_to_front" => ("全部置于顶层", "Bring All to Front"),
         "menu.keyboard_shortcuts" => ("显示键盘快捷键", "Show Keyboard Shortcuts"),
         "menu.enter_fullscreen" => ("进入全屏幕", "Enter Full Screen"),
         "menu.exit_fullscreen" => ("退出全屏幕", "Exit Full Screen"),
