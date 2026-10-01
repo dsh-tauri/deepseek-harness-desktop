@@ -1,5 +1,90 @@
+import postcss from 'postcss'
 import { describe, expect, it } from 'vitest'
 import globalStyle from './global.cssr'
+
+describe('conversation input dock stack', () => {
+  const rules: Record<string, Record<string, string>> = {}
+  postcss.parse(globalStyle.render()).walkRules((rule) => {
+    if (rule.selector.includes('conversation.input.dock')) {
+      rules[rule.selector] = {}
+      rule.walkDecls((decl) => {
+        rules[rule.selector][decl.prop] = decl.value
+      })
+    }
+  })
+
+  const dock = '[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor])))'
+
+  it.each([
+    [2, 'scale(0.98)'],
+    [3, 'scale(0.96)'],
+    [4, 'scale(0.94)'],
+  ])('reduces the real height of non-anchor child %s when collapsed', (index, transform) => {
+    expect(rules[`${dock}:not(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover)):not(:focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ height: '12px', transform })
+  })
+
+  it.each([2, 3, 4])('restores non-anchor child %s on hover or focus', (index) => {
+    expect(rules[`${dock}:is(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover), :focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ 'transform': 'scale(1)', 'margin-bottom': '6px', 'overflow': 'visible' })
+    expect(rules[`${dock} > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({
+      'position': 'relative',
+      'height': 'auto',
+      'min-height': '0',
+      'margin-block': '0',
+      'box-sizing': 'border-box',
+      'overflow': 'clip',
+      'transform-origin': 'top center',
+      'interpolate-size': 'allow-keywords',
+      'transition': 'height 220ms ease, transform 220ms ease, margin-bottom 220ms ease',
+    })
+  })
+
+  it('adds no stack declarations to the last child or children earlier than the fourth last', () => {
+    expect(Object.keys(rules).filter(selector => selector.includes(':nth-last-child(') && !selector.endsWith('::after'))).toHaveLength(9)
+    expect(Object.keys(rules).some(selector => selector.includes(':nth-last-child(1 '))).toBe(false)
+    expect(Object.keys(rules).some(selector => selector.includes(':nth-last-child(5 '))).toBe(false)
+  })
+})
+
+describe('mobile conversation layout', () => {
+  const root = postcss.parse(globalStyle.render())
+
+  it('keeps current mobile layout overrides scoped to mobile devices', () => {
+    const media = root.nodes.find(node => node.type === 'atrule' && node.name === 'media' && node.params === '(hover: none) and (any-pointer: coarse) and (any-hover: none)')
+    expect(media?.type).toBe('atrule')
+    if (media?.type !== 'atrule')
+      throw new Error('Missing mobile media query')
+    expect(media.params).toBe('(hover: none) and (any-pointer: coarse) and (any-hover: none)')
+    const rules: Record<string, unknown> = {}
+    media.walkRules((rule) => {
+      rules[rule.selector] = rule.nodes.map(node => node.type === 'decl' ? [node.prop, node.value, node.important] : [])
+    })
+    expect(rules).toEqual({
+      '[data-slot="conversation.composer.bar"] [class$="_dock"]': [['display', 'none', true]],
+      '[class$="_composerStack"] > [data-slot="conversation.input.dock"]': [['display', 'none', true]],
+      '[class$="_turnErrorCode"]': [['display', 'none', true]],
+      '[data-slot="conversation.header"] [class$="_header"]': [['display', 'none', true]],
+      '[data-slot="main"] header[class*="_pageHead"]': [['padding-left', '0', true], ['padding-top', '24px', true]],
+      'header[class*="_pageHead"] [class*="_toolbar"]': [['display', 'none', true]],
+      '[data-slot="conversation.view"] [class$="_scroll"]': [['padding', '16px', true]],
+      '[class*="_userStack"]': [['max-width', '100%', true]],
+      '[data-slot="main"] [data-conversation-scroll]': [['padding-bottom', '0', true]],
+    })
+  })
+
+  it('overrides conversation scroll bottom padding to zero inside the mobile media query', () => {
+    const declarations: unknown[] = []
+    root.walkRules('[data-slot="main"] [data-conversation-scroll]', (rule) => {
+      const parent = rule.parent
+      expect(parent?.type).toBe('atrule')
+      if (parent?.type === 'atrule')
+        expect(parent.params).toBe('(hover: none) and (any-pointer: coarse) and (any-hover: none)')
+      rule.walkDecls((decl) => {
+        declarations.push([decl.prop, decl.value, decl.important])
+      })
+    })
+    expect(declarations).toEqual([['padding-bottom', '0', true]])
+  })
+})
 
 /**
  * 侧边栏 rail 的 logo 契约。

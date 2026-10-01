@@ -1,5 +1,7 @@
 import { PLUGIN_ID } from '../../shared/constants'
 
+export const MOBILE_MEDIA_QUERIES = ['(hover: none)', '(any-pointer: coarse)', '(any-hover: none)'] as const
+
 export const SETTINGS_REGISTRANT = PLUGIN_ID
 export const SETTINGS_SHELL_SEAT_ID = PLUGIN_ID
 

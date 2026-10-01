@@ -31,8 +31,7 @@ use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{PredefinedMenuItem, Submenu};
 
 #[cfg(target_os = "macos")]
-static MACOS_FULLSCREEN_MENU_ITEM: OnceLock<Mutex<Option<PredefinedMenuItem<Wry>>>> =
-    OnceLock::new();
+static MACOS_FULLSCREEN_MENU_ITEM: OnceLock<Mutex<Option<MenuItem<Wry>>>> = OnceLock::new();
 
 #[cfg(windows)]
 use crate::desktop::window::on_page_load;
@@ -294,7 +293,14 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         .and_then(|window| window.is_fullscreen().ok())
         .unwrap_or(false);
     let fullscreen_label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));
-    let fullscreen = PredefinedMenuItem::fullscreen(app, Some(&fullscreen_label))?;
+    // AppKit 会因标准 toggleFullScreen: 菜单项省略“窗口”中的自动全屏入口。
+    let fullscreen = MenuItem::with_id(
+        app,
+        "desktop-fullscreen",
+        &fullscreen_label,
+        true,
+        Some("Ctrl+Super+F"),
+    )?;
     let run_menu = Submenu::with_id_and_items(
         app,
         "desktop-run-menu",
@@ -510,6 +516,11 @@ fn fullscreen_menu_label_key(is_fullscreen: bool) -> &'static str {
 /// 原生全屏动画会连续触发 Resize；只在状态真正变化时刷新菜单文案。
 #[cfg(target_os = "macos")]
 fn sync_macos_fullscreen_menu(window: &tauri::Window<Wry>) {
+    if window.label() == crate::desktop::pet::PET_WINDOW_LABEL
+        || !window.is_focused().unwrap_or(false)
+    {
+        return;
+    }
     let Ok(is_fullscreen) = window.is_fullscreen() else {
         return;
     };
@@ -1255,6 +1266,20 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
+            #[cfg(target_os = "macos")]
+            "desktop-fullscreen" => {
+                if let Some(window) = app.webview_windows().into_values().find(|window| {
+                    window.label() != crate::desktop::pet::PET_WINDOW_LABEL
+                        && window.is_focused().unwrap_or(false)
+                }) {
+                    if let Err(error) = window
+                        .is_fullscreen()
+                        .and_then(|is_fullscreen| window.set_fullscreen(!is_fullscreen))
+                    {
+                        log::warn!("[menu] FULLSCREEN_TOGGLE_FAILED: {error}");
+                    }
+                }
+            }
             "desktop-config"
             | "desktop-profiles"
             | "desktop-plugins"
@@ -1350,19 +1375,20 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                     label if label == MAIN_WINDOW_LABEL => crate::config::save_geometry(window),
                     _ => {}
                 }
-                // 全屏菜单文案与 Accessory 切换都只针对主窗口：附加窗口没有
-                // 独立的全屏菜单项，也不参与「关闭主窗口即后台化」的激活策略。
                 #[cfg(target_os = "macos")]
                 {
-                    if window.label() == MAIN_WINDOW_LABEL
-                        && matches!(event, tauri::WindowEvent::Resized(_))
-                    {
-                        // 退出全屏后补做全屏期间被推迟的 Accessory 切换
+                    if matches!(event, tauri::WindowEvent::Resized(_)) {
+                        // 全屏文案跟随聚焦的壳层窗口，Accessory 切换仍只处理主窗口。
                         sync_macos_fullscreen_menu(window);
-                        crate::desktop::activation::on_window_resized(window);
+                        if window.label() == MAIN_WINDOW_LABEL {
+                            // 退出全屏后补做全屏期间被推迟的 Accessory 切换。
+                            crate::desktop::activation::on_window_resized(window);
+                        }
                     }
                 }
             }
+            #[cfg(target_os = "macos")]
+            tauri::WindowEvent::Focused(true) => sync_macos_fullscreen_menu(window),
             _ => {}
         });
 

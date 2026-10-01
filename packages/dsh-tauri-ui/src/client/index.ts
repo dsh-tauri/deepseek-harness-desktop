@@ -6,11 +6,13 @@ import { locale } from './locales'
 import { composerResumeFeature } from './register/composer-resume'
 import { heroWorkspaceFeature } from './register/hero-workspace'
 import { registerImPanel } from './register/im-panel'
+import { registerMobilePreferences } from './register/mobile-preferences'
 import { sidebarNewSessionFeature, ungroupedNewSessionFeature } from './register/new-session'
 import { registerSettingsObstructions } from './register/obstructions'
 import { registerSettingsSections } from './register/sections'
 import { registerSettings } from './register/settings'
 import { registerSettingsOpen } from './register/settings-open'
+import { detectMobileDevice } from './register/settings.utils'
 import { registerStyles } from './register/styles'
 
 export * from './components'
@@ -30,12 +32,16 @@ export const name = PLUGIN_ID
 export const inject = ['slots', 'layout', 'locale', 'sessions']
 
 const COMPOSER_RESUME_EFFECT = `${PLUGIN_ID}: composer resume`
+const MOBILE_PREFERENCES_EFFECT = `${PLUGIN_ID}: mobile preferences`
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(locale.registerLocale, LOCALE_EFFECT)
   ctx.effect(registerStyles, STYLES_EFFECT)
   ctx.effect(registerSettingsSections, SECTIONS_EFFECT)
-  ctx.effect(registerSettings, SETTINGS_EFFECT)
+  if (detectMobileDevice())
+    ctx.effect(registerMobilePreferences, MOBILE_PREFERENCES_EFFECT)
+  else
+    ctx.effect(registerSettings, SETTINGS_EFFECT)
   ctx.effect(registerSettingsObstructions, OBSTRUCTIONS_EFFECT)
   ctx.effect(heroWorkspaceFeature, HERO_WORKSPACE_EFFECT)
   ctx.effect(sidebarNewSessionFeature, NEW_SESSION_EFFECT)

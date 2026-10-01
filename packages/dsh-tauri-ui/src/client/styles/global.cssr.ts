@@ -1,10 +1,96 @@
+import { MOBILE_MEDIA_QUERIES } from '../constants'
 import { cssr } from '../utils/cssr'
 
 export const GLOBAL_STYLE_ID = 'dsh-tauri-ui-global-styles'
 
 const { c } = cssr
 
+const INPUT_DOCK_SELECTOR = '[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor])))'
+
 export default c([
+  c(`:where(${INPUT_DOCK_SELECTOR})`, {
+    display: 'flex !important',
+    flexDirection: 'column',
+    width: 'calc(100% - var(--dsh-composer-side-clearance, 0px) * 2)',
+    maxWidth: 'var(--dsh-composer-card-max-width, 100%)',
+    marginInline: 'auto',
+    rowGap: '0',
+  }),
+  // The outlet now owns the side clearance; avoid subtracting it again in card widths.
+  c(`${INPUT_DOCK_SELECTOR} > :not([data-dsh-tauri-worktree-mode-anchor])`, {
+    '--dsh-composer-side-clearance': '0px',
+  }),
+  ...[2, 3, 4].flatMap((index) => {
+    const child = `> :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
+    return [
+      c(`${INPUT_DOCK_SELECTOR} ${child}`, {
+        position: 'relative',
+        height: 'auto',
+        minHeight: '0',
+        marginBlock: '0',
+        boxSizing: 'border-box',
+        overflow: 'clip',
+        transformOrigin: 'top center',
+        interpolateSize: 'allow-keywords',
+        transition: 'height 220ms ease, transform 220ms ease, margin-bottom 220ms ease',
+      }),
+      c(`${INPUT_DOCK_SELECTOR}:not(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover)):not(:focus-within) ${child}`, {
+        height: '12px',
+        transform: `scale(${1 - (index - 1) * 0.02})`,
+      }),
+      c(`${INPUT_DOCK_SELECTOR}:is(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover), :focus-within) ${child}`, {
+        transform: 'scale(1)',
+        marginBottom: '6px',
+        overflow: 'visible',
+      }),
+      c(`${INPUT_DOCK_SELECTOR}:is(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover), :focus-within) ${child}::after`, {
+        content: '""',
+        position: 'absolute',
+        top: '100%',
+        left: '0',
+        right: '0',
+        height: '8px',
+      }),
+    ]
+  }),
+  c('@media (prefers-reduced-motion: reduce)', [
+    c(`${INPUT_DOCK_SELECTOR} > :not([data-dsh-tauri-worktree-mode-anchor])`, {
+      transition: 'none !important',
+    }),
+  ]),
+  c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
+    c('[data-slot="conversation.composer.bar"] [class$="_dock"]', {
+      display: 'none !important',
+    }),
+    c('[class$="_composerStack"] > [data-slot="conversation.input.dock"]', {
+      display: 'none !important',
+    }),
+    c('[class$="_turnErrorCode"]', {
+      display: 'none !important',
+    }),
+    c('[data-slot="conversation.header"] [class$="_header"]', {
+      display: 'none !important',
+    }),
+    c('[data-slot="main"] header[class*="_pageHead"]', {
+      paddingLeft: '0 !important',
+      paddingTop: '24px !important',
+    }),
+    c('header[class*="_pageHead"] [class*="_toolbar"]', {
+      display: 'none !important',
+    }),
+    // c('[data-slot="conversation.session.header"], [data-slot="conversation.composer.bar"], [class*=""], [data-slot="sidebar"] [class$="_footArea"], [data-slot="sidebar"] [class*="_footArea "]', {
+    //   display: 'none !important',
+    // }),
+    c('[data-slot="conversation.view"] [class$="_scroll"]', {
+      padding: '16px !important',
+    }),
+    c('[class*="_userStack"]', {
+      maxWidth: '100% !important',
+    }),
+    c('[data-slot="main"] [data-conversation-scroll]', {
+      paddingBottom: '0 !important',
+    }),
+  ]),
   c('[data-slot="sidebar.right.tab.guide"]', [
     c('[class$="guide"]', {
       gap: '8px',

@@ -16,6 +16,13 @@
 -->
 <plist version="1.0">
 <dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
   <key>NSMicrophoneUsageDescription</key>
   <string>Voice input in DeepSeek Harness requires access to the microphone.</string>
   <key>NSCameraUsageDescription</key>
