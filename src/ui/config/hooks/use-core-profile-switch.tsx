@@ -10,7 +10,7 @@ import { coreProfileName, isCoreUpgrade } from '@/utils/core-version'
 import { normalizeProfileId } from '@/utils/profile-id'
 import { toast } from '@/utils/toast'
 
-/** 核心升级前的档案确认结果 */
+/** 核心换版前的档案确认结果 */
 export interface CoreUpgradeGuard {
   /** 警告弹窗是否已处理切换确认（true 时调用方不必再弹普通切换确认） */
   handled: boolean
@@ -19,11 +19,12 @@ export interface CoreUpgradeGuard {
 }
 
 /**
- * 切换/更新核心前的「破坏性更改 → 请切换档案」守卫，三个入口共用：
+ * 切换/更新核心前的「版本不配套 → 请切换档案」守卫，三个入口共用：
  * 核心面板切换、更新提示 toast（桌面外壳）、调试页「存在新版本」。
  *
- * 核心与档案配套：换到更新的 dsh 版本前，先让用户把当前档案换成与目标版本同名的
- * 版本档案（缺失则新建），新版本的插件与设置才不会破坏原档案。
+ * 核心与档案配套：主/次/修订号变化（升级或降级，issue #748）前，先让用户换成与目标版本同名的
+ * 版本档案（缺失则新建）。降级沿用较新档案时，旧核心找不到档案里的包，Harness 无法启动；
+ * 升级沿用旧档案则会把不配套的包留在原档案里。同一 x.y.z 的预发布互换不弹窗。
  *
  * 版本比对必须走本地数据：核心面板直接把列表里已加载的「在用核心」版本传进来；
  * 未传时退回只用本地信息的 `get_runtime_info`——绝不能为比对去拉 `get_cores`
@@ -51,7 +52,7 @@ export function useCoreProfileSwitch() {
   }
 
   /**
-   * 目标版本是在用核心的升级时弹警告并按用户选择处理档案。
+   * 目标版本与在用核心的主/次/修订号不同（升级或降级）时弹警告并按用户选择处理档案。
    *
    * `fromVersion` 由调用方从本地已有数据传入（核心面板传列表里的在用核心版本）；
    * 省略时退回本地读取。
@@ -60,7 +61,8 @@ export function useCoreProfileSwitch() {
    */
   async function guardCoreUpgrade(toVersion: string, fromVersion?: string): Promise<CoreUpgradeGuard | null> {
     const from = fromVersion ?? await localActiveVersion()
-    if (!isCoreUpgrade(from, toVersion))
+    // isCoreUpgrade 仍只表示「目标更高」。两个方向一起看，降级才会同样隔离档案。
+    if (!isCoreUpgrade(from, toVersion) && !isCoreUpgrade(toVersion, from))
       return { handled: false }
 
     let choice: CoreUpgradeChoice
@@ -74,6 +76,7 @@ export function useCoreProfileSwitch() {
     catch {
       return null
     }
+    // 明确无视风险时不改档案。沿用当前档案仍可能与目标核心不兼容（issue #748）。
     if (choice.mode === 'ignore')
       return { handled: true }
 

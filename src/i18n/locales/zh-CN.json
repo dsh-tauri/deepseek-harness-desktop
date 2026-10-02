@@ -399,7 +399,7 @@
   "core.local_unsupported_toast": "本地核心版本过低",
   "core.local_unsupported_hint": "内置插件需要 dsh {{version}} 及以上，已自动改用预打包核心。请先更新本地核心，再切换回它。",
   "core.breaking_title": "破坏性更改",
-  "core.breaking_desc": "{{from}} → {{to}} 含破坏性更改，可能破坏当前档案的插件与设置。请切换到配套档案；继续沿用旧档案会残留旧版核心包，导致设置无法保存，需手动修复该档案。",
+  "core.breaking_desc": "{{from}} → {{to}} 会切换核心版本（升级或降级），两者档案不兼容：较新档案配较旧核心时，核心包不可用会导致启动失败；较旧档案配较新核心会留下不配套的包，破坏插件与设置。请切换到配套档案。",
   "core.breaking_profile_label": "档案名称",
   "core.breaking_ignore": "仍沿用旧档案",
   "core.breaking_profile_failed": "切换档案失败，核心未切换",

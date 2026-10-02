@@ -399,7 +399,7 @@
   "core.local_unsupported_toast": "Local core is too old",
   "core.local_unsupported_hint": "Built-in plugins need dsh {{version}} or newer, so the bundled core is used instead. Update the local core before switching back to it.",
   "core.breaking_title": "Breaking changes",
-  "core.breaking_desc": "{{from}} → {{to}} has breaking changes that may break this profile's plugins and settings. Switch to a matching profile; keeping the old profile leaves stale core packages behind, which breaks saving settings and needs manual repair.",
+  "core.breaking_desc": "{{from}} → {{to}} switches core versions (upgrade or downgrade). Mixing them is incompatible: a newer profile on an older core can fail startup when core bundles are unavailable, and an older profile on a newer core leaves packages that break plugins and settings. Switch to a matching profile.",
   "core.breaking_profile_label": "Profile name",
   "core.breaking_ignore": "Keep old profile",
   "core.breaking_profile_failed": "Failed to switch profile — the core was not switched",

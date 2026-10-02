@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { readLocale, readSource } from './setup/read-source'
 
 /**
- * 「升级到更新的核心 → 请切换档案」链路的结构契约。
+ * 「版本号变化（升级或降级）→ 请切换档案」链路的结构契约。
  *
  * 前端不在单测里挂载组件（与 clone-profile.test.ts 同款跨层守卫），因此读源码断言结构：
- * 期望值一律取自需求本身（顺序、命令名、i18n key、本地比对），不与被测实现同源。
+ * 期望值一律取自需求本身（顺序、命令名、i18n key、双向本地比对），不与被测实现同源。
  *
  * 三个入口共用同一个守卫 hook：核心面板切换、更新提示 toast（桌面外壳）、调试页更新按钮。
  */
@@ -51,10 +51,14 @@ describe('版本比对一律走本地数据', () => {
     expect(body).not.toContain('\'get_cores\'')
   })
 
-  it('任何更新的版本都判定为升级，默认档案名取目标版本号（含 patch，Core-x.y.z）', () => {
+  it('核心号任一方向变化都要换档案，默认档案名取目标版本号（含 patch，Core-x.y.z）', () => {
     const body = bodyOf(guardSource, 'async function guardCoreUpgrade')
+    const bypass = body.indexOf('return { handled: false }')
 
     expect(body).toContain('isCoreUpgrade(from, toVersion)')
+    expect(body).toContain('isCoreUpgrade(toVersion, from)')
+    expect(body.indexOf('isCoreUpgrade(from, toVersion)')).toBeLessThan(bypass)
+    expect(body.indexOf('isCoreUpgrade(toVersion, from)')).toBeLessThan(bypass)
     expect(body).toContain('coreProfileName(toVersion)')
     expect(body).toMatch(/defaultName:/)
   })
