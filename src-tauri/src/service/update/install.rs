@@ -372,35 +372,101 @@ fn installer_mime(path: &std::path::Path) -> Option<&'static str> {
     }
 }
 
-/// 桌面条目搜索目录：`$XDG_DATA_HOME/applications` + `$XDG_DATA_DIRS/applications`。
+/// 桌面条目的下探层数上限（id 是相对 `applications/` 的路径，理论上可嵌套任意层，
+/// 实际发行版最多到 `vendor/` 一级，留 4 层足够且不会无界遍历）。
 #[cfg(target_os = "linux")]
-fn applications_dirs() -> Vec<PathBuf> {
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("/usr/share"));
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
-    std::iter::once(data_home)
-        .chain(
-            data_dirs
-                .split(':')
-                .filter(|dir| !dir.is_empty())
-                .map(PathBuf::from),
-        )
+const MAX_DESKTOP_ENTRY_DEPTH: usize = 4;
+
+/// 桌面条目搜索目录：`$XDG_DATA_HOME/applications` + `$XDG_DATA_DIRS/applications`。
+///
+/// 纯函数（环境值由调用方传入），空串按 XDG 规范等同未设置：`XDG_DATA_HOME` 空
+/// 则退回 `$HOME/.local/share`，`XDG_DATA_DIRS` 空则退回
+/// `/usr/local/share:/usr/share`，否则会把系统 applications 目录整个漏掉。
+#[cfg(target_os = "linux")]
+fn applications_dirs_from(
+    data_home: Option<&std::ffi::OsStr>,
+    data_dirs: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    match data_home.filter(|value| !value.is_empty()) {
+        Some(dir) => roots.push(PathBuf::from(dir)),
+        None => {
+            if let Some(home) = home.filter(|value| !value.is_empty()) {
+                roots.push(PathBuf::from(home).join(".local/share"));
+            }
+        }
+    }
+    let data_dirs = data_dirs
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
+    roots.extend(
+        data_dirs
+            .split(':')
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from),
+    );
+    roots
+        .into_iter()
         .map(|dir| dir.join("applications"))
         .collect()
 }
 
-/// 按目录顺序查找桌面条目（id 形如 `gdebi.desktop`，含路径分隔符的 id 直接拒绝）。
+/// 当前进程环境下的桌面条目搜索目录。
+#[cfg(target_os = "linux")]
+fn applications_dirs() -> Vec<PathBuf> {
+    applications_dirs_from(
+        std::env::var_os("XDG_DATA_HOME").as_deref(),
+        std::env::var_os("XDG_DATA_DIRS").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+}
+
+/// 按目录顺序查找桌面条目。
+///
+/// 桌面条目的 id 是相对 `applications/` 的路径把 `/` 换成 `-`（`foo/bar.desktop`
+/// 的 id 是 `foo-bar.desktop`），所以要逐层下探并按推导出的 id 比对；同一 id 命中
+/// 多个时先命中的层更浅，正合「浅路径优先」的规范约定。
 #[cfg(target_os = "linux")]
 fn find_desktop_entry(id: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     if id.contains('/') || id.contains("..") {
         return None;
     }
-    dirs.iter()
-        .map(|dir| dir.join(id))
-        .find(|path| path.is_file())
+    dirs.iter().find_map(|dir| find_entry_in_dir(id, dir))
+}
+
+/// 在单个 applications 目录内按层序（浅层优先）查找指定 id 的条目。
+#[cfg(target_os = "linux")]
+fn find_entry_in_dir(id: &str, dir: &std::path::Path) -> Option<PathBuf> {
+    let mut level = vec![(dir.to_path_buf(), String::new())];
+    for _ in 0..MAX_DESKTOP_ENTRY_DEPTH {
+        let mut next = Vec::new();
+        for (current, prefix) in level {
+            let Ok(entries) = std::fs::read_dir(&current) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                else {
+                    continue;
+                };
+                if path.is_dir() {
+                    next.push((path, format!("{prefix}{name}-")));
+                } else if format!("{prefix}{name}") == id {
+                    return Some(path);
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        level = next;
+    }
+    None
 }
 
 /// 当前 MIME 类型的默认处理器 id（`xdg-mime query default`）。
@@ -859,6 +925,90 @@ mod tests {
         );
         assert_eq!(find_desktop_entry("../gdebi.desktop", &[hit]), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 嵌套条目的 id 是相对路径把 `/` 换成 `-`：`vendor/gdebi.desktop` 应答
+    /// `vendor-gdebi.desktop`；同一 id 命中多个时浅层优先。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn find_desktop_entry_derives_ids_for_nested_dirs() {
+        let dir = std::env::temp_dir().join(format!("dsh-desktop-nested-{}", std::process::id()));
+        let apps = dir.join("applications");
+        std::fs::create_dir_all(apps.join("vendor")).unwrap();
+        std::fs::create_dir_all(apps.join("vendor/deep")).unwrap();
+        std::fs::write(apps.join("vendor/gdebi.desktop"), "nested").unwrap();
+        std::fs::write(apps.join("vendor/deep/tool.desktop"), "deep").unwrap();
+        std::fs::write(apps.join("flat-gdebi.desktop"), "flat").unwrap();
+
+        assert_eq!(
+            find_desktop_entry("vendor-gdebi.desktop", std::slice::from_ref(&apps)),
+            Some(apps.join("vendor/gdebi.desktop"))
+        );
+        assert_eq!(
+            find_desktop_entry("vendor-deep-tool.desktop", std::slice::from_ref(&apps)),
+            Some(apps.join("vendor/deep/tool.desktop"))
+        );
+        assert_eq!(
+            find_desktop_entry("flat-gdebi.desktop", std::slice::from_ref(&apps)),
+            Some(apps.join("flat-gdebi.desktop")),
+            "嵌套文件名本身不构成 id，只有推导出的 id 参与匹配"
+        );
+        assert_eq!(
+            find_desktop_entry("gdebi.desktop", std::slice::from_ref(&apps)),
+            None,
+            "仅作为嵌套文件名的 gdebi.desktop 不属于顶层 id"
+        );
+
+        std::fs::write(apps.join("vendor-flat.desktop"), "shallow").unwrap();
+        std::fs::write(apps.join("vendor/flat.desktop"), "deep").unwrap();
+        assert_eq!(
+            find_desktop_entry("vendor-flat.desktop", std::slice::from_ref(&apps)),
+            Some(apps.join("vendor-flat.desktop")),
+            "顶层与嵌套推出同一 id 时浅层优先"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// XDG 目录取值：空串按规范等同未设置，否则会把系统 applications 目录漏掉。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn applications_dirs_treats_empty_xdg_values_as_unset() {
+        use std::ffi::OsStr;
+        let home = OsStr::new("/home/tester");
+        let defaults = applications_dirs_from(None, None, Some(home));
+        assert_eq!(
+            defaults,
+            vec![
+                PathBuf::from("/home/tester/.local/share/applications"),
+                PathBuf::from("/usr/local/share/applications"),
+                PathBuf::from("/usr/share/applications"),
+            ]
+        );
+        assert_eq!(
+            applications_dirs_from(Some(OsStr::new("")), Some(OsStr::new("")), Some(home)),
+            defaults,
+            "空串应与未设置等价"
+        );
+        assert_eq!(
+            applications_dirs_from(
+                Some(OsStr::new("/opt/data")),
+                Some(OsStr::new("/opt/a:/opt/b")),
+                Some(home)
+            ),
+            vec![
+                PathBuf::from("/opt/data/applications"),
+                PathBuf::from("/opt/a/applications"),
+                PathBuf::from("/opt/b/applications"),
+            ]
+        );
+        assert_eq!(
+            applications_dirs_from(None, None, None),
+            vec![
+                PathBuf::from("/usr/local/share/applications"),
+                PathBuf::from("/usr/share/applications"),
+            ],
+            "无 HOME 时不应造出相对路径"
+        );
     }
 
     /// 处理器必须始终有活着的父进程（issue #865）：由等待子进程的 shell 启动后，
