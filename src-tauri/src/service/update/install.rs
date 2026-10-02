@@ -512,7 +512,27 @@ fn exec_with_file(tokens: &[String], file: &str) -> Vec<String> {
     command
 }
 
-/// 由一个等待子进程的 shell 启动处理器：`sh -c '"$@"' sh <命令…>`。
+/// 处理器程序是否真实存在且可执行（含 `/` 的按路径判断，裸名按 `PATH` 查找）。
+///
+/// 桌面条目可能指向已被卸载的程序（处理器卸了、条目还在），此时 `sh` 会以 127
+/// 退出，而 spawn 本身是成功的——不先验一遍就会吞掉失败、让上层错过兜底。
+#[cfg(target_os = "linux")]
+fn resolves_to_executable(program: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |path: &std::path::Path| {
+        std::fs::metadata(path)
+            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    };
+    if program.contains('/') {
+        return executable(std::path::Path::new(program));
+    }
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| executable(&dir.join(program)))
+    })
+}
+
+/// 由一个等待子进程的 shell 启动处理器：`/bin/sh -c '"$@"' sh <命令…>`。
 ///
 /// 返回的句柄可丢弃：子进程独立存活，丢弃只表示本进程不再回收它。
 #[cfg(target_os = "linux")]
@@ -520,7 +540,10 @@ fn spawn_waited_handler(command: &[String]) -> Result<std::process::Child, Strin
     let (program, args) = command
         .split_first()
         .ok_or_else(|| "UPDATE_OPEN: empty handler command".to_string())?;
-    let mut child = std::process::Command::new("sh");
+    if !resolves_to_executable(program) {
+        return Err(format!("UPDATE_OPEN: handler program not found: {program}"));
+    }
+    let mut child = std::process::Command::new("/bin/sh");
     child
         .arg("-c")
         .arg(r#""$@""#)
@@ -871,6 +894,27 @@ mod tests {
         );
         let _ = child.kill();
         let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 处理器程序缺失或不可执行时返回 Err，让 open_installer_now 走 opener 兜底，
+    /// 而不是静默起一个必然失败的 shell（桌面条目可能指向已被卸载的处理器）。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_handler_program_is_rejected() {
+        assert!(spawn_waited_handler(&[]).is_err());
+        assert!(spawn_waited_handler(&["/nonexistent/gdebi-gtk".to_string()]).is_err());
+        assert!(spawn_waited_handler(&["no-such-handler-9f3a".to_string()]).is_err());
+        let dir = std::env::temp_dir().join(format!("dsh-handler-mode-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = dir.join("plain-handler");
+        std::fs::write(&plain, b"#!/bin/sh\n").unwrap();
+        assert!(
+            spawn_waited_handler(&[plain.to_string_lossy().into_owned()]).is_err(),
+            "存在但无执行位的程序应被拒绝"
+        );
+        let mut child = spawn_waited_handler(&["/bin/true".to_string()]).unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
