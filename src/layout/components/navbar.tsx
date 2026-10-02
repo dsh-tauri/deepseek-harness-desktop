@@ -27,6 +27,7 @@ import { useListen } from '@/hooks/use-listen'
 import { store } from '@/store'
 import { DesktopAboutDialog } from '@/ui/dialog/about'
 import { ConfigDialog } from '@/ui/dialog/config'
+import { TaskManagerDialog } from '@/ui/dialog/task-manager'
 import { DesktopUpdateDialog } from '@/ui/dialog/update'
 import { writeClipboardText } from '@/utils/clipboard'
 import { toast } from '@/utils/toast'
@@ -85,7 +86,7 @@ const DOCS_URL = 'https://dshtauri.mintlify.site'
 type FileAction = 'new-window' | 'new-chat' | 'open-folder' | 'close' | 'quit'
 
 /** 「帮助」菜单的动作 id。 */
-type HelpAction = 'keyboard-shortcuts' | 'copy-run-logs' | 'check-update' | 'about' | 'documentation'
+type HelpAction = 'task-manager' | 'keyboard-shortcuts' | 'copy-run-logs' | 'check-update' | 'about' | 'documentation'
 
 /** 「运行」菜单项：直接打开配置对话框并定位到对应面板。 */
 const CONFIG_TABS: { id: ConfigTab, labelKey: string }[] = [
@@ -248,6 +249,7 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
   const [runMenuOpen, setRunMenuOpen] = useState(false)
 
   const openConfigDialog = useOverlay(ConfigDialog)
+  const openTaskManager = useOverlay(TaskManagerDialog)
   const openAboutDialog = useOverlay(DesktopAboutDialog)
   const openUpdateDialog = useOverlay(DesktopUpdateDialog)
 
@@ -281,7 +283,9 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
   }
 
   function onHelpAction(key: HelpAction) {
-    if (key === 'check-update')
+    if (key === 'task-manager')
+      void openTaskManager().catch(() => {})
+    else if (key === 'check-update')
       void handleCheckUpdate()
     else if (key === 'about')
       void openAboutDialog().catch(() => { })
@@ -421,6 +425,9 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
         break
       case 'desktop-about':
         handleOpenAbout()
+        break
+      case 'desktop-task-manager':
+        onHelpAction('task-manager')
         break
       case 'desktop-copy-run-logs':
         void copyRunLogs()
@@ -653,6 +660,14 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
                   onAction={() => onHelpAction('keyboard-shortcuts')}
                 >
                   <ShortcutLabel label={t('menu.keyboard_shortcuts')} hint={shortcutHint(shortcutRows, 'shortcuts.open')} />
+                </Dropdown.Item>
+                <Dropdown.Item
+                  id="task-manager"
+                  data-testid="dsh-navbar-item-task-manager"
+                  textValue={t('menu.task_manager')}
+                  onAction={() => onHelpAction('task-manager')}
+                >
+                  <Label>{t('menu.task_manager')}</Label>
                 </Dropdown.Item>
                 <Dropdown.Item
                   id="copy-run-logs"

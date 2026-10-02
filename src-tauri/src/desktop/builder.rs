@@ -425,6 +425,13 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let task_manager = MenuItem::with_id(
+        app,
+        "desktop-task-manager",
+        crate::config::i18n::t("menu.task_manager"),
+        true,
+        None::<&str>,
+    )?;
     let help_separator = PredefinedMenuItem::separator(app)?;
     let documentation = MenuItem::with_id(
         app,
@@ -450,6 +457,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
             &keyboard_shortcuts,
             &help_separator,
             &run_logs,
+            &task_manager,
         ],
     )?;
 
@@ -1246,6 +1254,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::quarantine_broken_patch_layers,
         crate::bridge::strip_unresolved_patch_entries,
         crate::bridge::get_dsh_status,
+        crate::bridge::get_task_manager_processes,
+        crate::bridge::end_task_manager_process,
         crate::bridge::is_dev_build,
         crate::bridge::get_preinstall_plugins,
         crate::bridge::get_preinstall_pending,
@@ -1388,7 +1398,8 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             | "desktop-search-chats"
             | "desktop-zoom-in"
             | "desktop-zoom-out"
-            | "desktop-zoom-reset" => {
+            | "desktop-zoom-reset"
+            | "desktop-task-manager" => {
                 if let Some(window) = app.webview_windows().into_values().find(|window| {
                     window.label() != crate::desktop::pet::PET_WINDOW_LABEL
                         && window.is_focused().unwrap_or(false)

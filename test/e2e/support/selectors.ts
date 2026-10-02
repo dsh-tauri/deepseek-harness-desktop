@@ -46,3 +46,12 @@ export const EMBEDDED_DOCUMENT = '[id="dsh"]'
 
 /** 设置侧栏根（`packages/dsh-tauri-ui/src/client/ui/settings-sidebar.tsx`，插件包属性）。 */
 export const SETTINGS_SIDEBAR_ATTRIBUTE = '[data-slot-sidebar="dsh-tauri-ui"]'
+
+export const TASK_MANAGER = '[data-testid="dsh-task-manager"]'
+export const TASK_MANAGER_SEARCH = '[data-testid="dsh-task-manager-search"]'
+export const TASK_MANAGER_PROCESSES = '[data-testid="dsh-task-manager-processes"]'
+export const TASK_MANAGER_REFRESH = '[data-testid="dsh-task-manager-refresh"]'
+export const TASK_MANAGER_AUTO_REFRESH = '[data-testid="dsh-task-manager-auto-refresh"]'
+export const TASK_MANAGER_END = '[data-testid="dsh-task-manager-end"]'
+export const TASK_MANAGER_RESTART = '[data-testid="dsh-task-manager-restart"]'
+export const TASK_MANAGER_CLOSE = '[data-testid="dsh-task-manager-close"]'

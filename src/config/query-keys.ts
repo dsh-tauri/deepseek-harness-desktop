@@ -5,6 +5,8 @@
  * 写入缓存都按同一份字面量操作，散落各处会出现「失效不生效」的静默 bug。
  */
 export const queryKeys = {
+  taskManager: ['task_manager'] as const,
+  taskManagerLogs: ['task_manager_logs'] as const,
   /** 运行时信息（版本 / 端口 / 路径，debug 面板） */
   info: ['info'] as const,
   /** CLI 链接状态（debug 面板） */

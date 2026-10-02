@@ -65,6 +65,7 @@ pub fn t(key: &str) -> String {
         "menu.enter_fullscreen" => ("进入全屏幕", "Enter Full Screen"),
         "menu.exit_fullscreen" => ("退出全屏幕", "Exit Full Screen"),
         "menu.about" => ("关于 Desktop", "About Desktop"),
+        "menu.task_manager" => ("任务管理器", "Task Manager"),
         "menu.run_logs" => ("运行日志", "Run Logs"),
         "menu.check_update" => ("检查更新", "Check for Updates"),
         "menu.restart" => ("重启", "Restart"),

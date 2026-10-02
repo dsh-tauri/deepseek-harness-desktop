@@ -8,11 +8,12 @@ import { useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { Navbar } from './navbar'
 import { Webview } from './webview'
 
-const { store, userAgent } = vi.hoisted(() => {
+const { store, userAgent, openOverlay } = vi.hoisted(() => {
   const userAgent = navigator.userAgent
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Macintosh' })
   return {
     userAgent,
+    openOverlay: vi.fn().mockResolvedValue(undefined),
     store: {
       harness: { status: 'ready', serviceHealthy: true },
       recovery: { recovery: { required: false } },
@@ -26,7 +27,7 @@ vi.mock('@/store', () => ({ store }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'macos' }))
 vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: [] }) }))
-vi.mock('@overlastic/react', () => ({ useOverlay: () => vi.fn() }))
+vi.mock('@overlastic/react', () => ({ useOverlay: () => openOverlay }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [{}] }))
 vi.mock('@/ui/dialog/about', () => ({ DesktopAboutDialog: () => null }))
@@ -98,6 +99,7 @@ function reportShortcuts() {
 
 beforeEach(() => {
   listeners.clear()
+  openOverlay.mockClear()
   menuEntries = []
   store.harness.status = 'ready'
   store.harness.serviceHealthy = true
@@ -216,6 +218,14 @@ describe('native View menu recipients', () => {
     act(() => nativeEvent('macos-menu-action', 'desktop-open-terminal', label))
     expect(main.mock.calls).toEqual(label === 'main' ? [['terminal.new']] : [])
     expect(remote.mock.calls).toEqual(label === 'remote-alpha' ? [['terminal.new']] : [])
+  })
+
+  it('opens the task manager only in the targeted shell window', async () => {
+    mountWindow('main')
+    mountWindow('remote-alpha')
+    await waitFor(() => expect([...listeners.values()].filter(listener => listener.event === 'macos-menu-action')).toHaveLength(2))
+    act(() => nativeEvent('macos-menu-action', 'desktop-task-manager', 'remote-alpha'))
+    expect(openOverlay).toHaveBeenCalledExactlyOnceWith()
   })
 
   it('applies a targeted zoom action once when two shell windows are open', async () => {

@@ -73,6 +73,17 @@ describe('macOS native menu', () => {
     expect(i18nSource).toContain(`"${key}" => ("${zh}", "${en}")`)
   })
 
+  it('places the task manager in Help alongside run logs', () => {
+    expect(submenuItems('desktop-help-menu')).toEqual([
+      '&documentation',
+      '&keyboard_shortcuts',
+      '&help_separator',
+      '&run_logs',
+      '&task_manager',
+    ])
+    expect(i18nSource).toContain('"menu.task_manager" => ("任务管理器", "Task Manager")')
+  })
+
   it('provides the native Run title in both languages', () => {
     expect(i18nSource).toContain('"menu.run" => ("运行", "Run")')
   })

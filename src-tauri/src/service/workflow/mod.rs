@@ -28,7 +28,7 @@ pub use health::proxy_health_check;
 pub use install::install;
 pub use launch::{launch, restart, start};
 pub use process::{
-    acquire_core_transition, has_owned_process, stop, stop_for_installer, stop_on_exit,
-    terminate_stale_harness_processes,
+    acquire_core_transition, has_owned_process, owned_process_pid, stop, stop_for_installer,
+    stop_on_exit, terminate_stale_harness_processes,
 };
 pub use sweep::sweep_orphan_harness;

@@ -149,6 +149,14 @@ pub fn has_owned_process() -> bool {
         .is_some()
 }
 
+pub fn owned_process_pid() -> Option<u32> {
+    owned_process_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+        .map(|process| process.pid)
+}
+
 /// 处理「持有的 dsh 进程退出」这一事实（由退出监视线程与健康检查 tick 共用）：
 ///
 /// - 仅当退出的 PID 仍是当前登记的那个进程时才清空持有（`take_owned_process_if`

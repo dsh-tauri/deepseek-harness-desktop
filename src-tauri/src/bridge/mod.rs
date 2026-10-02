@@ -16,6 +16,7 @@ pub mod preset_pet;
 pub mod profile;
 pub mod remote;
 pub mod system_os;
+pub mod task_manager;
 pub mod updater;
 
 pub use backup::*;
@@ -29,4 +30,5 @@ pub use preset_pet::*;
 pub use profile::*;
 pub use remote::*;
 pub use system_os::*;
+pub use task_manager::*;
 pub use updater::*;
