@@ -76,6 +76,24 @@ cargo test --manifest-path src-tauri/Cargo.toml --all-features --locked
 - 端口可配置，占用时可能回退；不保证并行启动时始终使用上述值。
 - 档案隔离的是配置，不是操作系统权限。
 
+## 按需采集慢启动
+
+仅诊断偶发慢启动时启用 `DSH_STARTUP_TRACE=1`，默认关闭。先通过应用菜单完全退出桌面端，再从设置了该变量的终端启动；已运行的实例不会继承新变量。Windows PowerShell 示例：
+
+```powershell
+$env:DSH_STARTUP_TRACE = '1'
+Start-Process 'D:\software\Deepseek Harness Desktop\deepseek-harness-desktop.exe'
+Remove-Item Env:DSH_STARTUP_TRACE
+```
+
+请按实际安装位置替换可执行文件路径。macOS / Linux 同样需要把变量传给桌面可执行文件，不要只打开已运行的实例。
+
+报告目录由后端日志 `STARTUP_TRACE_ENABLED` 给出：正式版为 `<AppData>/logs/dsh-web.startup/`，Debug 为 `<AppData>/dev/logs/dsh-web.dev.startup/`。每次启动写入一个 `startup-<时间戳>-<PID>.json`；`STARTUP_TRACE` 记录完成原因和文件名。采样在主服务端口开始监听、进程退出或 120 秒超时时停止，不等于页面完全就绪；不对派生子进程和 Worker 继续采样。超时依赖事件循环，JavaScript 阻塞时可能延后；强制终止进程无法写出报告。
+
+报告包含进程 CPU 时间、墙钟时间、事件循环空闲时间、最长定时器间隔，以及脱敏 CPU 调用树（包内相对模块路径、行列号；函数名匿名化）。不记录环境变量、启动参数、请求、令牌、会话内容或完整本地路径，也不改变插件配置。CPU 时间包含多线程，可能超过墙钟时间；`nonCpuWallMs` 是两者之差截断到零，**不能单独用作 I/O 等待时长**。Linux 的采样信号会中断 libuv 的轮询，事件循环空闲时间可能偏低，同样不能当作总等待时长。采样本身有开销，需与一次正常启动报告对照。
+
+复现后仅提供该 JSON 和对应时段的启动日志；常规日志仍可能包含认证令牌，请先脱敏。下次从普通入口启动即关闭采样，报告不会自动上传或删除，可按需手动删除。若出现 `STARTUP_TRACE_PREPARE_FAILED` / `STARTUP_TRACE_FAILED`，本次没有完整报告，但仍继续正常启动。
+
 ## 发布参考
 
 - [内置插件与资源指南](<../src-tauri/resources/README.md#built-in-internal-plugins>) — 注册与随包资源

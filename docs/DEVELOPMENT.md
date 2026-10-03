@@ -76,6 +76,24 @@ Use `git diff --check` for documentation-only edits. Tests must use isolated dat
 - Ports are configurable and may fall back when occupied; side-by-side launches need not use those exact values.
 - Profiles separate configuration, not OS permissions.
 
+## Opt-in slow-startup capture
+
+Set `DSH_STARTUP_TRACE=1` only when diagnosing an intermittent slow launch; it is off by default. Fully quit the desktop app through its menu first, then launch it from the configured terminal. An already running instance does not inherit the variable. Windows PowerShell example:
+
+```powershell
+$env:DSH_STARTUP_TRACE = '1'
+Start-Process 'D:\software\Deepseek Harness Desktop\deepseek-harness-desktop.exe'
+Remove-Item Env:DSH_STARTUP_TRACE
+```
+
+Replace the executable path with your installation. On macOS / Linux, pass the variable to the actual desktop executable rather than activating an existing instance.
+
+The backend's `STARTUP_TRACE_ENABLED` log identifies the report directory: `<AppData>/logs/dsh-web.startup/` for release, `<AppData>/dev/logs/dsh-web.dev.startup/` for debug. Each launch writes `startup-<timestamp>-<PID>.json`; `STARTUP_TRACE` logs the completion reason and filename. Capture stops when the main service port starts listening, the process exits, or 120 seconds elapse. Listening is not full page readiness; forked children and workers are not profiled. The timeout is cooperative and can be delayed by blocked JavaScript; forced termination cannot flush a report.
+
+Reports contain process CPU time, wall time, event-loop idle time, the longest timer gap, and a sanitized CPU call tree (package-relative module paths and line/column numbers; anonymized function names). No environment variables, arguments, requests, tokens, session content, or full local paths are recorded, and plugin configuration is unchanged. CPU time includes multiple threads and can exceed wall time; `nonCpuWallMs` is their difference clamped to zero, **not an independent I/O-wait measurement**. On Linux, profiling signals can interrupt libuv's polling and undercount event-loop idle time; do not treat it as total waiting time either. Sampling has overhead, so compare a slow report with a normal-startup report.
+
+After reproducing, provide only the JSON and the relevant startup-log interval. Normal logs can still contain authentication tokens: redact them first. Launch normally next time to disable capture. Reports are neither uploaded nor removed automatically and can be deleted manually. `STARTUP_TRACE_PREPARE_FAILED` / `STARTUP_TRACE_FAILED` means that capture failed; normal startup continues.
+
 ## Release references
 
 - [Built-in plugin/resource guide](<../src-tauri/resources/README.md#built-in-internal-plugins>) — registration and bundled resources

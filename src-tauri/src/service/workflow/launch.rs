@@ -5,9 +5,9 @@ use crate::config;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
 #[cfg(not(windows))]
 use std::io::Read;
+use std::path::Path;
 #[cfg(not(windows))]
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
@@ -46,9 +46,19 @@ type SpawnResult = Result<
 /// 复用配置端口；到期仍未释放才按“真占用”逐级递增。
 const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-fn build_harness_args(dsh_binary: &Path, profile: &str, port: u16, heap_mb: Option<u32>) -> Vec<OsString> {
-    let mut args = Vec::with_capacity(7);
+fn build_harness_args(
+    dsh_binary: &Path,
+    profile: &str,
+    port: u16,
+    heap_mb: Option<u32>,
+    startup_trace: Option<&Path>,
+) -> Vec<OsString> {
+    let mut args = Vec::with_capacity(9);
     args.extend(super::heap::heap_option_arg(heap_mb));
+    if let Some(preload) = startup_trace {
+        args.push(OsString::from("--require"));
+        args.push(preload.as_os_str().to_os_string());
+    }
     args.extend([
         dsh_binary.as_os_str().to_os_string(),
         OsString::from("--profile"),
@@ -600,6 +610,37 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     fs::create_dir_all(log_path.parent().unwrap_or(std::path::Path::new(".")))
         .map_err(|e| format!("LOG_DIR_MKDIR_FAILED: create log dir failed: {e}"))?;
     rotate_service_log(&log_path, 3);
+    let startup_trace = if std::env::var("DSH_STARTUP_TRACE").as_deref() == Ok("1") {
+        let directory = log_path.with_extension("startup");
+        let preload = directory.join("startup-trace.cjs");
+        let write_preload = preload.clone();
+        let written = tauri::async_runtime::spawn_blocking(move || {
+            fs::create_dir_all(write_preload.parent().unwrap())
+                .and_then(|()| fs::write(&write_preload, include_str!("startup_trace.cjs")))
+        })
+        .await;
+        match written {
+            Ok(Ok(())) => {
+                envs.insert("DSH_STARTUP_TRACE".to_string(), "1".to_string());
+                envs.insert(
+                    "DSH_STARTUP_TRACE_DIR".to_string(),
+                    directory.to_string_lossy().into_owned(),
+                );
+                log::info!("STARTUP_TRACE_ENABLED: {}", directory.display());
+                Some(preload)
+            }
+            Ok(Err(error)) => {
+                log::warn!("STARTUP_TRACE_PREPARE_FAILED: {error}");
+                None
+            }
+            Err(error) => {
+                log::warn!("STARTUP_TRACE_PREPARE_FAILED: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // `dsh web` 默认在系统浏览器打开 UI；桌面端内嵌 WebView，不需要浏览器，
     // 追加 `--no-open` 关闭。该标志自 0.1.0-rc.8 起提供，全部受支持核心（≥
@@ -663,7 +704,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                 GetExitCodeProcess, WaitForSingleObject, INFINITE,
             };
 
-            let args = build_harness_args(&dsh_binary_path, active_profile.as_str(), setting.port, heap_mb);
+            let args = build_harness_args(
+                &dsh_binary_path,
+                active_profile.as_str(),
+                setting.port,
+                heap_mb,
+                startup_trace.as_deref(),
+            );
 
             // 只负责 spawn 并返回管道/PID/句柄：探测与重试期间不登记、不挂
             // 监视线程——只有最终采用的那个进程才登记，否则旧监视线程会通过
@@ -766,7 +813,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         {
             use std::os::unix::process::CommandExt;
             let mut cmd = Command::new(&node_binary_path);
-            cmd.args(build_harness_args(&dsh_binary_path, active_profile.as_str(), setting.port, heap_mb));
+            cmd.args(build_harness_args(
+                &dsh_binary_path,
+                active_profile.as_str(),
+                setting.port,
+                heap_mb,
+                startup_trace.as_deref(),
+            ));
             cmd.envs(&envs)
                 .current_dir(&core_dir)
                 // 核心修正：提供一个空的 stdin 防止 setRawMode 报错
@@ -802,7 +855,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                                         );
                                         reset_active_profile_root(&app_handle);
                                         cmd = Command::new(&node_binary_path);
-                                        cmd.args(build_harness_args(&dsh_binary_path, active_profile.as_str(), setting.port, heap_mb));
+                                        cmd.args(build_harness_args(
+                                            &dsh_binary_path,
+                                            active_profile.as_str(),
+                                            setting.port,
+                                            heap_mb,
+                                            startup_trace.as_deref(),
+                                        ));
                                         cmd.envs(&envs)
                                             .current_dir(&core_dir)
                                             .stdin(Stdio::null())
@@ -867,6 +926,55 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    #[test]
+    fn harness_args_do_not_enable_startup_tracing_by_default() {
+        let args = build_harness_args(
+            Path::new("core/lib/bin.js"),
+            "core-020",
+            3080,
+            Some(8192),
+            None,
+        );
+        assert_eq!(
+            args,
+            [
+                "--max-old-space-size=8192",
+                "core/lib/bin.js",
+                "--profile",
+                "core-020",
+                "--port",
+                "3080",
+                "--no-open",
+            ]
+            .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn harness_args_preload_startup_tracing_before_the_entrypoint() {
+        let args = build_harness_args(
+            Path::new("core/lib/bin.js"),
+            "core-020",
+            3080,
+            None,
+            Some(Path::new("logs with spaces/trace.cjs")),
+        );
+        assert_eq!(
+            args,
+            [
+                "--require",
+                "logs with spaces/trace.cjs",
+                "core/lib/bin.js",
+                "--profile",
+                "core-020",
+                "--port",
+                "3080",
+                "--no-open",
+            ]
+            .map(OsString::from)
+        );
+    }
 
     #[test]
     fn occupied_port_advances_to_a_free_port() {
