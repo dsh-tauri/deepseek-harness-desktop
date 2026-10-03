@@ -73,6 +73,7 @@ Use `git diff --check` for documentation-only edits. Tests must use isolated dat
 
 - Debug runtime, core, and dependencies live under `<AppData>/dev/`; the log is `<AppData>/dev/logs/dsh-web.dev.log`.
 - Debug ignores inherited `DSH_HOME`, uses `~/.dsh.dev`, and does not migrate release data or modify the production CLI PATH.
+- The release data directory is the user-level `DSH_HOME` variable (`~/.dsh` when unset). The installer can set it, and **Settings → Data Directory** copies the data, verifies the copy, renames the old directory aside, and rewrites the variable; rollback restores the previous location from that renamed directory.
 - Ports are configurable and may fall back when occupied; side-by-side launches need not use those exact values.
 - Profiles separate configuration, not OS permissions.
 

@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod cli;
 pub mod core;
+pub mod data_dir;
 pub mod download;
 pub mod fs_guard;
 pub mod migrate;

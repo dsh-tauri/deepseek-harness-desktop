@@ -21,6 +21,10 @@ export const queryKeys = {
   profiles: ['profiles'] as const,
   /** 当前档案的备份快照列表 */
   backups: ['backups'] as const,
+  /** 数据目录状态与旧目录备份（issue #871） */
+  dataDir: ['data_dir'] as const,
+  /** 数据目录下的一级子项体积（issue #871） */
+  dataDirEntries: ['data_dir_entries'] as const,
   remoteMachines: ['remote_machines'] as const,
   remoteEvents: ['remote_events'] as const,
 } as const

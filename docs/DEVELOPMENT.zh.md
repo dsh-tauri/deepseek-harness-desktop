@@ -73,6 +73,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --all-features --locked
 
 - Debug 的运行时、内核与依赖位于 `<AppData>/dev/`；日志为 `<AppData>/dev/logs/dsh-web.dev.log`。
 - Debug 忽略继承的 `DSH_HOME`，固定使用 `~/.dsh.dev`，不迁移正式版数据或修改生产 CLI PATH。
+- 正式版数据目录由**用户级 `DSH_HOME`** 决定（未设置时是 `~/.dsh`）。安装器可直接设置该变量，安装后可在「设置 → 数据目录」里复制数据、校验副本、把旧目录改名保底并改写变量；回滚会用该改名目录还原到原位置。
 - 端口可配置，占用时可能回退；不保证并行启动时始终使用上述值。
 - 档案隔离的是配置，不是操作系统权限。
 
