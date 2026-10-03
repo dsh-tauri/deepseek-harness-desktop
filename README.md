@@ -102,6 +102,15 @@ brew install dsh-tauri/desktop/deepseek-harness
 - 本地运行不等于完全离线：模型服务、插件安装、更新与桌宠预设素材仍可能联网。
 - Linux 显示、Wayland、AppImage 与权限问题的处理见[安装与故障排查文档](https://dshtauri.mintlify.site)。
 
+## 移动端支持
+
+同一仓库内维护移动端 **DSH Bridge**（Expo / React Native）：在局域网发现 DSH 主机，并以全屏 WebView 承载 Harness 网页，源码位于 `src-native/`。
+
+- Android APK 可在 [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases) 页面下载，资产名形如 `Deepseek.Harness.Android_x.x.x.apk`，版本跟随桌面端。
+- **iOS 尚未发布**，当前只有 Android 构建与发版流程。
+- 该移动端**仅在官方未推出移动端服务期间维护**，属于过渡方案。
+- 开发命令（`pnpm dev:native`、`pnpm android`、`pnpm test:native`、`pnpm typecheck:native` 等）与发现、连接、持久化、发版约定见[移动端规范](docs/specs/native.md)。
+
 ## 运行方式
 
 | 当前基线 | 版本 |

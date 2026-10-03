@@ -1,0 +1,75 @@
+{
+  "expo": {
+    "name": "DSH Bridge",
+    "slug": "dsh-bridge",
+    "version": "0.21.2",
+    "scheme": "dshbridge",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/native/icon.png",
+    "android": {
+      "package": "com.dshtauri.dshbridge",
+      "versionCode": 21001,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/native/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "CAMERA",
+        "POST_NOTIFICATIONS",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.dshtauri.dshbridge"
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "src-native/app"
+        }
+      ],
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/native/splash-icon.png",
+          "imageWidth": 128,
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#151517"
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "允许 DSH Bridge 使用相机扫描连接二维码。",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/native/notification-icon.png",
+          "color": "#151517"
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}

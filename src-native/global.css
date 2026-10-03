@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+@import 'uniwind';
+@import 'tw-animate-css';
+@import 'heroui-native/styles';
+@import './styles/variables.css';
+
+@source './';
+@source '../node_modules/heroui-native/lib';

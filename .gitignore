@@ -34,3 +34,13 @@ source/
 .gitmodules
 .tmp-alpha-inspect
 .dsh.dev
+
+# expo / react-native（移动端）构建产物
+.expo/
+android/
+ios/
+expo-env.d.ts
+*.apk
+*.aab
+*.jks
+*.keystore

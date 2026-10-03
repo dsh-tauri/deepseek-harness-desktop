@@ -1,0 +1,16 @@
+export const DEFAULT_PORTS = [3082, 3080] as const
+export const EXTRA_SCAN_PORTS: number[] = []
+export const SCAN_CONCURRENCY = 40
+export const PROBE_TIMEOUT_MS = 600
+export const HISTORY_PROBE_TIMEOUT_MS = 3000
+export const SCAN_BUDGET_MS = 20000
+export const HEALTH_INTERVAL_MS = 15000
+export const HISTORY_LIMIT = 20
+export const RECENT_LIMIT = 5
+export const WEBVIEW_LOAD_TIMEOUT_MS = 20000
+export const FOCUS_RETRY_INTERVAL_MS = 200
+export const FOCUS_TIMEOUT_MS = 15000
+export const NOTIFICATION_CHANNEL = 'dsh-bridge'
+export const CONNECTION_STORAGE_KEY = 'dsh-bridge/connections'
+export const AUTH_STATUS_PATH = '/__dsh_bridge__/auth-status'
+export const MANIFEST_PATH = '/manifest.webmanifest'

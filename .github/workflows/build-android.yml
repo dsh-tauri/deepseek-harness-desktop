@@ -1,0 +1,201 @@
+name: Android Native Build
+
+# 常规构建产物：main 上的 native 变更与手动触发时产出正式签名的 APK。
+# 只上传 Actions artifact，不碰任何 GitHub Release（随桌面端 release 发布见 release-native.yml，
+# PR 校验构建见 build-android-test.yml）。
+#
+# 签名 secret（与 dsh-bridge-mobile 同名，需在本仓库 Settings → Secrets 配置）：
+#   ANDROID_KEYSTORE_BASE64   keystore 的 Base64
+#   ANDROID_KEYSTORE_PASSWORD keystore 密码
+#   ANDROID_KEY_ALIAS         签名 key alias
+#   ANDROID_KEY_PASSWORD      签名 key 密码
+# 四项全有 → 用正式 key 重新签名；四项全无 → 用 Android 开发证书并在日志/摘要中警告；
+# 部分配置 → 直接失败（半成品签名不可发布）。
+on:
+  push:
+    branches: [main]
+    paths:
+      - src-native/**
+      - assets/native/**
+      - app.json
+      - app.config.js
+      - metro.config.js
+      - tsconfig.native.json
+      - vitest.native.config.ts
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/build-android.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      signing: ${{ steps.signing.outputs.mode }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 资产名里的版本号取自 app.json 的 expo.version；bumpp 目前只改 package.json /
+      # Cargo.toml / tauri.conf.json，两者不一致时必须在发版前同步。
+      - name: Read native version
+        id: meta
+        run: |
+          set -euo pipefail
+          version="$(node --input-type=commonjs -p "require('./app.json').expo.version")"
+          pkg="$(node --input-type=commonjs -p "require('./package.json').version")"
+          if [ "$version" != "$pkg" ]; then
+            echo "::error::app.json expo.version ($version) != package.json version ($pkg); 请让 native 版本跟随桌面端版本"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "native version: $version"
+
+      - name: Typecheck native sources
+        run: pnpm run typecheck:native
+
+      - name: Test native sources
+        run: pnpm run test:native
+
+      - name: Determine signing mode
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          present=0
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            if [[ -n "$value" ]]; then present=$((present + 1)); fi
+          done
+          if [[ "$present" -eq 0 ]]; then
+            echo 'mode=debug' >> "$GITHUB_OUTPUT"
+            echo '::warning::ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD 均未配置，APK 将使用 Android 开发证书。'
+          elif [[ "$present" -eq 4 ]]; then
+            echo 'mode=release' >> "$GITHUB_OUTPUT"
+          else
+            echo '::error::Android 签名 secret 必须四项全配或全不配；当前配置不完整。'
+            exit 1
+          fi
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: '12266719'
+
+      - name: Install Android build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+
+      - name: Generate Android project
+        env:
+          CI: '1'
+        run: pnpm run prebuild:native
+
+      - name: Build release APK
+        env:
+          CI: '1'
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64
+
+      # 发布资产名固定为 Deepseek.Harness.Android_<expo.version>.apk；同时校验 16 KB
+      # 页对齐、签名、APK 内的标准版本号，以及 app.config.js 注入的第三方声明。
+      - name: Sign and verify APK
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          source='android/app/build/outputs/apk/release/app-release.apk'
+          mkdir -p release
+          destination="release/Deepseek.Harness.Android_${VERSION}.apk"
+          "$tools/zipalign" -c -P 16 4 "$source"
+          if [[ "$SIGNING_MODE" == 'release' ]]; then
+            keystore="$RUNNER_TEMP/dsh-bridge-release.keystore"
+            trap 'rm -f -- "$keystore"' EXIT
+            umask 077
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+            "$tools/apksigner" sign \
+              --ks "$keystore" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass env:KEYSTORE_PASSWORD \
+              --key-pass env:KEY_PASSWORD \
+              --out "$destination" "$source"
+          else
+            cp "$source" "$destination"
+          fi
+          "$tools/apksigner" verify --verbose --print-certs "$destination"
+          # 先落文件再读取：`aapt dump badging | head` 会让 aapt 收到 SIGPIPE，pipefail 下误报失败。
+          "$tools/aapt" dump badging "$destination" > "$RUNNER_TEMP/badging.txt"
+          head -n 5 "$RUNNER_TEMP/badging.txt"
+          grep -q "versionName='${VERSION}'" "$RUNNER_TEMP/badging.txt" \
+            || { echo "::error::APK versionName 与 app.json expo.version ${VERSION} 不一致"; exit 1; }
+          APK_PATH="$destination" node --input-type=commonjs -e '
+            const fs = require("node:fs");
+            const { execFileSync } = require("node:child_process");
+            const apk = process.env.APK_PATH;
+            const config = JSON.parse(execFileSync("unzip", ["-p", apk, "assets/app.config"], { encoding: "utf8" }));
+            const notice = fs.readFileSync("THIRD_PARTY_NOTICES.md", "utf8");
+            if (config.extra?.thirdPartyNotices !== notice) throw new Error("APK is missing the complete third-party notices");
+            console.log("APK embeds the complete third-party notices.");
+          '
+          cp THIRD_PARTY_NOTICES.md release/THIRD_PARTY_NOTICES.md
+          (cd release && sha256sum ./*.apk ./THIRD_PARTY_NOTICES.md > SHA256SUMS.txt)
+          find release -type f -print | sort
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-apk-${{ steps.meta.outputs.version }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize build
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          {
+            echo "### Android native build"
+            echo
+            echo "- asset: \`Deepseek.Harness.Android_${VERSION}.apk\`"
+            echo "- signing: \`${SIGNING_MODE}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$SIGNING_MODE" == 'debug' ]]; then
+            echo '> [!WARNING]' >> "$GITHUB_STEP_SUMMARY"
+            echo '> 该 APK 使用 Android 开发证书，仅供评估，不能用于生产分发。' >> "$GITHUB_STEP_SUMMARY"
+          fi

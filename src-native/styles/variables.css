@@ -1,0 +1,60 @@
+@layer theme {
+  :root {
+    --radius: 16px;
+    --field-radius: 12px;
+
+    @variant light {
+      --background: #ffffff;
+      --foreground: #0f1115;
+      --surface: #f9fafb;
+      --surface-foreground: #0f1115;
+      --surface-secondary: #f5f6f7;
+      --surface-secondary-foreground: #0f1115;
+      --surface-tertiary: #f1f3f5;
+      --surface-tertiary-foreground: #0f1115;
+      --overlay: #ffffff;
+      --overlay-foreground: #0f1115;
+      --backdrop: rgba(0, 0, 0, 0.24);
+      --muted: #81858c;
+      --default: #f1f3f5;
+      --default-foreground: #0f1115;
+      --accent: #0f1115;
+      --accent-foreground: #ffffff;
+      --field-background: #f9fafb;
+      --field-foreground: #0f1115;
+      --field-placeholder: #81858c;
+      --field-border: rgba(0, 0, 0, 0.1);
+      --border: rgba(0, 0, 0, 0.1);
+      --separator: rgba(0, 0, 0, 0.16);
+      --success: #22c55e;
+      --focus: var(--accent);
+    }
+
+    @variant dark {
+      --background: #151517;
+      --foreground: #f9fafb;
+      --surface: #1b1b1c;
+      --surface-foreground: #f9fafb;
+      --surface-secondary: #2c2c2e;
+      --surface-secondary-foreground: #f9fafb;
+      --surface-tertiary: #2c2c2e;
+      --surface-tertiary-foreground: #f9fafb;
+      --overlay: #1b1b1c;
+      --overlay-foreground: #f9fafb;
+      --backdrop: rgba(0, 0, 0, 0.5);
+      --muted: #adb2b8;
+      --default: #2c2c2e;
+      --default-foreground: #f9fafb;
+      --accent: #f9fafb;
+      --accent-foreground: #0f1115;
+      --field-background: #1b1b1c;
+      --field-foreground: #f9fafb;
+      --field-placeholder: #adb2b8;
+      --field-border: rgba(255, 255, 255, 0.12);
+      --border: rgba(255, 255, 255, 0.12);
+      --separator: rgba(255, 255, 255, 0.2);
+      --success: #22c55e;
+      --focus: var(--accent);
+    }
+  }
+}

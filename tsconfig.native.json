@@ -1,0 +1,18 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src-native/*"]
+    },
+    "strict": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": [
+    "src-native/**/*.ts",
+    "src-native/**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts",
+    "vitest.native.config.ts"
+  ],
+  "exclude": ["node_modules", ".temp", "android", "ios", "dist"]
+}
