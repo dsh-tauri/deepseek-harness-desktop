@@ -887,11 +887,14 @@ pub(crate) fn on_macos_titlebar_event(event: &tauri::WindowEvent) {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn sync_macos_titlebars(app: &tauri::AppHandle<Wry>) {
+pub(crate) fn sync_macos_titlebars<I>(windows: impl FnOnce() -> I)
+where
+    I: IntoIterator<Item = tauri::WebviewWindow<Wry>>,
+{
     if !MACOS_TITLEBAR_SYNC_PENDING.swap(false, Ordering::Relaxed) {
         return;
     }
-    for webview in app.webview_windows().into_values() {
+    for webview in windows() {
         let Ok(handle) = webview.ns_window() else {
             continue;
         };
@@ -921,12 +924,18 @@ pub(crate) fn sync_macos_titlebars(app: &tauri::AppHandle<Wry>) {
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_titlebar_tests {
-    use super::{on_macos_titlebar_event, MACOS_TITLEBAR_SYNC_PENDING};
+    use super::{on_macos_titlebar_event, sync_macos_titlebars, MACOS_TITLEBAR_SYNC_PENDING};
+    use std::cell::Cell;
     use std::sync::atomic::Ordering;
     use tauri::{PhysicalPosition, PhysicalSize, Theme, WindowEvent};
 
     #[test]
-    fn only_layout_events_arm_the_titlebar_sync() {
+    fn only_layout_events_arm_a_single_titlebar_sync() {
+        let scans = Cell::new(0);
+        let windows = || {
+            scans.set(scans.get() + 1);
+            std::iter::empty::<tauri::WebviewWindow<tauri::Wry>>()
+        };
         for event in [
             WindowEvent::Moved(PhysicalPosition::new(10, 10)),
             WindowEvent::Destroyed,
@@ -938,18 +947,45 @@ mod macos_titlebar_tests {
                 "{event:?} 不该触发校准：拖动窗口时 Moved 会持续高频触发，\
                  逐帧校准会克隆窗口句柄并唤醒主 RunLoop，把主线程烧满（issue #880）"
             );
+            sync_macos_titlebars(&windows);
+            assert_eq!(scans.get(), 0, "{event:?} 不得枚举窗口（issue #880）");
         }
 
         for event in [
             WindowEvent::Resized(PhysicalSize::new(800, 600)),
             WindowEvent::ThemeChanged(Theme::Dark),
             WindowEvent::Focused(true),
+            WindowEvent::Focused(false),
         ] {
+            let scans_before = scans.get();
             MACOS_TITLEBAR_SYNC_PENDING.store(false, Ordering::Relaxed);
+            on_macos_titlebar_event(&event);
             on_macos_titlebar_event(&event);
             assert!(
                 MACOS_TITLEBAR_SYNC_PENDING.load(Ordering::Relaxed),
                 "{event:?} 会改变标题栏布局，必须触发一次校准"
+            );
+            sync_macos_titlebars(&windows);
+            assert_eq!(
+                scans.get(),
+                scans_before + 1,
+                "同一轮重复的 {event:?} 只能枚举一次窗口（issue #880）"
+            );
+            assert!(
+                !MACOS_TITLEBAR_SYNC_PENDING.load(Ordering::Relaxed),
+                "{event:?} 校准后必须消费标记，否则会重新唤醒主 RunLoop（issue #880）"
+            );
+            for _ in 0..1000 {
+                sync_macos_titlebars(&windows);
+            }
+            assert_eq!(
+                scans.get(),
+                scans_before + 1,
+                "连续空闲同步不得再次枚举窗口（issue #880）"
+            );
+            assert!(
+                !MACOS_TITLEBAR_SYNC_PENDING.load(Ordering::Relaxed),
+                "空闲同步不得重新设置校准标记（issue #880）"
             );
         }
     }

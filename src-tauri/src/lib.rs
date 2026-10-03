@@ -5,6 +5,9 @@ mod logger;
 mod service;
 mod utils;
 
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+
 /// 对显式给定的核心安装目录施加全套 dsh 补丁（`--patch-core <dir>` 的入口）。
 ///
 /// E2E 的插件 L2 直接起 `dsh web`，不经过桌面端启动路径；没有这一步，被测核心就缺少
@@ -83,7 +86,9 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::MainEventsCleared => {
-                desktop::builder::sync_macos_titlebars(app_handle);
+                desktop::builder::sync_macos_titlebars(|| {
+                    app_handle.webview_windows().into_values()
+                });
             }
             // macOS：关闭按钮只是隐藏窗口（见 builder 的 on_window_event），
             // 点击 Dock 图标时系统回调 applicationShouldHandleReopen 触发
