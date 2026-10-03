@@ -440,14 +440,28 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// 逐段比较路径组件，而不是比字符串前缀。
+    ///
+    /// 断言必须按平台分家：非 Windows 上 `\` 只是普通字符，`Path::new("D:\\Data\\sub")` 是
+    /// **一个**组件，`D:\Database` 与 `D:\Data` 也毫无关系——那套字面量在那边根本测不出
+    /// 「组件比较」这件事，只会全线失败（CI 的 ubuntu / macos job 就是这么红的）。
     #[test]
     fn is_within_compares_path_components_not_prefixes() {
-        let data = Path::new("D:\\Data");
-        assert!(is_within(Path::new("D:\\Data\\sub"), data));
-        assert!(is_within(data, data));
-        assert!(!is_within(Path::new("D:\\Database"), data));
-        assert!(!is_within(Path::new("D:\\Other"), data));
-        assert!(!is_within(data, Path::new("")));
+        if cfg!(windows) {
+            let data = Path::new("D:\\Data");
+            assert!(is_within(Path::new("D:\\Data\\sub"), data));
+            assert!(is_within(data, data));
+            assert!(!is_within(Path::new("D:\\Database"), data));
+            assert!(!is_within(Path::new("D:\\Other"), data));
+        } else {
+            let data = Path::new("/data");
+            assert!(is_within(Path::new("/data/sub"), data));
+            assert!(is_within(data, data));
+            assert!(!is_within(Path::new("/database"), data));
+            assert!(!is_within(Path::new("/other"), data));
+        }
+        // 空父路径永远不算「在里面」，与平台无关
+        assert!(!is_within(Path::new("/data"), Path::new("")));
     }
 
     #[cfg(windows)]
@@ -457,10 +471,18 @@ mod tests {
         assert!(is_within(Path::new("\\\\?\\D:\\Data\\sub"), Path::new("D:\\Data")));
     }
 
+    /// 同一个目录的两种写法要判成同一处。
+    ///
+    /// 同样得按平台分家：`D:\Data\` 末尾那个 `\` 在非 Windows 上是普通字符。
     #[test]
     fn same_path_matches_only_the_same_directory() {
-        assert!(same_path(Path::new("D:\\Data"), Path::new("D:\\Data\\")));
-        assert!(!same_path(Path::new("D:\\Data"), Path::new("D:\\Data2")));
+        if cfg!(windows) {
+            assert!(same_path(Path::new("D:\\Data"), Path::new("D:\\Data\\")));
+            assert!(!same_path(Path::new("D:\\Data"), Path::new("D:\\Data2")));
+        } else {
+            assert!(same_path(Path::new("/data"), Path::new("/data/")));
+            assert!(!same_path(Path::new("/data"), Path::new("/data2")));
+        }
     }
 
     #[test]

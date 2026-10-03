@@ -172,9 +172,14 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// 挪到一边的目录名必须还能反推出原路径。
+    ///
+    /// 这里刻意用 `/DSHHome` 这种两平台都认的绝对路径：`D:\DSHHome` 在非 Windows 上
+    /// 只是**一个**组件（`\` 是普通字符），`file_name()` 会把整串吐回来，断言随之失败。
+    /// 生产路径只可能是 Windows 盘符，但这条测试要验的是「拼后缀不改叶子名」，与盘符无关。
     #[test]
     fn with_current_suffix_keeps_the_original_path_recoverable() {
-        let original = Path::new("D:\\DSHHome");
+        let original = Path::new("/DSHHome");
         let aside = with_current_suffix(original, "2026-10-02T21-33-14").unwrap();
         assert_eq!(
             aside.file_name().unwrap().to_str().unwrap(),
