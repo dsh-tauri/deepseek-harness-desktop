@@ -181,6 +181,16 @@ describe('installer data directory page', () => {
     expect(source).toContain(`SendMessageTimeoutW(p 0xFFFF, i ${'$'}{WM_SETTINGCHANGE}`)
   })
 
+  it('prefers the persisted value over the inherited environment when pre-filling', () => {
+    const source = readSource(INSTALLER)
+    const onInit = source.slice(source.indexOf('Function .onInit'), source.indexOf('Section EarlyChecks'))
+    const persistedWins = onInit.indexOf('    StrCpy $DshDataDirNew "$DshDataDirOriginal"')
+    const inheritedWins = onInit.indexOf('    StrCpy $DshDataDirOriginal "$DshDataDirNew"')
+    expect(persistedWins).toBeGreaterThan(-1)
+    expect(inheritedWins).toBeGreaterThan(-1)
+    expect(persistedWins).toBeGreaterThan(inheritedWins)
+  })
+
   it('does not disturb updates, silent or passive installs', () => {
     const source = readSource(INSTALLER)
     const page = source.slice(source.indexOf('Function DshDataDirPage'), source.indexOf('Function DshDataDirPick'))

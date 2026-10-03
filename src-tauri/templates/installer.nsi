@@ -639,14 +639,16 @@ Function .onInit
   !endif
 
   ; Deepseek Harness Desktop: pre-fill the data directory page with the
-  ; location this installation would use today - the user-level override
-  ; first, then whatever this process inherited, then the default location.
+  ; location this installation would use today - the persisted user-level
+  ; override first, then whatever this process inherited, then the default
+  ; location. The persisted value wins on purpose: the environment this
+  ; installer inherited can be older than the last change, and clicking
+  ; straight through the page would then write that stale path back.
   ReadRegStr $DshDataDirOriginal HKCU "Environment" "DSH_HOME"
   ReadEnvStr $DshDataDirNew "DSH_HOME"
   ${If} $DshDataDirOriginal == ""
     StrCpy $DshDataDirOriginal "$DshDataDirNew"
-  ${EndIf}
-  ${If} $DshDataDirNew == ""
+  ${Else}
     StrCpy $DshDataDirNew "$DshDataDirOriginal"
   ${EndIf}
   ${If} $DshDataDirNew == ""
