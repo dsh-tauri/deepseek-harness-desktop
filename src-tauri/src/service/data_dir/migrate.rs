@@ -358,23 +358,27 @@ fn is_within(child: &Path, parent: &Path) -> bool {
         let Some(found) = remaining.next() else {
             return false;
         };
-        let equal = if cfg!(windows) {
-            same_component_ignore_case(&found, &part)
-        } else {
-            found == part
-        };
-        if !equal {
+        if !same_component(&found, &part) {
             return false;
         }
     }
     true
 }
 
-#[cfg(windows)]
-fn same_component_ignore_case(a: &Component, b: &Component) -> bool {
-    a.as_os_str()
-        .to_string_lossy()
-        .eq_ignore_ascii_case(&b.as_os_str().to_string_lossy())
+/// 两个路径组件是否指向同一层。
+///
+/// Windows 的文件名不区分大小写，得用 `eq_ignore_ascii_case`；其它平台按 `PartialEq` 比较。
+/// 这里用 `cfg!` 而不是 `#[cfg]` 门控函数：`cfg!` 只把条件替换成 `true`/`false`，两个分支在
+/// **所有**平台都要参与编译；一旦改成 `#[cfg(windows)]` 门控，非 Windows 平台就会在调用点
+/// 报 `E0425`（`cfg!` 的条件分支永远会被编译，哪怕运行时走不到）。
+fn same_component(a: &Component, b: &Component) -> bool {
+    if cfg!(windows) {
+        a.as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&b.as_os_str().to_string_lossy())
+    } else {
+        a == b
+    }
 }
 
 /// 进度载荷构造。
