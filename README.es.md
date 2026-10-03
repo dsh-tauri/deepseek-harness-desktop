@@ -42,6 +42,7 @@
 - 🔄 **Gestión del runtime** — Instalá dependencias, elegí versiones del núcleo y accedé a actualizaciones del escritorio y del núcleo.
 - 🧩 **Gestión de plugins** — 11 plugins integrados, más instalación, actualización, desinstalación y detalles de errores de plugins comunitarios.
 - 🗂️ **Configuración por perfiles** — Separá plugins y ajustes; los perfiles no son un sandbox de seguridad del sistema operativo.
+- 💽 **Directorio de datos** — En Windows, elegí dónde se guardan los datos al instalar, y migralo o revertilo después en Ajustes.
 - ⌨️ **Integración con la terminal** — Shims administrados de `dsh` / `pnpm`, no una instalación global del núcleo por npm.
 - 🐾 **Mascotas de escritorio** — Recursos Pets / Codex, importación de paquetes y actividad de conversaciones; los recursos predefinidos son remotos.
 - 🎨 **Personalización** — 8 paletas, modo terminal y transparencia nativa, con restauración de valores predeterminados en un clic.
