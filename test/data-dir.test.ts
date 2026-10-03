@@ -81,6 +81,16 @@ describe('data directory backend contract', () => {
     expect(readSource(ENV)).toContain('write_user_env(DATA_DIR_ENV, value)')
   })
 })
+describe('data directory usage contract', () => {
+  it('treats a missing data directory as an empty list instead of an error', () => {
+    // 迁移刚把旧目录改名搬走、Harness 还没重建它，或安装器指向尚未创建的目录时，
+    // 「占用空间」区必须走空态文案，不能弹红色 DATA_DIR_READ。
+    const source = readSource(MODULE)
+    expect(source).toContain('entries_in(&crate::config::get_dsh_data_path(app_handle))')
+    expect(source).toContain('Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),')
+    expect(source).toContain('DATA_DIR_READ')
+  })
+})
 
 describe('migration safety contract', () => {
   it('cites the junction accident it must not repeat', () => {

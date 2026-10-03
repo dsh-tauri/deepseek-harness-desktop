@@ -18,6 +18,7 @@
 //! - [`state`]：上次迁移记录与 `.moved-*` 命名规则
 //! - [`migrate`]：迁移/回滚的编排（校验、复制、改名、改写环境变量）
 
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter as _};
 
@@ -150,9 +151,20 @@ pub fn status(app_handle: &AppHandle) -> DataDirStatus {
 /// 与恢复脚本一致：迁移是整目录搬家，用户只需要知道「这一堆档案一共多大」，
 /// 不需要逐个勾选，因此这里只用于展示与体积汇总。
 pub fn entries(app_handle: &AppHandle) -> Result<Vec<DataDirEntry>, String> {
-    let root = crate::config::get_dsh_data_path(app_handle);
-    let read_dir =
-        std::fs::read_dir(&root).map_err(|e| format!("DATA_DIR_READ: {}: {e}", root.display()))?;
+    entries_in(&crate::config::get_dsh_data_path(app_handle))
+}
+
+/// [`entries`] 的纯目录版本（不依赖 `AppHandle`，因此可单测）。
+///
+/// 目录不存在时返回空列表而不是错误：迁移刚把旧目录改名搬走、Harness 还没来得及
+/// 重建它，或者安装器把 `DSH_HOME` 指向一个尚未创建的目录时，面板该显示空态
+/// （`data_dir.entries_empty_desc` 就是为这一刻写的），而不是一片红色报错。
+fn entries_in(root: &Path) -> Result<Vec<DataDirEntry>, String> {
+    let read_dir = match std::fs::read_dir(root) {
+        Ok(read_dir) => read_dir,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("DATA_DIR_READ: {}: {error}", root.display())),
+    };
     let mut candidates: Vec<DataDirEntry> = Vec::new();
     for entry in read_dir {
         let Ok(entry) = entry else { continue };
@@ -310,5 +322,57 @@ mod tests {
     #[test]
     fn process_alive_reports_the_current_process() {
         assert!(process_alive(std::process::id()));
+    }
+
+    /// 迁移刚把旧目录改名搬走、Harness 还没重建它时，目录会短暂不存在。
+    #[test]
+    fn entries_treat_a_missing_directory_as_empty() {
+        let root = temp_dir("entries-missing");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(entries_in(&root).unwrap().is_empty());
+        // 真正的读取错误仍要报出来，别把权限问题也当成空目录
+        let file = root.with_extension("txt");
+        std::fs::write(&file, "not a directory").unwrap();
+        assert!(entries_in(&file).unwrap_err().starts_with("DATA_DIR_READ: "));
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn entries_lists_directories_largest_first() {
+        let root = temp_dir("entries-order");
+        write(&root.join("small").join("one.bin"), "abc");
+        write(&root.join("big").join("one.bin"), "abcdef");
+        write(&root.join("big").join("two.bin"), "abcdef");
+        // 顶层文件不算「子项占用」，不参与统计
+        write(&root.join("loose.txt"), "x");
+
+        let listed = entries_in(&root).unwrap();
+        let names: Vec<&str> = listed.iter().map(|entry| entry.name.as_str()).collect();
+        assert_eq!(names, vec!["big", "small"]);
+        assert_eq!((listed[0].files, listed[0].bytes), (2, 12));
+        assert_eq!((listed[1].files, listed[1].bytes), (1, 3));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 临时目录自建：dev-dependencies 里没有 `tempfile`（与 `fs_ops` 同款写法）。
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-data-dir-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &Path, text: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, text).unwrap();
     }
 }
