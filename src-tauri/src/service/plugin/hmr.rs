@@ -629,12 +629,14 @@ mod tests {
 
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
         let config = &entries[0]["config"];
-        let base = PathBuf::from(
-            config["base"]
-                .as_str()
-                .expect("base")
-                .trim_start_matches("file:///"),
-        );
+        // `file://` 之后 Windows 还多一层根斜杠（`file:///C:/x`），Unix 剥完即是绝对路径。
+        let raw = config["base"]
+            .as_str()
+            .expect("base")
+            .trim_start_matches("file://");
+        #[cfg(windows)]
+        let raw = raw.trim_start_matches('/');
+        let base = PathBuf::from(raw);
         let resolved = config["root"]
             .as_sequence()
             .expect("root")
