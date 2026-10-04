@@ -15,7 +15,7 @@ import { useOverlay } from '@overlastic/react'
 import { useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
@@ -92,14 +92,14 @@ type FileAction = 'new-window' | 'new-chat' | 'open-folder' | 'close' | 'quit'
 type HelpAction = 'task-manager' | 'keyboard-shortcuts' | 'copy-run-logs' | 'check-update' | 'about' | keyof typeof HELP_LINKS
 
 /** 「运行」菜单项：直接打开配置对话框并定位到对应面板。 */
-const CONFIG_TABS: { id: ConfigTab, labelKey: string }[] = [
+const CONFIG_TABS = [
   { id: 'application', labelKey: 'config.application' },
   { id: 'appearance', labelKey: 'config.appearance' },
   { id: 'profiles', labelKey: 'config.profiles' },
   { id: 'plugins', labelKey: 'config.plugins' },
   { id: 'harness', labelKey: 'config.harness' },
   { id: 'dataDir', labelKey: 'config.dataDir' },
-]
+] as const
 
 /** WKWebView 的 macOS UA 稳定包含 Macintosh，用于切换平台原生窗口 chrome。 */
 function detectMacOS() {
@@ -622,41 +622,45 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
             <Dropdown.Popover className="min-w-55" data-testid="dsh-navbar-menu-popover">
               <Dropdown.Menu>
                 {CONFIG_TABS.map(item => (
-                  <Dropdown.Item
-                    key={item.id}
-                    id={item.id}
-                    data-testid={`dsh-navbar-item-${item.id}`}
-                    textValue={t(item.labelKey)}
-                    onAction={() => handleOpenConfig(item.id)}
-                  >
-                    <div className="flex w-full items-center justify-between gap-2">
-                      <Label>{t(item.labelKey)}</Label>
-                      <If cond={item.id === 'application'}>
-                        {/* 菜单项整行是 pressable，按钮外包一层专门拦冒泡：React Aria 的
+                  <Fragment key={item.id}>
+                    <Dropdown.Item
+                      id={item.id}
+                      data-testid={`dsh-navbar-item-${item.id}`}
+                      textValue={t(item.labelKey)}
+                      onAction={() => handleOpenConfig(item.id)}
+                    >
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <Label>{t(item.labelKey)}</Label>
+                        <If cond={item.id === 'application'}>
+                          {/* 菜单项整行是 pressable，按钮外包一层专门拦冒泡：React Aria 的
                             pressable 只在 pointerdown / click 上收口，pointerup 会冒泡到菜单项，
                             被菜单项当成「按在别处、松手落在我身上」而自行补一次 click，
                             顺带把菜单项动作（打开配置面板）也触发了——所以 pointerup 必须在这里拦。 */}
-                        <span
-                          className="flex shrink-0 items-center"
-                          onClick={event => event.stopPropagation()}
-                          onPointerDown={event => event.stopPropagation()}
-                          onPointerUp={event => event.stopPropagation()}
-                        >
-                          <Button
-                            className="size-6 hover:bg-background-tertiary"
-                            isIconOnly
-                            size="sm"
-                            variant="ghost"
-                            aria-label={t('app.restart')}
-                            data-testid="dsh-navbar-item-application-restart"
-                            onPress={handleQuickRestart}
+                          <span
+                            className="flex shrink-0 items-center"
+                            onClick={event => event.stopPropagation()}
+                            onPointerDown={event => event.stopPropagation()}
+                            onPointerUp={event => event.stopPropagation()}
                           >
-                            <ArrowRotateRight className="size-3.5" />
-                          </Button>
-                        </span>
-                      </If>
-                    </div>
-                  </Dropdown.Item>
+                            <Button
+                              className="size-6 hover:bg-background-tertiary"
+                              isIconOnly
+                              size="sm"
+                              variant="ghost"
+                              aria-label={t('app.restart')}
+                              data-testid="dsh-navbar-item-application-restart"
+                              onPress={handleQuickRestart}
+                            >
+                              <ArrowRotateRight className="size-3.5" />
+                            </Button>
+                          </span>
+                        </If>
+                      </div>
+                    </Dropdown.Item>
+                    <If cond={item.id === 'appearance'}>
+                      <Separator />
+                    </If>
+                  </Fragment>
                 ))}
               </Dropdown.Menu>
             </Dropdown.Popover>
