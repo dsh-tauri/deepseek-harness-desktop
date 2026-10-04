@@ -388,6 +388,7 @@ fn terminate_stale_harness_processes_at(dsh_bin: &Path) {
         return;
     };
     // 候选进程连同其上方仍活着的祖先一起上报：垫片转发链是否孤儿，只有整条链能判断。
+    // 祖先链被层数上限截断时单独标记，调用方据此放弃清扫（上方仍可能有持有者）。
     let script = r#"$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 try {
@@ -407,7 +408,7 @@ try {
     }
     $childCreated = 0
     if ($child.CreationDate) { $childCreated = $child.CreationDate.ToFileTimeUtc() }
-    [pscustomobject]@{ pid = $child.ProcessId; created = $childCreated; commandLine = $child.CommandLine; ancestors = $ancestors } | ConvertTo-Json -Compress -Depth 4
+    [pscustomobject]@{ pid = $child.ProcessId; created = $childCreated; commandLine = $child.CommandLine; ancestors = $ancestors; ancestorsTruncated = ($null -ne $parent) } | ConvertTo-Json -Compress -Depth 4
   }
 } catch { Write-Error $_; exit 1 }"#;
     let output = match Command::new("powershell")
@@ -497,6 +498,8 @@ struct WindowsProcessEntry {
     command_line: String,
     #[serde(default)]
     ancestors: Vec<WindowsProcessAncestor>,
+    #[serde(default, rename = "ancestorsTruncated")]
+    ancestors_truncated: bool,
 }
 
 #[cfg(windows)]
@@ -513,20 +516,31 @@ struct WindowsProcessAncestor {
 /// 子进程结束，不代表服务仍被某个桌面实例持有。nvmd 等 Node 版本管理器的垫片就是
 /// 这么转交的：垫片退出后真身的父进程是活着的 `cmd.exe`，旧谓词「父进程已退出」
 /// 漏杀 → 端口一直被占，下次启动 EADDRINUSE 起不来。
+///
+/// 只认 `/C node` 这种一次性转交：用户自己开着 `cmd.exe /K` 交互 shell 跑同一个
+/// 入口时，shell 的命令行里同样有 `--no-open`，但它是那个服务的宿主而不是转发层，
+/// 误判会让清扫顺手关掉用户的窗口。
 #[cfg(windows)]
 fn is_relay_ancestor(ancestor: &WindowsProcessAncestor) -> bool {
     ancestor.name.eq_ignore_ascii_case("cmd.exe")
-        && ancestor
-            .command_line
-            .as_deref()
-            .is_some_and(|command| command_line_has_argument(command, "--no-open"))
+        && ancestor.command_line.as_deref().is_some_and(|command| {
+            command_line_has_argument(command, "--no-open") && is_relay_command_line(command)
+        })
+}
+
+/// 判断命令行是否为 `cmd.exe /C node ...` 形式的转发：第一个词是 cmd（可带路径与
+/// `.exe`），紧跟 `/C`，再接 node（可带路径与 `.exe`）。
+#[cfg(windows)]
+fn is_relay_command_line(command: &str) -> bool {
+    regex::Regex::new(r"(?i)^\s*\S*cmd(?:\.exe)?\s+/c\s+\S*node(?:\.exe)?(?:\s|$)")
+        .is_ok_and(|pattern| pattern.is_match(&command.replace('"', "")))
 }
 
 /// 选出需要清扫的孤儿服务链，每条链返回转发层最顶层的进程：`taskkill /T` 会连同
 /// 下方的转发层与服务本体一起结束。判定只看「向上穿过所有转发层后还有没有活着的
 /// 宿主」：入口路径不匹配、已由本应用持有（`owned_pid`）、上方存在活着的非转发层
-/// 进程（另一个桌面实例的垫片、用户自己的 shell），或祖先创建时间晚于后代（PID
-/// 已被复用，父子关系失效）都不清扫。
+/// 进程（另一个桌面实例的垫片、用户自己的 shell）、祖先创建时间晚于后代（PID
+/// 已被复用，父子关系失效），或祖先链被层数上限截断（上方仍可能有持有者）都不清扫。
 #[cfg(windows)]
 fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> Vec<(u32, u64)> {
     let mut targets: Vec<(u32, u64)> = Vec::new();
@@ -534,7 +548,8 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
         .lines()
         .filter_map(|line| serde_json::from_str::<WindowsProcessEntry>(line).ok())
     {
-        if Some(entry.pid) == owned_pid
+        if entry.ancestors_truncated
+            || Some(entry.pid) == owned_pid
             || !is_windows_harness_command_line(&entry.command_line, dsh_bin)
         {
             continue;
@@ -1098,6 +1113,18 @@ mod tests {
             ),
             // 祖先创建时间晚于后代：父子关系已失效（PID 复用），退回按子进程本身清扫
             entry(205, vec![ancestor(9999, 305, "cmd.exe", &relay)]),
+            // 用户自己开着 `cmd.exe /K` 交互 shell 跑同一个入口 → 那是服务的宿主，不能碰
+            entry(
+                206,
+                vec![ancestor(
+                    1106,
+                    306,
+                    "cmd.exe",
+                    &relay.replace("/C node", "/K node"),
+                )],
+            ),
+            // 祖先链被层数上限截断：上方仍可能有持有者，不能清扫
+            serde_json::json!({ "pid": 207, "created": 1207, "commandLine": service, "ancestors": [ancestor(1107, 307, "cmd.exe", &relay)], "ancestorsTruncated": true }),
         ]
         .iter()
         .map(ToString::to_string)
@@ -1111,6 +1138,31 @@ mod tests {
             orphan_harness_pids(output.as_bytes(), bin, Some(301)),
             vec![(205, 1205)]
         );
+    }
+
+    /// 回归：转发层只认 `cmd.exe /C node` 这种一次性转交。用户自己开着 `cmd.exe /K`
+    /// 交互 shell 跑同一个入口时，shell 的命令行里同样有 `--no-open`，但它是那个服务
+    /// 的宿主；误判会让清扫连带关掉用户的窗口。
+    #[cfg(windows)]
+    #[test]
+    fn relay_command_line_requires_the_one_shot_transfer() {
+        let bin = r"C:\Users\Example User\AppData\Roaming\dsh-tauri\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js";
+        let service = format!("node.exe {bin} --profile web --port 3080 --no-open");
+        assert!(is_relay_command_line(&format!(
+            r#""cmd.exe" /C node {service}"#
+        )));
+        assert!(is_relay_command_line(&format!(
+            r#"C:\Windows\System32\cmd.exe /c node.exe {service}"#
+        )));
+        assert!(!is_relay_command_line(&format!(
+            r#""cmd.exe" /K node {service}"#
+        )));
+        assert!(!is_relay_command_line(&format!(
+            r#""cmd.exe" /C npm exec dsh {service}"#
+        )));
+        assert!(!is_relay_command_line(&format!(
+            r#"powershell.exe -Command "cmd.exe /C node {service}""#
+        )));
     }
 
     #[cfg(windows)]
