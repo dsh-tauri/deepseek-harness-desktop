@@ -56,8 +56,8 @@ pub async fn install(
     if dsh_latest.is_none() && dsh_missing {
         for attempt in 0..3 {
             let metadata = match config::recommended_dsh_version(app_handle) {
-                Some(version) => download::fetch_dsh_pkg_version(&version).await,
-                None => download::fetch_latest_dsh_pkg_info().await,
+                Some(version) => download::fetch_dsh_pkg_version(app_handle, &version).await,
+                None => download::fetch_latest_dsh_pkg_info(app_handle).await,
             };
             match metadata {
                 Ok(info) => {
@@ -172,7 +172,7 @@ pub async fn install(
         log::info!("Download completed, file size: {} bytes", buffer.len());
         let expected_digest = match kind {
             download::InstallKind::Node => {
-                download::fetch_node_sha256(task.get_download_url()?.as_str()).await?
+                download::fetch_node_sha256(app_handle, task.get_download_url()?.as_str()).await?
             }
             download::InstallKind::Dsh => {
                 // 元数据已在安装任务开始前获取，确保下载地址与摘要来自同一 release。

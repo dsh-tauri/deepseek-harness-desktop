@@ -159,8 +159,8 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
         None
     } else {
         Some(match recommended_version {
-            Some(version) => download::fetch_dsh_pkg_version(&version).await,
-            None => download::fetch_latest_dsh_pkg_info().await,
+            Some(version) => download::fetch_dsh_pkg_version(&app_handle, &version).await,
+            None => download::fetch_latest_dsh_pkg_info(&app_handle).await,
         })
     };
 
@@ -177,7 +177,7 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
             // 老记录没有 tag，反查 pkg 仓库 tags 列表确认记录对应的发布版本；
             // 反查失败时由 resolve_update 回退到“以实际文件为准”的保守分支
             let legacy_tags = if record_tag.is_none() {
-                download::fetch_dsh_pkg_tags().await.unwrap_or_default()
+                download::fetch_dsh_pkg_tags(&app_handle).await.unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -304,7 +304,7 @@ pub async fn check_dsh_update(
         return Ok(None);
     }
 
-    let latest = download::fetch_latest_dsh_pkg_info().await?;
+    let latest = download::fetch_latest_dsh_pkg_info(&app_handle).await?;
 
     // 关键修复1：最新 release 的版本号已经在已装核心列表里（含 active 和非 active
     // 槽位），就不提示更新。避免「老版本激活 + 新版已下载但未切换」场景下白点一次

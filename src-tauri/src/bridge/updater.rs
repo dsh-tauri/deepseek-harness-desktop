@@ -30,6 +30,6 @@ pub async fn open_desktop_installer(app_handle: AppHandle, path: String) -> Resu
 
 /// 关于对话框信息（版本 / 发布时间 / 版权 / 仓库）
 #[tauri::command]
-pub async fn get_desktop_about() -> Result<update::DesktopAboutInfo, String> {
-    Ok(update::about().await)
+pub async fn get_desktop_about(app_handle: AppHandle) -> Result<update::DesktopAboutInfo, String> {
+    Ok(update::about(&app_handle).await)
 }

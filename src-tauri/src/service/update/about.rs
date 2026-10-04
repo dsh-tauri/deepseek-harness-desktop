@@ -17,8 +17,8 @@ pub struct DesktopAboutInfo {
 
 /// 关于信息：版本来自编译常量，发布时间每次实时查询最新 Release（不缓存），
 /// 查询失败则留空、不影响展示。
-pub async fn about() -> DesktopAboutInfo {
-    let published_at = fetch_releases_meta()
+pub async fn about(app_handle: &tauri::AppHandle) -> DesktopAboutInfo {
+    let published_at = fetch_releases_meta(app_handle)
         .await
         .ok()
         .and_then(|releases| releases.first().map(|(_, p)| p.clone()))

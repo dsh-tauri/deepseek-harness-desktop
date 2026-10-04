@@ -95,7 +95,7 @@ async fn resolve_missing_targets(
         if version.is_some() {
             continue;
         }
-        let Some(latest) = known_latest(id) else {
+        let Some(latest) = known_latest(app_handle, id) else {
             continue;
         };
         if !is_registry_version(&latest) || installed_package_version(&profile, id).as_deref() == Some(latest.as_str()) {
@@ -329,7 +329,7 @@ pub(super) const RELEASE_AGE_RELAXED_FLAG: &str = "--config.minimumReleaseAge=0"
 /// 目标版本取更新探测缓存（[`known_latest`]，不新发网络请求）；git 托管插件的「最新」是
 /// 提交 SHA、`next` 这类 ref 都不是版本，不能进发布时长豁免清单，按形状挡掉。
 fn release_age_target(app_handle: &AppHandle, profile: &Path, id: &str) -> (bool, bool) {
-    let target = known_latest(id);
+    let target = known_latest(app_handle, id);
     let target = target.as_deref().filter(|latest| is_registry_version(latest));
     let Some(target) = target else {
         return (false, false);
@@ -823,7 +823,7 @@ async fn verify_update_landed(
                 .filter(|expected| *expected != detail && is_registry_version(expected))
                 .map(str::to_string)
                 .or_else(|| {
-                    known_latest(id).filter(|latest| latest != &detail && is_registry_version(latest))
+                    known_latest(app_handle, id).filter(|latest| latest != &detail && is_registry_version(latest))
                 });
             let retryable = latest.as_deref().is_some_and(|latest| {
                 !profile_release_age_excluded(app_handle, &format!("{id}@{latest}"))

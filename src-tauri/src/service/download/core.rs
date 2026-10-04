@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::service::download::ProgressTracker;
-use tauri::Runtime;
+use tauri::{Manager, Runtime};
 
 /// 下载文件到内存
 ///
@@ -83,7 +83,7 @@ async fn download_with_retry<'a, R: Runtime>(
     tracker.update(0.0, String::new(), format!("Download {}", url));
 
     // 创建具备 User-Agent 的客户端
-    let client = reqwest::Client::builder()
+    let client = crate::config::proxy::http_client_builder(tracker.window.app_handle())?
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (deepseek-harness-desktop)")
         .connect_timeout(std::time::Duration::from_secs(20))
         .read_timeout(Duration::from_secs(30))
@@ -291,12 +291,12 @@ pub fn verify_sha256(buffer: &[u8], expected: &str) -> Result<(), String> {
 }
 
 /// 从 Node.js 官方同版本 SHASUMS256.txt 中读取当前平台包的摘要。
-pub async fn fetch_node_sha256(download_url: &str) -> Result<String, String> {
+pub async fn fetch_node_sha256(app_handle: &tauri::AppHandle, download_url: &str) -> Result<String, String> {
     let (base, filename) = download_url.rsplit_once('/').ok_or_else(|| {
         "INTEGRITY_METADATA_INVALID: Node.js download URL has no filename".to_string()
     })?;
     let checksums_url = format!("{base}/SHASUMS256.txt");
-    let checksums = reqwest::Client::builder()
+    let checksums = crate::config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(Duration::from_secs(20))
         .build()

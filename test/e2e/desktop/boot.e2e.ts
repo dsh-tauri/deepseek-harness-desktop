@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startDesktopApp } from '../support/desktop'
 import { completePreinstall } from '../support/preinstall'
-import { SETUP_ERROR, SHELL_IFRAME, SHELL_ROOT } from '../support/selectors'
+import { PROXY_SAVE, PROXY_URL, SETUP_ERROR, SHELL_IFRAME, SHELL_ROOT } from '../support/selectors'
 
 /** 全局 Window 类型扩展，用于解决浏览器环境上下文注入报错 */
 interface DshWindow extends Window {
@@ -176,6 +176,44 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     await browser.waitUntil(async () => (await appearance()).palette === 'default', { timeoutMsg: '原生外观设置未恢复默认值' })
     expect(await appearance(), '重置未还原完整原生外观设置').toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, sidebarOnly: false })
     await click('dsh-config-dialog-close')
+  })
+
+  it('saves a proxy through the configuration UI and reloads the persisted value', async () => {
+    async function click(id: string) {
+      const element = await browser.$(`[data-testid="${id}"]`)
+      await element.waitForClickable()
+      await element.click()
+    }
+    async function proxyUrl() {
+      return browser.execute(async () => {
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ proxy_url: string }> } }).__TAURI_INTERNALS__
+        return (await bridge.invoke('get_app_config')).proxy_url
+      })
+    }
+    const original = await proxyUrl()
+    try {
+      await click('dsh-navbar-menu-config')
+      await click('dsh-navbar-item-network')
+      const input = await browser.$(PROXY_URL)
+      await input.waitForEnabled()
+      await input.setValue('socks5h://127.0.0.1:1080')
+      await browser.$(PROXY_SAVE).click()
+      await browser.waitUntil(async () => await proxyUrl() === 'socks5h://127.0.0.1:1080', { timeoutMsg: '代理地址未保存到原生设置' })
+      await click('dsh-config-dialog-close')
+      await click('dsh-navbar-menu-config')
+      await click('dsh-navbar-item-network')
+      expect(await browser.$(PROXY_URL).getValue(), '重新打开配置后代理地址不一致').toBe('socks5h://127.0.0.1:1080')
+      await browser.$(PROXY_URL).clearValue()
+      await browser.$(PROXY_SAVE).click()
+      await browser.waitUntil(async () => await proxyUrl() === '', { timeoutMsg: '清空代理未恢复继承设置' })
+    }
+    finally {
+      await browser.execute(async (proxyUrl) => {
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+        await bridge.invoke('update_app_config', { proxyUrl })
+      }, original)
+      await click('dsh-config-dialog-close')
+    }
   })
 
   it('persists shell zoom shortcuts without changing other native settings', async () => {

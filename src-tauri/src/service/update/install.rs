@@ -53,7 +53,7 @@ pub struct DesktopUpdateInfo {
 
 /// 检查是否有新版本可用（含安装包是否已下载）
 pub async fn check(app_handle: &AppHandle) -> Result<Option<DesktopUpdateInfo>, String> {
-    match fetch_latest_release().await? {
+    match fetch_latest_release(app_handle).await? {
         None => Ok(None),
         Some(r) => {
             let path = installer_path(app_handle, &r.asset_name)?;
@@ -132,8 +132,8 @@ async fn download_from_source(
 
 /// 安装包下载客户端：长超时（安装包可达数百 MB，慢镜像需要更久），
 /// 与检查更新用的 5s `http_client()` 区分。
-fn download_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+fn download_client(app_handle: &AppHandle) -> Result<reqwest::Client, String> {
+    config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .connect_timeout(Duration::from_secs(15))
@@ -217,7 +217,7 @@ fn verify_installer_sha256(path: &std::path::Path, expected: &str) -> Result<(),
 /// 宁可失败，防止第三方镜像投毒未被察觉；官方 GitHub 直连在摘要缺失时仍可
 /// 按旧行为下载（兼容早期未填摘要的发布），下载后若有摘要则强制校验。
 pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, String> {
-    let release = fetch_latest_release()
+    let release = fetch_latest_release(app_handle)
         .await?
         .ok_or_else(|| "UPDATE_NONE".to_string())?;
     let path = installer_path(app_handle, &release.asset_name)?;
@@ -232,7 +232,7 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
             .ok_or_else(|| "UPDATE_NONE".to_string());
     }
 
-    let client = download_client()?;
+    let client = download_client(app_handle)?;
 
     // 官方直连 → （可选）ghfast.top 镜像兜底。安装包无 SHA-256 元数据，切换源时
     // 丢弃上一源的部分字节从头下载，避免混用两个源的字节流。

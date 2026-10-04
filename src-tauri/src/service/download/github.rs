@@ -31,8 +31,8 @@ pub struct LatestDshPkg {
 }
 
 /// 构造带 User-Agent 与超时的 GitHub 请求客户端。
-fn github_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+fn github_client(app_handle: &tauri::AppHandle) -> Result<reqwest::Client, String> {
+    config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -160,8 +160,8 @@ fn first_non_preview_tag_from_atom(body: &str) -> Option<String> {
 /// atom 条目：预览版（Pre-release label 发布、tag 命名含预览标记）一律跳过，
 /// 只取最新一条非预览版——避免限流窗口内把预览版误当「最新 release」推给用户
 /// （见 [`is_preview_tag`]）。
-async fn fetch_latest_dsh_tag_from_atom() -> Result<String, String> {
-    let client = github_client()?;
+async fn fetch_latest_dsh_tag_from_atom(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    let client = github_client(app_handle)?;
     let body = client
         .get(format!("{DSH_PKG_REPO}/releases.atom"))
         .send()
@@ -242,8 +242,8 @@ async fn fetch_dsh_digest_from_expanded_assets(
 /// 回退到最新一条非预览版 release 供更新/安装判定（issue #299：最新 alpha 发布后
 /// 旧实现直接回 Err，导致初始化流程报 `DSH_INTEGRITY_UNAVAILABLE` 卡死）。仅当所有
 /// release 都是预览版（找不到非预览版）时才返回 Err，由调用方保持本地安装、不提示。
-pub async fn fetch_latest_dsh_pkg_info() -> Result<LatestDshPkg, String> {
-    let client = github_client()?;
+pub async fn fetch_latest_dsh_pkg_info(app_handle: &tauri::AppHandle) -> Result<LatestDshPkg, String> {
+    let client = github_client(app_handle)?;
     let expected_name = config::get_dsh_download_url()?
         .rsplit('/')
         .next()
@@ -276,7 +276,7 @@ pub async fn fetch_latest_dsh_pkg_info() -> Result<LatestDshPkg, String> {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing tag_name in latest release response".to_string())?
             .to_string(),
-        None => fetch_latest_dsh_tag_from_atom().await?,
+        None => fetch_latest_dsh_tag_from_atom(app_handle).await?,
     };
 
     // 2b. 预览版不参与更新判定：`/releases/latest` 已按 label 排除 Pre-release，
@@ -289,7 +289,7 @@ pub async fn fetch_latest_dsh_pkg_info() -> Result<LatestDshPkg, String> {
             "DSH_SKIP_PREVIEW: latest release {} is a preview, falling back to latest non-preview release",
             tag_name
         );
-        return fetch_latest_non_preview().await;
+        return fetch_latest_non_preview(app_handle).await;
     }
 
     // 3. commit：优先 API /commits/{tag}，失败用 tag 内嵌 build-id 兜底
@@ -374,13 +374,13 @@ pub async fn fetch_latest_dsh_pkg_info() -> Result<LatestDshPkg, String> {
 /// 推荐版本可能是 pre-release，不能使用 GitHub 的 `/releases/latest`；该端点会
 /// 排除标记为 pre-release 的发行版。先从完整 release 列表按解析后的 SemVer 精确匹配
 /// tag，再复用固定 tag 的资产与摘要查询，确保下载内容与校验摘要属于同一发布。
-pub async fn fetch_dsh_pkg_version(version: &str) -> Result<LatestDshPkg, String> {
-    let release = fetch_dsh_pkg_releases()
+pub async fn fetch_dsh_pkg_version(app_handle: &tauri::AppHandle, version: &str) -> Result<LatestDshPkg, String> {
+    let release = fetch_dsh_pkg_releases(app_handle)
         .await?
         .into_iter()
         .find(|release| parse_version_from_tag(&release.tag).as_deref() == Some(version))
         .ok_or_else(|| format!("DSH_RECOMMENDED_NOT_FOUND: no release found for {version}"))?;
-    fetch_dsh_pkg_asset(&release.tag).await
+    fetch_dsh_pkg_asset(app_handle, &release.tag).await
 }
 
 /// 最新非预览版 release：仅当最新 release 是预览版时由 [`fetch_latest_dsh_pkg_info`] 调用。
@@ -390,8 +390,8 @@ pub async fn fetch_dsh_pkg_version(version: &str) -> Result<LatestDshPkg, String
 /// 见 [`is_preview_tag`]），再复用固定 tag 的资产/摘要查询，确保下载内容与校验摘要
 /// 属于同一发布。找不到非预览版（全部是预览版）时返回错误，调用方保持不更新——
 /// 不把预览版推给用户自动更新，也不再以「最新是预览版」整段卡死初始化流程。
-async fn fetch_latest_non_preview() -> Result<LatestDshPkg, String> {
-    let tag = fetch_dsh_pkg_releases()
+async fn fetch_latest_non_preview(app_handle: &tauri::AppHandle) -> Result<LatestDshPkg, String> {
+    let tag = fetch_dsh_pkg_releases(app_handle)
         .await?
         .into_iter()
         .find(|m| !m.prerelease && !is_preview_tag(&m.tag))
@@ -399,15 +399,15 @@ async fn fetch_latest_non_preview() -> Result<LatestDshPkg, String> {
         .ok_or_else(|| {
             "DSH_PREVIEW_RELEASE: no non-preview release available, not an update".to_string()
         })?;
-    fetch_dsh_pkg_asset(&tag).await
+    fetch_dsh_pkg_asset(app_handle, &tag).await
 }
 
 /// 拉取指定 tag 的发行版信息（资产 URL + 可信摘要），供核心面板按版本下载。
 ///
 /// API 失败时资产 URL 按 tag 确定性构造，摘要从同一个 tag 的页面读取，避免
 /// latest 地址与固定 tag 的摘要发生错配。
-pub async fn fetch_dsh_pkg_asset(tag: &str) -> Result<LatestDshPkg, String> {
-    let client = github_client()?;
+pub async fn fetch_dsh_pkg_asset(app_handle: &tauri::AppHandle, tag: &str) -> Result<LatestDshPkg, String> {
+    let client = github_client(app_handle)?;
     let expected_name = config::get_dsh_download_url()?
         .rsplit('/')
         .next()
@@ -697,8 +697,8 @@ async fn fetch_dsh_pkg_releases_from_html(
 /// Pre-release label，无法区分预览版；releases 列表还能天然排除 draft（未发布
 /// 对匿名请求不可见）。API 失败时先读取 github.com Releases 页面，再失败时
 /// 由调用方回退 git tags，预览标记按 tag 命名（[`is_preview_tag`]）兜底。
-pub async fn fetch_dsh_pkg_releases() -> Result<Vec<DshPkgReleaseMeta>, String> {
-    let client = github_client()?;
+pub async fn fetch_dsh_pkg_releases(app_handle: &tauri::AppHandle) -> Result<Vec<DshPkgReleaseMeta>, String> {
+    let client = github_client(app_handle)?;
     let mut all_releases = Vec::new();
     let mut page = 1;
     loop {
@@ -759,8 +759,8 @@ pub async fn fetch_dsh_pkg_releases() -> Result<Vec<DshPkgReleaseMeta>, String> 
 ///
 /// 仅在更新判定需要反查“无 tag 的老记录”时调用，失败时由调用方回退到
 /// “以实际文件为准”的保守分支。
-pub async fn fetch_dsh_pkg_tags() -> Result<Vec<(String, String)>, String> {
-    let client = github_client()?;
+pub async fn fetch_dsh_pkg_tags(app_handle: &tauri::AppHandle) -> Result<Vec<(String, String)>, String> {
+    let client = github_client(app_handle)?;
     let tags: serde_json::Value = github_api_get(
         &client,
         &format!("{}/tags?per_page=100", DSH_PKG_GITHUB_API),

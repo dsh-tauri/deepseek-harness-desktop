@@ -102,6 +102,10 @@ brew install dsh-tauri/desktop/deepseek-harness
 - Local execution is not fully offline: model services, plugin installation, updates, and preset pet media can still use network.
 - For Linux display, Wayland, AppImage, and permission workarounds, see the [installation and troubleshooting docs](https://dshtauri.mintlify.site).
 
+- In the startup window, open **Configuration → Network** to set an HTTP, HTTPS, SOCKS5 or SOCKS5H proxy for desktop runtime/core downloads, update checks and plugin metadata queries. Leave it empty to inherit system/environment proxy settings. Changes apply to new requests; retry failed downloads after saving. SOCKS5H resolves destination names through the proxy, and loopback connections stay direct. This setting does not change Harness model requests or plugin subprocess networking.
+
+The proxy URL, including any credentials, is stored in the local desktop configuration. Prefer an HTTPS proxy when authenticating to a remote proxy: an HTTP proxy connection does not encrypt proxy credentials, even when the destination website uses HTTPS.
+
 ## Runtime
 
 | Current baseline | Version |

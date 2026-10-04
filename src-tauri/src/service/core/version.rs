@@ -74,20 +74,20 @@ fn read_manifest_dsh_version(dir: &Path) -> Option<String> {
 /// tags（无 label，预览标记按 tag 命名兜底），再失败降级为磁盘扫描，只列出
 /// 本地、激活与已下载的历史版本。
 pub async fn list(app_handle: &AppHandle) -> Vec<HarnessCore> {
-    let (release_metas, remote_catalog_available) = fetch_release_catalog().await;
+    let (release_metas, remote_catalog_available) = fetch_release_catalog(app_handle).await;
     rows_with_release_catalog(app_handle, release_metas, remote_catalog_available)
 }
 
 /// 版本行数据源：GitHub releases → git tags → 空（离线/限流时调用方降级为磁盘扫描）。
-async fn fetch_release_catalog() -> (Vec<download::DshPkgReleaseMeta>, bool) {
-    match download::fetch_dsh_pkg_releases().await {
+async fn fetch_release_catalog(app_handle: &AppHandle) -> (Vec<download::DshPkgReleaseMeta>, bool) {
+    match download::fetch_dsh_pkg_releases(app_handle).await {
         Ok(metas) => (metas, true),
         Err(e) => {
             log::warn!(
                 "Failed to fetch dsh pkg releases ({}), falling back to git tags",
                 e
             );
-            match download::fetch_dsh_pkg_tags().await {
+            match download::fetch_dsh_pkg_tags(app_handle).await {
                 Ok(tags) => (
                     tags.into_iter()
                         .map(|(tag, _)| download::DshPkgReleaseMeta {
@@ -542,7 +542,7 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
     // 切回随包内核只是把根指回去（见 `set_active` 的 `app-bundled` 分支）。
     if config::dependencies::bundled_core_dir(app_handle).is_some() {
         stop_harness_for_core_switch(app_handle).await?;
-        let commit = match download::fetch_dsh_pkg_tags().await {
+        let commit = match download::fetch_dsh_pkg_tags(app_handle).await {
             Ok(tags) => tags.into_iter().find(|(t, _)| t == tag).map(|(_, c)| c),
             Err(e) => {
                 log::warn!("failed to resolve commit for tag {tag}: {e}");
@@ -650,7 +650,7 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
     }
 
     // 3. 记录切换：tag + commit（commit 从 tags 列表反查，失败保留原值）
-    let commit = match download::fetch_dsh_pkg_tags().await {
+    let commit = match download::fetch_dsh_pkg_tags(app_handle).await {
         Ok(tags) => tags.into_iter().find(|(t, _)| t == tag).map(|(_, c)| c),
         Err(e) => {
             log::warn!("failed to resolve commit for tag {tag}: {e}");
@@ -693,7 +693,7 @@ pub async fn download_version(app_handle: &AppHandle, tag: &str) -> Result<Harne
 
     // 1. 拉该 tag 的资产地址 + 可信摘要（digest 缺失时安全中止，沿用
     //    DSH_INTEGRITY_UNAVAILABLE 设计：不下载无法验证完整性的内容）
-    let info = download::fetch_dsh_pkg_asset(tag)
+    let info = download::fetch_dsh_pkg_asset(app_handle, tag)
         .await
         .map_err(|e| format!("CORE_METADATA_FAILED: {e}"))?;
     let digest = info.digest.ok_or_else(|| {

@@ -8,6 +8,8 @@ use tauri_plugin_store::StoreExt;
 #[serde(rename_all = "snake_case")]
 pub struct Setting {
     #[serde(default)]
+    pub proxy_url: String,
+    #[serde(default)]
     pub appearance: super::Appearance,
     pub installed: bool,
     pub port: u16,
@@ -156,6 +158,7 @@ pub fn normalize_backup_retention(retention_count: u32) -> u32 {
 }
 
 fn normalize_setting(setting: &mut Setting) {
+    setting.proxy_url = super::proxy::normalize_proxy_url(&setting.proxy_url).unwrap_or_default();
     setting.appearance.normalize();
     setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
     setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
@@ -175,6 +178,7 @@ pub fn default_port() -> u16 {
 impl Default for Setting {
     fn default() -> Self {
         Self {
+            proxy_url: String::new(),
             appearance: super::Appearance::default(),
             installed: false,
             port: default_port(),
@@ -334,6 +338,7 @@ fn emit_setting(app_handle: &AppHandle, value: &serde_json::Value) {
 }
 
 fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Setting {
+    replacement.proxy_url.clone_from(&current.proxy_url);
     replacement.appearance.clone_from(&current.appearance);
     replacement.zoom_factor = normalize_zoom_factor(current.zoom_factor);
     replacement.harness_max_heap_mb = normalize_harness_max_heap_mb(current.harness_max_heap_mb);
@@ -697,6 +702,7 @@ mod tests {
         };
 
         let current = Setting {
+            proxy_url: "socks5h://127.0.0.1:1080".to_string(),
             appearance: super::super::Appearance {
                 palette: "nord".into(),
                 terminal: true,
@@ -716,6 +722,7 @@ mod tests {
 
         let merged = preserve_persisted_fields(stale, &current);
 
+        assert_eq!(merged.proxy_url, current.proxy_url);
         assert!(merged.installed);
         assert_eq!(merged.language, "en-US");
         assert_eq!(merged.port, 4099);
@@ -737,6 +744,20 @@ mod tests {
             merged.force_xwayland,
             "整对象写入不得覆盖最新的 XWayland 开关"
         );
+    }
+
+    #[test]
+    fn proxy_setting_survives_serialization_and_defaults_for_legacy_settings() {
+        let setting = Setting {
+            proxy_url: "socks5h://127.0.0.1:1080".to_string(),
+            ..Default::default()
+        };
+        let mut value = serde_json::to_value(&setting).unwrap();
+        let restored: Setting = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(restored.proxy_url, "socks5h://127.0.0.1:1080");
+        value.as_object_mut().unwrap().remove("proxy_url");
+        let legacy: Setting = serde_json::from_value(value).unwrap();
+        assert_eq!(legacy.proxy_url, "");
     }
 
     #[test]

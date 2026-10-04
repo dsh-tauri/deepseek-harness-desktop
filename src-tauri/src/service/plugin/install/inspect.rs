@@ -26,7 +26,7 @@ pub async fn inspect_specs(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .or_else(|| crate::service::core::active_version(app_handle));
-    let client = reqwest::Client::builder()
+    let client = crate::config::proxy::http_client_builder(app_handle)?
         .timeout(INSPECT_TIMEOUT)
         .build()
         .map_err(|e| format!("INSPECT_CLIENT: {e}"))?;

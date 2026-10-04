@@ -537,5 +537,12 @@
   "task_manager.restart": "重启 Harness 服务",
   "task_manager.restart_description": "这会中断本机正在运行的任务，并重新连接 Harness 服务。",
   "task_manager.logs_failed": "读取运行日志失败，请重新打开日志重试。",
-  "task_manager.paused": "已暂停刷新"
+  "task_manager.paused": "已暂停刷新",
+  "config.network": "网络",
+  "network.proxy_url": "代理地址",
+  "network.description": "为桌面端下载、更新检查和插件元数据请求设置代理。留空沿用系统或环境变量代理。保存后对新请求生效，下载失败时请在保存后重试。",
+  "network.formats": "支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。SOCKS5H 由代理解析目标域名，本机连接保持直连。",
+  "network.saved": "代理设置已保存",
+  "network.invalid": "请输入有效的代理地址，不要包含路径、查询参数或片段。",
+  "network.save_failed": "无法保存代理设置"
 }

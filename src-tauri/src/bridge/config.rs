@@ -36,6 +36,7 @@ pub fn is_dev_build() -> bool {
 #[allow(clippy::too_many_arguments)]
 pub async fn update_app_config(
     app_handle: AppHandle,
+    proxy_url: Option<String>,
     appearance: Option<config::Appearance>,
     port: Option<u16>,
     zoom_factor: Option<f64>,
@@ -46,6 +47,10 @@ pub async fn update_app_config(
     backup_retention_count: Option<u32>,
     backup_include_credentials: Option<bool>,
 ) -> Result<config::Setting, String> {
+    let proxy_url = proxy_url
+        .as_deref()
+        .map(config::proxy::normalize_proxy_url)
+        .transpose()?;
     if let Some(port) = port {
         if port == 0 {
             return Err("port must be a positive number".to_string());
@@ -61,6 +66,9 @@ pub async fn update_app_config(
         }
     }
     let setting = config::update_store_dat_setting(&app_handle, |setting| {
+        if let Some(proxy_url) = proxy_url {
+            setting.proxy_url = proxy_url;
+        }
         if let Some(appearance) = appearance {
             setting.appearance = appearance;
         }

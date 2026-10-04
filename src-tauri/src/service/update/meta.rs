@@ -28,8 +28,8 @@ pub(super) struct LatestRelease {
 }
 
 /// 构造带统一 UA 的 HTTP 客户端（并发小、超时短）。
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+fn http_client(app_handle: &tauri::AppHandle) -> Result<reqwest::Client, String> {
+    crate::config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(Duration::from_secs(5))
         .build()
@@ -69,8 +69,8 @@ fn parse_atom_entries(body: &str) -> Vec<(String, String)> {
 }
 
 /// 拉取 releases.atom 并解析全部 release（不走 api.github.com，不受未认证限流约束）。
-pub(super) async fn fetch_releases_meta() -> Result<Vec<(String, String)>, String> {
-    let body = http_client()?
+pub(super) async fn fetch_releases_meta(app_handle: &tauri::AppHandle) -> Result<Vec<(String, String)>, String> {
+    let body = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases.atom"))
         .send()
         .await
@@ -134,8 +134,8 @@ fn parse_digest_from_expanded_assets(body: &str, expected_name: &str) -> Option<
 /// expanded_assets 会列出所有平台的安装包，各带一个 `sha256:`，不能取「页面里
 /// 第一个能解析出摘要的资产」，否则会把别的资产的摘要套到当前平台安装包上，
 /// 导致完整性校验必然失败（见 `fetch_latest_release`）。
-async fn fetch_expanded_assets(tag: &str) -> Result<(Vec<String>, String), String> {
-    let body = http_client()?
+async fn fetch_expanded_assets(app_handle: &tauri::AppHandle, tag: &str) -> Result<(Vec<String>, String), String> {
+    let body = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases/expanded_assets/{tag}"))
         .send()
         .await
@@ -158,9 +158,9 @@ async fn fetch_expanded_assets(tag: &str) -> Result<(Vec<String>, String), Strin
 ///
 /// 返回 `Ok(Some(LatestRelease))` 表示有更新且匹配到当前平台安装包；
 /// `Ok(None)` 表示无更新（或未匹配到资产）。网络失败返回 Err。
-pub(super) async fn fetch_latest_release() -> Result<Option<LatestRelease>, String> {
+pub(super) async fn fetch_latest_release(app_handle: &tauri::AppHandle) -> Result<Option<LatestRelease>, String> {
     let current = current_version();
-    for (tag, published_at) in fetch_releases_meta().await? {
+    for (tag, published_at) in fetch_releases_meta(app_handle).await? {
         let version = tag.trim_start_matches('v').to_string();
         let Some(parsed) = parse_version(&version) else {
             log::debug!("UPDATE_SKIP: {tag} 非法 semver（手动测试 release?），跳过");
@@ -174,7 +174,7 @@ pub(super) async fn fetch_latest_release() -> Result<Option<LatestRelease>, Stri
             log::debug!("UPDATE_SKIP: {tag} 不高于当前版本 {current}");
             continue;
         }
-        if let Some(release) = fetch_release_assets(&tag, &version, &published_at).await? {
+        if let Some(release) = fetch_release_assets(app_handle, &tag, &version, &published_at).await? {
             return Ok(Some(release));
         }
     }
@@ -190,12 +190,13 @@ pub(super) async fn fetch_latest_release() -> Result<Option<LatestRelease>, Stri
 ///
 /// 返回 `None` 表示该 release 无匹配当前平台的安装包（调用方继续看更旧的正式版）。
 async fn fetch_release_assets(
+    app_handle: &tauri::AppHandle,
     tag: &str,
     version: &str,
     published_at: &str,
 ) -> Result<Option<LatestRelease>, String> {
     // 一次拉取 expanded_assets 页面，得到资产名列表与原始 HTML（避免两次请求）
-    let (names, body) = fetch_expanded_assets(tag).await?;
+    let (names, body) = fetch_expanded_assets(app_handle, tag).await?;
     let Some(asset_name) = pick_asset(&names) else {
         log::debug!("UPDATE_SKIP: {tag} 无当前平台安装包，继续看更旧的正式版");
         return Ok(None);

@@ -537,5 +537,12 @@
   "task_manager.restart": "Restart Harness service",
   "task_manager.restart_description": "This interrupts local running tasks and reconnects the Harness service.",
   "task_manager.logs_failed": "Failed to read run logs. Close and reopen logs to retry.",
-  "task_manager.paused": "Refresh paused"
+  "task_manager.paused": "Refresh paused",
+  "config.network": "Network",
+  "network.proxy_url": "Proxy URL",
+  "network.description": "Use a proxy for desktop downloads, update checks and plugin metadata. Leave empty to use the system or environment proxy. Saved changes apply to new requests; retry a failed download after saving.",
+  "network.formats": "Supports HTTP, HTTPS, SOCKS5 and SOCKS5H. SOCKS5H resolves destination names through the proxy. Local connections stay direct.",
+  "network.saved": "Proxy settings saved",
+  "network.invalid": "Enter a valid proxy URL without a path, query or fragment.",
+  "network.save_failed": "Could not save proxy settings"
 }

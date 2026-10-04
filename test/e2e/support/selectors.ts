@@ -21,6 +21,9 @@ export const SHELL_IFRAME = '[data-testid="dsh-shell-iframe"]'
 /** 装配失败页根节点（`src/layout/components/setup.tsx` → `Loadable`）。 */
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 
+export const PROXY_URL = '[data-testid="dsh-proxy-url"]'
+export const PROXY_SAVE = '[data-testid="dsh-proxy-save"]'
+
 /**
  * 首次装配「安装推荐插件」引导页的跳过按钮。
  *

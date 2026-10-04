@@ -102,6 +102,10 @@ brew install dsh-tauri/desktop/deepseek-harness
 - 本地运行不等于完全离线：模型服务、插件安装、更新与桌宠预设素材仍可能联网。
 - Linux 显示、Wayland、AppImage 与权限问题的处理见[安装与故障排查文档](https://dshtauri.mintlify.site)。
 
+- 启动界面的「配置 → 网络」可设置 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理，用于桌面端依赖/核心下载、更新检查及插件元数据查询。留空沿用系统/环境代理；保存后对新请求生效，下载失败后可重试。SOCKS5H 通过代理解析目标域名，本机回环连接始终直连。此设置不修改 Harness 模型请求或插件子进程的网络配置。
+
+代理 URL（包括填入的账号密码）保存在本机桌面配置中。远程代理需要账号密码时，建议使用 HTTPS 代理；HTTP 代理连接不会加密代理认证信息，即使请求的目标网站使用 HTTPS。
+
 ## 运行方式
 
 | 当前基线 | 版本 |

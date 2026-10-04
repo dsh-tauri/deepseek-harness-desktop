@@ -95,6 +95,7 @@ type HelpAction = 'task-manager' | 'keyboard-shortcuts' | 'copy-run-logs' | 'che
 const CONFIG_TABS: { id: ConfigTab, labelKey: string }[] = [
   { id: 'application', labelKey: 'config.application' },
   { id: 'appearance', labelKey: 'config.appearance' },
+  { id: 'network', labelKey: 'config.network' },
   { id: 'profiles', labelKey: 'config.profiles' },
   { id: 'plugins', labelKey: 'config.plugins' },
   { id: 'harness', labelKey: 'config.harness' },

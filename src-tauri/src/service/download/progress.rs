@@ -16,7 +16,7 @@ pub struct ProgressPayload {
 }
 
 pub struct ProgressTracker<'a, R: Runtime> {
-    window: &'a WebviewWindow<R>,
+    pub(super) window: &'a WebviewWindow<R>,
     total_phases: usize,
     current_phase: usize,
     current_title: String,
