@@ -73,6 +73,8 @@ Use `git diff --check` for documentation-only edits. Tests must use isolated dat
 
 - Debug runtime, core, and dependencies live under `<AppData>/dev/`; the log is `<AppData>/dev/logs/dsh-web.dev.log`.
 - Debug ignores inherited `DSH_HOME`, uses `~/.dsh.dev`, and does not migrate release data or modify the production CLI PATH.
+- The release data directory is the user-level `DSH_HOME` variable (`~/.dsh` when unset). The Windows installer can set it; on every platform **Settings → Data Directory** copies the data, verifies the copy, renames the old directory aside, and rewrites the variable; rollback restores the previous location from that renamed directory.
+- How that variable is persisted is platform-specific: Windows writes `HKCU\Environment`; macOS writes a `~/Library/LaunchAgents/dsh-tauri.env.plist` LaunchAgent that replays `launchctl setenv` at login (the plist's own `EnvironmentVariables` key would not reach a Finder/Dock-launched app); Linux writes `~/.config/environment.d/dsh-tauri.conf` plus a marked block in `~/.profile`. A GUI app started by launchd or by the display manager inherits no login-shell environment, so the app also reads the variable back from disk at startup.
 - Ports are configurable and may fall back when occupied; side-by-side launches need not use those exact values.
 - Profiles separate configuration, not OS permissions.
 

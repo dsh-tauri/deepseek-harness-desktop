@@ -458,7 +458,7 @@ pub fn get_dsh_package_json_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathB
 /// 用户主目录（Windows 取 `%USERPROFILE%`，Unix 取 `$HOME`）。
 ///
 /// 不使用 dirs crate（未引入该依赖），与官方 dsh 的 `$HOME/.dsh` 语义保持一致。
-fn user_home_dir() -> Option<PathBuf> {
+pub(crate) fn user_home_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let key = "USERPROFILE";
     #[cfg(not(windows))]

@@ -43,7 +43,7 @@ pub(super) fn inject_shell_rc(app_handle: &AppHandle) -> Result<(), String> {
                 ))
             }
         };
-        let next = upsert_rc_block(&original, &block);
+        let next = upsert_rc_block(&original, &block, RC_MARK_START, RC_MARK_END);
         if next == original {
             continue;
         }
@@ -73,7 +73,7 @@ pub(super) fn strip_shell_rc(app_handle: &AppHandle) -> Result<(), String> {
                 ))
             }
         };
-        let cleaned = strip_rc_block(&original);
+        let cleaned = strip_rc_block(&original, RC_MARK_START, RC_MARK_END);
         if cleaned != original {
             write_rc_with_backup(&rc_path, &cleaned)?;
             log::info!("Removed PATH export from {}", rc_path.display());
@@ -82,11 +82,20 @@ pub(super) fn strip_shell_rc(app_handle: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 将 PATH 导出块并入 rc 内容：先移除已有标记块，再在文件末尾追加新块，
+/// 将标记块并入 rc 内容：先移除已有标记块，再在文件末尾追加新块，
 /// 只更新自身块、保留用户其余配置，且块始终落在文件末尾。
+///
+/// 标记行由调用方给出而不是写死：同一个 rc 文件里会有多份本应用注入的块
+/// （PATH 导出、`DSH_HOME` 导出），每份块必须只认得自己的标记，否则后写的
+/// 块会把前一份删掉。
 #[cfg_attr(windows, allow(dead_code))]
-fn upsert_rc_block(content: &str, block: &str) -> String {
-    let mut out = strip_rc_block(content);
+pub(crate) fn upsert_rc_block(
+    content: &str,
+    block: &str,
+    mark_start: &str,
+    mark_end: &str,
+) -> String {
+    let mut out = strip_rc_block(content, mark_start, mark_end);
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
@@ -101,7 +110,10 @@ fn upsert_rc_block(content: &str, block: &str) -> String {
 /// 临时文件 + rename 原子替换；写失败时删除临时文件并回滚备份内容，
 /// 保证任何异常路径下用户原文件都不会被半写/被清空。
 #[cfg_attr(windows, allow(dead_code))]
-fn write_rc_with_backup(rc_path: &std::path::Path, new_content: &str) -> Result<(), String> {
+pub(crate) fn write_rc_with_backup(
+    rc_path: &std::path::Path,
+    new_content: &str,
+) -> Result<(), String> {
     let backup_path = rc_path.with_extension("dsh-backup");
     let had_original = rc_path.exists();
     if had_original {
@@ -141,17 +153,17 @@ fn write_rc_with_backup(rc_path: &std::path::Path, new_content: &str) -> Result<
 /// 移除 rc 文件中的标记块（含标记行本身）。
 /// 同时被注入（`upsert_rc_block`）与移除路径使用。
 #[cfg_attr(windows, allow(dead_code))]
-fn strip_rc_block(content: &str) -> String {
+pub(crate) fn strip_rc_block(content: &str, mark_start: &str, mark_end: &str) -> String {
     let lines = content.lines().peekable();
     let mut out = String::with_capacity(content.len());
     let mut skipping = false;
     for line in lines {
-        if line.trim() == RC_MARK_START {
+        if line.trim() == mark_start {
             skipping = true;
             continue;
         }
         if skipping {
-            if line.trim() == RC_MARK_END {
+            if line.trim() == mark_end {
                 skipping = false;
             }
             continue;
@@ -174,7 +186,7 @@ mod tests {
     #[test]
     fn upsert_keeps_user_content_and_appends_block() {
         let content = "# oh-my-zsh\nplugins=(git)\nalias ll='ls -alF'\n";
-        let next = upsert_rc_block(content, RC_BLOCK);
+        let next = upsert_rc_block(content, RC_BLOCK, RC_MARK_START, RC_MARK_END);
         assert!(next.starts_with(content));
         assert!(next.ends_with(RC_BLOCK));
         assert_eq!(next.matches(RC_MARK_START).count(), 1);
@@ -184,8 +196,8 @@ mod tests {
     #[test]
     fn upsert_moves_stale_block_to_end() {
         let stale = format!("alias ll='ls -alF'\n{RC_BLOCK}export NVM_DIR=\"$HOME/.nvm\"\n");
-        let next = upsert_rc_block(&stale, RC_BLOCK);
-        let stripped = strip_rc_block(&next);
+        let next = upsert_rc_block(&stale, RC_BLOCK, RC_MARK_START, RC_MARK_END);
+        let stripped = strip_rc_block(&next, RC_MARK_START, RC_MARK_END);
         assert_eq!(
             stripped,
             "alias ll='ls -alF'\nexport NVM_DIR=\"$HOME/.nvm\"\n"
@@ -198,20 +210,20 @@ mod tests {
     #[test]
     fn upsert_is_idempotent() {
         let content = "user content\n";
-        let once = upsert_rc_block(content, RC_BLOCK);
-        assert_eq!(upsert_rc_block(&once, RC_BLOCK), once);
+        let once = upsert_rc_block(content, RC_BLOCK, RC_MARK_START, RC_MARK_END);
+        assert_eq!(upsert_rc_block(&once, RC_BLOCK, RC_MARK_START, RC_MARK_END), once);
     }
 
     /// 空内容（文件不存在时的新建场景）→ 仅注入块，没有多余空行
     #[test]
     fn upsert_from_missing_file_creates_block_only() {
-        assert_eq!(upsert_rc_block("", RC_BLOCK), RC_BLOCK.to_string());
+        assert_eq!(upsert_rc_block("", RC_BLOCK, RC_MARK_START, RC_MARK_END), RC_BLOCK.to_string());
     }
 
     /// 无末尾换行的内容 → 补换行后再追加块
     #[test]
     fn upsert_handles_missing_trailing_newline() {
-        let next = upsert_rc_block("no trailing nl", RC_BLOCK);
+        let next = upsert_rc_block("no trailing nl", RC_BLOCK, RC_MARK_START, RC_MARK_END);
         assert_eq!(next, "no trailing nl\n".to_string() + RC_BLOCK);
     }
 
@@ -219,9 +231,9 @@ mod tests {
     #[test]
     fn strip_rc_block_removes_block_and_is_idempotent() {
         let content = format!("keep\n{RC_BLOCK}tail\n");
-        let cleaned = strip_rc_block(&content);
+        let cleaned = strip_rc_block(&content, RC_MARK_START, RC_MARK_END);
         assert_eq!(cleaned, "keep\ntail\n");
-        assert_eq!(strip_rc_block(&cleaned), cleaned);
+        assert_eq!(strip_rc_block(&cleaned, RC_MARK_START, RC_MARK_END), cleaned);
     }
 
     /// 写回：备份保留原内容、目标被替换为 new_content
@@ -253,5 +265,28 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&rc_path).unwrap(), "# block\n");
         assert!(!rc_path.with_extension("dsh-backup").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同一个 rc 文件里可以有多份本应用的块（PATH 与 issue #871 的 DSH_HOME）：
+    /// 各自只认得自己的标记，后写的一份不能把前一份删掉。
+    #[test]
+    fn two_blocks_coexist_without_clobbering_each_other() {
+        const HOME_START: &str = "# >>> deepseek-harness dsh home >>>";
+        const HOME_END: &str = "# <<< deepseek-harness dsh home <<<";
+        let home_block = format!("{HOME_START}\nexport DSH_HOME=\"/data/dsh\"\n{HOME_END}\n");
+
+        let both = upsert_rc_block(RC_BLOCK, &home_block, HOME_START, HOME_END);
+        assert!(both.contains(RC_MARK_START));
+        assert!(both.contains(HOME_START));
+
+        let again = upsert_rc_block(&both, RC_BLOCK, RC_MARK_START, RC_MARK_END);
+        assert!(again.contains(HOME_START));
+        assert!(again.contains("export DSH_HOME=\"/data/dsh\""));
+        assert_eq!(again.matches(RC_MARK_START).count(), 1);
+        assert_eq!(again.matches(HOME_START).count(), 1);
+        assert_eq!(
+            upsert_rc_block(&again, RC_BLOCK, RC_MARK_START, RC_MARK_END),
+            again
+        );
     }
 }

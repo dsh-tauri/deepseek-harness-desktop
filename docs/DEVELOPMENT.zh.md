@@ -73,6 +73,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --all-features --locked
 
 - Debug 的运行时、内核与依赖位于 `<AppData>/dev/`；日志为 `<AppData>/dev/logs/dsh-web.dev.log`。
 - Debug 忽略继承的 `DSH_HOME`，固定使用 `~/.dsh.dev`，不迁移正式版数据或修改生产 CLI PATH。
+- 正式版数据目录由**用户级 `DSH_HOME`** 决定（未设置时是 `~/.dsh`）。Windows 安装器可直接设置该变量；三个平台的「设置 → 数据目录」都能复制数据、校验副本、把旧目录改名保底并改写变量；回滚会用该改名目录还原到原位置。
+- 该变量的持久化方式按平台不同：Windows 写 `HKCU\Environment`；macOS 写 `~/Library/LaunchAgents/dsh-tauri.env.plist`，由 LaunchAgent 在登录时重放 `launchctl setenv`（plist 自带的 `EnvironmentVariables` 键到不了 Finder/Dock 启动的应用）；Linux 写 `~/.config/environment.d/dsh-tauri.conf` 与 `~/.profile` 里的标记块。由 launchd 或显示管理器启动的 GUI 应用不继承登录 shell 的环境，因此应用启动时还会自己从磁盘回读一次该变量。
 - 端口可配置，占用时可能回退；不保证并行启动时始终使用上述值。
 - 档案隔离的是配置，不是操作系统权限。
 

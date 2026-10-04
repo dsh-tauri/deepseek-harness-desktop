@@ -98,6 +98,7 @@ const CONFIG_TABS: { id: ConfigTab, labelKey: string }[] = [
   { id: 'profiles', labelKey: 'config.profiles' },
   { id: 'plugins', labelKey: 'config.plugins' },
   { id: 'harness', labelKey: 'config.harness' },
+  { id: 'dataDir', labelKey: 'config.dataDir' },
 ]
 
 /** WKWebView 的 macOS UA 稳定包含 Macintosh，用于切换平台原生窗口 chrome。 */

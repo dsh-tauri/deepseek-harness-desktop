@@ -42,6 +42,7 @@
 - 🔄 **Runtime management** — Install dependencies, select core versions, and access desktop/core updates.
 - 🧩 **Plugin management** — 11 built-in plugins, plus community plugin installation, upgrades, removal, and error details.
 - 🗂️ **Profile configuration** — Separate plugin/settings configurations; profiles are not an OS security sandbox.
+- 💽 **Data directory** — Pick where data lives during installation (Windows installer); migrate or roll it back later in Settings on Windows, macOS, and Linux.
 - ⌨️ **CLI integration** — Managed `dsh` / `pnpm` shims, not a global npm core installation.
 - 🐾 **Desktop pets** — Pets / Codex resources, pack imports, and conversation activity; preset media comes from remote hosts.
 - 🎨 **Personalization** — 8 palettes, terminal mode, and native transparency, with one-click restore to defaults.
