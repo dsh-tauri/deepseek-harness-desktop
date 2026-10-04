@@ -415,6 +415,15 @@ mod tests {
         dunce::canonicalize(&dir).unwrap()
     }
 
+    /// 实机热重载验证直接复用这份生产字节：只有显式给出 DSH_HMR_LAYER_DUMP 目录时
+    /// 才落盘，默认（含 CI）不写共享临时目录。
+    fn dump_layer(name: &str, yaml: &str) {
+        let Some(dir) = std::env::var_os("DSH_HMR_LAYER_DUMP") else {
+            return;
+        };
+        std::fs::write(Path::new(&dir).join(name), yaml).unwrap();
+    }
+
     #[test]
     fn ignore_patterns_escape_the_backslash_twice() {
         let patterns = ignore_patterns();
@@ -598,12 +607,7 @@ mod tests {
     fn render_layer_percent_encodes_reserved_characters() {
         let source = reserved_dir("reserved");
         let yaml = render_layer(std::slice::from_ref(&source)).expect("render");
-        // 与往返测试同理：把生产字节落到临时目录，实机验证直接复用。
-        std::fs::write(
-            std::env::temp_dir().join("dsh-hmr-layer-hash-out.yml"),
-            &yaml,
-        )
-        .unwrap();
+        dump_layer("dsh-hmr-layer-hash-out.yml", &yaml);
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
         let config = &entries[0]["config"];
         let base = config["base"].as_str().expect("base");
@@ -628,9 +632,8 @@ mod tests {
         let roots = watch_roots_in(&profile, &manifest, |_name, _dir| false);
         assert_eq!(roots, vec![source.clone()]);
 
-        // 实机热重载验证直接复用这份字节：把渲染结果落到临时目录，省掉手工重写补丁层。
         let yaml = render_layer(&roots).expect("render");
-        std::fs::write(std::env::temp_dir().join("dsh-hmr-layer-out.yml"), &yaml).unwrap();
+        dump_layer("dsh-hmr-layer-out.yml", &yaml);
 
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
         let config = &entries[0]["config"];
