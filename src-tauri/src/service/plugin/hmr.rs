@@ -273,31 +273,20 @@ fn relative_root(base: &Path, root: &Path) -> String {
 /// `file://` URL：核心用 `fileURLToPath(new URL(config.base, ctx.baseUrl))` 还原目录，
 /// 只认 file 协议（裸 `D:/x` 会抛 ERR_INVALID_URL_SCHEME）。
 ///
-/// 分隔符按需插入：盘符（`D:`）与 Unix 根（`/`）都要落成规范的三斜杠形态
-/// `file:///D:/x` / `file:///opt/x`；每个分量前无条件补斜杠会让 Unix 变成四斜杠
-/// `file:////opt/x`，被 `new URL()` 解析成 host 为空、pathname 以 `//` 开头。
+/// 用 `Url::from_file_path` 而不是拼字符串：路径里的保留字符必须百分号编码，否则
+/// `#` 会被 `new URL()` 当成 fragment 起始符，`fileURLToPath` 只还原出 `#` 之前的
+/// 半截目录（实测 `D:/my#plugin` ⇒ `D:/my`）；编码后 `%23` 能逐字还原。非 UTF-8
+/// 路径、非磁盘盘符（UNC）以及含 `..` 的相对路径都返回 `None`。
 fn file_url(dir: &Path) -> Option<String> {
-    let mut url = String::from("file:///");
-    for component in dir.components() {
-        match component {
-            Component::Prefix(prefix) => {
-                let text = prefix.as_os_str().to_string_lossy().into_owned();
-                if !text.ends_with(':') {
-                    return None;
-                }
-                url.push_str(&text);
-            }
-            Component::RootDir => {}
-            Component::Normal(part) => {
-                if !url.ends_with('/') {
-                    url.push('/');
-                }
-                url.push_str(&part.to_string_lossy());
-            }
-            Component::CurDir | Component::ParentDir => return None,
-        }
+    if dir
+        .components()
+        .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
+    {
+        return None;
     }
-    Some(url)
+    tauri::Url::from_file_path(dir)
+        .ok()
+        .map(|url| url.as_str().to_string())
 }
 
 fn render_layer(roots: &[PathBuf]) -> Option<String> {
@@ -552,8 +541,8 @@ mod tests {
     #[test]
     fn render_layer_writes_a_complete_hmr_config() {
         // 夹具必须是真实的绝对目录：`X:\hmr-tmp` 在 Unix 上不是绝对路径，`pick_base`
-        // 会返回 `None`。golden 里的平台差异（盘符 vs 根目录、`/` vs `\`）在比对前
-        // 归一化，其余字节逐字固定。
+        // 会返回 `None`。base 行按同一实现函数算出（盘符大小写、分隔符都取真实临时
+        // 目录的形态，不硬编码平台），其余字节逐字固定。
         let root = tmp_dir("render").join("plugins");
         std::fs::create_dir_all(&root).unwrap();
         let roots = vec![root.join("mine"), root.join("other").join("sub")];
@@ -574,7 +563,7 @@ mod tests {
         assert_eq!(config["debounce"].as_u64(), Some(HMR_DEBOUNCE_MS));
 
         // 逐字固定整份补丁层：核心按 id 整块替换 config，任何字段写错或漏写都会被静默忽略。
-        let base_line = format!("    base: {}", url_of(&root));
+        let base_line = format!("    base: {}", file_url(&root).expect("file url"));
         let golden = [
             "- id: hmr",
             "  name: '@deepseek-ai/dsh-hmr'",
@@ -597,17 +586,33 @@ mod tests {
         assert_eq!(yaml, golden);
     }
 
-    /// 目录的 `file:///` URL：只用于测试断言，与实现同口径（盘符大小写、分隔符都按
-    /// 真实临时目录，绝不硬编码平台形态）。
-    fn url_of(dir: &Path) -> String {
-        let text = dir
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        if text.starts_with('/') {
-            format!("file://{text}")
-        } else {
-            format!("file:///{text}")
-        }
+    /// 含保留字符（`#`）的真实目录：源码路径带 `#` 时 URL 必须百分号编码，否则
+    /// `new URL()` 把它当 fragment 起始符，核心会去监听被截断的父目录。
+    fn reserved_dir(tag: &str) -> PathBuf {
+        let dir = tmp_dir(tag).join("my#plugin");
+        std::fs::create_dir_all(&dir).unwrap();
+        dunce::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn render_layer_percent_encodes_reserved_characters() {
+        let source = reserved_dir("reserved");
+        let yaml = render_layer(std::slice::from_ref(&source)).expect("render");
+        // 与往返测试同理：把生产字节落到临时目录，实机验证直接复用。
+        std::fs::write(
+            std::env::temp_dir().join("dsh-hmr-layer-hash-out.yml"),
+            &yaml,
+        )
+        .unwrap();
+        let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
+        let config = &entries[0]["config"];
+        let base = config["base"].as_str().expect("base");
+        assert!(base.contains("my%23plugin"), "{base}");
+        assert!(!base.contains('#'), "{base}");
+
+        // 还原必须逐字回到真实源码目录：`#` 直接写进 URL 时这里只会得到 `my`。
+        let restored = tauri::Url::parse(base).expect("parse url").to_file_path();
+        assert_eq!(restored.ok(), Some(source));
     }
 
     #[test]
