@@ -11,6 +11,31 @@ use tauri::AppHandle;
 
 use crate::service::data_dir;
 
+/// 确认「记录在案的那个 Harness 真的已经退出」。
+///
+/// `stop()` 只处理本进程持有的那个 Harness，而且它成功后会删掉 `.harness.pid`
+/// （`workflow::process::stop`）。于是「崩溃残留、不在 owned 注册表里的 Harness」
+/// 既拦不住 `stop()`，也会因为标记被删而在 `data_dir::harness_stopped` 眼里变成
+/// 「已退出」。所以调用方在停之前先把标记里的 PID 记下来，停完再复核一次它是否
+/// 真的没了——「stop 返回 Ok」与「标记没了」都不是它退出的证据。
+///
+/// 判据刻意只取标记文件里的 PID，不做命令行 / 端口推断：标记路径由数据目录推出，
+/// 天然限定在「同一个数据目录」；而命令行里的 `--profile` 与 `--port` 都不含目录
+/// 信息（用户自己的另一个实例同样是 `--profile tauri --port 3080`），端口还可能被
+/// 无关程序占用。照命令行去清扫会杀掉用户正在用的那个实例，代价远大于让用户
+/// 手动关掉它再重试，因此这里只报告、不动手。
+fn confirm_harness_stopped(recorded: Option<u32>) -> Result<(), String> {
+    let Some(pid) = recorded else {
+        return Ok(());
+    };
+    if data_dir::process_alive(pid) {
+        return Err(format!(
+            "DATA_DIR_HARNESS_RUNNING: {pid} 仍在使用数据目录，请先退出那个实例再重试"
+        ));
+    }
+    Ok(())
+}
+
 /// 当前数据目录状态（同步命令：只读注册表与目录名，不做遍历）。
 #[tauri::command]
 pub fn get_data_dir_status(app_handle: AppHandle) -> data_dir::DataDirStatus {
@@ -76,7 +101,11 @@ pub async fn migrate_data_dir(
 ) -> Result<data_dir::MigrationOutcome, String> {
     let transition = crate::service::workflow::acquire_core_transition().await?;
     let operation = crate::service::plugin::acquire_operation_lock().await;
+    // 标记要在 `stop()` 之前读：停成功时它会顺手删掉标记，删掉之后就再也查不出
+    // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。
+    let recorded = data_dir::harness_marker_pid(&app_handle);
     crate::service::workflow::stop(app_handle.clone()).await?;
+    confirm_harness_stopped(recorded)?;
     let app = app_handle.clone();
     let result = data_dir::migrate(app, PathBuf::from(parent), leaf).await;
     drop(transition);
@@ -92,7 +121,9 @@ pub async fn rollback_data_dir(
 ) -> Result<data_dir::MigrationOutcome, String> {
     let transition = crate::service::workflow::acquire_core_transition().await?;
     let operation = crate::service::plugin::acquire_operation_lock().await;
+    let recorded = data_dir::harness_marker_pid(&app_handle);
     crate::service::workflow::stop(app_handle.clone()).await?;
+    confirm_harness_stopped(recorded)?;
     let app = app_handle.clone();
     let result = data_dir::rollback(app, backup.map(PathBuf::from)).await;
     drop(transition);

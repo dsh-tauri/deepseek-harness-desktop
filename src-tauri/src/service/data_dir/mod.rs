@@ -244,28 +244,47 @@ pub async fn rollback(
     .map_err(|e| format!("DATA_DIR_TASK: {e}"))?
 }
 
-/// 是否为「Harness 已经退出」的稳定状态：`.harness.pid` 里的进程不再存活。
+/// `.harness.pid` 里记录的 PID（从未启动过、上次已正常清理、内容读不出来时为空）。
 ///
 /// 只认标记文件，不做端口猜测：端口可能被别的程序占用，也可能因为端口漂移而
 /// 记着上一个端口；标记文件里的 PID 才是「本应用启动的 Harness」的唯一凭据。
-/// 读不到标记（从未启动过、或上次已正常清理）同样视为已退出。
+/// 标记是两行（PID、端口，见 `workflow::sweep::persist_harness_pid`），只取第一行。
+pub(crate) fn harness_marker_pid(app_handle: &AppHandle) -> Option<u32> {
+    let marker = crate::config::get_dsh_data_path(app_handle).join(".harness.pid");
+    let text = std::fs::read_to_string(&marker).ok()?;
+    text.lines().next()?.trim().parse::<u32>().ok()
+}
+
+/// 是否为「Harness 已经退出」的稳定状态：`.harness.pid` 里的进程不再存活。
+///
+/// 只有「标记不存在」才算已退出——那是从未启动过或上次已正常清理的样子。
+/// 其余一律按「可能还在跑」处理（fail closed）：读失败（占用、权限）说明有人正
+/// 动这个文件，内容解析不出来则可能正写到一半，两种情况下接着改数据目录都可能
+/// 复制到一份撕裂的数据。文件被删掉与写坏这两种「假阴性」的代价完全不对等：
+/// 前者只是让用户重试一次，后者会毁掉用户唯一无法重建的会话数据。
 pub(super) fn harness_stopped(app_handle: &AppHandle) -> bool {
     let marker = crate::config::get_dsh_data_path(app_handle).join(".harness.pid");
-    let Ok(text) = std::fs::read_to_string(&marker) else {
-        return true;
+    let text = match std::fs::read_to_string(&marker) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return true,
+        Err(error) => {
+            log::warn!("DATA_DIR_HARNESS_MARKER: {error}");
+            return false;
+        }
     };
     let Some(pid) = text
         .lines()
         .next()
         .and_then(|line| line.trim().parse::<u32>().ok())
     else {
-        return true;
+        log::warn!("DATA_DIR_HARNESS_MARKER: 无法解析 {}", marker.display());
+        return false;
     };
     !process_alive(pid)
 }
 
 /// 进程是否存活（只查该 PID，不刷新整张进程表）。
-fn process_alive(pid: u32) -> bool {
+pub(crate) fn process_alive(pid: u32) -> bool {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
     let mut system = System::new();

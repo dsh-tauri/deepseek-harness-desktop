@@ -153,12 +153,35 @@ describe('migration safety contract', () => {
     expect(run.indexOf(guard)).toBeLessThan(run.indexOf('fs_ops::copy_tree'))
   })
 
+  it('confirms the Harness really stopped before touching the data directory', () => {
+    // `stop()` 成功后会把 `.harness.pid` 删掉：崩溃残留、不在 owned 注册表里的
+    // Harness 会因此看起来「已退出」，所以标记必须在停之前读、停之后再复核。
+    const bridge = readSource(BRIDGE)
+    const recorded = bridge.indexOf('let recorded = data_dir::harness_marker_pid(&app_handle);')
+    expect(recorded).toBeGreaterThan(-1)
+    expect(recorded).toBeLessThan(bridge.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;'))
+    expect(bridge.split('confirm_harness_stopped(recorded)?;').length - 1).toBe(2)
+    expect(bridge).toContain('DATA_DIR_HARNESS_RUNNING')
+    expect(readSource(MODULE)).toContain('pub(crate) fn harness_marker_pid(app_handle: &AppHandle) -> Option<u32>')
+  })
+
   it('moves a non-empty rollback target aside instead of overwriting it', () => {
     const source = readSource(MIGRATE)
     expect(source).toContain('if fs_ops::is_dir_empty(&restore_to)')
     expect(source).toContain('state::with_current_suffix(&restore_to, &stamp)?')
     expect(source).toContain('DATA_DIR_ROLLBACK_ASIDE')
     expect(source).toContain('DATA_DIR_BACKUP_MISSING')
+  })
+
+  it('puts the backup back when the rollback cannot rewrite the environment', () => {
+    // 回滚的最后一步是改环境变量，此时备份已搬回原位、当前目录已挪到一边；
+    // 直接 `?` 返回会让 DSH_HOME 继续指着刚被搬空的那个目录。
+    const source = readSource(MIGRATE)
+    const rollback = source.slice(source.indexOf('pub(super) fn rollback('), source.indexOf('fn undo_rollback('))
+    expect(rollback).not.toContain('env::write_user_home(&text)?')
+    expect(rollback).toContain('undo_rollback(&chosen, &restore_to, &aside);')
+    expect(source).toContain('fn undo_rollback(chosen: &Path, restore_to: &Path, aside: &str)')
+    expect(source).toContain('DATA_DIR_ROLLBACK_UNDO')
   })
 
   it('ranks backups by session count before timestamp', () => {

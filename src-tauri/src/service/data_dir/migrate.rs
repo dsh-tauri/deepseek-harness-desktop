@@ -258,13 +258,26 @@ pub(super) fn rollback(
     }
 
     // 回到默认目录就清掉变量：默认目录不该在注册表里留一条冗余记录
-    if same_path(&restore_to, &env::default_home()) {
-        env::clear_user_home()?;
-        std::env::remove_var(env::DATA_DIR_ENV);
+    let rewritten = if same_path(&restore_to, &env::default_home()) {
+        let cleared = env::clear_user_home();
+        if cleared.is_ok() {
+            std::env::remove_var(env::DATA_DIR_ENV);
+        }
+        cleared
     } else {
         let text = restore_to.to_string_lossy().into_owned();
-        env::write_user_home(&text)?;
-        std::env::set_var(env::DATA_DIR_ENV, &text);
+        let written = env::write_user_home(&text);
+        if written.is_ok() {
+            std::env::set_var(env::DATA_DIR_ENV, &text);
+        }
+        written
+    };
+    if let Err(error) = rewritten {
+        // 环境变量是最后一步，也是「文件已经搬完」之后唯一还可能失败的一步：
+        // 直接返回会让 `DSH_HOME` 继续指着那个刚被搬空的目录，下次启动就在
+        // 那儿建一份空数据（用户看到的是「会话全没了」）。所以先退回原状再报错。
+        undo_rollback(&chosen, &restore_to, &aside);
+        return Err(error);
     }
     if let Err(error) = state::write_last_migration(app_handle, "") {
         log::warn!("DATA_DIR_STATE_CLEAR: {error}");
@@ -285,6 +298,23 @@ pub(super) fn rollback(
         links: stats.links,
         sessions: fs_ops::count_sessions(&restore_to),
     })
+}
+
+/// 回滚中途失败时的复原：把备份放回 `chosen`，再把挪到一边的当前目录放回原位。
+///
+/// 两步的先后不能反：`restore_to` 得先空出来，`aside` 才搬得回去。这一步失败时
+/// 只记日志——此时已经没有任何「更正确」的落点，把现场留在原地比继续搬动更好。
+fn undo_rollback(chosen: &Path, restore_to: &Path, aside: &str) {
+    if let Err(error) = fs::rename(restore_to, chosen) {
+        log::error!("DATA_DIR_ROLLBACK_UNDO: {}: {error}", restore_to.display());
+        return;
+    }
+    if aside.is_empty() {
+        return;
+    }
+    if let Err(error) = fs::rename(Path::new(aside), restore_to) {
+        log::error!("DATA_DIR_ROLLBACK_UNDO_ASIDE: {aside}: {error}");
+    }
 }
 
 /// 目标合法性：不能是源自己、不能互相嵌套、必须为空或不存在。
