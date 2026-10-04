@@ -1,4 +1,4 @@
-﻿; This file is forked from Tauri's NSIS installer template, at tauri-bundler v2.9.4:
+; This file is forked from Tauri's NSIS installer template, at tauri-bundler v2.9.4:
 ;   https://github.com/tauri-apps/tauri/blob/tauri-bundler-v2.9.4/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
 ;
 ; Keep it in sync with upstream tauri-bundler upgrades, but preserve the

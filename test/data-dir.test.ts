@@ -231,9 +231,14 @@ describe('migration safety contract', () => {
 })
 
 describe('installer data directory page', () => {
-  it('stays UTF-8 with a BOM so NSIS 3.x can compile the Chinese strings', () => {
+  it('leaves the BOM to tauri-bundler so NSIS 3.x can compile the Chinese strings', () => {
+    // tauri-bundler 的 `write_utf8_with_bom` 无条件写一个 UTF-8 BOM；自定义模板再自带一个
+    // 就是两个 BOM 连排，makensis 3.x 在第 1 行直接 `Invalid command: "\ufeff;"` 中止打包
+    // （release v0.22.0 的 Build Windows 就是这样挂的）。模板必须是裸 UTF-8，BOM 只由
+    // bundler 补；中文串仍留在模板里，靠 bundler 补的那个 BOM 让 makensis 走 (UTF8) 分支。
     const bytes = readFileSync(new URL(`../${INSTALLER}`, import.meta.url))
-    expect([...bytes.subarray(0, 3)]).toEqual([0xEF, 0xBB, 0xBF])
+    expect([...bytes.subarray(0, 3)]).not.toEqual([0xEF, 0xBB, 0xBF])
+    expect(readSource(INSTALLER)).toContain('数据存放目录')
   })
 
   it('asks for the data directory after the install directory', () => {
