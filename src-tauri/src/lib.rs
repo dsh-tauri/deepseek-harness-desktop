@@ -16,7 +16,8 @@ pub fn patch_core_dir(core_dir: &std::path::Path) -> Result<(), String> {
 
 /// 应用入口：先做 Wayland 环境兼容（见 `should_apply_wayland_egl_workaround` 与
 /// `should_restore_wayland_backend`），再初始化日志、装配桌面端并进入事件循环。
-pub fn run() {
+pub fn run() -> Result<(), String> {
+    desktop::startup::verify()?;
     // Wayland EGL workaround：仅 AppImage 需要（见 `should_apply_wayland_egl_workaround`）。
     if should_apply_wayland_egl_workaround(
         &std::env::var("XDG_SESSION_TYPE").unwrap_or_default(),
@@ -78,7 +79,7 @@ pub fn run() {
     desktop::builder()
         .invoke_handler(desktop::handler())
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        .map_err(|error| format!("STARTUP_FAILED: {error}"))?
         .run(|app_handle, event| match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::WindowEvent { event, .. } => {
@@ -121,6 +122,7 @@ pub fn run() {
             }
             _ => {}
         });
+    Ok(())
 }
 
 /// Wayland EGL workaround 是否生效：仅 AppImage 需要。

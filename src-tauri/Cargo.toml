@@ -54,7 +54,13 @@ tauri-plugin-autostart = "2"
 # 桌宠素材直连远端：插件版 HTTP 从 Rust 发起请求，绕开 githubusercontent 的 CORS。
 # 版本须与 package.json 的 @tauri-apps/plugin-http（catalog:tauri，^2.6.0）保持同一 minor：
 # tauri CLI 会在构建前校验 NPM 包与 Rust crate 的 major/minor 是否一致，不一致直接退出。
-tauri-plugin-http = "2.6"
+# 公开桌宠素材不需要 cookie；禁用持久化，避免缓存不可写时阻断整个应用启动。
+tauri-plugin-http = { version = "2.6", default-features = false, features = [
+  "rustls-tls",
+  "http2",
+  "charset",
+  "system-proxy"
+] }
 # 前端读取系统版本（`@tauri-apps/plugin-os` 的 `type()` / `version()`）用于缩放的平台判定。
 # 版本须与 package.json 的 @tauri-apps/plugin-os（catalog:tauri，^2.3.2）保持同一 minor：
 # tauri CLI 会在构建前校验 NPM 包与 Rust crate 的 major/minor 是否一致，不一致直接退出。
@@ -96,6 +102,8 @@ sysinfo = { version = "0.39.6", default-features = false, features = [ "system" 
 
 [dev-dependencies]
 auto-launch = "0.5"
+tauri = { version = "2", features = [ "test" ] }
+tempfile = "3"
 
 # 选择数据存放目录（issue #871）：Windows 走原生 IFileDialog、macOS 走 NSOpenPanel、
 # Linux 走 xdg-desktop-portal（无 portal 时 rfd 自己回退到 zenity）。

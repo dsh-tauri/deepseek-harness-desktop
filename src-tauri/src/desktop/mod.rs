@@ -12,6 +12,7 @@ pub mod payload;
 pub mod pet;
 pub mod pet_mouse;
 pub mod plugin_boot;
+pub mod startup;
 #[cfg(windows)]
 pub mod tauri_internals;
 pub mod window;

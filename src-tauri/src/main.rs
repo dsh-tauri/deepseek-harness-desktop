@@ -16,5 +16,8 @@ fn main() {
         }
         return;
     }
-    main::run()
+    if let Err(error) = main::run() {
+        main::desktop::startup::report(&error);
+        std::process::exit(1);
+    }
 }

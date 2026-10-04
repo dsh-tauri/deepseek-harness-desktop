@@ -105,6 +105,8 @@ brew install dsh-tauri/desktop/deepseek-harness
 
 ## 运行方式
 
+Windows 上出现 `STARTUP_LOW_INTEGRITY` 表示进程以低于 Medium 的完整性级别运行，无法写入正常用户的数据目录。安装目录若带有可继承的 Low 标签，更新替换的可执行文件可能继承该标签。可用 `icacls` 检查安装目录及可执行文件，将可信安装的标签恢复为 Medium，或重新安装到正常目录。以管理员身份运行同一个 Low 标签程序不会移除其完整性限制。无需删除会话或修改 `DSH_HOME`；启动失败时会通过原生 Windows 对话框显示具体错误。
+
 | 当前基线 | 版本 |
 | --- | --- |
 | 桌面端 | `0.20.0-beta.1` |

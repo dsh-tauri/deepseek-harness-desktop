@@ -105,6 +105,8 @@ brew install dsh-tauri/desktop/deepseek-harness
 
 ## Runtime
 
+On Windows, `STARTUP_LOW_INTEGRITY` means the process is running below Medium integrity and cannot write normal user data. This can happen when an installation folder has an inherited Low integrity label: a replacement executable can inherit it during an update. Inspect the folder and executable with `icacls`; restore the trusted installation's labels to Medium, or reinstall into a normal folder. Running the same Low-labeled executable as administrator does not remove its integrity restriction. Keep sessions and `DSH_HOME` unchanged. Startup failures now show a native Windows dialog with the underlying error.
+
 | Current baseline | Version |
 | --- | --- |
 | Desktop | `0.20.0-beta.1` |
