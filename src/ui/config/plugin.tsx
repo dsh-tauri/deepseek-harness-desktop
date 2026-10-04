@@ -1,10 +1,11 @@
 import type { Plugin, PluginProcess, PluginSearchProblem, PluginSearchResult } from '@/store/modules/plugins'
-import { ChevronRight, CircleExclamation } from '@gravity-ui/icons'
-import { Button, Chip, Input, Label, Spinner, Switch, Tooltip } from '@heroui/react'
+import { ChevronRight, CircleExclamation, FolderOpen } from '@gravity-ui/icons'
+import { Button, Chip, Description, Input, Label, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
 import { useToggle } from '@reause/core'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
+import { type } from '@tauri-apps/plugin-os'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
@@ -45,11 +46,33 @@ const QUEUED_ACTIONS: Record<PluginProcess['type'], string> = {
 /** 兼容性检查的问题码 → i18n key：管理器把宿主返回的 problem 原样透传给调用方 */
 const searchProblemKeys: Record<PluginSearchProblem, string> = {
   'invalid-spec': 'plugins.search_invalid_spec',
+  'local-missing': 'plugins.search_local_missing',
   'not-found': 'plugins.search_not_found',
   'network': 'plugins.search_network',
   'unsupported': 'plugins.search_unsupported',
   'unknown': 'plugins.search_unknown',
 }
+
+/** 宿主 `get_local_plugin_hmr` 的返回：开关值、补丁层路径与当前真正被监听的源码目录。 */
+interface LocalHmrStatus {
+  enabled: boolean
+  watching: boolean
+  patchPath: string | null
+  roots: string[]
+}
+
+/** 原生文件夹选择器只有 Windows 构建提供，其它平台宿主直接拒绝；据此隐藏入口。 */
+function pickFolderSupported(): boolean {
+  try {
+    return type() === 'windows'
+  }
+  catch (error) {
+    console.warn('[ConfigPlugin] failed to read the OS type, hiding the folder picker:', error)
+    return false
+  }
+}
+
+const PICK_FOLDER_SUPPORTED = pickFolderSupported()
 
 /**
  * 「插件」面板：已安装插件的安装/升级/卸载/禁用/启用全部经 `useDshPluginsManager` 收口
@@ -117,6 +140,57 @@ export function ConfigPlugin() {
       toast(t('plugins.snapshot_delete_failed', { name }), {})
     },
   })
+
+  /** 热重载状态只读展示：补丁层与被监听的源码目录都由后端按已挂载的本地插件算出来。 */
+  const hmr = useQuery({
+    queryKey: queryKeys.localPluginHmr,
+    queryFn: () => invoke<LocalHmrStatus>('get_local_plugin_hmr'),
+  })
+  const setHmr = useMutation({
+    mutationFn: (nextEnabled: boolean) => invoke<LocalHmrStatus>('set_local_plugin_hmr', { enabled: nextEnabled }),
+    onSuccess: (status) => {
+      queryClient.setQueryData(queryKeys.localPluginHmr, status)
+      const key = toast(t('plugins.hmr_restart_hint'), {
+        variant: 'accent',
+        timeout: 10_000,
+        actionProps: {
+          children: t('app.restart'),
+          onPress: () => {
+            store.harness.restart()
+            toast.close(key)
+          },
+        },
+      })
+    },
+    onError: (error: unknown) => {
+      console.error('[ConfigPlugin] local plugin hot reload update failed:', error)
+      toast(t('plugins.hmr_save_failed'), { variant: 'danger' })
+    },
+  })
+
+  /**
+   * 目录选择器只把选中的目录回填进安装框（`link:` spec），安装仍走与手打完全相同的链路：
+   * 用户可以先核对路径再点安装，也能就地改掉。
+   */
+  async function onPickLocalDir() {
+    if (installing)
+      return
+    setInstalling(true)
+    try {
+      const spec = await invoke<string | null>('pick_local_plugin_dir')
+      if (spec == null)
+        return
+      setInstallRef(spec)
+      setSearchResults(null)
+    }
+    catch (e) {
+      console.error('[ConfigPlugin] pick local plugin dir failed:', e)
+      toast(t('plugins.local_dir_failed'), { variant: 'danger' })
+    }
+    finally {
+      setInstalling(false)
+    }
+  }
 
   /** 该插件在管理器队列里的进程类型（不在队列里为 null）。 */
   function queuedType(id: string): PluginProcess['type'] | null {
@@ -622,6 +696,24 @@ export function ConfigPlugin() {
                   {t('plugins.install')}
                 </span>
               </Button>
+              <If cond={PICK_FOLDER_SUPPORTED}>
+                <Tooltip delay={0}>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="tertiary"
+                    className="size-8 shrink-0"
+                    isDisabled={installing}
+                    aria-label={t('plugins.local_dir')}
+                    onPress={() => void onPickLocalDir()}
+                  >
+                    <FolderOpen />
+                  </Button>
+                  <Tooltip.Content className="max-w-[320px]">
+                    <p>{t('plugins.local_dir')}</p>
+                  </Tooltip.Content>
+                </Tooltip>
+              </If>
             </div>
             <If cond={searchResults != null}>
               <div className="flex flex-col gap-1 px-1">
@@ -646,6 +738,29 @@ export function ConfigPlugin() {
                   </div>
                 ))}
               </div>
+            </If>
+          </div>
+
+          <div className="flex flex-col gap-1 px-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-ink">{t('plugins.hmr')}</span>
+              <Switch
+                size="sm"
+                isSelected={hmr.data?.enabled ?? false}
+                isDisabled={hmr.isFetching || setHmr.isPending}
+                onChange={enabled => setHmr.mutate(enabled)}
+                aria-label={t('plugins.hmr')}
+              >
+                <Switch.Content>
+                  <Switch.Control>
+                    <Switch.Thumb />
+                  </Switch.Control>
+                </Switch.Content>
+              </Switch>
+            </div>
+            <Description className="text-[10px] text-muted/70">{t('plugins.hmr_hint')}</Description>
+            <If cond={hmr.data != null && !hmr.data.watching}>
+              <Description className="text-[10px] text-warning">{t('plugins.hmr_idle')}</Description>
             </If>
           </div>
 

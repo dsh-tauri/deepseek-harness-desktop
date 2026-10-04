@@ -5,9 +5,9 @@ use crate::config;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
 #[cfg(not(windows))]
 use std::io::Read;
+use std::path::Path;
 #[cfg(not(windows))]
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
@@ -46,13 +46,30 @@ type SpawnResult = Result<
 /// 复用配置端口；到期仍未释放才按“真占用”逐级递增。
 const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-fn build_harness_args(dsh_binary: &Path, profile: &str, port: u16, heap_mb: Option<u32>) -> Vec<OsString> {
-    let mut args = Vec::with_capacity(7);
+/// 组装启动 Harness 的参数：`[--max-old-space-size] <dsh> --profile <档案>
+/// [--patch <补丁层>] --port <端口> --no-open`。
+///
+/// `--patch` 必须排在子命令参数之前（`dsh` 的选项收集器把第一个非选项参数之后
+/// 的内容整段透传给内层应用，排在后面的 `--patch` 会被判为 `unknown option`）。
+fn build_harness_args(
+    dsh_binary: &Path,
+    profile: &str,
+    patch: Option<&Path>,
+    port: u16,
+    heap_mb: Option<u32>,
+) -> Vec<OsString> {
+    let mut args = Vec::with_capacity(9);
     args.extend(super::heap::heap_option_arg(heap_mb));
     args.extend([
         dsh_binary.as_os_str().to_os_string(),
         OsString::from("--profile"),
         OsString::from(profile),
+    ]);
+    if let Some(patch) = patch {
+        args.push(OsString::from("--patch"));
+        args.push(patch.as_os_str().to_os_string());
+    }
+    args.extend([
         OsString::from("--port"),
         OsString::from(port.to_string()),
         OsString::from("--no-open"),
@@ -639,6 +656,15 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // Windows 分支的「早期退出重试」兜底。
     reset_active_profile_root(&app_handle);
 
+    // 本地插件热重载：把已挂载的本地路径插件源码目录折算成桌面端独占的补丁层，
+    // 随启动以 `--patch` 注入核心 HMR（本地插件没有版本号可升级，改源码即时生效）。
+    // 该层只在本次进程有效，每次启动都要按当前安装状态重算；没有本地插件时不传
+    // `--patch`（指向不存在的文件会让核心在读取补丁层时直接失败）。
+    let hmr_patch = crate::service::plugin::local_plugin_hmr_sync(&app_handle);
+    if let Some(path) = hmr_patch.as_deref() {
+        log::info!("Injecting local plugin HMR layer: {}", path.display());
+    }
+
     // Windows 打包版是 GUI 进程（没有控制台）。直接以 CREATE_NO_WINDOW 启动
     // node 会让 dsh 派生的子进程各自新建可见控制台窗口（频繁闪烁 cmd 黑窗），
     // 因此 Windows 上改用“隐藏控制台”方式启动，见 win_spawn 模块。
@@ -664,7 +690,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                 GetExitCodeProcess, WaitForSingleObject, INFINITE,
             };
 
-            let args = build_harness_args(&dsh_binary_path, active_profile.as_str(), setting.port, heap_mb);
+            let args = build_harness_args(
+                &dsh_binary_path,
+                active_profile.as_str(),
+                hmr_patch.as_deref(),
+                setting.port,
+                heap_mb,
+            );
 
             // 只负责 spawn 并返回管道/PID/句柄：探测与重试期间不登记、不挂
             // 监视线程——只有最终采用的那个进程才登记，否则旧监视线程会通过
@@ -767,7 +799,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         {
             use std::os::unix::process::CommandExt;
             let mut cmd = Command::new(&node_binary_path);
-            cmd.args(build_harness_args(&dsh_binary_path, active_profile.as_str(), setting.port, heap_mb));
+            cmd.args(build_harness_args(
+                &dsh_binary_path,
+                active_profile.as_str(),
+                hmr_patch.as_deref(),
+                setting.port,
+                heap_mb,
+            ));
             cmd.envs(&envs)
                 .current_dir(&core_dir)
                 // 核心修正：提供一个空的 stdin 防止 setRawMode 报错
@@ -803,7 +841,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                                         );
                                         reset_active_profile_root(&app_handle);
                                         cmd = Command::new(&node_binary_path);
-                                        cmd.args(build_harness_args(&dsh_binary_path, active_profile.as_str(), setting.port, heap_mb));
+                                        cmd.args(build_harness_args(
+                                            &dsh_binary_path,
+                                            active_profile.as_str(),
+                                            hmr_patch.as_deref(),
+                                            setting.port,
+                                            heap_mb,
+                                        ));
                                         cmd.envs(&envs)
                                             .current_dir(&core_dir)
                                             .stdin(Stdio::null())
@@ -886,6 +930,55 @@ mod tests {
     fn occupied_port_reports_exhaustion_at_max_port() {
         let error = find_available_port_by(u16::MAX, |_| true).expect_err("port exhaustion");
         assert!(error.starts_with("PORT_EXHAUSTED:"));
+    }
+
+    fn text_args(args: &[OsString]) -> Vec<String> {
+        args.iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// `--patch` 必须排在子命令参数之前：`dsh` 的选项收集器在遇到第一个非选项
+    /// 参数（内层应用名）之后会把剩余参数整段透传，排在其后的 `--patch` 会被内层
+    /// 应用判为未知选项并立刻退出（实测）。
+    #[test]
+    fn patch_layer_argument_precedes_the_port_flags() {
+        let patch = Path::new("D:/app-data/cordis.hmr.patch.yml");
+        let args = build_harness_args(
+            Path::new("D:/core/lib/bin.js"),
+            "tauri",
+            Some(patch),
+            3080,
+            None,
+        );
+        assert_eq!(
+            text_args(&args),
+            vec![
+                "D:/core/lib/bin.js".to_string(),
+                "--profile".to_string(),
+                "tauri".to_string(),
+                "--patch".to_string(),
+                "D:/app-data/cordis.hmr.patch.yml".to_string(),
+                "--port".to_string(),
+                "3080".to_string(),
+                "--no-open".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn heap_option_stays_ahead_of_the_script_path() {
+        let args = build_harness_args(
+            Path::new("D:/core/lib/bin.js"),
+            "tauri",
+            None,
+            3081,
+            Some(4096),
+        );
+        let text = text_args(&args);
+        assert_eq!(text[0], "--max-old-space-size=4096");
+        assert_eq!(text[1], "D:/core/lib/bin.js");
+        assert!(!text.contains(&"--patch".to_string()));
     }
 
     /// 模拟“上个会话残留进程刚被杀、端口仍在释放”的场景：先占用端口，随后在

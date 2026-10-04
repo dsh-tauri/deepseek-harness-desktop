@@ -86,6 +86,7 @@ use diagnose::{
 use pnpm::ensure_pnpm;
 use single::single_plugin_args;
 use spec::{bundled_dir_of, normalize_git_spec, preset_spec_for_install, spec_argument};
+pub(crate) use spec::local_spec_from_path;
 
 /// 允许构建重试的上限。每次重试解决 pnpm 报出的一个允许键（git depPath 或
 /// 传递构建包名），多个 git 插件 / 多个原生依赖各占一次，上限封顶防死循环。
@@ -132,6 +133,7 @@ fn policy_verification_retry_delay(retry: usize) -> std::time::Duration {
 /// 一次安装操作的目标：`id` 是稳定标识（错误记录 / 快照 / bundles 对账），
 /// `name` 是 `node_modules` 下的目录名（产物核验与入口补构建用，无法解析时为
 /// `None`，此时跳过这两步），`spec` 是最终交给 `dsh plugin add` 的参数。
+#[derive(Debug)]
 pub(crate) struct InstallTarget {
     pub id: String,
     pub name: Option<String>,
@@ -158,7 +160,7 @@ pub(crate) async fn install_internal(
 /// 按原始 spec 安装（插件市场 / 手动输入）：与预装路径共用同一套编排，只是目标
 /// 不再来自预设清单，因而没有捆绑目录与版本矩阵——spec 原样交给 pnpm 解析。
 pub async fn install_specs(app_handle: &AppHandle, specs: &[String]) -> Result<(), String> {
-    let targets = spec_targets(app_handle, specs);
+    let targets = spec_targets(app_handle, specs)?;
     if targets.is_empty() {
         return Err("PLUGIN_SPECS_EMPTY: no plugin specs provided".to_string());
     }
@@ -213,20 +215,33 @@ fn preset_targets(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<InstallT
     Ok(targets)
 }
 
-/// 原始 spec → 安装目标：`link:`/`file:` 读目标包名（读不到回落目录名），npm 形态
-/// 剥离版本后缀，git / URL 形态无法静态得知包名，回落 spec 本身并放弃产物核验。
+/// 原始 spec → 安装目标：本地目录 spec 规范成 `link:<绝对路径>` 并读目标包名
+/// （读不到回落目录名），npm 形态剥离版本后缀，git / URL 形态无法静态得知包名，
+/// 回落 spec 本身并放弃产物核验。
 ///
 /// 命中资源清单的 spec 走 [`preset_targets`] 同一套解析：同一条目无论从预装引导页
 /// （预设 id）还是从面板 / 市场（原始 spec）进入，都必须解析出相同的安装目标——内置
 /// 插件的捆绑 `link:` 目录与清单版本矩阵只能在这一侧得到。解析失败（内置插件缺
 /// 捆绑产物，属发布缺陷）时退回裸 spec，让 pnpm 报出真实原因而不是静默跳过该条目。
-fn spec_targets(app_handle: &AppHandle, specs: &[String]) -> Vec<InstallTarget> {
+///
+/// 本地目录在交给 pnpm 之前先校验：目录与 `package.json` 缺一都会让 pnpm 装出
+/// 一个没有清单的联接，随后的产物核验只会报出「命令成功但没有产物」这种与真实
+/// 原因无关的错误。
+fn spec_targets(app_handle: &AppHandle, specs: &[String]) -> Result<Vec<InstallTarget>, String> {
     let core_version = crate::service::core::active_version(app_handle);
     let presets = load_presets(app_handle);
+    // 相对路径的基准：`dsh plugin` 不切换 cwd，pnpm 在 `$AppData/dependencies/dsh`
+    // 下执行（与 [`install_with_cancel`] 传入的 cwd 同源），故本地 spec 必须在这里
+    // 先绝对化，用户输入的 `./plugins/x` 才不会被解析到应用安装目录里。
+    let base = config::get_dsh_install_path(app_handle);
     let mut targets = Vec::with_capacity(specs.len());
     for spec in specs {
         let spec = spec.trim();
         if spec.is_empty() {
+            continue;
+        }
+        if let Some(local) = spec::local_path_spec(spec) {
+            targets.push(local_target(&local, &base)?);
             continue;
         }
         if let Some(preset) = presets
@@ -247,14 +262,38 @@ fn spec_targets(app_handle: &AppHandle, specs: &[String]) -> Vec<InstallTarget> 
             }
         }
         let raw = normalize_git_spec(spec);
-        let name = spec::package_name_of_spec(&raw);
+        let name = spec::package_name_of_spec(&raw, &base);
         targets.push(InstallTarget {
             id: name.clone().unwrap_or_else(|| raw.clone()),
             name,
             spec: spec_argument(&raw, core_version.as_deref()),
         });
     }
-    targets
+    Ok(targets)
+}
+
+/// 本地目录 spec → 安装目标：目录与清单都必须在场，spec 统一改写成 `link:` 绝对路径。
+///
+/// `id` 取包名（产物核验、快照、错误记录都以包名为键）；清单读不出时回落绝对路径
+/// ——它是这条 spec 唯一的稳定标识，且与 pnpm 落盘的依赖键（`link:<路径>`）可读地对应。
+fn local_target(raw: &Path, base: &Path) -> Result<InstallTarget, String> {
+    let spec = raw.to_string_lossy();
+    let Some(dir) = spec::local_dir_of(&spec, base) else {
+        return Err(format!("PLUGIN_LOCAL_SPEC_INVALID: {spec}"));
+    };
+    if !dir.is_dir() {
+        return Err(format!(
+            "PLUGIN_LOCAL_DIR_MISSING: local plugin directory not found: {}",
+            dir.display()
+        ));
+    }
+    let name = spec::local_package_name(&dir);
+    let link = format!("link:{}", spec::forward_slashes(&dir));
+    Ok(InstallTarget {
+        id: name.clone().unwrap_or_else(|| link.clone()),
+        name,
+        spec: link,
+    })
 }
 
 /// 被门禁拦下的条目**全部**已在 lock 中时，返回该补写的豁免条目（精确 `包名@版本`）。
@@ -911,6 +950,115 @@ pub(super) fn append_command_output(all_output: &mut String, captured: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- 本地目录 spec 的安装目标解析 ----
+
+    /// 造一个真实存在的本地插件目录：本地 spec 的解析会 canonicalize，只有落盘
+    /// 路径才能覆盖「尾斜杠 / 混用分隔符 / 短名」这些形态。
+    fn local_plugin_fixture(tag: &str, manifest: Option<&str>) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!("dsh-local-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("plugin");
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(manifest) = manifest {
+            std::fs::write(dir.join("package.json"), manifest).unwrap();
+        }
+        // `temp_dir()` 在 Windows 上是 8.3 短名（`IUUUUU~1`），而安装 spec 按设计
+        // 展开成真实长名——夹具必须站在同一口径上比较。
+        let base = dunce::simplified(&std::fs::canonicalize(&base).unwrap()).to_path_buf();
+        let dir = base.join("plugin");
+        (base, dir)
+    }
+
+    #[test]
+    fn local_target_emits_link_absolute_spec_and_manifest_name() {
+        let (base, dir) = local_plugin_fixture(
+            "manifest",
+            Some("{\"name\":\"dsh-reverse-skill\",\"version\":\"1.0.2\"}"),
+        );
+
+        let target = local_target(std::path::Path::new("./plugin"), &base).unwrap();
+
+        assert_eq!(target.id, "dsh-reverse-skill");
+        assert_eq!(target.name.as_deref(), Some("dsh-reverse-skill"));
+        assert_eq!(target.spec, format!("link:{}", spec::forward_slashes(&dir)));
+        assert!(target.spec.starts_with("link:"));
+        assert!(
+            !target.spec.contains('\\'),
+            "pnpm 只接受正斜杠形态: {}",
+            target.spec
+        );
+        assert!(!target.spec.ends_with('/'));
+        assert!(
+            std::path::Path::new(target.spec.trim_start_matches("link:")).is_absolute(),
+            "相对输入必须绝对化：pnpm 的 cwd 是 dsh 安装目录，不是调用方目录: {}",
+            target.spec
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn local_target_falls_back_to_directory_name_without_manifest() {
+        // 无 package.json 时不在这里报错：dsh 会把这类依赖装成普通依赖（非 profile
+        // 层），pnpm 的目录名就是唯一可用的标识，也是产物核验要看的目录。
+        let (base, dir) = local_plugin_fixture("bare", None);
+
+        let target = local_target(std::path::Path::new("./plugin"), &base).unwrap();
+
+        assert_eq!(target.id, "plugin");
+        assert_eq!(target.name.as_deref(), Some("plugin"));
+        assert_eq!(target.spec, format!("link:{}", spec::forward_slashes(&dir)));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn local_target_rejects_missing_directory_before_pnpm_runs() {
+        // 目录缺失必须在这里拦下：交给 pnpm 只会得到 ERR_PNPM_LINKED_PKG_DIR_NOT_FOUND
+        // 或一个空联接，用户看不出到底哪里不对。
+        let (base, _) = local_plugin_fixture("missing", None);
+
+        let err = local_target(std::path::Path::new("./absent"), &base).unwrap_err();
+
+        assert!(err.starts_with("PLUGIN_LOCAL_DIR_MISSING"), "{err}");
+        assert!(err.contains("absent"), "错误里要给出解析后的路径: {err}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn local_target_rejects_a_file_path() {
+        // 粘贴到文件（而非目录）同样要提前拒绝，否则 pnpm 装出一个没有清单的联接，
+        // 产物核验只会报「命令成功但没有产物」这种与真实原因无关的错误。
+        let (base, dir) = local_plugin_fixture("file", None);
+        let file = dir.join("index.js");
+        std::fs::write(&file, "").unwrap();
+
+        let err = local_target(&file, &base).unwrap_err();
+
+        assert!(err.starts_with("PLUGIN_LOCAL_DIR_MISSING"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn local_target_honours_absolute_paths_verbatim() {
+        // 绝对路径不受 base 影响：用户从别的盘粘过来的插件目录必须指向它自己。
+        let (base, _) = local_plugin_fixture("absolute", None);
+        let (other_base, other_dir) = local_plugin_fixture("absolute-other", None);
+
+        let target = local_target(&other_dir, &base).unwrap();
+
+        assert_eq!(target.spec, format!("link:{}", spec::forward_slashes(&other_dir)));
+        assert_ne!(
+            target.spec,
+            format!("link:{}", spec::forward_slashes(&base.join("plugin")))
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&other_base);
+    }
 
     #[test]
     fn locked_release_age_exemptions_require_every_blocked_entry_to_be_locked() {

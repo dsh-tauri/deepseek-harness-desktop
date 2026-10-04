@@ -17,6 +17,8 @@ export const queryKeys = {
   cores: ['cores'] as const,
   /** 已安装 dsh 插件列表（面板 / 配置对话框角标 / 导航栏共用） */
   plugins: ['plugins'] as const,
+  /** 本地插件热重载开关与监听状态（插件面板） */
+  localPluginHmr: ['local_plugin_hmr'] as const,
   /** dsh 档案列表 */
   profiles: ['profiles'] as const,
   /** 当前档案的备份快照列表 */

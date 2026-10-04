@@ -7,6 +7,8 @@ use crate::config;
 use crate::service::plugin;
 use tauri::AppHandle;
 use tauri::Emitter;
+#[cfg(windows)]
+use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 fn mark_preinstall_done(app_handle: &AppHandle) {
@@ -84,6 +86,29 @@ pub async fn install_plugin_specs(app_handle: AppHandle, specs: Vec<String>) -> 
     plugin::install_specs(&app_handle, &specs).await?;
     plugin::watch::force_emit(&app_handle);
     Ok(())
+}
+
+/// 本地插件热重载的当前状态：生效开关、补丁层路径与被监听的源码目录。
+#[tauri::command]
+pub async fn get_local_plugin_hmr(app_handle: AppHandle) -> Result<plugin::LocalHmrStatus, String> {
+    Ok(plugin::local_plugin_hmr_status(&app_handle))
+}
+
+/// 开关本地插件热重载：开关变化会立即复算补丁层，下次启动服务时生效。
+#[tauri::command]
+pub async fn set_local_plugin_hmr(
+    app_handle: AppHandle,
+    enabled: bool,
+) -> Result<plugin::LocalHmrStatus, String> {
+    config::update_store_dat_setting(&app_handle, |setting| {
+        setting.local_plugin_hmr = enabled;
+    });
+    let patch = plugin::local_plugin_hmr_sync(&app_handle);
+    log::info!(
+        "[hmr] local plugin hot reload set to {enabled}, layer: {:?}",
+        patch.as_ref().map(|path| path.display().to_string())
+    );
+    Ok(plugin::local_plugin_hmr_status(&app_handle))
 }
 
 /// 只读检查一组 spec 的兼容性（registry `latest` 上的 DSH 家族 peer 依赖），
@@ -319,6 +344,43 @@ pub async fn restore_plugin(app_handle: AppHandle, id: String) -> Result<(), Str
     plugin::snapshot::restore(&app_handle, &id).await?;
     plugin::watch::force_emit(&app_handle);
     Ok(())
+}
+
+/// 弹出系统文件夹选择器，返回可直接安装的本地插件 `link:` spec（取消时为 `None`）。
+///
+/// Windows 的文件夹选择器是 COM 组件（`CoInitializeEx` 要求 STA 单元），而异步命令体跑在
+/// 线程池上、线程的 COM 单元不确定；因此把对话框搬到主线程（tao 建窗时已初始化 STA），
+/// 再同步等它关闭：阻塞的是原生对话框自身，异步运行时不阻塞。
+/// 其余平台没有可用的原生选择器，直接拒绝，由前端隐藏入口。
+#[tauri::command]
+pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let app = app_handle.clone();
+        app_handle
+            .run_on_main_thread(move || {
+                let mut dialog = rfd::FileDialog::new().set_title("选择本地插件目录");
+                if let Some(window) =
+                    app.get_webview_window(crate::desktop::builder::MAIN_WINDOW_LABEL)
+                {
+                    dialog = dialog.set_parent(&window);
+                }
+                let picked = dialog
+                    .pick_folder()
+                    .map(|dir| plugin::local_spec_from_path(&dir));
+                let _ = sender.send(picked);
+            })
+            .map_err(|error| format!("PLUGIN_PICK_FOLDER_FAILED: {error}"))?;
+        receiver
+            .await
+            .map_err(|error| format!("PLUGIN_PICK_FOLDER_FAILED: {error}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app_handle;
+        Err("PLUGIN_PICK_FOLDER_UNSUPPORTED: native folder picker is Windows-only".to_string())
+    }
 }
 
 /// 删除单个插件的快照（卸载级联清理 / 手动删除）：幂等，无快照视为成功。
