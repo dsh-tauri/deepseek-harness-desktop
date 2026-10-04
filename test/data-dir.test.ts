@@ -157,12 +157,24 @@ describe('migration safety contract', () => {
     // `stop()` 成功后会把 `.harness.pid` 删掉：崩溃残留、不在 owned 注册表里的
     // Harness 会因此看起来「已退出」，所以标记必须在停之前读、停之后再复核。
     const bridge = readSource(BRIDGE)
-    const recorded = bridge.indexOf('let recorded = data_dir::harness_marker_pid(&app_handle);')
+    const recorded = bridge.indexOf('let recorded = data_dir::harness_marker(&app_handle);')
     expect(recorded).toBeGreaterThan(-1)
-    expect(recorded).toBeLessThan(bridge.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;'))
-    expect(bridge.split('confirm_harness_stopped(recorded)?;').length - 1).toBe(2)
+    const stop = bridge.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;')
+    expect(stop).toBeGreaterThan(-1)
+    expect(recorded).toBeLessThan(stop)
+    // 两个命令各复核两次：停之前一次、停之后一次
+    expect(bridge.split('confirm_harness_stopped(recorded)?;').length - 1).toBe(4)
     expect(bridge).toContain('DATA_DIR_HARNESS_RUNNING')
-    expect(readSource(MODULE)).toContain('pub(crate) fn harness_marker_pid(app_handle: &AppHandle) -> Option<u32>')
+    expect(bridge).toContain('DATA_DIR_HARNESS_MARKER_INVALID')
+    // 标记读不出来与标记不在必须分开：前者要先拒绝，否则 `stop()` 删掉标记后
+    // 就再也查不出「有个不在 owned 注册表里的 Harness 还在写这个目录」。
+    expect(bridge).toContain('HarnessMarker::Invalid')
+    expect(bridge).toContain('HarnessMarker::Missing')
+    const module = readSource(MODULE)
+    expect(module).toContain('pub(crate) enum HarnessMarker {')
+    expect(module).toContain('pub(crate) fn harness_marker(app_handle: &AppHandle) -> HarnessMarker {')
+    // `harness_stopped` 复用同一份分类，不再各写一遍解析逻辑
+    expect(module).toContain('match harness_marker(app_handle) {')
   })
 
   it('moves a non-empty rollback target aside instead of overwriting it', () => {

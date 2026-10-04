@@ -24,16 +24,27 @@ use crate::service::data_dir;
 /// 信息（用户自己的另一个实例同样是 `--profile tauri --port 3080`），端口还可能被
 /// 无关程序占用。照命令行去清扫会杀掉用户正在用的那个实例，代价远大于让用户
 /// 手动关掉它再重试，因此这里只报告、不动手。
-fn confirm_harness_stopped(recorded: Option<u32>) -> Result<(), String> {
-    let Some(pid) = recorded else {
-        return Ok(());
-    };
-    if data_dir::process_alive(pid) {
-        return Err(format!(
-            "DATA_DIR_HARNESS_RUNNING: {pid} 仍在使用数据目录，请先退出那个实例再重试"
-        ));
+fn confirm_harness_stopped(recorded: data_dir::HarnessMarker) -> Result<(), String> {
+    use data_dir::HarnessMarker;
+    match recorded {
+        // 标记写坏（占用、权限、写到一半）时既读不出 PID，也就无法排除「有个
+        // 不在本进程注册表里的 Harness 正在写这个目录」；而 `stop()` 会把标记删掉，
+        // 删掉之后这种局面就再也查不出来了——所以必须在 `stop()` 之前就拒绝。
+        HarnessMarker::Invalid => Err(
+            "DATA_DIR_HARNESS_MARKER_INVALID: .harness.pid 读不出来，无法确认 Harness 是否已退出，请先退出所有实例再重试"
+                .to_string(),
+        ),
+        // 从未启动过、或上次已正常清理：没有别的实例可担心
+        HarnessMarker::Missing => Ok(()),
+        HarnessMarker::Pid(pid) => {
+            if data_dir::process_alive(pid) {
+                return Err(format!(
+                    "DATA_DIR_HARNESS_RUNNING: {pid} 仍在使用数据目录，请先退出那个实例再重试"
+                ));
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 /// 当前数据目录状态（同步命令：只读注册表与目录名，不做遍历）。
@@ -102,8 +113,10 @@ pub async fn migrate_data_dir(
     let transition = crate::service::workflow::acquire_core_transition().await?;
     let operation = crate::service::plugin::acquire_operation_lock().await;
     // 标记要在 `stop()` 之前读：停成功时它会顺手删掉标记，删掉之后就再也查不出
-    // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。
-    let recorded = data_dir::harness_marker_pid(&app_handle);
+    // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。读不出来
+    // 的情况同样要在停之前拒绝（`confirm_harness_stopped` 里的 Invalid 分支）。
+    let recorded = data_dir::harness_marker(&app_handle);
+    confirm_harness_stopped(recorded)?;
     crate::service::workflow::stop(app_handle.clone()).await?;
     confirm_harness_stopped(recorded)?;
     let app = app_handle.clone();
@@ -121,7 +134,8 @@ pub async fn rollback_data_dir(
 ) -> Result<data_dir::MigrationOutcome, String> {
     let transition = crate::service::workflow::acquire_core_transition().await?;
     let operation = crate::service::plugin::acquire_operation_lock().await;
-    let recorded = data_dir::harness_marker_pid(&app_handle);
+    let recorded = data_dir::harness_marker(&app_handle);
+    confirm_harness_stopped(recorded)?;
     crate::service::workflow::stop(app_handle.clone()).await?;
     confirm_harness_stopped(recorded)?;
     let app = app_handle.clone();

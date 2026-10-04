@@ -244,15 +244,50 @@ pub async fn rollback(
     .map_err(|e| format!("DATA_DIR_TASK: {e}"))?
 }
 
-/// `.harness.pid` 里记录的 PID（从未启动过、上次已正常清理、内容读不出来时为空）。
+/// `.harness.pid` 的读取结果（两行：PID、端口，见 `workflow::sweep::persist_harness_pid`）。
+///
+/// 「文件不在」与「文件在但读不出来 / 解析不出来」必须分开：前者是正常的
+/// 「从未启动过、或上次已正常清理」，后者说明有人正动这个文件（占用、权限、写到
+/// 一半）。区别在于 `workflow::process::stop()` 无论哪种情况都会把标记删掉，于是
+/// 「标记没了」会被误读成「Harness 已退出」——只有把 Invalid 单独标出来，调用方
+/// 才有机会在删标记之前拒绝这次迁移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HarnessMarker {
+    /// 文件不在：从未启动过、或上次已正常清理。
+    Missing,
+    /// 文件在，但读不出来或第一行不是 PID。
+    Invalid,
+    /// 标记里记录的 PID。
+    Pid(u32),
+}
+
+/// 读 `.harness.pid` 并分类。
 ///
 /// 只认标记文件，不做端口猜测：端口可能被别的程序占用，也可能因为端口漂移而
 /// 记着上一个端口；标记文件里的 PID 才是「本应用启动的 Harness」的唯一凭据。
-/// 标记是两行（PID、端口，见 `workflow::sweep::persist_harness_pid`），只取第一行。
-pub(crate) fn harness_marker_pid(app_handle: &AppHandle) -> Option<u32> {
-    let marker = crate::config::get_dsh_data_path(app_handle).join(".harness.pid");
-    let text = std::fs::read_to_string(&marker).ok()?;
-    text.lines().next()?.trim().parse::<u32>().ok()
+pub(crate) fn harness_marker(app_handle: &AppHandle) -> HarnessMarker {
+    harness_marker_at(&crate::config::get_dsh_data_path(app_handle).join(".harness.pid"))
+}
+
+/// 无 `AppHandle` 版本：路径由调用方给出，便于用临时目录直接测三种分类。
+fn harness_marker_at(marker: &Path) -> HarnessMarker {
+    let text = match std::fs::read_to_string(marker) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return HarnessMarker::Missing,
+        Err(error) => {
+            log::warn!("DATA_DIR_HARNESS_MARKER: {error}");
+            return HarnessMarker::Invalid;
+        }
+    };
+    let Some(pid) = text
+        .lines()
+        .next()
+        .and_then(|line| line.trim().parse::<u32>().ok())
+    else {
+        log::warn!("DATA_DIR_HARNESS_MARKER: 无法解析 {}", marker.display());
+        return HarnessMarker::Invalid;
+    };
+    HarnessMarker::Pid(pid)
 }
 
 /// 是否为「Harness 已经退出」的稳定状态：`.harness.pid` 里的进程不再存活。
@@ -263,24 +298,11 @@ pub(crate) fn harness_marker_pid(app_handle: &AppHandle) -> Option<u32> {
 /// 复制到一份撕裂的数据。文件被删掉与写坏这两种「假阴性」的代价完全不对等：
 /// 前者只是让用户重试一次，后者会毁掉用户唯一无法重建的会话数据。
 pub(super) fn harness_stopped(app_handle: &AppHandle) -> bool {
-    let marker = crate::config::get_dsh_data_path(app_handle).join(".harness.pid");
-    let text = match std::fs::read_to_string(&marker) {
-        Ok(text) => text,
-        Err(error) if error.kind() == ErrorKind::NotFound => return true,
-        Err(error) => {
-            log::warn!("DATA_DIR_HARNESS_MARKER: {error}");
-            return false;
-        }
-    };
-    let Some(pid) = text
-        .lines()
-        .next()
-        .and_then(|line| line.trim().parse::<u32>().ok())
-    else {
-        log::warn!("DATA_DIR_HARNESS_MARKER: 无法解析 {}", marker.display());
-        return false;
-    };
-    !process_alive(pid)
+    match harness_marker(app_handle) {
+        HarnessMarker::Missing => true,
+        HarnessMarker::Invalid => false,
+        HarnessMarker::Pid(pid) => !process_alive(pid),
+    }
 }
 
 /// 进程是否存活（只查该 PID，不刷新整张进程表）。
@@ -341,6 +363,30 @@ mod tests {
     #[test]
     fn process_alive_reports_the_current_process() {
         assert!(process_alive(std::process::id()));
+    }
+
+    /// 「文件不在」与「文件在但读不出来 / 解析不出来」必须分开：`stop()` 两种
+    /// 情况都会删标记，只有 Invalid 能让调用方在删之前拒绝迁移。
+    #[test]
+    fn harness_marker_tells_missing_from_unreadable() {
+        let root = temp_dir("marker");
+        let marker = root.join(".harness.pid");
+        assert_eq!(harness_marker_at(&marker), HarnessMarker::Missing);
+
+        // 两行（PID、端口）：只取第一行
+        std::fs::write(&marker, "4242\n3080\n").unwrap();
+        assert_eq!(harness_marker_at(&marker), HarnessMarker::Pid(4242));
+
+        std::fs::write(&marker, "not-a-pid\n3080\n").unwrap();
+        assert_eq!(harness_marker_at(&marker), HarnessMarker::Invalid);
+        std::fs::write(&marker, "").unwrap();
+        assert_eq!(harness_marker_at(&marker), HarnessMarker::Invalid);
+
+        // 同名目录：`read_to_string` 报的不是 NotFound，属于「有人占着这个名字」
+        std::fs::remove_file(&marker).unwrap();
+        std::fs::create_dir(&marker).unwrap();
+        assert_eq!(harness_marker_at(&marker), HarnessMarker::Invalid);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 迁移刚把旧目录改名搬走、Harness 还没重建它时，目录会短暂不存在。
