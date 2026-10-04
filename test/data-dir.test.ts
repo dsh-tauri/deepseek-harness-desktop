@@ -162,8 +162,16 @@ describe('migration safety contract', () => {
     const stop = bridge.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;')
     expect(stop).toBeGreaterThan(-1)
     expect(recorded).toBeLessThan(stop)
-    // 两个命令各复核两次：停之前一次、停之后一次
-    expect(bridge.split('confirm_harness_stopped(recorded)?;').length - 1).toBe(4)
+    // 停之前只拦「标记读不出来」，停之后才复核「标记里那个 PID 是否还在」：
+    // 标记里写着一个存活 PID 通常就是本应用自己刚拉起的 Harness，停之前一并
+    // 拒绝会让正常迁移永远走不下去（`stop()` 才是停它的那一步）。
+    expect(bridge.split('reject_unreadable_marker(recorded)?;').length - 1).toBe(2)
+    expect(bridge.indexOf('reject_unreadable_marker(recorded)?;')).toBeLessThan(stop)
+    expect(bridge.split('confirm_harness_stopped(recorded)?;').length - 1).toBe(2)
+    // 停之前那道检查必须放行「存活 PID」分支
+    expect(bridge).toContain('HarnessMarker::Missing | HarnessMarker::Pid(_) => Ok(())')
+    // 停之前那一步必须排在 `stop()` 前面，否则标记已经被删、什么都查不出
+    expect(bridge.indexOf('reject_unreadable_marker(recorded)?;')).toBeLessThan(bridge.indexOf('workflow::stop'))
     expect(bridge).toContain('DATA_DIR_HARNESS_RUNNING')
     expect(bridge).toContain('DATA_DIR_HARNESS_MARKER_INVALID')
     // 标记读不出来与标记不在必须分开：前者要先拒绝，否则 `stop()` 删掉标记后

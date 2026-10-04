@@ -11,13 +11,38 @@ use tauri::AppHandle;
 
 use crate::service::data_dir;
 
-/// 确认「记录在案的那个 Harness 真的已经退出」。
+/// 标记文件名（错误信息与 `data_dir::harness_marker` 指向同一个文件）。
+const MARKER_NAME: &str = ".harness.pid";
+
+/// `stop()` 之前：标记读不出来就先拒绝，别给 `stop()` 删标记的机会。
 ///
-/// `stop()` 只处理本进程持有的那个 Harness，而且它成功后会删掉 `.harness.pid`
-/// （`workflow::process::stop`）。于是「崩溃残留、不在 owned 注册表里的 Harness」
-/// 既拦不住 `stop()`，也会因为标记被删而在 `data_dir::harness_stopped` 眼里变成
-/// 「已退出」。所以调用方在停之前先把标记里的 PID 记下来，停完再复核一次它是否
-/// 真的没了——「stop 返回 Ok」与「标记没了」都不是它退出的证据。
+/// `stop()` 成功后会删掉 `.harness.pid`（`workflow::process::stop`），删掉之后
+/// 「这个目录当时有没有别的 Harness 在写」就再也查不出来了。标记读不出来
+/// （占用、权限、写到一半）恰恰说明有人正动这个文件，此时既拿不到 PID、也就无法
+/// 排除「有个不在 owned 注册表里的 Harness 还在写这个目录」，只能 fail closed。
+///
+/// 标记里写着一个存活 PID 时**不**在这里拒绝：那通常就是本应用自己拉起的 Harness
+/// （`launch.rs` 启动后立刻写下标记），`stop()` 会正常把它停掉；提前拒绝会让
+/// 正常迁移永远走不下去。这类判断留给 `stop()` 之后的 `confirm_harness_stopped`。
+fn reject_unreadable_marker(recorded: data_dir::HarnessMarker) -> Result<(), String> {
+    use data_dir::HarnessMarker;
+    match recorded {
+        HarnessMarker::Invalid => Err(format!(
+            "DATA_DIR_HARNESS_MARKER_INVALID: {} 读不出来，无法确认 Harness 是否已退出，请先退出所有实例再重试",
+            MARKER_NAME
+        )),
+        // 标记里写着一个存活 PID：那通常就是本应用自己拉起的 Harness，放行让
+        // `stop()` 去停它；真正「停不掉」的情况由停服后的复核负责。
+        HarnessMarker::Missing | HarnessMarker::Pid(_) => Ok(()),
+    }
+}
+
+/// `stop()` 之后：确认「记录在案的那个 Harness 真的已经退出」。
+///
+/// `stop()` 只处理本进程持有的那个 Harness。于是「崩溃残留、不在 owned 注册表里
+/// 的 Harness」既拦不住 `stop()`，也会因为标记被删而在 `data_dir::harness_stopped`
+/// 眼里变成「已退出」。所以调用方在停之前先把标记读下来，停完再复核一次它是否真的
+/// 没了——「stop 返回 Ok」与「标记没了」都不是它退出的证据。
 ///
 /// 判据刻意只取标记文件里的 PID，不做命令行 / 端口推断：标记路径由数据目录推出，
 /// 天然限定在「同一个数据目录」；而命令行里的 `--profile` 与 `--port` 都不含目录
@@ -27,13 +52,12 @@ use crate::service::data_dir;
 fn confirm_harness_stopped(recorded: data_dir::HarnessMarker) -> Result<(), String> {
     use data_dir::HarnessMarker;
     match recorded {
-        // 标记写坏（占用、权限、写到一半）时既读不出 PID，也就无法排除「有个
-        // 不在本进程注册表里的 Harness 正在写这个目录」；而 `stop()` 会把标记删掉，
-        // 删掉之后这种局面就再也查不出来了——所以必须在 `stop()` 之前就拒绝。
-        HarnessMarker::Invalid => Err(
-            "DATA_DIR_HARNESS_MARKER_INVALID: .harness.pid 读不出来，无法确认 Harness 是否已退出，请先退出所有实例再重试"
-                .to_string(),
-        ),
+        // 正常路径上到不了这里（`reject_unreadable_marker` 已经先拦下），留着是
+        // 为了万一将来有人调换两步顺序时仍然 fail closed。
+        HarnessMarker::Invalid => Err(format!(
+            "DATA_DIR_HARNESS_MARKER_INVALID: {} 读不出来，无法确认 Harness 是否已退出，请先退出所有实例再重试",
+            MARKER_NAME
+        )),
         // 从未启动过、或上次已正常清理：没有别的实例可担心
         HarnessMarker::Missing => Ok(()),
         HarnessMarker::Pid(pid) => {
@@ -113,10 +137,9 @@ pub async fn migrate_data_dir(
     let transition = crate::service::workflow::acquire_core_transition().await?;
     let operation = crate::service::plugin::acquire_operation_lock().await;
     // 标记要在 `stop()` 之前读：停成功时它会顺手删掉标记，删掉之后就再也查不出
-    // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。读不出来
-    // 的情况同样要在停之前拒绝（`confirm_harness_stopped` 里的 Invalid 分支）。
+    // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。
     let recorded = data_dir::harness_marker(&app_handle);
-    confirm_harness_stopped(recorded)?;
+    reject_unreadable_marker(recorded)?;
     crate::service::workflow::stop(app_handle.clone()).await?;
     confirm_harness_stopped(recorded)?;
     let app = app_handle.clone();
@@ -135,7 +158,7 @@ pub async fn rollback_data_dir(
     let transition = crate::service::workflow::acquire_core_transition().await?;
     let operation = crate::service::plugin::acquire_operation_lock().await;
     let recorded = data_dir::harness_marker(&app_handle);
-    confirm_harness_stopped(recorded)?;
+    reject_unreadable_marker(recorded)?;
     crate::service::workflow::stop(app_handle.clone()).await?;
     confirm_harness_stopped(recorded)?;
     let app = app_handle.clone();
