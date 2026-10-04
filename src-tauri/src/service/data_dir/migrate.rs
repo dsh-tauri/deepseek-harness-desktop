@@ -258,27 +258,23 @@ pub(super) fn rollback(
     }
 
     // 回到默认目录就清掉变量：默认目录不该在注册表里留一条冗余记录
-    let rewritten = if same_path(&restore_to, &env::default_home()) {
-        let cleared = env::clear_user_home();
-        if cleared.is_ok() {
-            std::env::remove_var(env::DATA_DIR_ENV);
+    let back_to_default = same_path(&restore_to, &env::default_home());
+    let apply = |text: &str| {
+        if back_to_default {
+            let cleared = env::clear_user_home();
+            if cleared.is_ok() {
+                std::env::remove_var(env::DATA_DIR_ENV);
+            }
+            cleared
+        } else {
+            let written = env::write_user_home(text);
+            if written.is_ok() {
+                std::env::set_var(env::DATA_DIR_ENV, text);
+            }
+            written
         }
-        cleared
-    } else {
-        let text = restore_to.to_string_lossy().into_owned();
-        let written = env::write_user_home(&text);
-        if written.is_ok() {
-            std::env::set_var(env::DATA_DIR_ENV, &text);
-        }
-        written
     };
-    if let Err(error) = rewritten {
-        // 环境变量是最后一步，也是「文件已经搬完」之后唯一还可能失败的一步：
-        // 直接返回会让 `DSH_HOME` 继续指着那个刚被搬空的目录，下次启动就在
-        // 那儿建一份空数据（用户看到的是「会话全没了」）。所以先退回原状再报错。
-        undo_rollback(&chosen, &restore_to, &aside);
-        return Err(error);
-    }
+    rewrite_env_or_undo(&chosen, &restore_to, &aside, apply)?;
     if let Err(error) = state::write_last_migration(app_handle, "") {
         log::warn!("DATA_DIR_STATE_CLEAR: {error}");
     }
@@ -298,6 +294,31 @@ pub(super) fn rollback(
         links: stats.links,
         sessions: fs_ops::count_sessions(&restore_to),
     })
+}
+
+/// 回滚最后一步：改写用户级 `DSH_HOME`；写失败就把已经搬动的两个目录放回去再报错。
+///
+/// 这一步是「文件已经搬完」之后唯一还可能失败的动作：直接返回会让 `DSH_HOME` 继续
+/// 指着那个刚被搬空的目录，下次启动就在那儿建一份空数据（用户看到的是「会话全
+/// 没了」）。所以先复原现场再报错。
+///
+/// 真正调注册表 / 广播 `WM_SETTINGCHANGE` 的动作由调用方以 `apply` 传进来：注册表是
+/// 机器级状态，单元测试不能真去改它（会污染跑测试的那台机器、也让断言依赖当前值），
+/// 而「写失败时到底有没有复原」恰恰是必须被真正执行到的那条路径。
+fn rewrite_env_or_undo<F>(
+    chosen: &Path,
+    restore_to: &Path,
+    aside: &str,
+    apply: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&str) -> Result<(), String>,
+{
+    if let Err(error) = apply(&restore_to.to_string_lossy()) {
+        undo_rollback(chosen, restore_to, aside);
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// 回滚中途失败时的复原：把备份放回 `chosen`，再把挪到一边的当前目录放回原位。
@@ -555,6 +576,61 @@ mod tests {
         assert!(found.contains(&backup_to), "默认位置的备份未被找到：{found:?}");
         // 反向核对：用当前位置的名字去找默认位置旁边的备份必须一无所获
         assert!(state::find_moved_dirs(&moved_to, "DSHHome").is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 环境变量写失败时必须**真的**复原现场，而不只是「存在 undo_rollback 这个函数」。
+    ///
+    /// 写注册表是机器级动作，单元测试不能真去改它（会污染跑测试的那台机器）；
+    /// 所以失败由闭包注入，能一路走到 `rewrite_env_or_undo` 的错误分支：备份要回到
+    /// `chosen`，被挪到一边的当前目录要回到 `restore_to`。
+    #[test]
+    fn env_write_failure_puts_both_directories_back() {
+        let root = temp_dir("undo");
+        let restore_to = root.join("DSHHome");
+        let chosen = root.join("DSHHome.moved-2026-01-01T00-00-00");
+        let aside = root.join("DSHHome.current-2026-01-01T00-00-00");
+        // 回滚走到这一步时的现场：备份已搬回 restore_to，当前目录已挪到 aside
+        fs::create_dir_all(&restore_to).unwrap();
+        fs::write(restore_to.join("sessions.json"), "backup").unwrap();
+        fs::create_dir_all(&aside).unwrap();
+        fs::write(aside.join("sessions.json"), "current").unwrap();
+
+        let error = rewrite_env_or_undo(&chosen, &restore_to, &aside.to_string_lossy(), |_| {
+            Err("DATA_DIR_ENV_WRITE: 注册表写不进去".to_string())
+        })
+        .unwrap_err();
+        assert!(error.contains("DATA_DIR_ENV_WRITE"), "{error}");
+        assert_eq!(
+            fs::read_to_string(chosen.join("sessions.json")).unwrap(),
+            "backup"
+        );
+        assert_eq!(
+            fs::read_to_string(restore_to.join("sessions.json")).unwrap(),
+            "current"
+        );
+        assert!(!aside.exists(), "挪到一边的目录没有被放回去");
+
+        // 目标本来是空的：aside 为空串，只需把备份放回去
+        let plain = root.join("Plain");
+        let plain_backup = root.join("Plain.moved-2026-01-01T00-00-00");
+        fs::create_dir_all(&plain).unwrap();
+        fs::write(plain.join("sessions.json"), "current").unwrap();
+        assert!(rewrite_env_or_undo(&plain_backup, &plain, "", |_| Err("x".to_string())).is_err());
+        assert!(!plain.exists());
+        assert_eq!(
+            fs::read_to_string(plain_backup.join("sessions.json")).unwrap(),
+            "current"
+        );
+
+        // 写成功时一个字节都不该搬动
+        rewrite_env_or_undo(&chosen, &restore_to, "", |text| {
+            assert!(text.ends_with("DSHHome"), "{text}");
+            Ok(())
+        })
+        .unwrap();
+        assert!(chosen.is_dir());
+        assert!(restore_to.is_dir());
         let _ = fs::remove_dir_all(&root);
     }
 }

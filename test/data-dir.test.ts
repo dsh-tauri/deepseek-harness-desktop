@@ -157,17 +157,26 @@ describe('migration safety contract', () => {
     // `stop()` 成功后会把 `.harness.pid` 删掉：崩溃残留、不在 owned 注册表里的
     // Harness 会因此看起来「已退出」，所以标记必须在停之前读、停之后再复核。
     const bridge = readSource(BRIDGE)
-    const recorded = bridge.indexOf('let recorded = data_dir::harness_marker(&app_handle);')
-    expect(recorded).toBeGreaterThan(-1)
-    const stop = bridge.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;')
-    expect(stop).toBeGreaterThan(-1)
-    expect(recorded).toBeLessThan(stop)
+    // 逐个命令切开看顺序，而不是只数「出现了两次」：数量断言在某一处把复核挪到
+    // `stop()` 之前时照样通过，而那种顺序在「崩溃残留、不在 owned 注册表里的
+    // Harness」上会直接放行迁移——正是这道守卫要拦的场景。
+    const bodies = bridge
+      .split('#[tauri::command]')
+      .filter(body => body.includes('workflow::stop'))
+    expect(bodies.length).toBe(2)
+    for (const body of bodies) {
+      const recorded = body.indexOf('let recorded = data_dir::harness_marker(&app_handle);')
+      const reject = body.indexOf('reject_unreadable_marker(recorded)?;')
+      const stop = body.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;')
+      const confirm = body.indexOf('confirm_harness_stopped(recorded)?;')
+      expect(recorded).toBeGreaterThan(-1)
+      expect(reject).toBeGreaterThan(recorded)
+      expect(stop).toBeGreaterThan(reject)
+      expect(confirm).toBeGreaterThan(stop)
+    }
     // 停之前只拦「标记读不出来」，停之后才复核「标记里那个 PID 是否还在」：
     // 标记里写着一个存活 PID 通常就是本应用自己刚拉起的 Harness，停之前一并
     // 拒绝会让正常迁移永远走不下去（`stop()` 才是停它的那一步）。
-    expect(bridge.split('reject_unreadable_marker(recorded)?;').length - 1).toBe(2)
-    expect(bridge.indexOf('reject_unreadable_marker(recorded)?;')).toBeLessThan(stop)
-    expect(bridge.split('confirm_harness_stopped(recorded)?;').length - 1).toBe(2)
     // 停之前那道检查必须放行「存活 PID」分支
     expect(bridge).toContain('HarnessMarker::Missing | HarnessMarker::Pid(_) => Ok(())')
     // 停之前那一步必须排在 `stop()` 前面，否则标记已经被删、什么都查不出
@@ -197,9 +206,18 @@ describe('migration safety contract', () => {
     // 回滚的最后一步是改环境变量，此时备份已搬回原位、当前目录已挪到一边；
     // 直接 `?` 返回会让 DSH_HOME 继续指着刚被搬空的那个目录。
     const source = readSource(MIGRATE)
-    const rollback = source.slice(source.indexOf('pub(super) fn rollback('), source.indexOf('fn undo_rollback('))
+    // 切到定义处而不是调用处：`indexOf` 命中的是 rollback 里那行调用
+    const rollback = source.slice(
+      source.indexOf('pub(super) fn rollback('),
+      source.indexOf('\nfn rewrite_env_or_undo'),
+    )
     expect(rollback).not.toContain('env::write_user_home(&text)?')
-    expect(rollback).toContain('undo_rollback(&chosen, &restore_to, &aside);')
+    expect(rollback).toContain('rewrite_env_or_undo(&chosen, &restore_to, &aside, apply)?;')
+    // 「写失败时到底有没有复原」不看字符串、看行为：Rust 侧
+    // `env_write_failure_puts_both_directories_back` 注入一个必然失败的写入，
+    // 再核对备份回到 chosen、被挪到一边的当前目录回到 restore_to。
+    expect(source).toContain('fn rewrite_env_or_undo<F>(')
+    expect(source).toContain('undo_rollback(chosen, restore_to, aside);')
     expect(source).toContain('fn undo_rollback(chosen: &Path, restore_to: &Path, aside: &str)')
     expect(source).toContain('DATA_DIR_ROLLBACK_UNDO')
   })
