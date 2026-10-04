@@ -1,6 +1,7 @@
 //! Harness 进程生命周期：本应用持有的根进程登记（PID + Windows 句柄成对存储）、
 //! 启动守卫、进程树终止与退出状态回落，以及按 dsh 安装路径清扫历史残留的
-//! 孤儿服务实例（Windows 按入口路径清扫，垫片的 `cmd.exe /C node` 转发层不算持有者）。
+//! 孤儿服务实例（各平台都按入口路径清扫：Windows 需穿过垫片的 `cmd.exe /C node`
+//! 转发层判断持有者，Unix 的匹配与父进程状态无关，转发层自身也会被命中）。
 
 use crate::config;
 use std::fs;
@@ -601,7 +602,10 @@ fn is_harness_command_line(cmdline: &str, dsh_bin: &str) -> bool {
 /// Windows 只结束入口路径精确匹配且已失去持有者的 node 服务：父进程已退出，或
 /// 父进程只是垫片的 `cmd.exe /C node` 转发层且上方没有活着的垫片。仍由另一个
 /// 桌面实例持有的服务（真身直接挂在实例下，或转发层上方还压着活着的垫片）不做清扫。
-/// Unix 保持原有 release 路径匹配行为。
+/// Unix 保持原有 release 路径匹配行为：枚举 `ps` 按入口路径与启动参数匹配命令行，
+/// 与父进程是否存活无关——垫片/shell 包装层的命令行同样带着入口路径与服务参数，
+/// 因此转发层与其下方的真身会被分别命中，不存在 Windows 的转发层漏杀问题
+/// （debug 构建跳过该分支，只按 `.harness.pid` 标记回收）。
 pub fn terminate_stale_harness_processes(app_handle: &tauri::AppHandle) {
     #[cfg(windows)]
     terminate_stale_harness_processes_at(&config::get_dsh_binary_path(app_handle));
@@ -876,6 +880,24 @@ mod tests {
         let bin = "/home/u/.dsh/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js";
         assert!(is_harness_command_line(
             &format!("node {bin} --profile web --port 3083"),
+            bin
+        ));
+    }
+
+    /// Unix 侧清扫只按入口路径与启动参数匹配命令行，与父进程是否存活无关：垫片/
+    /// shell 包装层的命令行里同样带着入口路径与服务参数，转发层与其下方的真身会
+    /// 被分别命中，因此 Windows 上「转发层活着导致真身漏杀」不会在 Unix 出现。
+    #[test]
+    fn harness_cmdline_matches_relay_wrapper_arguments() {
+        let bin = "/home/u/.dsh/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js";
+        // 版本管理器垫片（asdf 等）：包装层自身的命令行同样带入口路径与服务参数
+        assert!(is_harness_command_line(
+            &format!("/home/u/.asdf/shims/node {bin} --profile web --port 3080 --no-open"),
+            bin
+        ));
+        // 真身独立命中：包装层与真身各自被枚举到，任一层被回收都会释放端口
+        assert!(is_harness_command_line(
+            &format!("/home/u/.asdf/installs/nodejs/22.22.0/bin/node {bin} --profile web --port 3080 --no-open"),
             bin
         ));
     }
