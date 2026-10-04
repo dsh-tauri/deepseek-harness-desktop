@@ -416,9 +416,9 @@ mod tests {
     }
 
     /// 实机热重载验证直接复用这份生产字节：只有显式给出 DSH_HMR_LAYER_DUMP 目录时
-    /// 才落盘，默认（含 CI）不写共享临时目录。
+    /// 才落盘，默认（含 CI）不写共享临时目录；变量存在但为空时同样不写，避免落到当前目录。
     fn dump_layer(name: &str, yaml: &str) {
-        let Some(dir) = std::env::var_os("DSH_HMR_LAYER_DUMP") else {
+        let Some(dir) = std::env::var_os("DSH_HMR_LAYER_DUMP").filter(|dir| !dir.is_empty()) else {
             return;
         };
         std::fs::write(Path::new(&dir).join(name), yaml).unwrap();
