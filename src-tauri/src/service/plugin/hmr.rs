@@ -272,6 +272,10 @@ fn relative_root(base: &Path, root: &Path) -> String {
 
 /// `file://` URL：核心用 `fileURLToPath(new URL(config.base, ctx.baseUrl))` 还原目录，
 /// 只认 file 协议（裸 `D:/x` 会抛 ERR_INVALID_URL_SCHEME）。
+///
+/// 分隔符按需插入：盘符（`D:`）与 Unix 根（`/`）都要落成规范的三斜杠形态
+/// `file:///D:/x` / `file:///opt/x`；每个分量前无条件补斜杠会让 Unix 变成四斜杠
+/// `file:////opt/x`，被 `new URL()` 解析成 host 为空、pathname 以 `//` 开头。
 fn file_url(dir: &Path) -> Option<String> {
     let mut url = String::from("file:///");
     for component in dir.components() {
@@ -285,7 +289,9 @@ fn file_url(dir: &Path) -> Option<String> {
             }
             Component::RootDir => {}
             Component::Normal(part) => {
-                url.push('/');
+                if !url.ends_with('/') {
+                    url.push('/');
+                }
                 url.push_str(&part.to_string_lossy());
             }
             Component::CurDir | Component::ParentDir => return None,
@@ -517,34 +523,40 @@ mod tests {
 
     #[test]
     fn common_ancestor_stops_at_the_shared_prefix() {
-        let root = PathBuf::from("X:\\hmr-tmp");
+        // 夹具必须落在真实临时目录上：`X:\hmr-tmp` 这类 Windows 字面量在 Unix 上
+        // 只是单个相对分量（不是绝对路径），公共祖先会直接算成 `None`。
+        let root = tmp_dir("common");
         assert_eq!(
-            common_ancestor(&[root.join("a\\b"), root.join("a\\c")]),
+            common_ancestor(&[root.join("a").join("b"), root.join("a").join("c")]),
             Some(root.join("a"))
         );
-        assert_eq!(common_ancestor(std::slice::from_ref(&root)), Some(root));
+        assert_eq!(
+            common_ancestor(std::slice::from_ref(&root)),
+            Some(root.clone())
+        );
         assert_eq!(common_ancestor(&[]), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn pick_base_prefers_the_volume_with_more_roots() {
-        let single = vec![PathBuf::from("X:\\hmr-tmp").join("only")];
+        let root = tmp_dir("pick-base");
+        let single = vec![root.join("only")];
         assert_eq!(pick_base(&single), Some(single[0].clone()));
 
-        let roots = vec![
-            PathBuf::from("X:\\hmr-tmp").join("a\\p1"),
-            PathBuf::from("X:\\hmr-tmp").join("a\\p2"),
-        ];
-        assert_eq!(
-            pick_base(&roots),
-            Some(PathBuf::from("X:\\hmr-tmp").join("a"))
-        );
+        let roots = vec![root.join("a").join("p1"), root.join("a").join("p2")];
+        assert_eq!(pick_base(&roots), Some(root.join("a")));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn render_layer_writes_a_complete_hmr_config() {
-        let root = PathBuf::from("X:\\hmr-tmp").join("plugins");
-        let roots = vec![root.join("mine"), root.join("other\\sub")];
+        // 夹具必须是真实的绝对目录：`X:\hmr-tmp` 在 Unix 上不是绝对路径，`pick_base`
+        // 会返回 `None`。golden 里的平台差异（盘符 vs 根目录、`/` vs `\`）在比对前
+        // 归一化，其余字节逐字固定。
+        let root = tmp_dir("render").join("plugins");
+        std::fs::create_dir_all(&root).unwrap();
+        let roots = vec![root.join("mine"), root.join("other").join("sub")];
         let yaml = render_layer(&roots).expect("render");
 
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
@@ -562,11 +574,12 @@ mod tests {
         assert_eq!(config["debounce"].as_u64(), Some(HMR_DEBOUNCE_MS));
 
         // 逐字固定整份补丁层：核心按 id 整块替换 config，任何字段写错或漏写都会被静默忽略。
+        let base_line = format!("    base: {}", url_of(&root));
         let golden = [
             "- id: hmr",
             "  name: '@deepseek-ai/dsh-hmr'",
             "  config:",
-            "    base: file:///X:/hmr-tmp/plugins",
+            base_line.as_str(),
             "    root:",
             "      - mine",
             "      - other/sub",
@@ -582,6 +595,19 @@ mod tests {
         .join("\n")
             + "\n";
         assert_eq!(yaml, golden);
+    }
+
+    /// 目录的 `file:///` URL：只用于测试断言，与实现同口径（盘符大小写、分隔符都按
+    /// 真实临时目录，绝不硬编码平台形态）。
+    fn url_of(dir: &Path) -> String {
+        let text = dir
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        if text.starts_with('/') {
+            format!("file://{text}")
+        } else {
+            format!("file:///{text}")
+        }
     }
 
     #[test]

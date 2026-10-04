@@ -656,6 +656,8 @@ mod tests {
             ".\\plugins\\probe",
             "..\\plugins\\probe",
             "/opt/dsh/plugins/probe",
+            "link:/opt/dsh/plugins/probe",
+            "file:///opt/dsh/plugins/probe",
             "\\\\server\\share\\probe",
             "  D:/plugins/probe  ",
         ] {
@@ -730,17 +732,23 @@ mod tests {
             local_dir_of(&format!("link:{}", forward_slashes(&dir)), &base),
             Some(dir.clone())
         );
+        // 尾斜杠 / 原生分隔符 / 大小写都归一到同一真实路径
+        assert_eq!(
+            local_dir_of(&format!("link:{}/", forward_slashes(&dir)), &base),
+            Some(dir.clone()),
+            "尾斜杠要剥掉"
+        );
+        assert_eq!(
+            local_dir_of(&format!("link:{}", dir.display()), &base),
+            Some(dir.clone()),
+            "原生分隔符要归一到同一真实路径"
+        );
+
+        #[cfg(windows)]
         assert_eq!(
             local_dir_of(&format!("file:///{}", forward_slashes(&dir)), &base),
-            Some(dir.clone())
-        );
-        // 尾斜杠 / 混用分隔符 / 大小写都归一到同一真实路径
-        assert_eq!(
-            local_dir_of(
-                &format!("link:{}/", forward_slashes(&dir)).replace('/', "\\\\"),
-                &base
-            ),
-            Some(dir.clone())
+            Some(dir.clone()),
+            "file:/// 的盘符还原只在 Windows 成立（Unix 上 /D:/x 不是绝对路径）"
         );
 
         let _ = std::fs::remove_dir_all(&base);
