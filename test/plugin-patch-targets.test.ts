@@ -11,7 +11,10 @@ import { readSource } from './setup/read-source'
  * `dsh-tauri-model` 是它的完整 fork、注册同一个 `settings.section/models`，故必须禁用。
  * 已被核心移除的 `ui-settings-unarchive-sessions` 不得再回到任何 patch 层。
  */
-const OFFICIAL_ROW_DISABLES = ['dsh-tauri-model → ui-settings-models']
+const OFFICIAL_ROW_DISABLES = [
+  'dsh-tauri → web-fetch-http',
+  'dsh-tauri-model → ui-settings-models',
+]
 
 const PACKAGES_ROOT = new URL('../packages/', import.meta.url)
 

@@ -56,6 +56,7 @@
   "dependencies": {
     "h3": "catalog:",
     "hookable": "catalog:utils",
+    "ipaddr.js": "catalog:",
     "ofetch": "catalog:utils",
     "unstorage": "catalog:utils"
   },
