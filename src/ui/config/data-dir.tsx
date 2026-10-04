@@ -276,6 +276,12 @@ export function ConfigDataDir() {
         title={t('config.dataDir')}
         description={t('data_dir.description')}
         testId="dsh-config-panel-title"
+        action={(
+          <Button size="sm" variant="primary" className="h-8" onPress={() => handleReveal(status?.dataDir ?? '')}>
+            <Folder className="size-3.5" />
+            <span>{t('data_dir.reveal')}</span>
+          </Button>
+        )}
       />
 
       <If cond={status !== null}>
@@ -287,12 +293,6 @@ export function ConfigDataDir() {
               {t('data_dir.env_unset')}
             </If>
           </Info>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="tertiary" className="h-8" onPress={() => handleReveal(status?.dataDir ?? '')}>
-            <Folder className="size-3.5" />
-            <span>{t('data_dir.reveal')}</span>
-          </Button>
         </div>
       </If>
 

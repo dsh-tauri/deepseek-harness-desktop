@@ -1,5 +1,5 @@
 import type { RuntimeInfo } from '@/types'
-import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, Copy, Folder, Power } from '@gravity-ui/icons'
+import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, Copy, Power } from '@gravity-ui/icons'
 import { Button, Chip, Description, Input, Link, ListBox, Select, Spinner, Switch } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
@@ -174,14 +174,6 @@ export function ConfigDebug() {
     },
   })
 
-  const { mutate: onRevealDataDir } = useMutation({
-    mutationFn: () => invoke('reveal_data_dir'),
-    onError: (err: unknown) => {
-      console.error('[ConfigDebug] reveal data dir failed:', err)
-      toast(t('messages.reveal_dir_failed'), { variant: 'danger' })
-    },
-  })
-
   return (
     <div className="space-y-3">
       <Panel.Header title={t('config.application')} testId="dsh-config-panel-title" />
@@ -274,24 +266,6 @@ export function ConfigDebug() {
           <Info term={t('ui.platform')}>
             {info ? `${info.platform} / ${info.arch}` : '-'}
           </Info>
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="shrink-0 min-w-[30%] text-muted font-medium">{t('ui.data_dir')}</span>
-            <span className="min-w-0 flex items-center gap-1">
-              <span className="truncate font-mono text-[11px] text-muted/80" title={info?.data_dir ?? '-'}>
-                {info?.data_dir ?? '-'}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                isIconOnly
-                className="size-6 min-w-6"
-                aria-label={t('app.reveal_dir')}
-                onPress={() => onRevealDataDir()}
-              >
-                <Folder className="size-3.5" />
-              </Button>
-            </span>
-          </div>
         </div>
       </div>
       <div className="border-t border-line/30" />

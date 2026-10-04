@@ -413,7 +413,7 @@
   "config.profiles": "档案",
   "config.plugins": "插件",
   "config.harness": "核心",
-  "config.dataDir": "数据目录",
+  "config.dataDir": "数据",
   "data_dir.description": "数据目录保存会话、附件与插件缓存；可以整体搬到别的磁盘，之后随时再改。",
   "data_dir.current": "当前位置",
   "data_dir.default_dir": "默认位置",
