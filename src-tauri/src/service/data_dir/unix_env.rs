@@ -21,10 +21,11 @@
 
 use std::path::PathBuf;
 
+#[cfg(target_os = "macos")]
 use crate::config::APP_IDENTIFIER;
 use crate::service::cli::{strip_rc_block, upsert_rc_block, write_rc_with_backup};
 
-use super::DATA_DIR_ENV;
+use super::env::DATA_DIR_ENV;
 
 /// 环境变量在 `~/.profile` 里的块标记。
 ///
