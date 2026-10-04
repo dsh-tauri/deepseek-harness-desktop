@@ -26,15 +26,22 @@ mod env;
 mod fs_ops;
 mod migrate;
 mod state;
+#[cfg(unix)]
+mod unix_env;
+
+/// 应用启动时把持久化的 `DSH_HOME` 注入本进程（Unix 的实现见 [`unix_env`]；
+/// Windows 走注册表，进程启动时已经拿到值，这里是空操作）。
+///
+/// 必须在任何 `config::get_dsh_data_path` 调用之前执行：macOS / Linux 上由
+/// launchd 或显示管理器启动的 GUI 应用拿不到登录 shell 的环境变量，迁移过的
+/// 数据目录只能靠这一步回到进程里，否则会「迁移成功但重启后又读旧目录」。
+pub fn restore_process_env() {
+    #[cfg(unix)]
+    unix_env::restore_process_env();
+}
 
 /// 迁移进度事件（前端进度条订阅；与 `install-progress` 同款「后端推、前端渲染」）。
 pub const PROGRESS_EVENT: &str = "data-dir://progress";
-
-/// 非 Windows 平台不支持迁移：`DSH_HOME` 是用户级环境变量，只有 Windows 的
-/// `HKCU\Environment` 有对应的读写点，且恢复脚本本身就是 Windows 专用。
-pub(crate) fn platform_unsupported() -> String {
-    format!("DATA_DIR_PLATFORM_UNSUPPORTED: {}", std::env::consts::OS)
-}
 
 /// 数据目录状态（`supported` 为 false 时前端只展示说明、不展示任何动作）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -136,7 +143,7 @@ pub fn status(app_handle: &AppHandle) -> DataDirStatus {
         migrate::find_backups(app_handle, &data_dir).into_iter().collect();
     let rollback_available = !backups.is_empty();
     DataDirStatus {
-        supported: cfg!(windows) && !cfg!(debug_assertions),
+        supported: !cfg!(debug_assertions),
         data_dir: data_dir.to_string_lossy().into_owned(),
         default_dir: default_dir.to_string_lossy().into_owned(),
         env_override,

@@ -71,6 +71,9 @@ pub fn run() {
     }
     // 初始化日志系统
     logger::init();
+    // Unix：把持久化的 DSH_HOME 补回进程环境（issue #871）。必须在桌面端装配之前，
+    // 否则首次 get_dsh_data_path 会落到默认目录，日志、store 与 shim 全部写错位置。
+    service::data_dir::restore_process_env();
 
     desktop::builder()
         .invoke_handler(desktop::handler())

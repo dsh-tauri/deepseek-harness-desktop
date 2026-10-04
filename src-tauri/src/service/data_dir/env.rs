@@ -1,8 +1,14 @@
 //! 数据目录环境变量、默认目录、时间戳与磁盘空间。
 //!
-//! 用户级环境变量的读写直接复用 CLI 集成模块已泛化的
-//! `service::cli::{read_user_env, write_user_env, delete_user_env}`：注册表
-//! `HKCU\Environment` 全仓库只有一处写点，这里不再造第二份 Windows API 调用。
+//! 用户级环境变量的读写按平台分流：
+//! - Windows：复用 CLI 集成模块已泛化的 `service::cli::{read_user_env,
+//!   write_user_env, delete_user_env}`，注册表 `HKCU\Environment` 全仓库只有一处
+//!   写点，这里不再造第二份 Windows API 调用；
+//! - macOS / Linux：落点是纯文本（`~/.profile` 标记块、macOS LaunchAgent、
+//!   Linux `environment.d`），实现集中在 [`super::unix_env`]。
+//!
+//! 本文件只保留「与平台无关的语义」：默认目录、时间戳格式、可用空间预检，
+//! 三个平台的时间戳与空间探测都必须产出同一形状的结果。
 
 use std::path::PathBuf;
 
@@ -32,9 +38,11 @@ pub(super) fn read_user_home() -> Result<Option<String>, String> {
     Ok(normalize(crate::service::cli::read_user_env(DATA_DIR_ENV)?))
 }
 
+/// Unix：值可能来自进程环境、~/.profile 的标记块或平台自己的会话文件
+/// （macOS LaunchAgent / Linux environment.d），三者由 unix_env 统一处理。
 #[cfg(not(windows))]
 pub(super) fn read_user_home() -> Result<Option<String>, String> {
-    Ok(normalize(std::env::var(DATA_DIR_ENV).ok()))
+    Ok(normalize(super::unix_env::read_value()))
 }
 
 /// 写入用户级 `DSH_HOME` 并广播 `WM_SETTINGCHANGE`。
@@ -48,9 +56,11 @@ pub(super) fn write_user_home(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Unix：三处落点一起写（~/.profile 标记块、平台会话文件、当前进程环境），
+/// 详见 unix_env。与 Windows 的注册表广播一样，只影响此后新建的进程。
 #[cfg(not(windows))]
-pub(super) fn write_user_home(_value: &str) -> Result<(), String> {
-    Err(super::platform_unsupported())
+pub(super) fn write_user_home(value: &str) -> Result<(), String> {
+    super::unix_env::write_value(value)
 }
 
 /// 清除用户级 `DSH_HOME`（回滚到默认目录时用）。
@@ -66,7 +76,7 @@ pub(super) fn clear_user_home() -> Result<(), String> {
 
 #[cfg(not(windows))]
 pub(super) fn clear_user_home() -> Result<(), String> {
-    Err(super::platform_unsupported())
+    super::unix_env::clear_value()
 }
 
 /// 本地时间戳 `yyyy-MM-ddTHH-mm-ss`。
@@ -86,9 +96,46 @@ pub(super) fn now_stamp() -> String {
     )
 }
 
+/// Unix：本地时间戳，格式与 Windows 分支逐字一致（`yyyy-MM-ddTHH-mm-ss`）。
+///
+/// 用 `localtime_r` 而不是 UTC：`.moved-*` 目录名要能和用户看到的本地时间对上，
+/// 同一天里的两次迁移也才在肉眼上可排序。取不到本地时间（极端情况下 tzdata 缺失）
+/// 时退回 UTC，**绝不返回空串**——空串会让旧目录名退化成 `.moved-`，
+/// `state::moved_stamp` 与 `find_moved_dirs` 的长度判据随之全部失效。
 #[cfg(not(windows))]
 pub(super) fn now_stamp() -> String {
-    String::new()
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as libc::time_t)
+        .unwrap_or_default();
+    let mut local: libc::tm = unsafe { std::mem::zeroed() };
+    let filled = unsafe {
+        libc::localtime_r(
+            &seconds as *const libc::time_t,
+            &mut local as *mut libc::tm,
+        )
+    };
+    if !filled.is_null() {
+        return format!(
+            "{:04}-{:02}-{:02}T{:02}-{:02}-{:02}",
+            local.tm_year + 1900,
+            local.tm_mon + 1,
+            local.tm_mday,
+            local.tm_hour,
+            local.tm_min,
+            local.tm_sec
+        );
+    }
+    let utc = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}-{:02}-{:02}",
+        utc.year(),
+        u8::from(utc.month()),
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second()
+    )
 }
 
 /// 目标所在卷的可用字节数。
@@ -121,9 +168,25 @@ pub(super) fn free_bytes(path: &std::path::Path) -> Option<u64> {
     (ok != 0).then_some(free)
 }
 
+/// Unix：`statvfs` 取目标所在文件系统的可用字节数（与 Windows 的 `GetDiskFreeSpaceExW`
+/// 同款语义：从最近的存在祖先取卷信息）。
 #[cfg(not(windows))]
-pub(super) fn free_bytes(_path: &std::path::Path) -> Option<u64> {
-    None
+pub(super) fn free_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut probe = path.to_path_buf();
+    while !probe.exists() {
+        probe = probe.parent()?.to_path_buf();
+    }
+    let c_path = CString::new(probe.as_os_str().as_bytes()).ok()?;
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    // f_bavail 是非特权用户可用块数、f_frsize 是块大小；先转 u64 再乘，
+    // 免得在 32 位平台上先乘后溢出。
+    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
 }
 
 /// 空白字符串统一视为「未设置」。
@@ -162,14 +225,14 @@ mod tests {
     #[test]
     fn stamp_has_the_script_compatible_shape() {
         let stamp = now_stamp();
-        if cfg!(windows) {
-            // yyyy-MM-ddTHH-mm-ss：脚本用 [0-9T-]+ 匹配，字符集必须完全一致
-            assert_eq!(stamp.len(), 19);
-            assert!(stamp
-                .chars()
-                .all(|c| c.is_ascii_digit() || c == 'T' || c == '-'));
-            assert_eq!(&stamp[10..11], "T");
-        }
+        // yyyy-MM-ddTHH-mm-ss：脚本用 [0-9T-]+ 匹配，字符集必须完全一致，
+        // 且三个平台都要真的产出时间戳（Unix 曾经返回空串，旧目录名会退化成
+        // `.moved-`，`find_moved_dirs` 的长度判据随之失效）。
+        assert_eq!(stamp.len(), 19);
+        assert!(stamp
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == 'T' || c == '-'));
+        assert_eq!(&stamp[10..11], "T");
     }
 
     #[test]
@@ -178,9 +241,7 @@ mod tests {
             .join("dsh-data-dir-not-created")
             .join("deep");
         let free = free_bytes(&missing);
-        if cfg!(windows) {
-            assert!(free.is_some());
-        }
+        assert!(free.is_some_and(|bytes| bytes > 0));
         assert_eq!(free_bytes(std::path::Path::new("relative-only")), None);
     }
 }

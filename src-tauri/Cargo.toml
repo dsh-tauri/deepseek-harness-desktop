@@ -97,6 +97,19 @@ sysinfo = { version = "0.39.6", default-features = false, features = [ "system" 
 [dev-dependencies]
 auto-launch = "0.5"
 
+# 选择数据存放目录（issue #871）：Windows 走原生 IFileDialog、macOS 走 NSOpenPanel、
+# Linux 走 xdg-desktop-portal（无 portal 时 rfd 自己回退到 zenity）。
+# 上游的默认特性是 Linux 专用的（xdg-portal + wayland + async-std），因此这里显式列
+# 出特性并关掉默认值：Windows / macOS 只需要 common-controls-v6；Linux 的 ashpd 传输
+# 后端用本仓库已有的 tokio，不为一次选目录再引入 async-std 这整套运行时。
+[target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
+rfd = { version = "0.16", default-features = false, features = [
+  "common-controls-v6",
+  "xdg-portal",
+  "wayland",
+  "tokio",
+] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "NSWindow",
@@ -157,7 +170,6 @@ tauri-plugin-notifications = { path = "vendor/tauri-plugin-notifications" }
 debug = 1
 
 [target.'cfg(windows)'.dependencies]
-rfd = "0.16"
 webview2-com = "0.38"
 windows-core = "0.61"
 winreg = "0.55"

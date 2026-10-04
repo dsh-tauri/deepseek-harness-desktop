@@ -13,8 +13,8 @@ use super::env;
 use super::fs_ops::{self, CopyProgress, TreeStats};
 use super::state;
 use super::{
-    harness_stopped, platform_unsupported, MigrationBackup, MigrationOutcome, MigrationPlan,
-    ProgressPayload, ProgressSink,
+    harness_stopped, MigrationBackup, MigrationOutcome, MigrationPlan, ProgressPayload,
+    ProgressSink,
 };
 
 /// 预留的磁盘空间余量（百分比）：把目标卷填到 0 字节会让系统与其它程序一起失灵。
@@ -90,9 +90,6 @@ pub(super) fn plan(
     source: &Path,
     target: &Path,
 ) -> Result<MigrationPlan, String> {
-    if !cfg!(windows) {
-        return Err(platform_unsupported());
-    }
     validate_target(source, target)?;
     let mut stats = TreeStats::default();
     fs_ops::scan_tree(source, &mut stats)?;
@@ -201,9 +198,6 @@ pub(super) fn rollback(
     backup: Option<&Path>,
     emit: ProgressSink<'_>,
 ) -> Result<MigrationOutcome, String> {
-    if !cfg!(windows) {
-        return Err(platform_unsupported());
-    }
     if !harness_stopped(app_handle) {
         return Err(format!(
             "DATA_DIR_HARNESS_RUNNING: {} 仍在使用数据目录",

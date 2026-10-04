@@ -26,6 +26,10 @@ mod path;
 mod shim;
 
 pub use core::{ensure, ensure_shims, get_status, remove, CliLinkStatus};
+// 数据目录（issue #871）在 Unix 上复用同一套「标记块 + 备份写回」原语，
+// 免得再抄一份 rc 文件读写的实现。
+#[cfg(unix)]
+pub(crate) use path::{strip_rc_block, upsert_rc_block, write_rc_with_backup};
 #[cfg(windows)]
 pub(crate) use path::find_user_pnpm_executable;
 #[cfg(windows)]

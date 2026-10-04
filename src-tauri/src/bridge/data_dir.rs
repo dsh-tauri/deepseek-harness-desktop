@@ -79,25 +79,19 @@ pub fn get_data_dir_status(app_handle: AppHandle) -> data_dir::DataDirStatus {
 
 /// 弹出系统选目录对话框，返回用户选中的目录（取消返回 `None`）。
 ///
-/// 选目录走 `rfd`（Windows-only 依赖）：仓库未引入 `tauri-plugin-dialog`，
-/// `AsyncFileDialog` 自身起线程与 COM apartment，可直接在异步命令中 `.await`。
+/// 选目录走 `rfd`：仓库未引入 `tauri-plugin-dialog`，`AsyncFileDialog` 自己起线程
+/// （macOS 后端会把对话框派发到主线程），因此可以直接在异步命令里 `.await`。
+/// Linux 上用 xdg-desktop-portal 后端；没有 portal 的会话（纯 X11、无 DBus）会
+/// 失败，前端据此提示用户手填路径。
 #[tauri::command]
 pub async fn pick_data_dir(app_handle: AppHandle) -> Result<Option<String>, String> {
-    #[cfg(windows)]
-    {
-        let start = crate::config::get_dsh_data_path(&app_handle);
-        let picked = rfd::AsyncFileDialog::new()
-            .set_title("选择数据存放目录")
-            .set_directory(start.parent().unwrap_or(&start))
-            .pick_folder()
-            .await;
-        return Ok(picked.map(|handle| handle.path().to_string_lossy().into_owned()));
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = app_handle;
-        Err(data_dir::platform_unsupported())
-    }
+    let start = crate::config::get_dsh_data_path(&app_handle);
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title("选择数据存放目录")
+        .set_directory(start.parent().unwrap_or(&start))
+        .pick_folder()
+        .await;
+    Ok(picked.map(|handle| handle.path().to_string_lossy().into_owned()))
 }
 
 /// 数据目录下的顶层条目及占用空间（遍历目录树，脱离异步运行时）。
