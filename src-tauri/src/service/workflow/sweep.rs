@@ -37,7 +37,7 @@ pub fn sweep_orphan_harness(app_handle: &tauri::AppHandle) {
     }
     // 先按命令行路径清扫所有从本应用 dsh 安装目录启动的孤儿 Harness 实例：
     // 标记文件只记录最近一次会话的 PID，应用多次崩溃/强杀会遗留更早的孤儿。
-    // Windows 按入口与父进程状态回收，不按共享标记结束另一个仍在运行的 dev 实例。
+    // Windows 按入口路径与转发链状态回收，不按共享标记结束另一个仍在运行的 dev 实例。
     terminate_stale_harness_processes(app_handle);
     if cfg!(windows) {
         return;

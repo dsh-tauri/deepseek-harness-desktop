@@ -1,6 +1,6 @@
 //! Harness 进程生命周期：本应用持有的根进程登记（PID + Windows 句柄成对存储）、
 //! 启动守卫、进程树终止与退出状态回落，以及按 dsh 安装路径清扫历史残留的
-//! 孤儿服务实例（Windows 仅清扫父进程已退出且入口路径匹配的服务）。
+//! 孤儿服务实例（Windows 按入口路径清扫，垫片的 `cmd.exe /C node` 转发层不算持有者）。
 
 use crate::config;
 use std::fs;
@@ -387,7 +387,29 @@ fn terminate_stale_harness_processes_at(dsh_bin: &Path) {
     let Some(dsh_bin) = dsh_bin.to_str() else {
         return;
     };
-    let script = "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; try { $all = Get-CimInstance Win32_Process; $byPid = @{}; foreach ($process in $all) { $byPid[$process.ProcessId] = $process }; foreach ($child in $all) { if ($child.Name -ne 'node.exe') { continue }; $parent = $byPid[$child.ParentProcessId]; if ($child.CreationDate -and (!$parent -or ($parent.CreationDate -and $parent.CreationDate.ToUniversalTime() -gt $child.CreationDate.ToUniversalTime()))) { [pscustomobject]@{ pid = $child.ProcessId; commandLine = $child.CommandLine; created = $child.CreationDate.ToFileTimeUtc() } | ConvertTo-Json -Compress } } } catch { Write-Error $_; exit 1 }";
+    // 候选进程连同其上方仍活着的祖先一起上报：垫片转发链是否孤儿，只有整条链能判断。
+    let script = r#"$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {
+  $all = Get-CimInstance Win32_Process
+  $byPid = @{}
+  foreach ($process in $all) { $byPid[$process.ProcessId] = $process }
+  foreach ($child in $all) {
+    if (-not $child.CommandLine -or -not $child.CommandLine.Contains('--no-open')) { continue }
+    $ancestors = @()
+    $parent = $byPid[$child.ParentProcessId]
+    for ($depth = 0; $depth -lt 8; $depth++) {
+      if (-not $parent) { break }
+      $ancestorCreated = 0
+      if ($parent.CreationDate) { $ancestorCreated = $parent.CreationDate.ToFileTimeUtc() }
+      $ancestors += [pscustomobject]@{ pid = $parent.ProcessId; name = $parent.Name; created = $ancestorCreated; commandLine = $parent.CommandLine }
+      $parent = $byPid[$parent.ParentProcessId]
+    }
+    $childCreated = 0
+    if ($child.CreationDate) { $childCreated = $child.CreationDate.ToFileTimeUtc() }
+    [pscustomobject]@{ pid = $child.ProcessId; created = $childCreated; commandLine = $child.CommandLine; ancestors = $ancestors } | ConvertTo-Json -Compress -Depth 4
+  }
+} catch { Write-Error $_; exit 1 }"#;
     let output = match Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(0x08000000)
@@ -467,18 +489,78 @@ fn matches_process_creation(pid: u32, created: u64, terminate: impl FnOnce()) ->
 }
 
 #[cfg(windows)]
+#[derive(serde::Deserialize)]
+struct WindowsProcessEntry {
+    pid: u32,
+    created: u64,
+    #[serde(rename = "commandLine")]
+    command_line: String,
+    #[serde(default)]
+    ancestors: Vec<WindowsProcessAncestor>,
+}
+
+#[cfg(windows)]
+#[derive(serde::Deserialize)]
+struct WindowsProcessAncestor {
+    pid: u32,
+    created: u64,
+    name: String,
+    #[serde(rename = "commandLine")]
+    command_line: Option<String>,
+}
+
+/// 转发层：`cmd.exe /C node <入口>` 只是把命令转交给真身，它自己活着只代表还在等
+/// 子进程结束，不代表服务仍被某个桌面实例持有。nvmd 等 Node 版本管理器的垫片就是
+/// 这么转交的：垫片退出后真身的父进程是活着的 `cmd.exe`，旧谓词「父进程已退出」
+/// 漏杀 → 端口一直被占，下次启动 EADDRINUSE 起不来。
+#[cfg(windows)]
+fn is_relay_ancestor(ancestor: &WindowsProcessAncestor) -> bool {
+    ancestor.name.eq_ignore_ascii_case("cmd.exe")
+        && ancestor
+            .command_line
+            .as_deref()
+            .is_some_and(|command| command_line_has_argument(command, "--no-open"))
+}
+
+/// 选出需要清扫的孤儿服务链，每条链返回转发层最顶层的进程：`taskkill /T` 会连同
+/// 下方的转发层与服务本体一起结束。判定只看「向上穿过所有转发层后还有没有活着的
+/// 宿主」：入口路径不匹配、已由本应用持有（`owned_pid`）、上方存在活着的非转发层
+/// 进程（另一个桌面实例的垫片、用户自己的 shell），或祖先创建时间晚于后代（PID
+/// 已被复用，父子关系失效）都不清扫。
+#[cfg(windows)]
 fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> Vec<(u32, u64)> {
-    String::from_utf8_lossy(output)
+    let mut targets: Vec<(u32, u64)> = Vec::new();
+    for entry in String::from_utf8_lossy(output)
         .lines()
-        .filter_map(|line| {
-            let process = serde_json::from_str::<serde_json::Value>(line).ok()?;
-            let pid = u32::try_from(process.get("pid")?.as_u64()?).ok()?;
-            let command = process.get("commandLine")?.as_str()?;
-            let created = process.get("created")?.as_u64()?;
-            (Some(pid) != owned_pid && is_windows_harness_command_line(command, dsh_bin))
-                .then_some((pid, created))
-        })
-        .collect()
+        .filter_map(|line| serde_json::from_str::<WindowsProcessEntry>(line).ok())
+    {
+        if Some(entry.pid) == owned_pid
+            || !is_windows_harness_command_line(&entry.command_line, dsh_bin)
+        {
+            continue;
+        }
+        let mut root = (entry.pid, entry.created);
+        let mut descendant = entry.created;
+        let mut owned = false;
+        for ancestor in &entry.ancestors {
+            if ancestor.created > descendant {
+                break;
+            }
+            if !is_relay_ancestor(ancestor) {
+                owned = true;
+                break;
+            }
+            root = (ancestor.pid, ancestor.created);
+            descendant = ancestor.created;
+        }
+        if owned || Some(root.0) == owned_pid {
+            continue;
+        }
+        if !targets.contains(&root) {
+            targets.push(root);
+        }
+    }
+    targets
 }
 
 /// 判断命令行是否为「从本应用 dsh 安装目录启动的 Harness 服务」。
@@ -501,8 +583,10 @@ fn is_harness_command_line(cmdline: &str, dsh_bin: &str) -> bool {
 /// 会持续占用 `dependencies/dsh` 目录的文件句柄（node 以该目录为 cwd 且模块
 /// DLL 加载在内存），更新切换目录时触发 os error 32（INSTALL_BACKUP_FAILED）。
 ///
-/// Windows 只结束入口路径精确匹配且父进程已退出的 node 服务；仍由另一个桌面实例
-/// 持有的服务不做清扫。Unix 保持原有 release 路径匹配行为。
+/// Windows 只结束入口路径精确匹配且已失去持有者的 node 服务：父进程已退出，或
+/// 父进程只是垫片的 `cmd.exe /C node` 转发层且上方没有活着的垫片。仍由另一个
+/// 桌面实例持有的服务（真身直接挂在实例下，或转发层上方还压着活着的垫片）不做清扫。
+/// Unix 保持原有 release 路径匹配行为。
 pub fn terminate_stale_harness_processes(app_handle: &tauri::AppHandle) {
     #[cfg(windows)]
     terminate_stale_harness_processes_at(&config::get_dsh_binary_path(app_handle));
@@ -953,10 +1037,10 @@ mod tests {
     fn orphan_selection_excludes_owned_foreign_and_plugin_processes() {
         let bin = r"C:\sandbox\dev\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js";
         let lines = [
-            serde_json::json!({ "pid": 101, "created": 1001, "commandLine": format!("node.exe {bin} --profile web --port 3081 --no-open") }),
-            serde_json::json!({ "pid": 102, "created": 1002, "commandLine": format!("node.exe {bin} --profile web --port 3082 --no-open") }),
-            serde_json::json!({ "pid": 103, "created": 1003, "commandLine": format!("node.exe {bin} plugin --profile web --port 3083") }),
-            serde_json::json!({ "pid": 104, "created": 1004, "commandLine": format!("node.exe {bin}.backup --profile web --port 3084") }),
+            serde_json::json!({ "pid": 101, "created": 1001, "commandLine": format!("node.exe {bin} --profile web --port 3081 --no-open"), "ancestors": [] }),
+            serde_json::json!({ "pid": 102, "created": 1002, "commandLine": format!("node.exe {bin} --profile web --port 3082 --no-open"), "ancestors": [] }),
+            serde_json::json!({ "pid": 103, "created": 1003, "commandLine": format!("node.exe {bin} plugin --profile web --port 3083"), "ancestors": [] }),
+            serde_json::json!({ "pid": 104, "created": 1004, "commandLine": format!("node.exe {bin}.backup --profile web --port 3084"), "ancestors": [] }),
         ];
         let output = lines
             .iter()
@@ -970,6 +1054,62 @@ mod tests {
         assert_eq!(
             orphan_harness_pids(b"invalid json", bin, None),
             Vec::<(u32, u64)>::new()
+        );
+    }
+
+    /// 回归：nvmd 等 Node 版本管理器的垫片以 `cmd.exe /C node <入口>` 转交真身。
+    /// 垫片退出后真身的父进程是仍活着的 `cmd.exe`，旧谓词「父进程已退出」判定
+    /// 它「有人管」而跳过清扫 → 真身继续占着 3080，下次启动直接 EADDRINUSE。
+    /// 新谓词须穿过转发层清扫，同时不得误伤仍被活着的垫片持有的服务。
+    #[cfg(windows)]
+    #[test]
+    fn orphan_selection_sweeps_through_relay_ancestors() {
+        let bin = r"C:\Users\Example User\AppData\Roaming\dsh-tauri\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js";
+        let service = format!("node.exe {bin} --profile web --port 3080 --no-open");
+        let relay = format!(r#""cmd.exe" /C node "{bin}" --profile web --port 3080 --no-open"#);
+        let shim = format!(r"C:\nvmd\bin\node.exe {bin} --profile web --port 3080 --no-open");
+        let entry = |pid: u32, ancestors: Vec<serde_json::Value>| serde_json::json!({ "pid": pid, "created": 1000 + u64::from(pid), "commandLine": service, "ancestors": ancestors });
+        let ancestor = |created: u64, pid: u32, name: &str, command_line: &str| serde_json::json!({ "pid": pid, "created": created, "name": name, "commandLine": command_line });
+        let output = [
+            // 垫片退出，只剩 `cmd.exe` 压着真身 → 须连转发层一起结束
+            entry(201, vec![ancestor(1100, 301, "cmd.exe", &relay)]),
+            // 转发层上方还压着活着的垫片 → 另一个桌面实例仍持有，不能碰
+            entry(
+                202,
+                vec![
+                    ancestor(1102, 302, "cmd.exe", &relay),
+                    ancestor(1101, 402, "node.exe", &shim),
+                ],
+            ),
+            // 真身直接挂在桌面实例下（没有垫片）→ 实例仍持有，不能碰
+            entry(
+                203,
+                vec![ancestor(1103, 403, "deepseek-harness-desktop.exe", "")],
+            ),
+            // 命令行里出现 `--no-open` 但不是转发层（用户自己的 shell）→ 不能碰
+            entry(
+                204,
+                vec![ancestor(
+                    1104,
+                    304,
+                    "powershell.exe",
+                    &format!("pwsh -Command \"{service}\""),
+                )],
+            ),
+            // 祖先创建时间晚于后代：父子关系已失效（PID 复用），退回按子进程本身清扫
+            entry(205, vec![ancestor(9999, 305, "cmd.exe", &relay)]),
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert_eq!(
+            orphan_harness_pids(output.as_bytes(), bin, None),
+            vec![(301, 1100), (205, 1205)]
+        );
+        assert_eq!(
+            orphan_harness_pids(output.as_bytes(), bin, Some(301)),
+            vec![(205, 1205)]
         );
     }
 
@@ -1062,6 +1202,111 @@ mod tests {
         ));
         // 空命令行
         assert!(!is_harness_command_line("", bin));
+    }
+
+    /// 回归：nvmd 等 Node 版本管理器的垫片以 `cmd.exe /C node <entry>` 转交真身，
+    /// 垫片先退出后真身仍占着端口。旧谓词要求「父进程已退出」才清扫，此时真身的父
+    /// 进程 `cmd.exe` 还活着 → 漏杀，端口一直占着，下次启动 EADDRINUSE。
+    /// 新谓词按入口路径清扫，并连带结束上方的转发层。
+    #[cfg(windows)]
+    #[test]
+    fn orphan_service_is_swept_through_live_relay_ancestors() {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+
+        fn read_pid(path: &std::path::Path) -> u32 {
+            std::fs::read_to_string(path)
+                .expect("pid file")
+                .trim()
+                .parse::<u32>()
+                .expect("pid")
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "dsh-转发链-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let core = root.join("dependencies").join("dsh");
+        let bin = core
+            .join("node_modules")
+            .join("@deepseek-ai")
+            .join("dsh")
+            .join("lib")
+            .join("bin.js");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        let ready = root.join("ready");
+        let service_pid_file = root.join("service.pid");
+        std::fs::write(
+            &bin,
+            format!(
+                "require('fs').writeFileSync({:?}, 'ready'); require('fs').writeFileSync({:?}, String(process.pid)); setTimeout(() => process.exit(0), 60000)",
+                ready.to_string_lossy(),
+                service_pid_file.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let relay_pid_file = root.join("relay.pid");
+        let relay = "const {spawn}=require('child_process'); const c=spawn('cmd.exe',['/C','node',process.argv[1],'--profile','web','--port','3081','--no-open'],{cwd:process.argv[2],detached:true,stdio:'ignore'}); require('fs').writeFileSync(process.argv[3],String(c.pid)); c.unref()";
+        let result = std::panic::catch_unwind(|| {
+            let output = Command::new("node.exe")
+                .args(["-e", relay])
+                .arg(&bin)
+                .arg(&core)
+                .arg(&relay_pid_file)
+                .creation_flags(0x08000000)
+                .output()
+                .expect("spawn temporary relay");
+            assert!(
+                output.status.success(),
+                "temporary relay should spawn the service through cmd.exe"
+            );
+            let relay_pid = read_pid(&relay_pid_file);
+            let started = std::time::Instant::now();
+            while !ready.exists() && started.elapsed() < std::time::Duration::from_secs(5) {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            assert!(ready.exists(), "temporary service must become ready");
+            let service = read_pid(&service_pid_file);
+            let service_handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, service) };
+            assert!(!service_handle.is_null(), "retain the service handle");
+            let relay_handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, relay_pid) };
+            assert!(!relay_handle.is_null(), "retain the relay handle");
+            let check = std::panic::catch_unwind(|| {
+                terminate_stale_harness_processes_at(&bin);
+                assert_eq!(
+                    unsafe { WaitForSingleObject(service_handle, 5000) },
+                    WAIT_OBJECT_0,
+                    "the relayed orphan service should be terminated"
+                );
+                assert_eq!(
+                    unsafe { WaitForSingleObject(relay_handle, 5000) },
+                    WAIT_OBJECT_0,
+                    "the live relay ancestors should be terminated with it"
+                );
+            });
+            if unsafe { WaitForSingleObject(service_handle, 0) } != WAIT_OBJECT_0 {
+                kill_pid_tree(service);
+            }
+            if unsafe { WaitForSingleObject(relay_handle, 0) } != WAIT_OBJECT_0 {
+                kill_pid_tree(relay_pid);
+            }
+            unsafe { CloseHandle(service_handle) };
+            unsafe { CloseHandle(relay_handle) };
+            if let Err(error) = check {
+                std::panic::resume_unwind(error);
+            }
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        if let Err(error) = result {
+            std::panic::resume_unwind(error);
+        }
     }
 
     /// 回归（issue #91）：Unix 上 `kill_pid_tree` 对「无独立进程组」的进程
