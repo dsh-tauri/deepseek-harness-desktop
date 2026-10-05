@@ -4,7 +4,7 @@ import type { RemoteTransport, RemoteTransportCapabilities, RemoteTransportOptio
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer, get } from 'node:http'
+import { createServer, get, request } from 'node:http'
 import { Server as NetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
@@ -464,6 +464,37 @@ function listenAt(port: number): Promise<Server> {
   })
 }
 
+/**
+ * 隧道口与远端实例之间的第二跳：`instanceAlive()` 取假时照真实观感把该条连接掐断（没有状态行），
+ * 于是隧道口仍在而实例已死——这正是「逐请求失败」与「链路丢失」的区别所在。隧道口本身的死活
+ * 由调用方直接关掉本服务器表达。
+ */
+function hopThrough(target: number, instanceAlive: () => boolean): Promise<{ port: number, close: () => Promise<void> }> {
+  const server = createServer((incoming, outgoing) => {
+    if (!instanceAlive()) {
+      outgoing.destroy()
+      incoming.resume()
+      return
+    }
+    const forwarded = request({ host: '127.0.0.1', port: target, method: incoming.method, path: incoming.url, headers: { ...incoming.headers, connection: 'close' } }, (response) => {
+      outgoing.writeHead(response.statusCode ?? 502, response.headers)
+      response.pipe(outgoing)
+    })
+    forwarded.on('error', () => outgoing.destroy())
+    incoming.pipe(forwarded)
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({
+      port: (server.address() as AddressInfo).port,
+      close: async () => {
+        await new Promise<void>((done) => {
+          server.close(() => done())
+        })
+      },
+    }))
+  })
+}
+
 async function closeServers(servers: Server[]): Promise<void> {
   for (const server of servers)
     await new Promise<void>((resolve) => { server.close(() => resolve()) })
@@ -796,6 +827,35 @@ describe('sshManager', () => {
     releaseTunnel!()
     await expect(pending).rejects.toMatchObject({ code: 'machine-connect-failed', message: /cancelled by disconnect/ })
     expect(manager.status(MachineId('m1')).state).toBe('disconnected')
+  })
+
+  it('cancels an in-flight connect that disconnects while the gateway entry is starting', async () => {
+    let releaseStart: (() => void) | undefined
+    let markStartEntered: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    const startEntered = new Promise<void>((resolve) => {
+      markStartEntered = resolve
+    })
+    const original = gateway.start
+    vi.spyOn(gateway, 'start').mockImplementation(async (options) => {
+      markStartEntered?.()
+      await gate
+      return await original(options)
+    })
+    const { manager, transport } = boot()
+    const pending = manager.connect(MachineId('m1'))
+    await startEntered
+    await manager.disconnect(MachineId('m1'))
+    releaseStart!()
+    await expect(pending).rejects.toMatchObject({ code: 'machine-connect-failed', message: /cancelled by disconnect/ })
+    expect(manager.status(MachineId('m1')).state).toBe('disconnected')
+    expect(manager.link(MachineId('m1'))).toBeUndefined()
+    // 断开必须真的赢：成功路径不得把状态改写回 connected，也不得留下监听口或会话
+    expect(gateway.list()).toEqual([expect.objectContaining({ id: 'remote-outbound:m1', state: 'stopped', port: 0 })])
+    expect(transport.sessions[0]?.closed).toBe(true)
+    expect(transport.sessions[0]?.tunnelCloseCalls).toBe(1)
   })
 
   it('discards a tunnel failure that a disconnect superseded', async () => {
@@ -1790,7 +1850,7 @@ describe('sshManager reconnect', () => {
   it('keeps the link alive when the remote launch token cannot be read, then mints on the next access', async () => {
     const standIn = await remoteStandIn()
     try {
-      const { manager, transport } = boot({
+      const { manager, transport, events } = boot({
         sessionFactory: () => {
           const session = new FakeSession(() => true)
           session.tunnelPort = standIn.port
@@ -1803,6 +1863,10 @@ describe('sshManager reconnect', () => {
       expect(standIn.records.map(record => record.url)).toEqual(['/'])
       expect(manager.status(MachineId('m1')).state).toBe('connected')
       expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(link.tunnelBaseUrl)
+      // 铸造失败必须留下一条可读事件：它是发现「远端实例重启」的唯一线索
+      expect(events.since(MachineId('m1')).events.map(event => event.line)).toContainEqual(
+        expect.stringContaining('DSH 原生 cookie 铸造失败（token 不可用）'),
+      )
       // 失败的铸造不得被缓存：token 恢复后无需重连即可铸造成功
       transport.sessions[0]!.webTokenResult = 'tok-abc-123\n'
       const allowed = await getThrough(link.tunnelBaseUrl)
@@ -1913,13 +1977,51 @@ describe('sshManager reconnect', () => {
     }
   })
 
+  it('keeps the link through a per-request upstream failure and serves again once the instance is back', async () => {
+    const standIn = await remoteStandIn()
+    let instanceAlive = true
+    const hop = await hopThrough(standIn.port, () => instanceAlive)
+    const { manager, transport, events } = boot({
+      sessionFactory: () => {
+        const session = standInSession(standIn)
+        session.tunnelPort = hop.port
+        return session
+      },
+    })
+    try {
+      const link = await manager.connect(MachineId('m1'))
+      // 远端实例停机而隧道口（hop）仍在监听：只有转发到实例的那一跳失败
+      instanceAlive = false
+      const denied = await getThrough(link.tunnelBaseUrl)
+      expect(denied.status).toBe(502)
+      expect(denied.body).toContain('上游不可达')
+      // 死的是远端实例而不是链路：SSH 会话与入口都不得被拆掉
+      expect(transport.sessions[0]?.closed).toBe(false)
+      expect(gateway.list()).toEqual([expect.objectContaining({ id: 'remote-outbound:m1', state: 'listening' })])
+      expect(manager.status(MachineId('m1')).state).toBe('connected')
+      expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(link.tunnelBaseUrl)
+      await until(() => (manager.status(MachineId('m1')).lastError ?? '').includes('上游不可达'), 'readable per-request failure')
+      expect(events.since(MachineId('m1')).events.some(event => event.line.includes('上游不可达'))).toBe(true)
+      // 实例原地恢复即恢复服务，无需任何重连
+      instanceAlive = true
+      const served = await getThrough(link.tunnelBaseUrl)
+      expect(served.status).toBe(200)
+      expect(served.body).toBe('dsh-ok')
+      expect(manager.status(MachineId('m1')).state).toBe('connected')
+    }
+    finally {
+      await standIn.close()
+      await hop.close()
+    }
+  })
+
   it('reconnects when the upstream tunnel dies behind the gateway', async () => {
     let standIn = await remoteStandIn()
     const port = standIn.port
     const { manager } = boot({ sessionFactory: () => standInSession(standIn) })
     try {
       const link = await manager.connect(MachineId('m1'))
-      // 上游隧道被杀：同一端口不再有监听，网关转发拿到 ECONNREFUSED
+      // 隧道口本身消失：同一端口不再有监听，网关转发与链路探测都拿到 ECONNREFUSED
       await standIn.close()
       const response = await getThrough(link.tunnelBaseUrl)
       expect(response.status).toBe(502)

@@ -1992,7 +1992,11 @@ describe('gateway 监听生命周期', () => {
     const holders = await occupyRange(21)
     const base = holders[0]?.port ?? 0
     try {
-      await expect(gateway.start({ id: 'entry', kind: 'inbound', upstream: upstream.origin, port: base })).rejects.toThrow(/网关端口全部占用/)
+      // 错误码是消费方（出站机器）判定「终态、不再重试」的契约，与中文文案解耦
+      await expect(gateway.start({ id: 'entry', kind: 'inbound', upstream: upstream.origin, port: base })).rejects.toMatchObject({
+        code: 'ERR_GATEWAY_PORTS_EXHAUSTED',
+        message: expect.stringMatching(/网关端口全部占用/u),
+      })
       expect(gateway.status('entry')).toMatchObject({ state: 'stopped', port: 0 })
     }
     finally {

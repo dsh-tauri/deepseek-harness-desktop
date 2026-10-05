@@ -1,10 +1,12 @@
 import type { Buffer } from 'node:buffer'
-import type { MachineProfile, MachineSaveRow, MachineSecretWrite, MachineView, RemoteInstallResult, RemoteLink, RemoteMachineStatus, RemoteProgress, RemoteSession, RemoteTestResult } from '../types/index'
+import type { ClientRequest } from 'node:http'
+import type { MachineProfile, MachineSaveRow, MachineSecretWrite, MachineView, RemoteInstallResult, RemoteLink, RemoteMachineStatus, RemoteProgress, RemoteSession, RemoteStreamHandle, RemoteTestResult } from '../types/index'
 import type { WorkspaceAllowlist } from '../utils/allowlist'
 import type { SshHostBlock } from '../utils/ssh-config'
 import type { BootstrapHooks } from './bootstrap.types'
 import type { MachineState, ReconnectState } from './machine.types'
 import type { RemoteTransportCapabilities } from './transport.types'
+import { request } from 'node:http'
 import { defineService } from 'dsh-tauri'
 import { join } from 'pathe'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
@@ -22,6 +24,10 @@ import { gateway } from './gateway'
 import { knownHosts } from './known-hosts'
 import { fingerprintHostKey } from './known-hosts.utils'
 import { state } from './state'
+
+const TUNNEL_PROBE_TIMEOUT_MS = 2_000
+
+const GATEWAY_PORTS_EXHAUSTED = 'ERR_GATEWAY_PORTS_EXHAUSTED'
 
 export const machine = defineService({
   enabled(): boolean {
@@ -470,21 +476,33 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
           return token === undefined ? undefined : `http://${authority}/?token=${token}`
         },
       })
+      if (generation !== target.generation) {
+        await cancelAttempt(entryId, tunnel)
+        throw new AttemptCancelled()
+      }
       entryPort = entry.port
     }
     catch (error) {
-      await tunnel.close().catch(() => undefined)
-      portExhausted = isGatewayPortExhausted(error)
+      if (!(error instanceof AttemptCancelled)) {
+        await tunnel.close().catch(() => undefined)
+        portExhausted = isGatewayPortExhausted(error)
+      }
       throw error
     }
     const unsubscribe = gateway.subscribe((event) => {
-      if (event.id !== entryId || (event.kind !== 'stopped' && event.kind !== 'upstream'))
+      if (event.id !== entryId || (event.kind !== 'stopped' && event.kind !== 'upstream' && event.kind !== 'cookie' && event.kind !== 'compression'))
         return
+      if (machineStates.get(machineId)?.tunnel !== tunnel)
+        return
+      // 铸造 / 压缩失败只留可读事件：单条请求的降级不该改写 link 级状态
+      if (event.kind === 'cookie' || event.kind === 'compression') {
+        events.append(machineId, 'reconnect', redacted(machineId, `网关转发异常：${event.line}`))
+        return
+      }
       // 本回调与网关写回下游响应同处一条调用链：必须让当前响应先出网，否则拆除会截断响应体。
+      const dead = event.kind === 'stopped'
       setImmediate(() => {
-        if (machineStates.get(machineId)?.gateway?.id !== entryId)
-          return
-        detach(machineId, `网关入口异常退出：${event.line}`)
+        void gatewayFailure(machineId, tunnel, event.line, dead)
       })
     })
     const link: RemoteLink = { machineId, tunnelBaseUrl: `http://127.0.0.1:${entryPort}` }
@@ -547,10 +565,73 @@ function outboundEntryId(machineId: MachineId): string {
   return `remote-outbound:${machineId}`
 }
 
+async function cancelAttempt(entryId: string, tunnel: RemoteStreamHandle): Promise<void> {
+  await Promise.all([
+    gateway.stop(entryId).catch(() => undefined),
+    tunnel.close().catch(() => undefined),
+  ])
+}
+
+/**
+ * 网关的 `upstream` 是**逐请求**错误通道（超时 504 / 不可达 502），不是链路级死亡通知；只有入口自身停止
+ * （`dead`）或回环隧道口不再接受连接才说明链路丢了。探测把这两种情况分开，否则一条慢请求的 504 就会
+ * 换掉整条 SSH 会话与 iframe，远端实例重启窗口内的 502 也会被误判成入口死亡。
+ */
+async function gatewayFailure(machineId: MachineId, tunnel: RemoteStreamHandle, line: string, dead: boolean): Promise<void> {
+  const target = machineStates.get(machineId)
+  if (target === undefined || target.tunnel !== tunnel)
+    return
+  if (!dead && !await tunnelRefused(tunnel.localPort)) {
+    recordGatewayIncident(machineId, `网关转发失败：${line}`)
+    return
+  }
+  detach(machineId, `网关入口异常退出：${line}`)
+}
+
+/** 直连隧道口：只有本机回环上的 ECONNREFUSED 才等于「隧道口不再监听」；转发腿上的复位与超时都算隧道仍在。 */
+function tunnelRefused(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const request = probeRequest(port)
+    const timer = setTimeout(() => {
+      request.destroy()
+      resolve(false)
+    }, TUNNEL_PROBE_TIMEOUT_MS)
+    const settle = (refused: boolean): void => {
+      clearTimeout(timer)
+      resolve(refused)
+    }
+    request.on('response', (response) => {
+      response.resume()
+      settle(false)
+    })
+    request.on('error', (error) => {
+      settle(codeOf(error) === 'ECONNREFUSED')
+    })
+    request.end()
+  })
+}
+
+function probeRequest(port: number): ClientRequest {
+  return request({ host: '127.0.0.1', port, method: 'HEAD', path: '/', agent: false, headers: { connection: 'close' } })
+}
+
+function recordGatewayIncident(machineId: MachineId, reason: string): void {
+  const target = machineStates.get(machineId)
+  if (target === undefined)
+    return
+  target.lastError = redacted(machineId, reason)
+  events.append(machineId, 'reconnect', target.lastError)
+  emit(machineId)
+}
+
+function codeOf(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | null)?.code
+}
+
 /** 网关端口耗尽的判据：内核只在「候选全被登记表占用」或「每个候选都撞上 EADDRINUSE」时抛出，无人重试能改变这一点。 */
 function isGatewayPortExhausted(error: unknown): boolean {
-  const message = messageOf(error)
-  return message.includes('网关端口全部占用') || message.includes('EADDRINUSE')
+  const code = codeOf(error)
+  return code === 'EADDRINUSE' || code === GATEWAY_PORTS_EXHAUSTED
 }
 
 function terminalConnectFailure(error: unknown, target: MachineState): boolean {
@@ -582,7 +663,7 @@ function detach(machineId: MachineId, reason: string): void {
   delete target.tunnel
   delete target.link
   delete target.progress
-  target.lastError = reason
+  target.lastError = redacted(machineId, reason)
   if (entry !== undefined)
     entry.unsubscribe()
   const pending = Promise.all([
@@ -595,8 +676,13 @@ function detach(machineId: MachineId, reason: string): void {
 
 function beginReconnect(machineId: MachineId, pending?: Promise<void>): void {
   const target = ensureState(machineId)
-  if (target.reconnect !== undefined)
+  if (target.reconnect !== undefined) {
+    if (pending !== undefined) {
+      const previous = target.reconnect.pending
+      target.reconnect.pending = previous === undefined ? pending : Promise.all([previous, pending]).then(() => undefined)
+    }
     return
+  }
   target.reconnect = {
     generation: target.generation,
     attempt: 0,

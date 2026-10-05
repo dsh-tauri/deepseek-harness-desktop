@@ -996,6 +996,9 @@ describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
     const upstream = await startUpstream()
     const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
     try {
+      // 协商结果记在服务端连接上且跨用例存活：本用例的断言必须由本用例的连接满足
+      sshd.state.negotiated = undefined
+      plainSshd.state.negotiated = undefined
       const profile = profileFor(sshdProxy.port, upstream.port)
       harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
       const link = await harness.manager.connect(profile.id)
@@ -1061,7 +1064,7 @@ describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
     }
   }, 90_000)
 
-  it('moves the machine to reconnecting when its upstream tunnel dies, then serves the same link again', async () => {
+  it('keeps the link and the SSH session when the remote instance dies, and serves it again once the instance is back', async () => {
     const upstream = await startUpstream()
     const port = upstream.port
     const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000, reconnectInitialDelayMs: 300, reconnectMaxAttempts: 4 })
@@ -1072,18 +1075,25 @@ describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
       const link = await harness.manager.connect(profile.id)
       expect((await fetch(link.tunnelBaseUrl)).status).toBe(200)
 
-      // 人为杀掉上游隧道：远端实例端口不再有监听，网关转发拿到 ECONNREFUSED
+      // 只杀远端实例：隧道口（SSH 转发监听口）仍在，链路没有断，因此禁止重拨与换 link
       await live.close()
       const response = await fetch(link.tunnelBaseUrl)
       expect(response.status).toBe(502)
-      await waitFor(() => harness.manager.status(profile.id).state === 'reconnecting', 'reconnecting state')
-      harness.log('observed reconnecting after the upstream tunnel died')
+      await waitFor(() => (harness.manager.status(profile.id).lastError ?? '').includes('上游不可达'), 'readable per-request failure')
+      expect(harness.manager.status(profile.id).state).toBe('connected')
+      harness.log(`observed a per-request failure while still connected: ${harness.manager.status(profile.id).lastError}`)
 
       live = await startUpstream(port)
-      await waitFor(() => harness.manager.status(profile.id).state === 'connected', 'reconnect after upstream kill', 60_000)
+      const deadline = Date.now() + 30_000
+      let resumed = await fetch(link.tunnelBaseUrl)
+      while (resumed.status !== 200 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        resumed = await fetch(link.tunnelBaseUrl)
+      }
+      expect(resumed.status).toBe(200)
+      expect(harness.manager.status(profile.id).state).toBe('connected')
       expect(harness.manager.link(profile.id)?.tunnelBaseUrl).toBe(link.tunnelBaseUrl)
-      expect((await fetch(link.tunnelBaseUrl)).status).toBe(200)
-      harness.log(`link serves again at the SAME ${link.tunnelBaseUrl}`)
+      harness.log(`link serves again at the SAME ${link.tunnelBaseUrl} without a reconnect`)
     }
     finally {
       await live.close()

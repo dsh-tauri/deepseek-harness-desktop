@@ -15,6 +15,8 @@ const LOOPBACK = '127.0.0.1'
 
 const PORT_FALLBACK_LIMIT = 20
 
+const PORTS_EXHAUSTED_CODE = 'ERR_GATEWAY_PORTS_EXHAUSTED'
+
 const COMPRESS_MIN_BYTES = 1024
 
 const SESSION_COOKIE = 'dsh_remote_session'
@@ -229,7 +231,9 @@ async function bindEntry(entry: GatewayEntry, preferred: number): Promise<{ serv
         throw error
     }
   }
-  throw new Error(`网关端口全部占用：已尝试 ${preferred}-${Math.min(preferred + PORT_FALLBACK_LIMIT, 65535)}${lastError === undefined ? '' : `（${messageOf(lastError)}）`}`)
+  const error = new Error(`网关端口全部占用：已尝试 ${preferred}-${Math.min(preferred + PORT_FALLBACK_LIMIT, 65535)}${lastError === undefined ? '' : `（${messageOf(lastError)}）`}`) as NodeJS.ErrnoException
+  error.code = PORTS_EXHAUSTED_CODE
+  throw error
 }
 
 function listenAt(entry: GatewayEntry, port: number): Promise<Server> {
