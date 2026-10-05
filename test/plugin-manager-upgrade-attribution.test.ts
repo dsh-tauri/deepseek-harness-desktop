@@ -7,7 +7,7 @@ interface ToastCallOptions {
   variant?: string
   isLoading?: boolean
   description?: string
-  actionProps?: { children?: string }
+  actionProps?: { children?: string, onPress?: () => void }
   onClose?: (reason: string) => void
 }
 
@@ -41,9 +41,14 @@ const { parseUpdateFailures } = await import('../src/store/modules/plugins/utils
 const RUNTIME = { toast: true, restartOnSettle: false }
 const NETWORK_MESSAGE = 'NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry.'
 const ENTRY_MESSAGE = 'PLUGIN_ENTRY_MISSING: bbb declared entry dist/index.js was not built'
+const INCOMPATIBLE = [{ name: 'bbb', version: '1.0.0', runtime_version: '0.2.0-rc.2' }]
 
 function failureError(entries: unknown): Error {
   return new Error(`PLUGIN_UPDATE_FAILED: ${JSON.stringify(entries)}`)
+}
+
+function incompatibleLine(payload: unknown): string {
+  return `PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(payload)}`
 }
 
 function holdLine(payload: unknown): string {
@@ -165,6 +170,35 @@ describe('plugins manager upgrade attribution', () => {
     ])
     expect(results[0].error).toBe(ENTRY_MESSAGE)
     expect(plugins.pendingApprovals).toHaveLength(0)
+  })
+
+  it('settles the failed target while the refused one waits for authorisation', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command !== 'update_dsh_plugins')
+        return undefined
+      throw new Error([
+        incompatibleLine(INCOMPATIBLE),
+        `PLUGIN_UPDATE_FAILED: ${JSON.stringify([{ name: 'aaa', message: ENTRY_MESSAGE }])}`,
+      ].join('\n'))
+    })
+
+    const done = plugins.enqueue('upgrade', ['aaa', 'bbb@1.0.0'], RUNTIME)
+    await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
+
+    // 顶层的不兼容拒绝仍然要点名目标、挂上授权按钮——宿主把这条载荷提升到顶层，
+    // 就是为了让它穿过逐项失败的包装活到这里。
+    expect(plugins.pendingApprovals.map(process => process.name)).toEqual(['bbb'])
+    expect(plugins.pendingApprovals[0].refusal?.kind).toBe('incompatible')
+    // 有自己失败的目标照自己的错结算，不该被同一批里的授权等待连坐
+    expect(plugins.processes.map(process => [process.name, process.status])).toEqual([['bbb', 'unauthorized']])
+    expect(plugins.logs.map(log => log.message)).toContain(ENTRY_MESSAGE)
+
+    await plugins.cancel()
+    const results = await done
+    expect(results.map(result => [result.process.name, result.ok, result.reason])).toEqual([
+      ['aaa', false, undefined],
+      ['bbb', false, 'cancelled'],
+    ])
   })
 
   it('settles a failed target while another waits for authorisation', async () => {
