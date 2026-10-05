@@ -45,7 +45,7 @@ describe('child proxy environment contract', () => {
     expect(source).toContain('fn child_no_proxy() -> String')
     expect(source).toContain('fn merge_no_proxy(inherited: &str) -> String')
     for (const key of ['NO_PROXY', 'no_proxy'])
-      expect(source).toContain('"' + key + '"')
+      expect(source).toContain(`"${key}"`)
   })
 
   it('feeds both desktop spawn sites through the helper', () => {
