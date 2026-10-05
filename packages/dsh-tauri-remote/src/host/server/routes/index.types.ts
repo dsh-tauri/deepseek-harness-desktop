@@ -45,7 +45,7 @@ export interface RemoteMachinesResponse {
   error?: string
 }
 
-export interface SshMachineRowBody {
+export interface RemoteMachineRowBody {
   name?: string
   host?: string
   port?: number
@@ -57,27 +57,27 @@ export interface SshMachineRowBody {
   tintBorder?: boolean
 }
 
-export interface SshMachineSecretsBody {
+export interface RemoteMachineSecretsBody {
   password?: string
   passphrase?: string
 }
 
-export interface SshMachineSaveBody {
+export interface RemoteMachineSaveBody {
   machineId?: string
-  row?: SshMachineRowBody
-  secrets?: SshMachineSecretsBody
+  row?: RemoteMachineRowBody
+  secrets?: RemoteMachineSecretsBody
 }
 
-export interface SshMachineIdBody {
+export interface RemoteMachineIdBody {
   machineId?: string
 }
 
-export interface SshMachineEventsQuery {
+export interface GetMachinesEventsQuery {
   machineId?: string
   sinceSeq?: number
 }
 
-export interface SshMachineEventItem {
+export interface RemoteMachineEventItem {
   seq?: number
   ts?: string
   machineId?: string
@@ -87,25 +87,25 @@ export interface SshMachineEventItem {
   reason?: string
 }
 
-export interface SshMachineEventsResponse {
-  items?: SshMachineEventItem[]
+export interface RemoteMachineEventsResponse {
+  items?: RemoteMachineEventItem[]
   nextSeq?: number
   error?: string
 }
 
-export interface SshTestResponse {
+export interface RemoteTestResponse {
   ok?: boolean
   banner?: string
   message?: string
   error?: string
 }
 
-export interface SshConnectResponse {
+export interface RemoteConnectResponse {
   tunnelBaseUrl?: string
   error?: string
 }
 
-export interface SshInstallResponse {
+export interface RemoteInstallResponse {
   installed?: string[]
   dshRef?: string
   dshVersion?: string
@@ -115,7 +115,7 @@ export interface SshInstallResponse {
   error?: string
 }
 
-export interface SshActionResponse {
+export interface RemoteActionResponse {
   error?: string
 }
 

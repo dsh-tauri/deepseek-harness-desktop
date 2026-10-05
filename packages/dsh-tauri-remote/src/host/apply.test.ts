@@ -48,6 +48,8 @@ function scriptedHttpServer() {
   }
 }
 
+const BASE = '/api/tauri/remote'
+
 const REST_ENDPOINTS = [
   '/api/tauri/remote/settings',
   '/api/tauri/remote/session/role',
@@ -79,15 +81,23 @@ const baseConfig: RemoteConfig = {
 // harness home are never touched.
 let sshDir: string
 let statePath: string
+let previousHome: string | undefined
 
 beforeEach(() => {
   clearHostRuntime()
   sshDir = mkdtempSync(join(tmpdir(), 'ssh-index-'))
   statePath = join(sshDir, 'machines.json')
+  // 暴露配置也落在 $DSH_HOME 下：不隔离就会读到（并在 enabled 时真的开启）开发机上的真实配置。
+  previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = sshDir
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
+  if (previousHome === undefined)
+    delete process.env.DSH_HOME
+  else
+    process.env.DSH_HOME = previousHome
   rmSync(sshDir, { recursive: true, force: true })
   clearHostRuntime()
 })
@@ -180,8 +190,19 @@ describe('remote plugin', () => {
 
   it('mounts the REST routes without any settings service', async () => {
     const { webServer } = await boot()
-    expect(webServer.routes.map(route => `${route.kind} ${route.path}`)).toEqual(REST_ENDPOINTS.map(path => `exact ${path}`))
-    expect(webServer.routes.map(route => typeof route.handler)).toEqual(REST_ENDPOINTS.map(() => 'function'))
+    const management = webServer.routes.filter(route => !route.path.includes('/access'))
+    expect(management.map(route => `${route.kind} ${route.path}`)).toEqual(REST_ENDPOINTS.map(path => `exact ${path}`))
+    expect(management.map(route => typeof route.handler)).toEqual(REST_ENDPOINTS.map(() => 'function'))
+  })
+
+  it('mounts the panel-only access routes on the same host', async () => {
+    const { webServer } = await boot()
+    const panelRoutes = webServer.routes.filter(route => route.path.includes('/access'))
+    expect(panelRoutes.map(route => `${route.kind} ${route.path}`)).toEqual([
+      `exact ${BASE}/access`,
+      `exact ${BASE}/access/token`,
+    ])
+    expect(panelRoutes.map(route => typeof route.handler)).toEqual(['function', 'function'])
   })
 
   it('starts switched off and persists the enable switch', async () => {
@@ -484,7 +505,7 @@ describe('remote plugin', () => {
   it('disposes the manager when the context tears down', () => {
     const { service, disposers } = construct()
     const dispose = vi.spyOn(service, 'dispose').mockResolvedValue(undefined)
-    expect(disposers).toHaveLength(2)
+    expect(disposers).toHaveLength(3)
     for (const disposeAll of disposers) disposeAll()
     expect(dispose).toHaveBeenCalledTimes(1)
   })
@@ -506,7 +527,9 @@ describe('remote plugin', () => {
 
   it('assembles the plugin declaratively', () => {
     const { ctx, webServer } = construct()
-    expect(webServer.routes.map(route => `${route.kind} ${route.path}`)).toEqual(REST_ENDPOINTS.map(path => `exact ${path}`))
+    expect(webServer.routes.map(route => route.path)).toEqual(
+      expect.arrayContaining([...REST_ENDPOINTS, `${BASE}/access`, `${BASE}/access/token`]),
+    )
     expect(apply(ctx, { ...baseConfig, sshDir, statePath })).toBeUndefined()
   })
 })

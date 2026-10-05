@@ -1,3 +1,4 @@
+import type { HostConnectionHandle } from 'dsh-tauri'
 import type { Buffer } from 'node:buffer'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -314,5 +315,6 @@ export interface HostWebServer {
 export interface RemoteHostContext {
   webServer: HostWebServer
   effect: (execute: () => (() => void) | void, label?: string) => unknown
+  connection?: HostConnectionHandle
   logger?: { error: (message: string) => void, warn?: (message: string) => void }
 }

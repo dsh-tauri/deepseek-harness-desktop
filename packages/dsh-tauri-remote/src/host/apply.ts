@@ -6,6 +6,8 @@ import { REMOTE_PLUGIN_NAME } from '../shared/constants'
 import { clearHostRuntime, migrateLegacyState, setCurrentHostInstance, setHostConfig, setMachineDeps, setSyncDeps } from './config/runtime'
 import { ConfigSchema } from './config/schema'
 import { server } from './server'
+import { panel } from './server/panel'
+import { access } from './service/access'
 import { gateway } from './service/gateway'
 import { machine } from './service/machine'
 import { transport } from './service/transport'
@@ -14,6 +16,8 @@ import { packSkills, profileAllowlistReader, profileDependenciesReader, skillRoo
 const REMOTE_START_EFFECT = `${REMOTE_PLUGIN_NAME}: start`
 
 const REMOTE_ROUTES_EFFECT = `${REMOTE_PLUGIN_NAME}: routes`
+
+const REMOTE_PANEL_EFFECT = `${REMOTE_PLUGIN_NAME}: panel routes`
 
 const REMOTE_RUNTIME_EFFECT = `${REMOTE_PLUGIN_NAME}: host runtime`
 
@@ -43,12 +47,16 @@ export function apply(ctx: RemoteHostContext, config: RemoteConfig): void {
     if (migrationFailure !== undefined)
       ctx.logger?.warn?.(`${REMOTE_PLUGIN_NAME}: 旧状态目录迁移未完成，已按新目录空状态启动（旧文件未改动）: ${migrationFailure}`)
     void machine.start().catch(() => undefined)
+    void access.restore().catch(() => undefined)
   }, REMOTE_START_EFFECT)
 
   ctx.effect(() => server(ctx as unknown as Context), REMOTE_ROUTES_EFFECT)
 
+  ctx.effect(() => panel(ctx as unknown as Context), REMOTE_PANEL_EFFECT)
+
   ctx.effect(() => () => {
     void machine.dispose()
+    void access.dispose()
     void gateway.dispose().catch(() => undefined)
     clearHostRuntime()
   }, REMOTE_RUNTIME_EFFECT)

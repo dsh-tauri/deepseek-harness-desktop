@@ -1,5 +1,5 @@
 import type { HostWebRoute, MachineView, RemoteMachineStatus, RemoteTestResult, SyncPreview } from '../types/index'
-import type { RemoteMachinesResponse, RemoteSessionRoleResponse, RemoteSettingsResponse, SshActionResponse, SshConnectResponse, SshInstallResponse, SshMachineEventsResponse, SshTestResponse, SyncApplyResponse, SyncPreviewResponse } from './routes/index.types'
+import type { RemoteActionResponse, RemoteConnectResponse, RemoteInstallResponse, RemoteMachineEventsResponse, RemoteMachinesResponse, RemoteSessionRoleResponse, RemoteSettingsResponse, RemoteTestResponse, SyncApplyResponse, SyncPreviewResponse } from './routes/index.types'
 import { createServer } from 'node:http'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { events } from '../service/events'
@@ -58,7 +58,7 @@ interface HostFakes {
   test: (machineId: MachineId, signal?: AbortSignal) => Promise<RemoteTestResult>
   connect: (machineId: MachineId, signal?: AbortSignal) => Promise<{ machineId: MachineId, tunnelBaseUrl: string }>
   disconnect: (machineId: MachineId) => Promise<void>
-  install: (machineId: MachineId, signal?: AbortSignal) => Promise<SshInstallResponse>
+  install: (machineId: MachineId, signal?: AbortSignal) => Promise<RemoteInstallResponse>
   events: (machineId: MachineId, sinceSeq?: number) => { events: unknown[], nextSeq: number }
   save: (machineId: MachineId, row: Record<string, unknown>, secrets?: Record<string, unknown>) => Promise<void>
   remove: (machineId: MachineId) => Promise<void>
@@ -367,7 +367,7 @@ describe('ssh REST handlers', () => {
     const save = vi.fn(async () => {})
     installHost(fakeHost({ save }))
     const password = 'p'.repeat(2 * 1024 * 1024)
-    const reply = await call<SshActionResponse>('POST', `${BASE}/machines`, {
+    const reply = await call<RemoteActionResponse>('POST', `${BASE}/machines`, {
       machineId: 'm1',
       row: { name: 'alpha', host: '10.0.0.1', user: 'root' },
       secrets: { password },
@@ -383,14 +383,14 @@ describe('ssh REST handlers', () => {
 
   it('tests a machine', async () => {
     installHost(fakeHost())
-    const reply = await call<SshTestResponse>('POST', `${BASE}/machines/test`, { machineId: 'm1' })
+    const reply = await call<RemoteTestResponse>('POST', `${BASE}/machines/test`, { machineId: 'm1' })
     expect(reply.status).toBe(200)
     expect(reply.body).toEqual({ ok: true, banner: 'Linux alpha' })
   })
 
   it('connects a machine and returns the tunnel URL', async () => {
     installHost(fakeHost())
-    const reply = await call<SshConnectResponse>('POST', `${BASE}/machines/connect`, { machineId: 'm1' })
+    const reply = await call<RemoteConnectResponse>('POST', `${BASE}/machines/connect`, { machineId: 'm1' })
     expect(reply.status).toBe(200)
     expect(reply.body).toEqual({ tunnelBaseUrl: 'http://127.0.0.1:45678' })
   })
@@ -398,7 +398,7 @@ describe('ssh REST handlers', () => {
   it('saves a machine with write-only secrets', async () => {
     const save = vi.fn(async () => {})
     installHost(fakeHost({ save }))
-    const reply = await call<SshActionResponse>('POST', `${BASE}/machines`, {
+    const reply = await call<RemoteActionResponse>('POST', `${BASE}/machines`, {
       machineId: 'm1',
       row: {
         name: 'alpha',
@@ -429,18 +429,18 @@ describe('ssh REST handlers', () => {
   it('rejects malformed machine writes', async () => {
     const save = vi.fn(async () => {})
     installHost(fakeHost({ save }))
-    const missingRow = await call<SshActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1' })
+    const missingRow = await call<RemoteActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1' })
     expect(missingRow.status).toBe(400)
     expect(missingRow.body).toEqual({ error: 'missing row' })
-    const badName = await call<SshActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: '', host: 'x', user: 'u' } })
+    const badName = await call<RemoteActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: '', host: 'x', user: 'u' } })
     expect(badName.body).toEqual({ error: 'invalid row: name' })
-    const badHost = await call<SshActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: 'a', host: '', user: 'u' } })
+    const badHost = await call<RemoteActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: 'a', host: '', user: 'u' } })
     expect(badHost.body).toEqual({ error: 'invalid row: host' })
-    const badUser = await call<SshActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: 'a', host: 'x', user: 7 } })
+    const badUser = await call<RemoteActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: 'a', host: 'x', user: 7 } })
     expect(badUser.body).toEqual({ error: 'invalid row: user' })
-    const badSecrets = await call<SshActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: 'a', host: 'x', user: 'u' }, secrets: 'nope' })
+    const badSecrets = await call<RemoteActionResponse>('POST', `${BASE}/machines`, { machineId: 'm1', row: { name: 'a', host: 'x', user: 'u' }, secrets: 'nope' })
     expect(badSecrets.body).toEqual({ error: 'invalid secrets' })
-    const noMachine = await call<SshActionResponse>('POST', `${BASE}/machines`, { row: { name: 'a', host: 'x', user: 'u' } })
+    const noMachine = await call<RemoteActionResponse>('POST', `${BASE}/machines`, { row: { name: 'a', host: 'x', user: 'u' } })
     expect(noMachine.body).toEqual({ error: 'missing machineId' })
     expect(save).not.toHaveBeenCalled()
   })
@@ -487,7 +487,7 @@ describe('ssh REST handlers', () => {
   it('removes a machine', async () => {
     const remove = vi.fn(async () => {})
     installHost(fakeHost({ remove }))
-    const reply = await call<SshActionResponse>('DELETE', `${BASE}/machines`, { machineId: 'm1' })
+    const reply = await call<RemoteActionResponse>('DELETE', `${BASE}/machines`, { machineId: 'm1' })
     expect(reply.status).toBe(200)
     expect(reply.body).toEqual({})
     expect(remove).toHaveBeenCalledWith(MachineId('m1'))
@@ -496,7 +496,7 @@ describe('ssh REST handlers', () => {
   it('requires a machineId on removal', async () => {
     const remove = vi.fn(async () => {})
     installHost(fakeHost({ remove }))
-    const reply = await call<SshActionResponse>('DELETE', `${BASE}/machines`, {})
+    const reply = await call<RemoteActionResponse>('DELETE', `${BASE}/machines`, {})
     expect(reply.status).toBe(400)
     expect(reply.body).toEqual({ error: 'missing machineId' })
     expect(remove).not.toHaveBeenCalled()
@@ -505,7 +505,7 @@ describe('ssh REST handlers', () => {
   it('disconnects a machine', async () => {
     const disconnect = vi.fn(async () => {})
     installHost(fakeHost({ disconnect }))
-    const reply = await call<SshActionResponse>('POST', `${BASE}/machines/disconnect`, { machineId: 'm1' })
+    const reply = await call<RemoteActionResponse>('POST', `${BASE}/machines/disconnect`, { machineId: 'm1' })
     expect(reply.status).toBe(200)
     expect(reply.body).toEqual({})
     expect(disconnect).toHaveBeenCalledWith(MachineId('m1'))
@@ -514,7 +514,7 @@ describe('ssh REST handlers', () => {
   it('installs dsh on a machine and returns the outcome', async () => {
     const install = vi.fn(async () => ({ installed: ['node'], dshRef: 'dsh-0.1.2-rc.1-1', dshVersion: '0.1.2-rc.1', dshPath: '/root/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js', credentialsCopied: true }))
     installHost(fakeHost({ install }))
-    const reply = await call<SshInstallResponse>('POST', `${BASE}/machines/install`, { machineId: 'm1' })
+    const reply = await call<RemoteInstallResponse>('POST', `${BASE}/machines/install`, { machineId: 'm1' })
     expect(reply.status).toBe(200)
     expect(reply.body).toEqual({
       installed: ['node'],
@@ -532,7 +532,7 @@ describe('ssh REST handlers', () => {
         throw new RemoteError('machine-install-failed', MachineId('m1'), 'pnpm: not found')
       },
     }))
-    const install = await call<SshInstallResponse>('POST', `${BASE}/machines/install`, { machineId: 'm1' })
+    const install = await call<RemoteInstallResponse>('POST', `${BASE}/machines/install`, { machineId: 'm1' })
     expect(install.status).toBe(400)
     expect(install.body).toEqual({ error: 'pnpm: not found' })
 
@@ -541,7 +541,7 @@ describe('ssh REST handlers', () => {
         throw new RemoteError('machine-connect-failed', MachineId('m1'), 'auth failed')
       },
     }))
-    const test = await call<SshTestResponse>('POST', `${BASE}/machines/test`, { machineId: 'm1' })
+    const test = await call<RemoteTestResponse>('POST', `${BASE}/machines/test`, { machineId: 'm1' })
     expect(test.status).toBe(400)
     expect(test.body).toEqual({ error: 'auth failed' })
 
@@ -550,7 +550,7 @@ describe('ssh REST handlers', () => {
         throw new Error('tunnel broken')
       },
     }))
-    const connect = await call<SshConnectResponse>('POST', `${BASE}/machines/connect`, { machineId: 'm1' })
+    const connect = await call<RemoteConnectResponse>('POST', `${BASE}/machines/connect`, { machineId: 'm1' })
     expect(connect.status).toBe(400)
     expect(connect.body).toEqual({ error: 'tunnel broken' })
   })
@@ -562,14 +562,14 @@ describe('ssh REST handlers', () => {
         throw 'boom'
       },
     }))
-    const reply = await call<SshTestResponse>('POST', `${BASE}/machines/test`, { machineId: 'm1' })
+    const reply = await call<RemoteTestResponse>('POST', `${BASE}/machines/test`, { machineId: 'm1' })
     expect(reply.status).toBe(400)
     expect(reply.body).toEqual({ error: 'boom' })
   })
 
   it('requires a machineId on actions', async () => {
     installHost(fakeHost())
-    const reply = await call<SshTestResponse>('POST', `${BASE}/machines/test`, {})
+    const reply = await call<RemoteTestResponse>('POST', `${BASE}/machines/test`, {})
     expect(reply.status).toBe(400)
     expect(reply.body).toEqual({ error: 'missing machineId' })
   })
@@ -634,7 +634,7 @@ describe('ssh REST handlers', () => {
 
   it('drains machine events from the beginning', async () => {
     installHost(fakeHost())
-    const reply = await call<SshMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1`)
+    const reply = await call<RemoteMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1`)
     expect(reply.status).toBe(200)
     expect(reply.body).toEqual({
       items: [
@@ -648,26 +648,26 @@ describe('ssh REST handlers', () => {
 
   it('drains machine events incrementally by sinceSeq', async () => {
     installHost(fakeHost())
-    const reply = await call<SshMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1&sinceSeq=2`)
+    const reply = await call<RemoteMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1&sinceSeq=2`)
     expect(reply.body).toMatchObject({ items: [expect.objectContaining({ seq: 3 })], nextSeq: 4 })
   })
 
   it('reports unknown event machines as an empty page anchored at seq 1', async () => {
     installHost(fakeHost())
-    const reply = await call<SshMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=ghost`)
+    const reply = await call<RemoteMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=ghost`)
     expect(reply.body).toEqual({ items: [], nextSeq: 1 })
   })
 
   it('rejects malformed event cursors', async () => {
     installHost(fakeHost())
-    const negative = await call<SshMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1&sinceSeq=-1`)
+    const negative = await call<RemoteMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1&sinceSeq=-1`)
     expect(negative.status).toBe(400)
     expect(negative.body).toEqual({ error: 'invalid sinceSeq' })
 
-    const fractional = await call<SshMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1&sinceSeq=1.5`)
+    const fractional = await call<RemoteMachineEventsResponse>('GET', `${BASE}/machines/events?machineId=m1&sinceSeq=1.5`)
     expect(fractional.body).toEqual({ error: 'invalid sinceSeq' })
 
-    const missing = await call<SshMachineEventsResponse>('GET', `${BASE}/machines/events`)
+    const missing = await call<RemoteMachineEventsResponse>('GET', `${BASE}/machines/events`)
     expect(missing.body).toEqual({ error: 'missing machineId' })
   })
 })

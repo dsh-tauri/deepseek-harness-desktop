@@ -14,6 +14,7 @@ const STATE_DIR = 'remote'
 const LEGACY_STATE_DIR = 'ssh'
 const STATE_DOCUMENT = 'machines.json'
 const KNOWN_HOSTS_DOCUMENT = 'known-hosts.json'
+const ACCESS_DOCUMENT = 'access.json'
 
 let hostInstance: RemoteHostContext | undefined
 
@@ -102,6 +103,10 @@ export function setKnownHostsPath(path: string): void {
 
 export function knownHostsFilePath(): string {
   return knownHostsPath === '' ? join(stateDir(), KNOWN_HOSTS_DOCUMENT) : knownHostsPath
+}
+
+export function accessDocumentPath(): string {
+  return join(stateDir(), ACCESS_DOCUMENT)
 }
 
 /**
