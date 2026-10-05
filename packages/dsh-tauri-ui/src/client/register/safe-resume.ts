@@ -25,6 +25,11 @@ export const safeResumeFeature = defineRegister<ClientContext>((controller, ctx,
 
   let pending = false
 
+  function fail(sessionId: string, reason: string): void {
+    console.warn(`[${PLUGIN_ID}] 安全恢复失败: ${reason}`)
+    store.safeResume.failRecovery(sessionId)
+  }
+
   async function recover(sessionId: string): Promise<void> {
     if (pending || sessionsBinding === undefined)
       return
@@ -36,16 +41,22 @@ export const safeResumeFeature = defineRegister<ClientContext>((controller, ctx,
       return
     }
     pending = true
-    store.safeResume.beginRecovery(sessionId)
-    const outcome = await forkRefusedSession({ sessions, sessionId, atSeq })
-    pending = false
-    if (!outcome.ok) {
-      console.warn(`[${PLUGIN_ID}] 安全恢复失败: ${outcome.error}`)
-      store.safeResume.failRecovery(sessionId)
-      return
+    try {
+      store.safeResume.beginRecovery(sessionId)
+      const outcome = await forkRefusedSession({ sessions, sessionId, atSeq })
+      if (!outcome.ok) {
+        fail(sessionId, outcome.error)
+        return
+      }
+      store.safeResume.clear(sessionId)
+      sessions.open?.(outcome.childId)
     }
-    store.safeResume.clear(sessionId)
-    sessions.open?.(outcome.childId)
+    catch (error) {
+      fail(sessionId, error instanceof Error ? error.message : String(error))
+    }
+    finally {
+      pending = false
+    }
   }
 
   controller.add(ctx.slots.inject(

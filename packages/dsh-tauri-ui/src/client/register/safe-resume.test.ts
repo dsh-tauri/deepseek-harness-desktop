@@ -119,6 +119,22 @@ describe('safeResumeFeature', () => {
     expect(store.safeResume.refusals['s-1']?.phase).toBe('unavailable')
   })
 
+  it('恢复动作抛错时解除进行中标记并落到失败态，后续仍可重试', async () => {
+    install([{ type: 'event', event: { type: 'turn/end', seq: 4, data: { reason: { kind: 'completed' } } } }])
+    mocks.forkRefusedSession.mockRejectedValueOnce(new Error('boom'))
+    safeResumeFeature.call(createCtx())
+    store.safeResume.capture('s-1', refusal)
+
+    const recover = registeredOptions()?.inject('s-1').recover as (id: string) => Promise<void>
+    await recover('s-1')
+    expect(store.safeResume.refusals['s-1']?.phase).toBe('failing')
+
+    await recover('s-1')
+
+    expect(mocks.forkRefusedSession).toHaveBeenCalledTimes(2)
+    expect((mocks.adapter.sessions as { open: (id: string) => void }).open).toHaveBeenCalledWith('child-1')
+  })
+
   it('分叉失败时把阶段落到失败态，不打开任何会话', async () => {
     install([{ type: 'event', event: { type: 'turn/end', seq: 4, data: { reason: { kind: 'completed' } } } }])
     mocks.forkRefusedSession.mockResolvedValue({ ok: false, error: 'session/fork-unavailable' } as never)
