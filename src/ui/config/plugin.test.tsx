@@ -38,7 +38,6 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@/store', () => ({ store: { preinstall: { open: vi.fn(), installing: false }, harness: { restart: mocks.restart } } }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'windows' }))
 vi.mock('@/components/modal', () => ({ Modal: () => null }))
 vi.mock('@/components/item', () => ({ Item: ({ left, right }: { left: ReactNode, right: ReactNode }) => (
   <div>
@@ -176,7 +175,7 @@ describe('built-in plugin toggles', () => {
 })
 
 describe('local plugin folder picking', () => {
-  /** 目录选择器只在 Windows 构建上存在，这里让 get_local_plugin_hmr 与 pick 各自返回固定值。 */
+  /** 目录选择器由宿主在三平台各用原生实现，这里让 get_local_plugin_hmr 与 pick 各自返回固定值。 */
   function mockLocalCommands(picked: string | null) {
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === 'get_local_plugin_hmr')
@@ -186,6 +185,11 @@ describe('local plugin folder picking', () => {
       throw new Error(`Unexpected command: ${command}`)
     })
   }
+
+  it('offers the folder picker on every platform', () => {
+    render(<ConfigPlugin />)
+    expect(screen.getByRole('button', { name: 'plugins.local_dir' })).toBeTruthy()
+  })
 
   it('installs the picked folder as a link spec through the normal install chain', async () => {
     mockLocalCommands('link:D:/plugins/mine')

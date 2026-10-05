@@ -351,7 +351,10 @@ pub async fn restore_plugin(app_handle: AppHandle, id: String) -> Result<(), Str
 /// Windows 的文件夹选择器是 COM 组件（`CoInitializeEx` 要求 STA 单元），而异步命令体跑在
 /// 线程池上、线程的 COM 单元不确定；因此把对话框搬到主线程（tao 建窗时已初始化 STA），
 /// 再同步等它关闭：阻塞的是原生对话框自身，异步运行时不阻塞。
-/// 其余平台没有可用的原生选择器，直接拒绝，由前端隐藏入口。
+/// 其余平台走 `rfd` 的异步对话框（与 `pick_data_dir` 同一条路）：macOS 后端自己把面板
+/// 派发到主线程、不设父窗也会挂到主窗，Linux 用 xdg-desktop-portal，没有 portal 的会话会
+/// 回退 zenity。这两条路都拿不到用户选择时同样返回 `None`，与「用户取消」无法区分，
+/// 前端按取消处理（不弹错）。
 #[tauri::command]
 pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<String>, String> {
     #[cfg(windows)]
@@ -379,7 +382,11 @@ pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<Strin
     #[cfg(not(windows))]
     {
         let _ = app_handle;
-        Err("PLUGIN_PICK_FOLDER_UNSUPPORTED: native folder picker is Windows-only".to_string())
+        let picked = rfd::AsyncFileDialog::new()
+            .set_title("选择本地插件目录")
+            .pick_folder()
+            .await;
+        Ok(picked.map(|handle| plugin::local_spec_from_path(handle.path())))
     }
 }
 

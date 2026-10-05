@@ -5,7 +5,6 @@ import { useOverlay } from '@overlastic/react'
 import { useToggle } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { type } from '@tauri-apps/plugin-os'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
@@ -60,19 +59,6 @@ interface LocalHmrStatus {
   patchPath: string | null
   roots: string[]
 }
-
-/** 原生文件夹选择器只有 Windows 构建提供，其它平台宿主直接拒绝；据此隐藏入口。 */
-function pickFolderSupported(): boolean {
-  try {
-    return type() === 'windows'
-  }
-  catch (error) {
-    console.warn('[ConfigPlugin] failed to read the OS type, hiding the folder picker:', error)
-    return false
-  }
-}
-
-const PICK_FOLDER_SUPPORTED = pickFolderSupported()
 
 /**
  * 「插件」面板：已安装插件的安装/升级/卸载/禁用/启用全部经 `useDshPluginsManager` 收口
@@ -696,24 +682,22 @@ export function ConfigPlugin() {
                   {t('plugins.install')}
                 </span>
               </Button>
-              <If cond={PICK_FOLDER_SUPPORTED}>
-                <Tooltip delay={0}>
-                  <Button
-                    isIconOnly
-                    size="sm"
-                    variant="tertiary"
-                    className="size-8 shrink-0"
-                    isDisabled={installing}
-                    aria-label={t('plugins.local_dir')}
-                    onPress={() => void onPickLocalDir()}
-                  >
-                    <FolderOpen />
-                  </Button>
-                  <Tooltip.Content className="max-w-[320px]">
-                    <p>{t('plugins.local_dir')}</p>
-                  </Tooltip.Content>
-                </Tooltip>
-              </If>
+              <Tooltip delay={0}>
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="tertiary"
+                  className="size-8 shrink-0"
+                  isDisabled={installing}
+                  aria-label={t('plugins.local_dir')}
+                  onPress={() => void onPickLocalDir()}
+                >
+                  <FolderOpen />
+                </Button>
+                <Tooltip.Content className="max-w-[320px]">
+                  <p>{t('plugins.local_dir')}</p>
+                </Tooltip.Content>
+              </Tooltip>
             </div>
             <If cond={searchResults != null}>
               <div className="flex flex-col gap-1 px-1">
