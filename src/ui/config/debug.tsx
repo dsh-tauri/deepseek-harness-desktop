@@ -400,7 +400,7 @@ export function ConfigDebug() {
           </span>
           <div className="flex items-center gap-1.5">
             <Input
-              type="password"
+              type="text"
               autoComplete="off"
               spellCheck={false}
               variant="secondary"
