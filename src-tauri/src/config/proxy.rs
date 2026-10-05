@@ -53,8 +53,9 @@ pub(crate) fn client_builder(value: &str) -> Result<ClientBuilder, String> {
 ///
 /// 只写小写名：核心的读取顺序是小写优先、大写兜底，值相同故不重复写；curl、git、
 /// pnpm 同样认小写。`no_proxy` 与 [`client_builder`] 的绕过列表保持一致并补上
-/// Node 自己的匹配规则只认的裸回环地址（`127.0.0.1` / `[::1]`，IPv4 段写法 Node
-/// 不识别）。空值返回空 map：用户没配代理时不注入任何键，子进程照旧继承系统环境。
+/// Node 自己的匹配规则只认的写法，再逐条追加进程已有的 `NO_PROXY` / `no_proxy`
+/// （见 [`child_no_proxy`]）。空值返回空 map：用户没配代理时不注入任何键，子进程
+/// 照旧继承系统环境。
 ///
 /// SOCKS 值原样下发：curl/git/pnpm 认，Node 侧由核心判为不支持后保持直连（与只配
 /// 代理不改代码时一致）。
@@ -65,14 +66,48 @@ pub fn proxy_child_env(value: &str) -> HashMap<String, String> {
     };
     HashMap::from([
         ("http_proxy".to_string(), url.clone()),
-        ("https_proxy".to_string(), url.clone()),
-        ("no_proxy".to_string(), CHILD_NO_PROXY.to_string()),
+        ("https_proxy".to_string(), url),
+        ("no_proxy".to_string(), child_no_proxy()),
     ])
 }
 
-/// 子进程的代理绕过列表：既有回环约定（见 [`client_builder`]）加上 Node
-/// `NODE_USE_ENV_PROXY` 匹配 `NO_PROXY` 时要求的裸主机名形式。
-const CHILD_NO_PROXY: &str = "localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1]";
+/// 子进程的代理绕过列表：固定回环条目加上进程已有的 `NO_PROXY` / `no_proxy`。
+///
+/// 追加而不是覆盖：Node 与 curl 都是「命中即绕过」，追加不会让既有例外失效；
+/// 小写 `no_proxy` 在 Node 中优先于大写，若直接覆盖，企业内网例外
+/// （如 `.corp.example`）就会失效，内网请求被送去代理。两个名字都读、按原样去重。
+fn child_no_proxy() -> String {
+    let inherited = ["NO_PROXY", "no_proxy"]
+        .iter()
+        .filter_map(|key| std::env::var_os(key))
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    merge_no_proxy(&inherited)
+}
+
+/// 固定回环条目与继承条目合并成一份列表。
+///
+/// Node 的匹配规则只认裸主机名与「起-止」IPv4 段、不认 CIDR，所以回环段除保留
+/// `127.0.0.0/8`（curl、git、pnpm 认）外再补一条 `127.0.0.1-127.255.255.255`。
+fn merge_no_proxy(inherited: &str) -> String {
+    let mut entries = CHILD_NO_PROXY
+        .split(',')
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for entry in inherited.split(',') {
+        let entry = entry.trim();
+        if !entry.is_empty() && !entries.iter().any(|item| item == entry) {
+            entries.push(entry.to_string());
+        }
+    }
+    entries.join(",")
+}
+
+/// 子进程代理绕过列表的固定部分：回环地址与 [`client_builder`] 的约定保持一致，
+/// 并补上 Node 自己那套匹配规则认得的形式（见 [`merge_no_proxy`]）。
+const CHILD_NO_PROXY: &str =
+    "localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1],127.0.0.1-127.255.255.255";
 
 #[cfg(test)]
 mod tests {
@@ -251,6 +286,22 @@ mod tests {
         }
         assert!(!envs.contains_key("all_proxy"));
         assert!(!envs.contains_key("NODE_USE_ENV_PROXY"));
+    }
+
+    #[test]
+    fn merge_no_proxy_appends_inherited_entries_without_duplicates() {
+        assert_eq!(merge_no_proxy(""), CHILD_NO_PROXY);
+
+        let merged = merge_no_proxy(" .corp.example ,localhost,, 10.0.0.0/8 ");
+        let entries = merged.split(',').collect::<Vec<_>>();
+        assert!(entries.contains(&".corp.example"));
+        assert!(entries.contains(&"10.0.0.0/8"));
+        assert_eq!(
+            entries.iter().filter(|entry| **entry == "localhost").count(),
+            1
+        );
+        assert!(entries.contains(&"127.0.0.1-127.255.255.255"));
+        assert!(!entries.contains(&""));
     }
 
     #[tokio::test]

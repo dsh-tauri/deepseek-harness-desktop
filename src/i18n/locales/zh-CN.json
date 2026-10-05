@@ -608,7 +608,7 @@
   "config.network": "网络",
   "network.proxy_url": "代理地址",
   "network.description": "为桌面端下载、更新检查、插件元数据以及 Harness 与插件子进程设置代理。留空沿用系统或环境变量代理。桌面端请求与插件安装立即生效，Harness 服务进程在下次启动时生效；下载失败时请在保存后重试。",
-  "network.formats": "支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。SOCKS5H 由代理解析目标域名，本机连接保持直连。SOCKS 代理只对 curl、git、pnpm 等子进程生效，Harness 内的网络请求保持直连。",
+  "network.formats": "支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。SOCKS5H 由代理解析目标域名，本机连接保持直连。SOCKS 代理对桌面端请求与 curl、git、pnpm 等子进程同样生效，Harness 内的网络请求保持直连。",
   "network.saved": "代理设置已保存",
   "network.invalid": "请输入有效的代理地址，不要包含路径、查询参数或片段。",
   "network.save_failed": "无法保存代理设置"

@@ -35,7 +35,17 @@ describe('child proxy environment contract', () => {
 
   it('bypasses loopback with the bare hosts Node understands', () => {
     const source = readSource(PROXY)
-    expect(source).toContain('localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1]')
+    expect(source).toContain(
+      'localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1],127.0.0.1-127.255.255.255',
+    )
+  })
+
+  it('appends the inherited bypass list instead of replacing it', () => {
+    const source = readSource(PROXY)
+    expect(source).toContain('fn child_no_proxy() -> String')
+    expect(source).toContain('fn merge_no_proxy(inherited: &str) -> String')
+    for (const key of ['NO_PROXY', 'no_proxy'])
+      expect(source).toContain('"' + key + '"')
   })
 
   it('feeds both desktop spawn sites through the helper', () => {
