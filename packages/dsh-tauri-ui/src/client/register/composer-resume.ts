@@ -4,11 +4,13 @@ import { defineRegister } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 import { locale } from '../locales'
 import { resumeComposer } from '../service/composer-resume'
+import { store } from '../store'
 import {
   isComposerEmpty,
   paintResumeIcon,
   primaryButtonOf,
   readIconPath,
+  refusalFromTurnEnd,
   restoreDisabled,
   restorePrimaryIcon,
   shouldOfferResume,
@@ -31,6 +33,7 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
   let unwatchEvents: (() => void) | undefined
   let unwatchSession: (() => void) | undefined
   let patch: { button: HTMLButtonElement, icon: ComposerIconState } | undefined
+  let refusedSessionId: string | undefined
   let pending = false
 
   const resumeLabel = (): string => locale.text('resumeTask')
@@ -77,6 +80,17 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
       return
     const card = document.querySelector(COMPOSER_CARD_SELECTOR)
     const entries = binding?.eventSource?.getSnapshot?.().entries
+    const sessionId = sessionIdNow()
+    const refusal = refusalFromTurnEnd(entries)
+    if (refusal !== undefined && sessionId !== undefined) {
+      store.safeResume.capture(sessionId, refusal)
+      refusedSessionId = sessionId
+      restore(card)
+      return
+    }
+    if (refusedSessionId !== undefined && refusedSessionId !== sessionId)
+      store.safeResume.clear(refusedSessionId)
+    refusedSessionId = undefined
     if (card !== null && isComposerEmpty(card) && shouldOfferResume({ session: snapshotNow(), entries })) {
       const button = primaryButtonOf(card)
       if (button !== null) {
@@ -117,7 +131,13 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
     const outcome = await resumeComposer({ sessionId })
     pending = false
     if (!outcome.ok) {
-      console.warn(`[${PLUGIN_ID}] 会话继续失败: ${outcome.error ?? 'unknown'}`)
+      if (outcome.refusal !== undefined) {
+        store.safeResume.capture(sessionId, outcome.refusal)
+        refusedSessionId = sessionId
+      }
+      else {
+        console.warn(`[${PLUGIN_ID}] 会话继续失败: ${outcome.error}`)
+      }
       reconcile()
     }
   }

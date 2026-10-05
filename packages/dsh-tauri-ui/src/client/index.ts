@@ -1,13 +1,14 @@
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { ClientContext } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../shared/constants'
-import { HERO_WORKSPACE_EFFECT, IM_PANEL_EFFECT, LOCALE_EFFECT, NEW_SESSION_EFFECT, OBSTRUCTIONS_EFFECT, SECTIONS_EFFECT, SETTINGS_EFFECT, SETTINGS_OPEN_EFFECT, STYLES_EFFECT, UNGROUPED_NEW_SESSION_EFFECT } from './constants'
+import { HERO_WORKSPACE_EFFECT, IM_PANEL_EFFECT, LOCALE_EFFECT, NEW_SESSION_EFFECT, OBSTRUCTIONS_EFFECT, SAFE_RESUME_EFFECT, SECTIONS_EFFECT, SETTINGS_EFFECT, SETTINGS_OPEN_EFFECT, STYLES_EFFECT, UNGROUPED_NEW_SESSION_EFFECT } from './constants'
 import { locale } from './locales'
 import { composerResumeFeature } from './register/composer-resume'
 import { heroWorkspaceFeature } from './register/hero-workspace'
 import { registerImPanel } from './register/im-panel'
 import { sidebarNewSessionFeature, ungroupedNewSessionFeature } from './register/new-session'
 import { registerSettingsObstructions } from './register/obstructions'
+import { safeResumeFeature } from './register/safe-resume'
 import { registerSettingsSections } from './register/sections'
 import { registerSettings } from './register/settings'
 import { registerSettingsOpen } from './register/settings-open'
@@ -42,5 +43,6 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(registerSettingsOpen, SETTINGS_OPEN_EFFECT)
   ctx.effect(ungroupedNewSessionFeature, UNGROUPED_NEW_SESSION_EFFECT)
   ctx.effect(composerResumeFeature, COMPOSER_RESUME_EFFECT)
+  ctx.effect(safeResumeFeature, SAFE_RESUME_EFFECT)
   ctx.effect(registerImPanel, IM_PANEL_EFFECT)
 }

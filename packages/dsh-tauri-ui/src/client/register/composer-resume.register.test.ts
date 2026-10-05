@@ -1,5 +1,6 @@
 import type { ComposerSessionEventEntry, ComposerSessionSnapshot } from './composer-resume.types'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { store } from '../store'
 import { composerResumeFeature } from './composer-resume'
 
 const ARROW_PATH = 'M8.3125 0.980183C8.66767 1.0531'
@@ -56,9 +57,16 @@ vi.mock('dsh-tauri/client', () => {
       click: (event: unknown) => clickHandler?.(event),
     }
   }
+  const defineStore = (definition: { state?: () => Record<string, unknown>, actions?: Record<string, unknown> }) => {
+    const instance: Record<string, unknown> = definition.state?.() ?? {}
+    for (const [key, action] of Object.entries(definition.actions ?? {}))
+      instance[key] = (action as (...args: unknown[]) => unknown).bind(instance)
+    return instance
+  }
   return {
     ofetch: vi.fn(),
     defineLocale,
+    defineStore,
     createLifecycleController,
     defineRegister: (ctxOrSetup: unknown, maybeSetup?: unknown) => {
       const setup = (typeof maybeSetup === 'function' ? maybeSetup : ctxOrSetup) as
@@ -121,8 +129,8 @@ function snapshotSource<T>(initial: T) {
   }
 }
 
-function turnEnd(kind: string): ComposerSessionEventEntry {
-  return { type: 'event', event: { type: 'turn/end', data: { reason: { kind } } } }
+function turnEnd(kind: string, error?: { message?: string, code?: string, status?: number }): ComposerSessionEventEntry {
+  return { type: 'event', event: { type: 'turn/end', data: { reason: { kind, ...(error === undefined ? {} : { error }) } } } }
 }
 
 function turnStart(): ComposerSessionEventEntry {
@@ -231,6 +239,7 @@ beforeEach(() => {
   mocks.resumeComposer.mockClear()
   mocks.resumeComposer.mockResolvedValue({ ok: true })
   delete mocks.adapter.sessions
+  store.safeResume.clear('s-1')
 })
 
 describe('composerResumeFeature', () => {
@@ -288,6 +297,22 @@ describe('composerResumeFeature', () => {
     const h = harness({ empty: false, entries: [turnStart(), turnEnd('aborted')] })
     expect(h.icon()).toBe(ARROW_PATH)
     expect(h.disabled()).toBe(true)
+    h.cleanup()
+  })
+
+  it('内容审核拒绝时不改写主按钮，并把拒绝状态交给安全恢复入口', () => {
+    const h = harness({
+      entries: [turnStart(), turnEnd('completed'), turnStart(), turnEnd('error', { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 })],
+    })
+
+    expect(h.icon()).toBe(ARROW_PATH)
+    expect(h.disabled()).toBe(true)
+    expect(store.safeResume.refusals['s-1']).toMatchObject({
+      message: 'Content Exists Risk',
+      code: 'INVALID_REQUEST',
+      status: 400,
+      phase: 'idle',
+    })
     h.cleanup()
   })
 

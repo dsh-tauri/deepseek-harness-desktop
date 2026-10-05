@@ -14,6 +14,16 @@ const SETTLED_TURN_END_KINDS = ['completed', 'blocked', 'max-tokens']
 
 const DSH_LLM_MODULE = '@deepseek-ai/dsh-llm'
 
+// 已知的内容审核拒绝：再灌一次「继续」只会被同一份上下文原样驳回（issue #928），
+// 必须改走不改动原会话的安全恢复入口，而不是把用户丢进必然失败的循环。
+const CONTENT_RISK_PATTERN = /content exists risk/i
+
+interface SessionResumeRefusal {
+  message: string
+  code: string
+  status: number
+}
+
 export const session = defineService({
   async resume(sessionId: string): Promise<SessionResumeOutcome> {
     try {
@@ -63,6 +73,9 @@ async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcom
   const kind = lastTurnEndKind(agent.session)
   if (kind !== undefined && SETTLED_TURN_END_KINDS.includes(kind))
     return { ok: false, code: 409, error: `上一轮已正常结束（${kind}），无需继续` }
+  const refusal = lastTurnEndRefusal(agent.session)
+  if (refusal !== undefined)
+    return { ok: false, code: 409, error: refusal.message, refusal }
   if (kind === undefined)
     ctx?.logger?.warn?.(`dsh-tauri-ui: 无法从会话日志判定上一轮结束原因（session ${sessionId}），按可继续处理`)
   const createUserMessage = await loadCreateUserMessage(ctx.loader)
@@ -122,6 +135,27 @@ async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcom
     restore()
   }
   return { ok: true }
+}
+
+function lastTurnEndRefusal(value: unknown): SessionResumeRefusal | undefined {
+  const events = sessionEvents(value)
+  if (events === undefined)
+    return undefined
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index] as { type?: string, data?: { reason?: { kind?: unknown, error?: unknown } } }
+    if (event?.type !== 'turn/end')
+      continue
+    const reason = event.data?.reason
+    if (reason?.kind !== 'error')
+      return undefined
+    const error = reason.error as { message?: unknown, code?: unknown, status?: unknown } | undefined
+    if (error?.code !== 'INVALID_REQUEST' || error.status !== 400 || typeof error.message !== 'string')
+      return undefined
+    if (!CONTENT_RISK_PATTERN.test(error.message))
+      return undefined
+    return { message: error.message, code: 'INVALID_REQUEST', status: 400 }
+  }
+  return undefined
 }
 
 function lastTurnEndKind(value: unknown): string | undefined {

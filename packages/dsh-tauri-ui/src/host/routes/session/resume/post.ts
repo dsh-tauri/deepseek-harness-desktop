@@ -14,5 +14,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<SessionResumeResp
   if (outcome.ok)
     return { ok: true }
   event.res.status = outcome.code
+  if ('refusal' in outcome)
+    return { error: outcome.error, refusal: outcome.refusal }
   return { error: outcome.error }
 })

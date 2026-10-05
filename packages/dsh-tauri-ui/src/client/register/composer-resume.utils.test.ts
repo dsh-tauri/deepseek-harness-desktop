@@ -1,6 +1,6 @@
 import type { ComposerSessionEventEntry } from './composer-resume.types'
 import { describe, expect, it } from 'vitest'
-import { isComposerEmpty, lastTurnEndKind, paintResumeIcon, readIconPath, restoreDisabled, restorePrimaryIcon, shouldOfferResume } from './composer-resume.utils'
+import { isComposerEmpty, lastTurnEndKind, paintResumeIcon, readIconPath, refusalFromTurnEnd, restoreDisabled, restorePrimaryIcon, safeResumeBoundary, shouldOfferResume } from './composer-resume.utils'
 
 const ARROW_PATH = 'M8.3125 0.980183C8.66767 1.0531'
 const PLAY_FILL_PATH = 'M14.642 6.285c1.294.777 1.294 2.653 0 3.43l-9.113 5.468c-1.333.8-3.028-.16-3.029-1.715V2.532C2.5.978 4.196.018 5.53.818z'
@@ -169,5 +169,72 @@ describe('paintResumeIcon / restorePrimaryIcon', () => {
     expect(restoreDisabled(true, true, false)).toBe(false)
     expect(restoreDisabled(true, true, true)).toBe(true)
     expect(restoreDisabled(false, false, false)).toBe(false)
+  })
+})
+
+describe('refusalFromTurnEnd / safeResumeBoundary', () => {
+  function turnEndEvent(input: {
+    kind?: string
+    seq?: number
+    error?: { message?: string, code?: string, status?: number }
+  }): ComposerSessionEventEntry {
+    return {
+      type: 'event',
+      event: {
+        type: 'turn/end',
+        seq: input.seq,
+        data: { reason: { kind: input.kind, ...(input.error === undefined ? {} : { error: input.error }) } },
+      },
+    }
+  }
+
+  const refusal = { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 }
+
+  it('reads a provider content-risk refusal off the newest turn/end', () => {
+    expect(refusalFromTurnEnd([turnEndEvent({ kind: 'error', seq: 9, error: refusal })])).toEqual(refusal)
+    expect(refusalFromTurnEnd([
+      turnEndEvent({ kind: 'completed', seq: 4 }),
+      turnEndEvent({ kind: 'error', seq: 9, error: refusal }),
+    ])).toEqual(refusal)
+  })
+
+  it('keeps a rejected-looking payload and unknown 400s out of the refusal bucket', () => {
+    expect(refusalFromTurnEnd([turnEndEvent({ kind: 'error', seq: 9, error: { message: 'bad request', code: 'INVALID_REQUEST', status: 400 } })])).toBeUndefined()
+    expect(refusalFromTurnEnd([turnEndEvent({ kind: 'error', seq: 9, error: { message: 'Content Exists Risk', code: 'SERVER' } })])).toBeUndefined()
+    expect(refusalFromTurnEnd([turnEndEvent({ kind: 'aborted', seq: 9 })])).toBeUndefined()
+    expect(refusalFromTurnEnd([turnEndEvent({ kind: 'interrupted', seq: 9 })])).toBeUndefined()
+    expect(refusalFromTurnEnd([])).toBeUndefined()
+    expect(refusalFromTurnEnd(undefined)).toBeUndefined()
+  })
+
+  it('does not let an earlier refusal leak through a later ordinary turn/end', () => {
+    expect(refusalFromTurnEnd([
+      turnEndEvent({ kind: 'error', seq: 9, error: refusal }),
+      turnEndEvent({ kind: 'aborted', seq: 12 }),
+    ])).toBeUndefined()
+  })
+
+  it('returns the seq of the newest completed turn/end as the safe resume boundary', () => {
+    expect(safeResumeBoundary([
+      turnEndEvent({ kind: 'completed', seq: 4 }),
+      turnEndEvent({ kind: 'error', seq: 9, error: refusal }),
+    ])).toBe(4)
+    expect(safeResumeBoundary([
+      turnEndEvent({ kind: 'completed', seq: 4 }),
+      turnEndEvent({ kind: 'aborted', seq: 7 }),
+      turnEndEvent({ kind: 'completed', seq: 11 }),
+    ])).toBe(11)
+  })
+
+  it('refuses to guess a boundary without a completed turn/end', () => {
+    expect(safeResumeBoundary([turnEndEvent({ kind: 'error', seq: 9, error: refusal })])).toBeUndefined()
+    expect(safeResumeBoundary([turnEndEvent({ kind: 'completed' })])).toBeUndefined()
+    expect(safeResumeBoundary(undefined)).toBeUndefined()
+  })
+
+  it('never offers the plain resume on a known refusal', () => {
+    const entries = [turnEndEvent({ kind: 'error', seq: 9, error: refusal })]
+    expect(shouldOfferResume({ session: { running: false, removed: false }, entries })).toBe(false)
+    expect(shouldOfferResume({ session: { running: false, removed: false }, entries: [turnEndEvent({ kind: 'aborted', seq: 12 })] })).toBe(true)
   })
 })

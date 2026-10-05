@@ -20,8 +20,8 @@ interface SetupOptions {
   nextStep?: UserMessage[]
 }
 
-function turnEnd(kind: string) {
-  return { type: 'turn/end', seq: 1, time: 0, data: { turn: 1, reason: { kind } } }
+function turnEnd(kind: string, error?: { message?: string, code?: string, status?: number }) {
+  return { type: 'turn/end', seq: 1, time: 0, data: { turn: 1, reason: { kind, ...(error === undefined ? {} : { error }) } } }
 }
 
 function setup(options: SetupOptions = {}) {
@@ -614,5 +614,40 @@ describe('session.resume', () => {
       loader: { import: async () => { throw new Error('boom') }, unwrapExports: (value: unknown) => value },
     })
     expect(await session.resume('s1')).toEqual({ ok: false, code: 500, error: 'Error: boom' })
+  })
+
+  it('把已知的内容审核拒绝摘出来，不再向原会话灌继续指令（issue #928）', async () => {
+    const refusal = { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 }
+    const { followed } = setup({
+      events: [
+        { type: 'turn/end', seq: 4, time: 0, data: { turn: 1, reason: { kind: 'completed' } } },
+        { type: 'turn/start', seq: 5, time: 1, data: { turn: 2 } },
+        { type: 'turn/end', seq: 9, time: 2, data: { turn: 2, reason: { kind: 'error', error: refusal } } },
+      ],
+    })
+
+    expect(await session.resume('s1')).toEqual({ ok: false, code: 409, error: 'Content Exists Risk', refusal })
+    expect(followed).toHaveLength(0)
+  })
+
+  it('只按 code 命中的 400 不当成内容审核，仍按可继续处理', async () => {
+    const { followed } = setup({
+      events: [turnEnd('error', { message: 'bad request', code: 'INVALID_REQUEST', status: 400 })],
+    })
+
+    expect(await session.resume('s1')).toEqual({ ok: true })
+    expect(followed).toHaveLength(1)
+  })
+
+  it('拒绝之后又出现普通结束时不沿用旧拒绝', async () => {
+    const { followed } = setup({
+      events: [
+        turnEnd('error', { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 }),
+        turnEnd('aborted'),
+      ],
+    })
+
+    expect(await session.resume('s1')).toEqual({ ok: true })
+    expect(followed).toHaveLength(1)
   })
 })

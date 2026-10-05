@@ -69,6 +69,16 @@ export const TURN_NAVIGATION_SLOT_SELECTOR = `div:has(> ${TURN_NAVIGATION_SELECT
 
 export const SETTINGS_TRIGGER_PRIORITY = -1
 
+/**
+ * 输入框上方独占一行的 dock 槽（list 型、可叠加）：内容审核拒绝的安全恢复入口。
+ *
+ * 与官方 todo/goal/queue 及工作树横幅共存；order 取在两者之间，紧贴输入框但让工作树横幅压在其上。
+ */
+export const SAFE_RESUME_INPUT_DOCK_SLOT = 'conversation.input.dock'
+export const SAFE_RESUME_DOCK_ID = `${PLUGIN_ID}-safe-resume`
+export const SAFE_RESUME_DOCK_ORDER = -20
+export const SAFE_RESUME_EFFECT = `${PLUGIN_ID}: safe resume`
+
 export const SETTINGS_UNDERLAY_SLOT_KEYS = ['sidebar', 'main', 'rightbar'] as const
 export const SETTINGS_EXTERNAL_OVERLAY_SELECTORS = ['[data-dsh-better-sidebar]', '[data-dsh-panel]'] as const
 export const SIDEBAR_WIDTH_PROPERTY = '--dsh-sidebar-width'
