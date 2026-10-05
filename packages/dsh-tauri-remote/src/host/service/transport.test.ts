@@ -10,7 +10,7 @@ import { MachineId } from '../types/index'
 import { loginShell, shQuote } from '../utils/shell'
 import { transport } from './transport'
 import { sshTransport } from './transport.ssh'
-import { classifyConnectFailure, describeConnectFailure, injectCookieHead } from './transport.utils'
+import { classifyConnectFailure, describeConnectFailure } from './transport.utils'
 
 const READY_TIMEOUT_MS = 15_000
 
@@ -364,6 +364,13 @@ describe('ssh2Transport', () => {
     const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     expect(lastClient().connectConfig).toMatchObject({ keepaliveInterval: 10_000, keepaliveCountMax: 3 })
+    await session.close()
+  })
+
+  it('offers zlib@openssh.com ahead of none for link compression', async () => {
+    const transport = newTransport(stubResolver())
+    const session = await transport.connect(profile, () => true)
+    expect(lastClient().connectConfig?.algorithms).toEqual({ compress: ['zlib@openssh.com', 'none'] })
     await session.close()
   })
 
@@ -824,60 +831,20 @@ describe('ssh2Transport ProxyJump', () => {
   })
 })
 
-describe('injectCookieHead', () => {
-  it('replaces Cookie, forces Connection: close, keeps the request line first', () => {
-    const head = 'GET / HTTP/1.1\r\nHost: 127.0.0.1:5000\r\nConnection: keep-alive\r\nCookie: stale=1'
-    const out = injectCookieHead(head, 'dsh-auth-x=v1.signed')
-    const lines = out.split('\r\n')
-    expect(lines[0]).toBe('GET / HTTP/1.1')
-    expect(lines).toContain('Cookie: dsh-auth-x=v1.signed')
-    expect(lines).toContain('Connection: close')
-    expect(lines.some(line => /keep-alive/iu.test(line))).toBe(false)
-    expect(lines.filter(line => /^cookie:/iu.test(line))).toHaveLength(1)
-  })
-
-  it('keeps Connection: Upgrade untouched for websocket handshakes', () => {
-    const head = 'GET /ws HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket'
-    const out = injectCookieHead(head, 'dsh-auth-x=v1.signed')
-    expect(out).toContain('Connection: Upgrade')
-    expect(out).not.toContain('Connection: close')
-    expect(out).toContain('Cookie: dsh-auth-x=v1.signed')
-  })
-})
-
-describe('tunnel cookie injection', () => {
-  it('stamps the request head with the minted cookie through the pipe', async () => {
-    const transport = newTransport(stubResolver())
-    const session = await transport.connect(profile, () => true)
-    const injection = { cookie: 'dsh-auth-x=v1.signed' as string | undefined }
-    const tunnel = await session.stream(3080, undefined, injection)
-    const socket = tcpConnect(tunnel.localPort, '127.0.0.1')
-    await new Promise<void>(resolve => socket.once('connect', () => resolve()))
-    // PassThrough 回环：写入 channel 的字节流（= 注入后的请求）回到 socket
-    const echoed: Buffer[] = []
-    socket.on('data', chunk => echoed.push(chunk as Buffer))
-    socket.write('GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n')
-    await new Promise(resolve => setTimeout(resolve, 30))
-    const received = Buffer.concat(echoed).toString('latin1')
-    expect(received).toContain('Cookie: dsh-auth-x=v1.signed')
-    expect(received).toContain('Connection: close')
-    expect(received.startsWith('GET / HTTP/1.1')).toBe(true)
-    socket.destroy()
-    await tunnel.close()
-    await session.close()
-  })
-
-  it('without a minted cookie the tunnel stays a plain pipe', async () => {
+describe('tunnel transparency', () => {
+  it('relays the request head byte-for-byte without injecting a cookie', async () => {
     const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.stream(3080)
     const socket = tcpConnect(tunnel.localPort, '127.0.0.1')
     await new Promise<void>(resolve => socket.once('connect', () => resolve()))
+    // PassThrough 回环：写入 channel 的字节流回到 socket，可逐字节比对
     const echoed: Buffer[] = []
     socket.on('data', chunk => echoed.push(chunk as Buffer))
-    socket.write('ping')
+    const head = 'GET / HTTP/1.1\r\nHost: 127.0.0.1:3080\r\nConnection: keep-alive\r\nCookie: viewer=1\r\n\r\n'
+    socket.write(head)
     await new Promise(resolve => setTimeout(resolve, 30))
-    expect(Buffer.concat(echoed).toString('latin1')).toBe('ping')
+    expect(Buffer.concat(echoed).toString('latin1')).toBe(head)
     socket.destroy()
     await tunnel.close()
     await session.close()

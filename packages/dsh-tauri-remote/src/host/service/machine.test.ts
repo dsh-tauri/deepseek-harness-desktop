@@ -1,10 +1,11 @@
-import type { AddressInfo } from 'node:net'
+import type { AddressInfo, Server } from 'node:net'
 import type { MachineProfile, RemoteExecOptions, RemoteExecResult, RemoteMachineEvent, RemoteSession, RemoteStreamHandle } from '../types/index'
 import type { RemoteTransport, RemoteTransportCapabilities, RemoteTransportOptions } from './transport.types'
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer } from 'node:http'
+import { createServer, get } from 'node:http'
+import { Server as NetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,6 +13,7 @@ import { clearHostRuntime, machineStates, machineTable, setHostConfig, setKnownH
 import { MachineId, RemoteError } from '../types/index'
 import { EMPTY_ALLOWLIST } from '../utils/allowlist'
 import { events } from './events'
+import { gateway } from './gateway'
 import { machine } from './machine'
 
 const profile: MachineProfile = {
@@ -178,11 +180,7 @@ class FakeSession implements RemoteSession {
   /** The stdout the credentials-copy command answers (default: copied). */
   credentialsAnswer = 'copied'
 
-  /** The injection slot the last stream call received. */
-  tunnelInjection: { cookie: string | undefined } | undefined
-
-  async stream(_remotePort: number, preferredLocalPort?: number, injection?: { cookie: string | undefined }): Promise<RemoteStreamHandle> {
-    this.tunnelInjection = injection
+  async stream(_remotePort: number, preferredLocalPort?: number): Promise<RemoteStreamHandle> {
     this.preferredTunnelPort = preferredLocalPort
     this.tunnelStarted?.()
     if (this.tunnelGate !== undefined)
@@ -293,6 +291,7 @@ afterEach(async () => {
   finally {
     try {
       await machine.dispose()
+      await gateway.dispose()
       await settleRuntime()
     }
     finally {
@@ -372,6 +371,123 @@ function terminalsOf(log: typeof events): RemoteMachineEvent[] {
   return log.since(MachineId('m1')).events.filter(event => event.terminal !== undefined)
 }
 
+/** 网关候选端口数：首选端口 + 20 次回落（S2 的端口回落语义，测试侧独立固定）。 */
+const GATEWAY_CANDIDATES = 21
+
+interface StandInRecord {
+  url: string
+  host: string | undefined
+  encoding: string | undefined
+  cookie: string | undefined
+}
+
+interface RemoteStandIn {
+  port: number
+  records: StandInRecord[]
+  /** 远端实例当前认可的会话 cookie；重启后换新值，旧 cookie 随即 401。 */
+  sessionCookie: (value: string) => void
+  close: () => Promise<void>
+}
+
+/**
+ * 远端 DSH 的替身：`/?token=<t>` 铸造 `dsh-session=<t>`，其余请求只在带上当前有效
+ * cookie 时回 200，否则 401。每条请求的 Host / Accept-Encoding / Cookie 都被记录，
+ * 供出站腿的改写与注入断言使用。
+ */
+async function remoteStandIn(port = 0): Promise<RemoteStandIn> {
+  const records: StandInRecord[] = []
+  let accepted = 'dsh-session=tok-abc-123'
+  const server = createServer((request, response) => {
+    const url = request.url ?? ''
+    records.push({
+      url,
+      host: request.headers.host,
+      encoding: request.headers['accept-encoding'],
+      cookie: request.headers.cookie,
+    })
+    const token = new URLSearchParams(url.slice(url.indexOf('?'))).get('token')
+    if (url.startsWith('/?token=') && token !== null) {
+      response.setHeader('set-cookie', [`dsh-session=${token}; Path=/; HttpOnly`])
+      response.end('minted')
+      return
+    }
+    if (request.headers.cookie !== accepted) {
+      response.statusCode = 401
+      response.end('unauthorized')
+      return
+    }
+    response.end('dsh-ok')
+  })
+  await new Promise<void>((resolve) => {
+    server.listen(port, '127.0.0.1', () => resolve())
+  })
+  return {
+    port: (server.address() as AddressInfo).port,
+    records,
+    sessionCookie: (value: string) => {
+      accepted = value
+    },
+    close: async () => {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve())
+      })
+    },
+  }
+}
+
+/** stand-in 的会话替身：隧道口指向 stand-in，启动 token 取用远端日志里的那一枚。 */
+function standInSession(standIn: RemoteStandIn): FakeSession {
+  const session = new FakeSession(() => true)
+  session.webTokenResult = 'tok-abc-123\n'
+  session.tunnelPort = standIn.port
+  return session
+}
+
+function getThrough(url: string): Promise<{ status: number, body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = get(url, (response) => {
+      let body = ''
+      response.on('data', (chunk: Buffer) => {
+        body += chunk.toString('utf8')
+      })
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body }))
+    })
+    request.on('error', reject)
+  })
+}
+
+function listenAt(port: number): Promise<Server> {
+  const server = new NetServer()
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => resolve(server))
+  })
+}
+
+async function closeServers(servers: Server[]): Promise<void> {
+  for (const server of servers)
+    await new Promise<void>((resolve) => { server.close(() => resolve()) })
+}
+
+/** 连续 count 个空闲回环端口的占用者：`preferred` 起优先，不成则扫描一段静态范围，绝不静默降级为更弱的用例。 */
+async function occupyRange(count: number, preferred: number): Promise<{ base: number, servers: Server[] }> {
+  const bases = [preferred]
+  for (let base = 20_000; base < 60_000; base += count + 1)
+    bases.push(base)
+  for (const base of bases) {
+    const servers: Server[] = []
+    try {
+      for (let offset = 0; offset < count; offset += 1)
+        servers.push(await listenAt(base + offset))
+      return { base, servers }
+    }
+    catch {
+      await closeServers(servers)
+    }
+  }
+  throw new Error(`找不到连续 ${count} 个空闲回环端口`)
+}
+
 describe('sshManager', () => {
   it('lists redacted profile views in settings order', () => {
     const { manager } = boot()
@@ -396,11 +512,13 @@ describe('sshManager', () => {
     expect(manager.link(MachineId('ghost'))).toBeUndefined()
   })
 
-  it('connects a healthy machine and publishes the link', async () => {
+  it('connects a healthy machine and publishes the gateway link', async () => {
     const { manager, transport, emits } = boot()
     const link = await manager.connect(MachineId('m1'))
-    expect(link.tunnelBaseUrl).toBe('http://127.0.0.1:49152')
-    expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(link.tunnelBaseUrl)
+    expect(link.tunnelBaseUrl).toBe(manager.status(MachineId('m1')).tunnelBaseUrl)
+    expect(link.tunnelBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u)
+    expect(link.tunnelBaseUrl).not.toContain('token')
+    expect(manager.link(MachineId('m1'))).toEqual(link)
     expect(manager.status(MachineId('m1')).state).toBe('connected')
     expect(transport.connectCalls).toBe(1)
     expect(transport.hostKeys[0]?.accepted).toBe(true)
@@ -1563,9 +1681,8 @@ describe('sshManager reconnect', () => {
     expect(transport.connectCalls).toBe(1)
   })
 
-  it('publishes the tunnel URL with the launch token when the remote log has one', async () => {
-    // 远端 web 日志带 token：隧道 URL 附带 ?token=（首次加载 mint 鉴权 cookie）
-    const { manager } = boot({
+  it('keeps the launch token out of the link and reads it only when the gateway mints', async () => {
+    const { manager, transport } = boot({
       sessionFactory: () => {
         const session = new FakeSession(() => true)
         session.webTokenResult = 'tok-abc-123\n'
@@ -1573,8 +1690,10 @@ describe('sshManager reconnect', () => {
       },
     })
     const link = await manager.connect(MachineId('m1'))
-    expect(link.tunnelBaseUrl).toBe('http://127.0.0.1:49152/?token=tok-abc-123')
-    expect(manager.status(MachineId('m1')).tunnelBaseUrl).toBe('http://127.0.0.1:49152/?token=tok-abc-123')
+    expect(link.tunnelBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u)
+    expect(link.tunnelBaseUrl).not.toContain('tok-abc-123')
+    expect(JSON.stringify(manager.statuses())).not.toContain('tok-abc-123')
+    expect(transport.sessions[0]?.commands.some(command => command.startsWith('grep -oE \'token='))).toBe(false)
   })
 
   it('syncs the supplied plugin tree before ensuring the instance', async () => {
@@ -1605,37 +1724,256 @@ describe('sshManager reconnect', () => {
     expect(lines.some(line => line.includes('捆绑插件同步失败'))).toBe(true)
   })
 
-  it('stamps the tunnel with the minted session cookie once the launch token resolves', async () => {
-    const requests: string[] = []
-    const server = createServer((request, response) => {
-      requests.push(request.url ?? '')
-      response.setHeader('set-cookie', ['dsh-auth-x=v1.signed; Path=/; HttpOnly'])
-      response.end('ok')
-    })
-    await new Promise<void>((resolve) => {
-      server.listen(0, '127.0.0.1', resolve)
-    })
+  it('mints the DSH session cookie through the gateway on first access', async () => {
+    const standIn = await remoteStandIn()
     try {
-      const port = (server.address() as AddressInfo).port
-      const { manager, transport } = boot({
+      const { manager, transport } = boot({ sessionFactory: () => standInSession(standIn) })
+      const link = await manager.connect(MachineId('m1'))
+      // 连接阶段不铸造：网关只在首次访问时取用启动 token
+      expect(standIn.records).toEqual([])
+      const response = await getThrough(link.tunnelBaseUrl)
+      expect(response.status).toBe(200)
+      expect(response.body).toBe('dsh-ok')
+      expect(standIn.records.map(record => record.url)).toEqual(['/?token=tok-abc-123', '/'])
+      expect(standIn.records[0]?.host).toBe(`127.0.0.1:${new URL(link.tunnelBaseUrl).port}`)
+      expect(standIn.records[1]?.cookie).toBe('dsh-session=tok-abc-123')
+      expect(transport.sessions[0]?.closed).toBe(false)
+    }
+    finally {
+      await standIn.close()
+    }
+  })
+
+  it('re-reads the remote launch token to re-mint after the remote instance restarts', async () => {
+    const standIn = await remoteStandIn()
+    try {
+      const { manager, transport } = boot({ sessionFactory: () => standInSession(standIn) })
+      const link = await manager.connect(MachineId('m1'))
+      expect((await getThrough(link.tunnelBaseUrl)).status).toBe(200)
+      // 远端实例重启：日志里的 token 变了，旧 cookie 随即失效
+      standIn.sessionCookie('dsh-session=tok-next-456')
+      transport.sessions[0]!.webTokenResult = 'tok-next-456\n'
+      const after = await getThrough(link.tunnelBaseUrl)
+      expect(after.status).toBe(200)
+      expect(after.body).toBe('dsh-ok')
+      expect(standIn.records.filter(record => record.url.startsWith('/?token=')).map(record => record.url)).toEqual(['/?token=tok-abc-123', '/?token=tok-next-456'])
+      expect(standIn.records.at(-1)?.cookie).toBe('dsh-session=tok-next-456')
+      expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(link.tunnelBaseUrl)
+    }
+    finally {
+      await standIn.close()
+    }
+  })
+
+  it('declares identity and the gateway authority to the remote instance', async () => {
+    const standIn = await remoteStandIn()
+    try {
+      const { manager } = boot({
         sessionFactory: () => {
           const session = new FakeSession(() => true)
-          session.webTokenResult = 'tok-abc-123\n'
-          session.tunnelPort = port
+          session.tunnelPort = standIn.port
           return session
         },
       })
       const link = await manager.connect(MachineId('m1'))
-      // mint 走隧道自身的带 token URL；注入槽随后携带 Cookie（iframe 免登录）
-      expect(requests).toEqual(['/?token=tok-abc-123'])
-      expect(transport.sessions[0]?.tunnelInjection?.cookie).toBe('dsh-auth-x=v1.signed')
-      expect(link.tunnelBaseUrl).toBe(`http://127.0.0.1:${port}/?token=tok-abc-123`)
+      await getThrough(link.tunnelBaseUrl)
+      expect(standIn.records).toHaveLength(1)
+      expect(standIn.records[0]?.url).toBe('/')
+      expect(standIn.records[0]?.host).toBe(`127.0.0.1:${new URL(link.tunnelBaseUrl).port}`)
+      expect(standIn.records[0]?.encoding).toBe('identity')
     }
     finally {
-      await new Promise<void>((resolve) => {
-        server.close(() => resolve())
-      })
+      await standIn.close()
     }
+  })
+
+  it('keeps the link alive when the remote launch token cannot be read, then mints on the next access', async () => {
+    const standIn = await remoteStandIn()
+    try {
+      const { manager, transport } = boot({
+        sessionFactory: () => {
+          const session = new FakeSession(() => true)
+          session.tunnelPort = standIn.port
+          return session
+        },
+      })
+      const link = await manager.connect(MachineId('m1'))
+      const denied = await getThrough(link.tunnelBaseUrl)
+      expect(denied.status).toBe(401)
+      expect(standIn.records.map(record => record.url)).toEqual(['/'])
+      expect(manager.status(MachineId('m1')).state).toBe('connected')
+      expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(link.tunnelBaseUrl)
+      // 失败的铸造不得被缓存：token 恢复后无需重连即可铸造成功
+      transport.sessions[0]!.webTokenResult = 'tok-abc-123\n'
+      const allowed = await getThrough(link.tunnelBaseUrl)
+      expect(allowed.status).toBe(200)
+      expect(allowed.body).toBe('dsh-ok')
+      expect(standIn.records.map(record => record.url)).toEqual(['/', '/?token=tok-abc-123', '/'])
+    }
+    finally {
+      await standIn.close()
+    }
+  })
+
+  it('runs one outbound gateway entry per connected machine, upstreamed at its tunnel port', async () => {
+    const { manager, transport } = boot()
+    const link = await manager.connect(MachineId('m1'))
+    expect(gateway.list()).toEqual([
+      expect.objectContaining({
+        id: 'remote-outbound:m1',
+        kind: 'outbound',
+        state: 'listening',
+        host: '127.0.0.1',
+        url: link.tunnelBaseUrl,
+        upstream: `http://127.0.0.1:${transport.sessions[0]!.tunnelPort}`,
+      }),
+    ])
+    await manager.disconnect(MachineId('m1'))
+    expect(gateway.list()).toEqual([expect.objectContaining({ id: 'remote-outbound:m1', state: 'stopped', port: 0 })])
+    expect(manager.status(MachineId('m1')).tunnelBaseUrl).toBeUndefined()
+  })
+
+  it('gives each connected machine its own gateway port', async () => {
+    const { manager } = boot()
+    const first = await manager.connect(MachineId('m1'))
+    const second = await manager.connect(MachineId('m2'))
+    expect(first.tunnelBaseUrl).not.toBe(second.tunnelBaseUrl)
+    expect(gateway.list().map(entry => entry.url).sort()).toEqual([first.tunnelBaseUrl, second.tunnelBaseUrl].sort())
+  })
+
+  it('does not report connected before the gateway entry is listening', async () => {
+    const { manager } = boot()
+    const original = gateway.start
+    const observed: string[] = []
+    const start = vi.spyOn(gateway, 'start').mockImplementation(async (options) => {
+      observed.push(manager.status(MachineId('m1')).state)
+      return await original(options)
+    })
+    const link = await manager.connect(MachineId('m1'))
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(start.mock.calls[0]?.[0]).toMatchObject({ id: 'remote-outbound:m1', kind: 'outbound' })
+    expect(observed).toEqual(['connecting'])
+    expect(manager.status(MachineId('m1')).state).toBe('connected')
+    expect(manager.status(MachineId('m1')).tunnelBaseUrl).toBe(link.tunnelBaseUrl)
+  })
+
+  it('reuses the gateway port after a disconnect so the link survives a manual reconnect', async () => {
+    const { manager } = boot()
+    const first = await manager.connect(MachineId('m1'))
+    await manager.disconnect(MachineId('m1'))
+    const again = await manager.connect(MachineId('m1'))
+    expect(again.tunnelBaseUrl).toBe(first.tunnelBaseUrl)
+  })
+
+  it('dials the retry only after the previous gateway teardown has landed', async () => {
+    const order: string[] = []
+    const { manager, transport } = boot({
+      sessionFactory: () => {
+        order.push('dial')
+        return new FakeSession(() => true)
+      },
+    })
+    const first = await manager.connect(MachineId('m1'))
+    const original = gateway.stop
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.spyOn(gateway, 'stop').mockImplementation(async (id) => {
+      order.push('teardown')
+      await gate
+      await original(id)
+      order.push('teardown-done')
+    })
+    transport.sessions[0]!.drop()
+    const due = machineStates.get(MachineId('m1'))!.reconnect?.nextRetryAt
+    expect(due).toBeTypeOf('number')
+    // 退避已到期（+50ms 余量）而回收仍未落地：此刻不许再拨号
+    await until(() => Date.now() > (due ?? 0) + 50, 'retry window passed')
+    expect(order).toEqual(['dial', 'teardown'])
+    release()
+    await until(() => manager.status(MachineId('m1')).state === 'connected', 'reconnect after teardown')
+    expect(order).toEqual(['dial', 'teardown', 'teardown-done', 'dial'])
+    expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(first.tunnelBaseUrl)
+  })
+
+  it('reconnects when the gateway entry dies behind the machine', async () => {
+    const standIn = await remoteStandIn()
+    try {
+      const { manager } = boot({ sessionFactory: () => standInSession(standIn) })
+      const first = await manager.connect(MachineId('m1'))
+      await gateway.stop('remote-outbound:m1')
+      await until(() => manager.status(MachineId('m1')).state === 'reconnecting', 'reconnecting after gateway stop')
+      await until(() => manager.status(MachineId('m1')).state === 'connected', 'gateway restart')
+      expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(first.tunnelBaseUrl)
+      expect((await getThrough(first.tunnelBaseUrl)).status).toBe(200)
+    }
+    finally {
+      await standIn.close()
+    }
+  })
+
+  it('reconnects when the upstream tunnel dies behind the gateway', async () => {
+    let standIn = await remoteStandIn()
+    const port = standIn.port
+    const { manager } = boot({ sessionFactory: () => standInSession(standIn) })
+    try {
+      const link = await manager.connect(MachineId('m1'))
+      // 上游隧道被杀：同一端口不再有监听，网关转发拿到 ECONNREFUSED
+      await standIn.close()
+      const response = await getThrough(link.tunnelBaseUrl)
+      expect(response.status).toBe(502)
+      expect(response.body).toContain('上游不可达')
+      await until(() => manager.status(MachineId('m1')).state === 'reconnecting', 'reconnecting after upstream kill')
+      standIn = await remoteStandIn(port)
+      await until(() => manager.status(MachineId('m1')).state === 'connected', 'reconnect after upstream kill')
+      expect(manager.status(MachineId('m1')).state).toBe('connected')
+      expect((await getThrough(manager.link(MachineId('m1'))!.tunnelBaseUrl)).status).toBe(200)
+    }
+    finally {
+      await standIn.close()
+    }
+  })
+
+  it('gives up with a readable reason when every gateway candidate port is taken', async () => {
+    const { manager, transport } = boot()
+    const first = await manager.connect(MachineId('m1'))
+    const remembered = Number(new URL(first.tunnelBaseUrl).port)
+    await manager.disconnect(MachineId('m1'))
+    const range = await occupyRange(GATEWAY_CANDIDATES, remembered)
+    machineStates.get(MachineId('m1'))!.preferredGatewayPort = range.base
+    try {
+      await expect(manager.connect(MachineId('m1'))).rejects.toMatchObject({ code: 'machine-bootstrap-failed' })
+      const status = manager.status(MachineId('m1'))
+      expect(status.state).toBe('given-up')
+      expect(status.lastError).toMatch(/网关端口全部占用/u)
+      expect(status.nextRetryAt).toBeUndefined()
+      expect(manager.link(MachineId('m1'))).toBeUndefined()
+      expect(transport.sessions.at(-1)?.closed).toBe(true)
+      expect(transport.sessions.at(-1)?.tunnelCloseCalls).toBe(1)
+    }
+    finally {
+      await closeServers(range.servers)
+    }
+  })
+
+  it('rebuilds the outbound entry after a full gateway teardown', async () => {
+    const { manager } = boot()
+    const first = await manager.connect(MachineId('m1'))
+    await gateway.dispose()
+    expect(gateway.list()).toEqual([])
+    await until(() => manager.status(MachineId('m1')).state === 'reconnecting', 'reconnecting after gateway teardown')
+    await until(() => manager.status(MachineId('m1')).state === 'connected', 'gateway rebuilt')
+    expect(gateway.list()).toEqual([expect.objectContaining({ id: 'remote-outbound:m1', kind: 'outbound', state: 'listening' })])
+    expect(manager.link(MachineId('m1'))?.tunnelBaseUrl).toBe(first.tunnelBaseUrl)
+  })
+
+  it('closes the gateway when the machine profile vanishes', async () => {
+    const { manager } = boot()
+    await manager.connect(MachineId('m1'))
+    manager.refreshProfiles(new Map([[secondProfile.id, secondProfile]]))
+    await until(() => gateway.list().every(entry => entry.state === 'stopped'), 'gateway teardown')
+    expect(manager.status(MachineId('m1')).state).toBe('disconnected')
   })
 
   it('exits given-up on a fresh connect', async () => {
@@ -1647,7 +1985,7 @@ describe('sshManager reconnect', () => {
     expect(manager.status(MachineId('m1')).state).toBe('given-up')
     fail = false
     const link = await manager.connect(MachineId('m1'))
-    expect(link.tunnelBaseUrl).toBe('http://127.0.0.1:49152')
+    expect(link.tunnelBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u)
     expect(manager.status(MachineId('m1')).state).toBe('connected')
   })
 

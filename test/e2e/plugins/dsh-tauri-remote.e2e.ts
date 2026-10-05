@@ -23,9 +23,11 @@
 
 import type { Connection, Server as SshServer } from 'ssh2'
 import type { MachineProfile, RemoteHostContext, RemoteSession } from '../../../packages/dsh-tauri-remote/src/host/types/index'
+import { Buffer } from 'node:buffer'
 import { execSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer as createHttpServer } from 'node:http'
 import { createServer, connect as tcpConnect } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import process from 'node:process'
@@ -739,4 +741,353 @@ describe('e2e keepalive watchdog (silent connection freeze)', () => {
       await harness.dispose()
     }
   }, 60_000)
+})
+
+/**
+ * E2E #5 — 出站网关：干净 link、身份改写与 SSH 链路压缩，全部跑在真实 ssh2 协议往返上。
+ *
+ * 远端 DSH 用本机 HTTP 服务器顶替（`/?token=` 铸造会话 cookie，其余请求按 cookie 放行），
+ * SSH 服务端是回环 ssh2 协议服务器：exec 通道回答健康探测与启动 token 读取，direct-tcpip
+ * 通道把隧道流量转给那台 HTTP 服务器。客户端与 sshd 之间挂一枚计数代理，把「链路压缩是否
+ * 真的生效」量成字节数；压缩协商结果直接读服务端连接的 `_protocol._kex.negotiated`。
+ *
+ * 环境降级标注：真实远端 DSH 与真实公网隧道不在本环境内（无可用远端机），桌面临窗口内的
+ * 真实对话与断网重连属人工验收；本套只覆盖可自动化的出站契约。
+ */
+describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
+  const PASSWORD = 'e2e-outbound'
+  const TOKEN = 'tok-e2e-outbound'
+  const BULK_BYTES = 200 * 1024
+  const BULK = Buffer.alloc(BULK_BYTES, 0x41)
+  const BOOT_HTML = '<html><body><script>globalThis["__DSH_BOOT__"] = {"entries":[{"url":"/plugins/@deepseek-ai/dsh-client-ui-layout/client.js"}]};</script></body></html>'
+
+  interface RemoteRequest {
+    url: string
+    host: string | undefined
+    encoding: string | undefined
+    cookie: string | undefined
+  }
+
+  interface Upstream {
+    port: number
+    requests: RemoteRequest[]
+    close: () => Promise<void>
+  }
+
+  interface SshdState {
+    negotiated: string | undefined
+    commands: string[]
+  }
+
+  interface Sshd {
+    server: SshServer
+    port: number
+    state: SshdState
+  }
+
+  let sshd: Sshd
+  let plainSshd: Sshd
+  let sshdProxy: { port: number, close: () => void }
+  let plainProxy: { port: number, close: () => void }
+  let wireBytes = 0
+  let scratchSshDir = ''
+
+  /** 远端 DSH 的替身：按启动 token 铸造会话 cookie，其余请求必须带对 cookie 才放行。 */
+  async function startUpstream(port = 0): Promise<Upstream> {
+    const requests: RemoteRequest[] = []
+    const server = createHttpServer((request, response) => {
+      const url = request.url ?? ''
+      requests.push({
+        url,
+        host: request.headers.host,
+        encoding: request.headers['accept-encoding'],
+        cookie: request.headers.cookie,
+      })
+      if (url.startsWith('/?token=')) {
+        if (url !== `/?token=${TOKEN}`) {
+          response.statusCode = 401
+          response.end('bad token')
+          return
+        }
+        response.setHeader('set-cookie', [`dsh-session=${TOKEN}; Path=/; HttpOnly`])
+        response.end('minted')
+        return
+      }
+      if (request.headers.cookie !== `dsh-session=${TOKEN}`) {
+        response.statusCode = 401
+        response.end('unauthorized')
+        return
+      }
+      if (url === '/bulk') {
+        response.setHeader('content-type', 'application/javascript')
+        response.end(BULK)
+        return
+      }
+      response.setHeader('content-type', 'text/html')
+      response.end('dsh-ok')
+    })
+    await new Promise<void>((resolve) => {
+      server.listen(port, '127.0.0.1', () => resolve())
+    })
+    return {
+      port: (server.address() as { port: number }).port,
+      requests,
+      close: async () => {
+        await new Promise<void>((resolve) => {
+          server.close(() => resolve())
+        })
+      },
+    }
+  }
+
+  /**
+   * 回环 ssh2 协议服务器。`compressAlgorithms` 省略即 ssh2 默认（服务端偏好 `none`，
+   * 但按 RFC 4253 由客户端的优先序决定结果）；传 `['none']` 即「服务端不支持延迟压缩」。
+   */
+  async function startSshd(compressAlgorithms?: ['none']): Promise<Sshd> {
+    const state: SshdState = { negotiated: undefined, commands: [] }
+    const server = new Server(
+      {
+        hostKeys: [freshRsaPem()],
+        ...compressAlgorithms === undefined ? {} : { algorithms: { compress: compressAlgorithms } },
+      },
+      (client: Connection) => {
+        client.on('authentication', (ctx) => {
+          if (ctx.method === 'password' && ctx.password === PASSWORD) {
+            ctx.accept()
+            return
+          }
+          ctx.reject(['publickey', 'password'])
+        })
+        client.on('ready', () => {
+          const kex = (client as unknown as {
+            _protocol?: { _kex?: { negotiated?: { cs?: { compress?: string } } } }
+          })._protocol?._kex
+          state.negotiated = kex?.negotiated?.cs?.compress
+        })
+        client.on('session', (accept) => {
+          const session = accept()
+          session.on('exec', (acceptExec, _rejectExec, info) => {
+            const stream = acceptExec()
+            const command = (info as { command?: string }).command ?? ''
+            state.commands.push(command)
+            if (command.includes('grep -oE') && command.includes('token=')) {
+              stream.write(`${TOKEN}\n`)
+              stream.exit(0)
+              stream.end()
+              return
+            }
+            if (command.includes('%{http_code}')) {
+              stream.write('console.log(1)\n200')
+              stream.exit(0)
+              stream.end()
+              return
+            }
+            if (command.includes('curl -s -m')) {
+              stream.write(BOOT_HTML)
+              stream.exit(0)
+              stream.end()
+              return
+            }
+            stream.stderr.write('e2e: 未实现的远端命令\n')
+            stream.exit(1)
+            stream.end()
+          })
+        })
+        client.on('tcpip', (accept, _reject, info) => {
+          const channel = accept()
+          const dest = tcpConnect((info as { destPort: number }).destPort, '127.0.0.1')
+          channel.pipe(dest).pipe(channel)
+          channel.on('close', () => dest.destroy())
+          dest.on('error', () => channel.close())
+        })
+        client.on('error', () => {
+          // 断连与杀上游都由客户端侧发起，服务端只收尾。
+        })
+      },
+    )
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve())
+    })
+    return { server, port: (server.address() as { port: number }).port, state }
+  }
+
+  /** 计数代理：客户端连它，它连 sshd；两个方向的字节都计入 `wireBytes`。 */
+  function startProxy(target: number): Promise<{ port: number, close: () => void }> {
+    const proxy = createServer((down) => {
+      const up = tcpConnect(target, '127.0.0.1')
+      down.on('data', (chunk: Buffer) => {
+        wireBytes += chunk.length
+      })
+      up.on('data', (chunk: Buffer) => {
+        wireBytes += chunk.length
+      })
+      down.pipe(up).pipe(down)
+      down.on('error', () => down.destroy())
+      up.on('error', () => up.destroy())
+    })
+    return new Promise((resolve) => {
+      proxy.listen(0, '127.0.0.1', () => resolve({
+        port: (proxy.address() as { port: number }).port,
+        close: () => proxy.close(),
+      }))
+    })
+  }
+
+  function profileFor(port: number, remotePort: number): MachineProfile {
+    return {
+      id: id('outbound-gateway'),
+      name: 'outbound-gateway',
+      host: '127.0.0.1',
+      port,
+      user: 'root',
+      password: PASSWORD,
+      remotePort,
+    }
+  }
+
+  beforeAll(async () => {
+    sshd = await startSshd()
+    plainSshd = await startSshd(['none'])
+    sshdProxy = await startProxy(sshd.port)
+    plainProxy = await startProxy(plainSshd.port)
+    scratchSshDir = mkdtempSync(join(tmpdir(), 'dsh-ssh-e2e-gateway-'))
+    writeFileSync(join(scratchSshDir, 'config'), '')
+  })
+
+  afterAll(() => {
+    sshd.server.close()
+    plainSshd.server.close()
+    sshdProxy.close()
+    plainProxy.close()
+    rmSync(scratchSshDir, { recursive: true, force: true })
+  })
+
+  it('publishes a credential-free loopback link and proxies a real request through the gateway', async () => {
+    const upstream = await startUpstream()
+    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    try {
+      const profile = profileFor(sshdProxy.port, upstream.port)
+      harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
+      const link = await harness.manager.connect(profile.id)
+      expect(link.tunnelBaseUrl, `link 必须是无凭据的回环入口，实际 ${link.tunnelBaseUrl}`).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u)
+      expect(link.tunnelBaseUrl).not.toContain('token')
+      expect(harness.manager.status(profile.id).state).toBe('connected')
+      harness.log(`connected link=${link.tunnelBaseUrl}`)
+
+      const response = await fetch(link.tunnelBaseUrl)
+      const gatewayPort = new URL(link.tunnelBaseUrl).port
+      harness.log(`remote instance saw ${JSON.stringify(upstream.requests)}`)
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe('dsh-ok')
+      expect(upstream.requests.map(record => record.url)).toEqual([`/?token=${TOKEN}`, '/'])
+      expect(upstream.requests[1]?.cookie).toBe(`dsh-session=${TOKEN}`)
+      expect(upstream.requests[1]?.host).toBe(`127.0.0.1:${gatewayPort}`)
+      expect(upstream.requests[1]?.encoding).toBe('identity')
+      expect(upstream.requests[1]?.url).toBe('/')
+    }
+    finally {
+      await harness.dispose()
+      await upstream.close()
+    }
+  }, 90_000)
+
+  it('negotiates zlib@openssh.com and shrinks the tunnel bytes for a compressible body', async () => {
+    const upstream = await startUpstream()
+    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    try {
+      const profile = profileFor(sshdProxy.port, upstream.port)
+      harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
+      const link = await harness.manager.connect(profile.id)
+      expect(sshd.state.negotiated).toBe('zlib@openssh.com')
+      harness.log(`sshd negotiated compress=${String(sshd.state.negotiated)}`)
+
+      wireBytes = 0
+      const response = await fetch(`${link.tunnelBaseUrl}/bulk`)
+      const body = await response.text()
+      expect(response.status).toBe(200)
+      expect(body.length).toBe(BULK_BYTES)
+      harness.log(`wire ${wireBytes} bytes for a ${BULK_BYTES}-byte body`)
+      expect(wireBytes).toBeLessThan(BULK_BYTES / 5)
+    }
+    finally {
+      await harness.dispose()
+      await upstream.close()
+    }
+  }, 90_000)
+
+  it('degrades silently to no compression when the server does not offer it', async () => {
+    const upstream = await startUpstream()
+    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    try {
+      plainSshd.state.negotiated = undefined
+      const profile = profileFor(plainProxy.port, upstream.port)
+      harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
+      const link = await harness.manager.connect(profile.id)
+      expect(plainSshd.state.negotiated).toBe('none')
+      harness.log(`sshd negotiated compress=${String(plainSshd.state.negotiated)}`)
+
+      wireBytes = 0
+      const response = await fetch(`${link.tunnelBaseUrl}/bulk`)
+      const body = await response.text()
+      expect(response.status).toBe(200)
+      expect(body.length).toBe(BULK_BYTES)
+      harness.log(`wire ${wireBytes} bytes for a ${BULK_BYTES}-byte body without link compression`)
+      expect(wireBytes).toBeGreaterThan(BULK_BYTES)
+    }
+    finally {
+      await harness.dispose()
+      await upstream.close()
+    }
+  }, 90_000)
+
+  it('reuses the gateway port across a disconnect so the link survives a reconnect', async () => {
+    const upstream = await startUpstream()
+    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    try {
+      const profile = profileFor(sshdProxy.port, upstream.port)
+      harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
+      const first = await harness.manager.connect(profile.id)
+      await harness.manager.disconnect(profile.id)
+      expect(harness.manager.status(profile.id).state).toBe('disconnected')
+      const again = await harness.manager.connect(profile.id)
+      expect(again.tunnelBaseUrl).toBe(first.tunnelBaseUrl)
+      harness.log(`rebound the same gateway port ${again.tunnelBaseUrl}`)
+      expect((await fetch(again.tunnelBaseUrl)).status).toBe(200)
+    }
+    finally {
+      await harness.dispose()
+      await upstream.close()
+    }
+  }, 90_000)
+
+  it('moves the machine to reconnecting when its upstream tunnel dies, then serves the same link again', async () => {
+    const upstream = await startUpstream()
+    const port = upstream.port
+    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000, reconnectInitialDelayMs: 300, reconnectMaxAttempts: 4 })
+    let live = upstream
+    try {
+      const profile = profileFor(sshdProxy.port, port)
+      harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
+      const link = await harness.manager.connect(profile.id)
+      expect((await fetch(link.tunnelBaseUrl)).status).toBe(200)
+
+      // 人为杀掉上游隧道：远端实例端口不再有监听，网关转发拿到 ECONNREFUSED
+      await live.close()
+      const response = await fetch(link.tunnelBaseUrl)
+      expect(response.status).toBe(502)
+      await waitFor(() => harness.manager.status(profile.id).state === 'reconnecting', 'reconnecting state')
+      harness.log('observed reconnecting after the upstream tunnel died')
+
+      live = await startUpstream(port)
+      await waitFor(() => harness.manager.status(profile.id).state === 'connected', 'reconnect after upstream kill', 60_000)
+      expect(harness.manager.link(profile.id)?.tunnelBaseUrl).toBe(link.tunnelBaseUrl)
+      expect((await fetch(link.tunnelBaseUrl)).status).toBe(200)
+      harness.log(`link serves again at the SAME ${link.tunnelBaseUrl}`)
+    }
+    finally {
+      await live.close()
+      await harness.dispose()
+    }
+  }, 120_000)
 })

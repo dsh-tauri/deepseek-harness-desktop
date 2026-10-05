@@ -1,19 +1,19 @@
+import type { Buffer } from 'node:buffer'
 import type { AddressInfo, Server, Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
-import type { ConnectConfig } from 'ssh2'
-import type { MachineProfile, RemoteAuthMethod, RemoteExecOptions, RemoteExecResult, RemoteSession, RemoteStreamHandle, TunnelHeaderInjection } from '../types/index'
+import type { CompressionAlgorithm, ConnectConfig } from 'ssh2'
+import type { MachineProfile, RemoteAuthMethod, RemoteExecOptions, RemoteExecResult, RemoteSession, RemoteStreamHandle } from '../types/index'
 import type { ResolvedSshAuth } from '../utils/ssh-config'
 import type { RemoteHostKeyVerifier, RemoteTransport, RemoteTransportOptions } from './transport.types'
-import { Buffer } from 'node:buffer'
 import { createServer } from 'node:net'
 import process from 'node:process'
 import { Client } from 'ssh2'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { MachineId } from '../types/index'
 import { loginShell } from '../utils/shell'
-import { classifyConnectFailure, describeConnectFailure, injectCookieHead } from './transport.utils'
+import { classifyConnectFailure, describeConnectFailure } from './transport.utils'
 
-const TUNNEL_HEAD_CAP = 64 * 1024
+const COMPRESSION_ALGORITHMS: CompressionAlgorithm[] = ['zlib@openssh.com', 'none']
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 10_000
 const DEFAULT_KEEPALIVE_COUNT_MAX = 3
 
@@ -183,6 +183,7 @@ function connectWithAuth(
         readyTimeout: options.readyTimeoutMs,
         keepaliveInterval: options.keepaliveIntervalMs ?? DEFAULT_KEEPALIVE_INTERVAL_MS,
         keepaliveCountMax: options.keepaliveCountMax ?? DEFAULT_KEEPALIVE_COUNT_MAX,
+        algorithms: { compress: COMPRESSION_ALGORITHMS },
         authHandler,
         hostVerifier: (key: Buffer, verify: (valid: boolean) => void): void => {
           const verdict = hostKeyVerifier(label, key)
@@ -294,11 +295,11 @@ class Ssh2Session implements RemoteSession {
     })
   }
 
-  stream(remotePort: number, preferredLocalPort?: number, injection?: TunnelHeaderInjection): Promise<RemoteStreamHandle> {
-    return this.listenTunnel(remotePort, preferredLocalPort, true, injection)
+  stream(remotePort: number, preferredLocalPort?: number): Promise<RemoteStreamHandle> {
+    return this.listenTunnel(remotePort, preferredLocalPort, true)
   }
 
-  private listenTunnel(remotePort: number, preferredLocalPort: number | undefined, allowFallback: boolean, injection?: TunnelHeaderInjection): Promise<RemoteStreamHandle> {
+  private listenTunnel(remotePort: number, preferredLocalPort: number | undefined, allowFallback: boolean): Promise<RemoteStreamHandle> {
     return new Promise<RemoteStreamHandle>((resolve, reject) => {
       const sockets = new Set<Socket>()
       const server: Server = createServer((socket) => {
@@ -314,17 +315,12 @@ class Ssh2Session implements RemoteSession {
             return
           }
           channel.on('error', () => socket.destroy())
-          const cookie = injection?.cookie
-          if (cookie === undefined) {
-            socket.pipe(channel).pipe(socket)
-            return
-          }
-          pipeChannelWithCookie(socket, channel, cookie)
+          socket.pipe(channel).pipe(socket)
         })
       })
       server.on('error', (error: NodeJS.ErrnoException) => {
         if (allowFallback && error.code === 'EADDRINUSE' && preferredLocalPort !== undefined) {
-          void this.listenTunnel(remotePort, undefined, false, injection).then(resolve, reject)
+          void this.listenTunnel(remotePort, undefined, false).then(resolve, reject)
           return
         }
         reject(error)
@@ -354,41 +350,6 @@ class Ssh2Session implements RemoteSession {
     this.client.end()
     return Promise.resolve()
   }
-}
-
-function pipeChannelWithCookie(socket: Socket, channel: Duplex, cookie: string): void {
-  const buffered: Buffer[] = []
-  let bufferedLength = 0
-  let injected = false
-  const writeToChannel = (data: Buffer): void => {
-    if (!channel.write(data))
-      socket.pause()
-  }
-  socket.on('data', (chunk: Buffer) => {
-    if (injected) {
-      writeToChannel(chunk)
-      return
-    }
-    buffered.push(chunk)
-    bufferedLength += chunk.length
-    const whole = Buffer.concat(buffered)
-    const headEnd = whole.indexOf('\r\n\r\n')
-    if (headEnd === -1) {
-      if (bufferedLength > TUNNEL_HEAD_CAP) {
-        injected = true
-        writeToChannel(whole)
-      }
-      return
-    }
-    injected = true
-    const head = whole.subarray(0, headEnd).toString('latin1')
-    const rest = whole.subarray(headEnd)
-    writeToChannel(Buffer.concat([Buffer.from(injectCookieHead(head, cookie), 'latin1'), rest]))
-  })
-  socket.on('end', () => channel.end())
-  channel.on('drain', () => socket.resume())
-  channel.on('end', () => socket.end())
-  channel.pipe(socket)
 }
 
 function abortError(signal: AbortSignal): Error {

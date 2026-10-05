@@ -288,10 +288,6 @@ export interface RemoteExecOptions {
   stdinData?: Buffer
 }
 
-export interface TunnelHeaderInjection {
-  cookie: string | undefined
-}
-
 export interface RemoteStreamHandle {
   localPort: number
   close: () => Promise<void>
@@ -300,7 +296,7 @@ export interface RemoteStreamHandle {
 export interface RemoteSession {
   readonly authMethod?: RemoteAuthMethod | undefined
   exec: (command: string, options?: RemoteExecOptions) => Promise<RemoteExecResult>
-  stream: (remotePort: number, preferredLocalPort?: number, injection?: TunnelHeaderInjection) => Promise<RemoteStreamHandle>
+  stream: (remotePort: number, preferredLocalPort?: number) => Promise<RemoteStreamHandle>
   onClosed: (callback: () => void) => void
   close: () => Promise<void>
 }

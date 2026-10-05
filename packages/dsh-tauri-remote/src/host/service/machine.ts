@@ -1,5 +1,5 @@
 import type { Buffer } from 'node:buffer'
-import type { MachineProfile, MachineSaveRow, MachineSecretWrite, MachineView, RemoteInstallResult, RemoteLink, RemoteMachineStatus, RemoteProgress, RemoteSession, RemoteTestResult, TunnelHeaderInjection } from '../types/index'
+import type { MachineProfile, MachineSaveRow, MachineSecretWrite, MachineView, RemoteInstallResult, RemoteLink, RemoteMachineStatus, RemoteProgress, RemoteSession, RemoteTestResult } from '../types/index'
 import type { WorkspaceAllowlist } from '../utils/allowlist'
 import type { SshHostBlock } from '../utils/ssh-config'
 import type { BootstrapHooks } from './bootstrap.types'
@@ -18,10 +18,10 @@ import { discoverableHosts, loadSshConfigBlocks, lookupSshConfig, resolveSshAuth
 import { bootstrap } from './bootstrap'
 import { checkMissingCommand, credentialsCopyCommand, describeExecFailure, ensurePnpmCommand, firstLineOf, missingComponentsOf, planRemoteInstall, readEnvCredentials, remoteWebTokenCommand, safeProfileName, skippedVerificationSummary } from './bootstrap.utils'
 import { events } from './events'
+import { gateway } from './gateway'
 import { knownHosts } from './known-hosts'
 import { fingerprintHostKey } from './known-hosts.utils'
 import { state } from './state'
-import { mintTunnelCookie } from './transport.utils'
 
 export const machine = defineService({
   enabled(): boolean {
@@ -164,6 +164,7 @@ export const machine = defineService({
       target.phase = 'connecting'
       delete target.lastError
       delete target.dshMissing
+      delete target.gatewayExhausted
       target.progress = { phase: 'handshake' }
       emit(machineId)
       const generation = target.generation
@@ -175,7 +176,7 @@ export const machine = defineService({
         const current = machineStates.get(machineId)
         if (current === undefined || current.generation !== generation)
           return
-        if ((error instanceof RemoteError && error.code === 'machine-dsh-missing') || current.dshMissing === true) {
+        if (terminalConnectFailure(error, current)) {
           giveUp(machineId, current)
           return
         }
@@ -200,13 +201,20 @@ export const machine = defineService({
     stopReconnect(target)
     delete target.lastError
     delete target.dshMissing
+    delete target.gatewayExhausted
     delete target.progress
+    const entry = target.gateway
     const tunnel = target.tunnel
     const session = target.session
+    delete target.gateway
     delete target.tunnel
     delete target.session
     delete target.link
     target.phase = 'disconnected'
+    if (entry !== undefined) {
+      entry.unsubscribe()
+      await gateway.stop(entry.id).catch(() => undefined)
+    }
     if (tunnel !== undefined)
       await tunnel.close().catch(() => undefined)
     if (session !== undefined)
@@ -398,6 +406,7 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
   const target = ensureState(machineId)
   const generation = target.generation
   let bootstrapSettled = false
+  let portExhausted = false
   const onEvent = settlingEventSink(machineId, () => {
     bootstrapSettled = true
   })
@@ -443,24 +452,49 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
         onEvent,
       },
     )
-    const injection: TunnelHeaderInjection = { cookie: undefined }
-    const tunnel = await session.stream(profile.remotePort, target.preferredTunnelPort, injection)
+    const tunnel = await session.stream(profile.remotePort, target.preferredTunnelPort)
     if (generation !== target.generation) {
       await tunnel.close().catch(() => undefined)
       throw new AttemptCancelled()
     }
-    const webToken = await readRemoteWebToken(session)
-    if (webToken !== undefined)
-      injection.cookie = await mintTunnelCookie(`http://127.0.0.1:${tunnel.localPort}/?token=${webToken}`)
-    const link: RemoteLink = {
-      machineId,
-      tunnelBaseUrl: `http://127.0.0.1:${tunnel.localPort}${webToken === undefined ? '' : `/?token=${webToken}`}`,
+    const entryId = outboundEntryId(machineId)
+    let entryPort: number
+    try {
+      const entry = await gateway.start({
+        id: entryId,
+        kind: 'outbound',
+        upstream: `http://127.0.0.1:${tunnel.localPort}`,
+        port: target.preferredGatewayPort ?? 0,
+        tokenProvider: async (authority) => {
+          const token = await readRemoteWebToken(session)
+          return token === undefined ? undefined : `http://${authority}/?token=${token}`
+        },
+      })
+      entryPort = entry.port
     }
+    catch (error) {
+      await tunnel.close().catch(() => undefined)
+      portExhausted = isGatewayPortExhausted(error)
+      throw error
+    }
+    const unsubscribe = gateway.subscribe((event) => {
+      if (event.id !== entryId || (event.kind !== 'stopped' && event.kind !== 'upstream'))
+        return
+      // 本回调与网关写回下游响应同处一条调用链：必须让当前响应先出网，否则拆除会截断响应体。
+      setImmediate(() => {
+        if (machineStates.get(machineId)?.gateway?.id !== entryId)
+          return
+        detach(machineId, `网关入口异常退出：${event.line}`)
+      })
+    })
+    const link: RemoteLink = { machineId, tunnelBaseUrl: `http://127.0.0.1:${entryPort}` }
     const reconnected = target.reconnect !== undefined ? target.reconnect.reasons.length : undefined
     target.session = session
     target.tunnel = tunnel
+    target.gateway = { id: entryId, unsubscribe }
     target.link = link
     target.preferredTunnelPort = tunnel.localPort
+    target.preferredGatewayPort = entryPort
     if (session.authMethod === undefined)
       delete target.authMethod
     else
@@ -469,17 +503,9 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
     stopReconnect(target)
     target.phase = 'connected'
     session.onClosed(() => {
-      const current = machineStates.get(machineId)
-      if (current?.session !== session)
+      if (machineStates.get(machineId)?.session !== session)
         return
-      const dropped = current.tunnel
-      delete current.session
-      delete current.tunnel
-      delete current.link
-      delete current.progress
-      void dropped?.close().catch(() => undefined)
-      current.lastError = 'SSH connection closed'
-      beginReconnect(machineId)
+      detach(machineId, 'SSH connection closed')
     })
     emit(machineId)
     events.append(
@@ -508,11 +534,29 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
     if (generation === target.generation) {
       delete target.progress
       noteConnectFailure(machineId, message)
+      if (portExhausted)
+        target.gatewayExhausted = true
       target.phase = 'disconnected'
       emit(machineId)
     }
     throw new RemoteError('machine-bootstrap-failed', machineId, message)
   }
+}
+
+function outboundEntryId(machineId: MachineId): string {
+  return `remote-outbound:${machineId}`
+}
+
+/** 网关端口耗尽的判据：内核只在「候选全被登记表占用」或「每个候选都撞上 EADDRINUSE」时抛出，无人重试能改变这一点。 */
+function isGatewayPortExhausted(error: unknown): boolean {
+  const message = messageOf(error)
+  return message.includes('网关端口全部占用') || message.includes('EADDRINUSE')
+}
+
+function terminalConnectFailure(error: unknown, target: MachineState): boolean {
+  if (target.dshMissing === true || target.gatewayExhausted === true)
+    return true
+  return error instanceof RemoteError && error.code === 'machine-dsh-missing'
 }
 
 function noteConnectFailure(machineId: MachineId, message: string): void {
@@ -526,7 +570,30 @@ function noteConnectFailure(machineId: MachineId, message: string): void {
   events.append(machineId, 'auth', redactedMessage)
 }
 
-function beginReconnect(machineId: MachineId): void {
+function detach(machineId: MachineId, reason: string): void {
+  const target = machineStates.get(machineId)
+  if (target === undefined)
+    return
+  const entry = target.gateway
+  const tunnel = target.tunnel
+  const session = target.session
+  delete target.gateway
+  delete target.session
+  delete target.tunnel
+  delete target.link
+  delete target.progress
+  target.lastError = reason
+  if (entry !== undefined)
+    entry.unsubscribe()
+  const pending = Promise.all([
+    entry === undefined ? undefined : gateway.stop(entry.id).catch(() => undefined),
+    tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
+    session === undefined ? undefined : session.close().catch(() => undefined),
+  ]).then(() => undefined)
+  beginReconnect(machineId, pending)
+}
+
+function beginReconnect(machineId: MachineId, pending?: Promise<void>): void {
   const target = ensureState(machineId)
   if (target.reconnect !== undefined)
     return
@@ -534,6 +601,7 @@ function beginReconnect(machineId: MachineId): void {
     generation: target.generation,
     attempt: 0,
     reasons: [target.lastError ?? 'connection failed'],
+    ...pending === undefined ? {} : { pending },
   }
   scheduleReconnect(machineId)
 }
@@ -573,8 +641,16 @@ async function attemptReconnect(machineId: MachineId, expected: ReconnectState):
   const profile = machineProfiles.get(machineId)
   if (profile === undefined)
     return
+  const pending = rec.pending
+  delete rec.pending
+  if (pending !== undefined)
+    await pending
+  const current = machineStates.get(machineId)
+  const active = current?.reconnect
+  if (current === undefined || active !== rec || rec.generation !== current.generation)
+    return
   delete rec.nextRetryAt
-  target.progress = { phase: 'handshake' }
+  current.progress = { phase: 'handshake' }
   emit(machineId)
   try {
     await performConnect(machineId, profile)
@@ -582,15 +658,15 @@ async function attemptReconnect(machineId: MachineId, expected: ReconnectState):
   catch (error) {
     if (error instanceof AttemptCancelled)
       return
-    const current = machineStates.get(machineId)
-    const loop = current?.reconnect
-    if (current === undefined || loop === undefined || loop.generation !== current.generation)
+    const after = machineStates.get(machineId)
+    const loop = after?.reconnect
+    if (after === undefined || loop !== rec || rec.generation !== after.generation)
       return
-    if ((error instanceof RemoteError && error.code === 'machine-dsh-missing') || current.dshMissing === true) {
-      giveUp(machineId, current)
+    if (terminalConnectFailure(error, after)) {
+      giveUp(machineId, after)
       return
     }
-    loop.reasons.push(current.lastError ?? describeSshFailure(error))
+    loop.reasons.push(after.lastError ?? describeSshFailure(error))
     scheduleReconnect(machineId)
   }
 }
