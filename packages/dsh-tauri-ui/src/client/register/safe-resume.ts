@@ -32,7 +32,7 @@ export const safeResumeFeature = defineRegister<ClientContext>((controller, ctx,
     const atSeq = safeResumeBoundary(binding?.eventSource?.getSnapshot?.().entries)
     if (atSeq === undefined) {
       console.warn(`[${PLUGIN_ID}] 无法定位安全恢复边界，已保持原会话不变`)
-      store.safeResume.failRecovery(sessionId)
+      store.safeResume.markUnavailable(sessionId)
       return
     }
     pending = true

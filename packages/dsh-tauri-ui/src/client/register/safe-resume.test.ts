@@ -108,7 +108,7 @@ describe('safeResumeFeature', () => {
     expect(store.safeResume.refusals['s-1']).toBeUndefined()
   })
 
-  it('找不到安全边界时不猜边界、不动原会话，只标记恢复失败', async () => {
+  it('找不到安全边界时不猜边界、不动原会话，只标记不可恢复', async () => {
     install([{ type: 'event', event: { type: 'turn/end', seq: 9, data: { reason: { kind: 'error', error: refusal } } } }])
     safeResumeFeature.call(createCtx())
     store.safeResume.capture('s-1', refusal)
@@ -116,7 +116,7 @@ describe('safeResumeFeature', () => {
     await (registeredOptions()?.inject('s-1').recover as (id: string) => Promise<void>)('s-1')
 
     expect(mocks.forkRefusedSession).not.toHaveBeenCalled()
-    expect(store.safeResume.refusals['s-1']?.phase).toBe('failing')
+    expect(store.safeResume.refusals['s-1']?.phase).toBe('unavailable')
   })
 
   it('分叉失败时把阶段落到失败态，不打开任何会话', async () => {

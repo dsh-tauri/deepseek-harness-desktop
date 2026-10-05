@@ -22,6 +22,7 @@ export function SafeResumeBar({ sessionId, recover }: SafeResumeBarProps): React
   if (sessionId === undefined || state === undefined)
     return null
   const running = state.phase === 'running'
+  const unavailable = state.phase === 'unavailable'
   return (
     <div className="box-border">
       <div className="box-border mx-auto self-center w-[calc(100%_-_2_*_var(--dsh-composer-side-clearance)_-_4_*_var(--dsh-composer-dock-inset))] max-w-[calc(var(--dsh-composer-card-max-width)_-_4_*_var(--dsh-composer-dock-inset))]">
@@ -29,12 +30,12 @@ export function SafeResumeBar({ sessionId, recover }: SafeResumeBarProps): React
           data-dsh-safe-resume={sessionId}
           glyph={<Icon as={TriangleExclamation} size={14} />}
           label={locale.text('refusedTitle')}
-          objective={state.message}
+          objective={unavailable ? locale.text('refusedRecoverUnavailable') : state.message}
           error={state.phase === 'failing' ? locale.text('refusedRecoverFailed') : undefined}
           actions={(
             <ConversationBarAction
               aria-label={locale.text('refusedRecover')}
-              disabled={running}
+              disabled={running || unavailable}
               onClick={() => void recover(sessionId)}
             >
               {locale.text('refusedRecover')}

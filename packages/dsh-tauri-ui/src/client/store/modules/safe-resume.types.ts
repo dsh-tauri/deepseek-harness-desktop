@@ -1,6 +1,6 @@
 import type { ComposerRefusal } from '../../register/composer-resume.types'
 
-export type SafeResumePhase = 'idle' | 'running' | 'failing'
+export type SafeResumePhase = 'idle' | 'running' | 'failing' | 'unavailable'
 
 /** 一个会话已确认的内容审核拒绝：provider 原文 + 恢复动作阶段。 */
 export interface SafeResumeRefusalState extends ComposerRefusal {

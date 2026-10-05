@@ -38,5 +38,11 @@ export const safeResume = defineStore({
         return
       this.refusals = { ...this.refusals, [sessionId]: { ...current, phase: 'failing' } }
     },
+    markUnavailable(sessionId: string) {
+      const current: SafeResumeRefusalState | undefined = this.refusals[sessionId]
+      if (current === undefined)
+        return
+      this.refusals = { ...this.refusals, [sessionId]: { ...current, phase: 'unavailable' } }
+    },
   },
 })
