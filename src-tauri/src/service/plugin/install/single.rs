@@ -796,35 +796,21 @@ async fn run_plugin_command(
 /// 入口缺失」坏态，若不拦截，下一次启动即崩溃（见 [`ensure_plugin_entry_built`]）。
 /// 包名先解析（预设 package 覆盖 / 清单依赖 basename），解析不到时跳过核验
 /// （警告即可，不误杀成功更新）。
+///
+/// 「版本已达目标」只跳过 [`update_verify_step`] 的指纹判定，**不**跳过入口核验：
+/// 版本正确而声明入口缺失同样是坏态（见该函数说明）。
 async fn verify_update_landed(
     app_handle: &AppHandle,
     id: &str,
     before: Option<&str>,
     expected: Option<&str>,
 ) -> Result<(), String> {
-    if let Some(expected) = expected {
-        // 已经就是用户要的那个版本：pnpm 没有东西可改，指纹自然不变，但请求的状态已经达成
-        // ——显式安装之后这一条必须算成功，否则「装上了」会被报成「没有变化」。
-        if installed_package_version(&profile_dir(app_handle), id).as_deref() == Some(expected) {
-            return Ok(());
-        }
-    }
-    if let Some(before) = before {
-        if dependency_fingerprint(&profile_dir(app_handle), id).as_deref() == Some(before) {
-            let detail = installed_package_version(&profile_dir(app_handle), id)
-                .unwrap_or_else(|| before.to_string());
+    let profile = profile_dir(app_handle);
+    match update_verify_step(&profile, id, before, expected, || known_latest(app_handle, id)) {
+        UpdateVerifyStep::Hold { detail, latest } => {
             // 只有「新版本太新」这一种成因有出路（授权那个精确版本即可过闸），因此把
             // 目标版本与「是否已在豁免清单里」一并带出去：已经授权过还是不动，说明成因
             // 是档案把来源钉死，界面就别再给按钮——否则用户只会反复点一个没用的动作。
-            // 目标版本优先用本次请求带来的版本（面板显示的那个），探测缓存只在没有时才
-            // 兜底：缓存没命中会让 `latest` 为空、`retryable` 判成不可授权，用户点升级
-            // 就只剩一句「没有变化」。
-            let latest = expected
-                .filter(|expected| *expected != detail && is_registry_version(expected))
-                .map(str::to_string)
-                .or_else(|| {
-                    known_latest(app_handle, id).filter(|latest| latest != &detail && is_registry_version(latest))
-                });
             let retryable = latest.as_deref().is_some_and(|latest| {
                 !profile_release_age_excluded(app_handle, &format!("{id}@{latest}"))
             });
@@ -841,6 +827,7 @@ async fn verify_update_landed(
                 })
             ));
         }
+        UpdateVerifyStep::Entry => {}
     }
     let Some(name) = installed_package_name(app_handle, id) else {
         log::warn!("plugin {id} not resolvable to a package name, skipping entry verify");
@@ -858,6 +845,63 @@ async fn verify_update_landed(
         return Err(e);
     }
     Ok(())
+}
+
+/// 升级核验的第一步：这次升级该按「没落地」上报，还是继续核验声明入口。
+///
+/// 版本已经是用户请求的那个目标时**只**跳过指纹判定：pnpm 没有东西可改，指纹自然不变，
+/// 但请求的状态已经达成——显式安装之后这一条必须算成功，否则「装上了」会被报成
+/// 「没有变化」。入口核验**不能**跟着跳过：版本对而声明入口缺失（prepare 未构建、产物被
+/// 删掉）同样是坏态，而 [`run_plugin_command`] 的成功分支会清掉历史插件错误，漏掉这一步
+/// 就等于把坏态报成成功，下一次启动才崩（见 [`ensure_plugin_entry_built`]）。
+///
+/// 探测缓存以闭包传入：失败载荷里的 `latest` 需要它兜底，而读取要 `AppHandle`，
+/// 这一步本身只需要一个档案目录——这样整条判定都能脱离 Tauri 单测。
+fn update_verify_step(
+    profile: &Path,
+    id: &str,
+    before: Option<&str>,
+    expected: Option<&str>,
+    known_latest: impl Fn() -> Option<String>,
+) -> UpdateVerifyStep {
+    let reached = expected.is_some_and(|expected| {
+        installed_package_version(profile, id).as_deref() == Some(expected)
+    });
+    if !reached {
+        if let Some(before) = before {
+            if dependency_fingerprint(profile, id).as_deref() == Some(before) {
+                let detail = installed_package_version(profile, id)
+                    .unwrap_or_else(|| before.to_string());
+                // 目标版本优先用本次请求带来的版本（面板显示的那个），探测缓存只在没有时
+                // 兜底：缓存没命中会让 `latest` 为空，用户点升级就只剩一句「没有变化」。
+                let latest = expected
+                    .filter(|expected| *expected != detail && is_registry_version(expected))
+                    .map(str::to_string)
+                    .or_else(|| {
+                        known_latest().filter(|latest| latest != &detail && is_registry_version(latest))
+                    });
+                log::warn!(
+                    "dsh plugin update made no change for {id}, still at {detail}, newest {latest:?}"
+                );
+                return UpdateVerifyStep::Hold { detail, latest };
+            }
+        }
+    }
+    UpdateVerifyStep::Entry
+}
+
+/// [`update_verify_step`] 的判定结果。
+enum UpdateVerifyStep {
+    /// 指纹没动、请求的目标版本也没达成：这次升级没落地，按 [`UPDATE_HOLD_PREFIX`]
+    /// 载荷上报（`retryable` 由调用方按豁免清单补判）。
+    Hold {
+        /// 当前实际版本（lock 读不出时回落到升级前的指纹版本）。
+        detail: String,
+        /// 可授权的目标版本（非 registry 形状时为 `None`）。
+        latest: Option<String>,
+    },
+    /// 请求的目标版本已达成，或指纹确实变了：继续核验声明入口。
+    Entry,
 }
 
 #[cfg(test)]
@@ -1361,6 +1405,85 @@ mod tests {
         // 两侧都读不到 → None，调用方跳过核验：不确定时绝不误报升级失败
         let dir = probe_profile("unreadable", "", None);
         assert_eq!(dependency_fingerprint(&dir, "dsh-probe"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #913：显式升级命中目标版本时必须继续走入口核验。
+    ///
+    /// pnpm 在版本已经满足请求时不会改动 lock，指纹因此保持不变；若把「指纹没动」
+    /// 当成「没升级」上报，用户点名要的那个版本反而被报成失败。
+    #[test]
+    fn reached_target_version_still_verifies_the_entry() {
+        let dir = probe_profile("reached", LOCK_CATALOG, Some("0.19.0"));
+        let fingerprint = dependency_fingerprint(&dir, "dsh-probe");
+        assert_eq!(fingerprint.as_deref(), Some("catalog: @ 0.18.1"));
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            fingerprint.as_deref(),
+            Some("0.19.0"),
+            || None,
+        );
+        assert!(matches!(step, UpdateVerifyStep::Entry), "版本已达目标必须继续核验入口");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 指纹没动、目标版本也没达成 → 仍按「没落地」上报，并带上可授权的目标版本。
+    #[test]
+    fn unchanged_fingerprint_without_the_target_is_still_a_hold() {
+        let dir = probe_profile("hold", LOCK_CATALOG, Some("0.18.1"));
+        let fingerprint = dependency_fingerprint(&dir, "dsh-probe");
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            fingerprint.as_deref(),
+            Some("0.19.0"),
+            || None,
+        );
+        match step {
+            UpdateVerifyStep::Hold { detail, latest } => {
+                assert_eq!(detail, "0.18.1");
+                assert_eq!(latest.as_deref(), Some("0.19.0"));
+            }
+            UpdateVerifyStep::Entry => panic!("指纹未变且目标未达成时必须上报没落地"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 目标版本不是 registry 形状（catalog:/git 地址）时回落到探测缓存，
+    /// 否则界面只剩一句「没有变化」而没有可授权的版本。
+    #[test]
+    fn hold_falls_back_to_the_probed_latest_version() {
+        let dir = probe_profile("fallback-latest", LOCK_CATALOG, Some("0.18.1"));
+        let fingerprint = dependency_fingerprint(&dir, "dsh-probe");
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            fingerprint.as_deref(),
+            Some("https://codeload.github.com/o/r/tar.gz/aaaaaaaaaaaaaaaa"),
+            || Some("0.19.0".to_string()),
+        );
+        match step {
+            UpdateVerifyStep::Hold { latest, .. } => {
+                assert_eq!(latest.as_deref(), Some("0.19.0"));
+            }
+            UpdateVerifyStep::Entry => panic!("指纹未变且目标未达成时必须上报没落地"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 指纹确实变了 → 升级已落地，继续核验入口（不再看版本是否等于目标）。
+    #[test]
+    fn changed_fingerprint_goes_straight_to_entry_verification() {
+        let dir = probe_profile("moved", LOCK_CATALOG, Some("0.19.0"));
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            Some("catalog: @ 0.17.0"),
+            Some("0.20.0"),
+            || None,
+        );
+        assert!(matches!(step, UpdateVerifyStep::Entry));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
