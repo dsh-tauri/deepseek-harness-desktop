@@ -52,6 +52,19 @@ const searchProblemKeys: Record<PluginSearchProblem, string> = {
   'unknown': 'plugins.search_unknown',
 }
 
+/**
+ * 安装框文本 → spec 列表：默认按逗号/空白拆分（可一次装多个），但目录选择器回填的那
+ * 一条要整体保留——路径里的空格属于路径本身，拆开只会得到两条都不存在的 spec。
+ */
+function splitRefs(value: string, picked: string | null): string[] {
+  const trimmed = value.trim()
+  if (trimmed === '')
+    return []
+  if (picked !== null && trimmed === picked)
+    return [trimmed]
+  return trimmed.split(/[\s,]+/).filter(Boolean)
+}
+
 /** 宿主 `get_local_plugin_hmr` 的返回：开关值、补丁层路径与当前真正被监听的源码目录。 */
 interface LocalHmrStatus {
   enabled: boolean
@@ -83,6 +96,8 @@ export function ConfigPlugin() {
   const [busy, setBusy] = useState<string[]>([])
   /** 安装输入的原始文本：支持逗号/空白分隔的多个 spec */
   const [installRef, setInstallRef] = useState('')
+  /** 目录选择器回填的整条 spec：与输入框内容逐字相等时才按单条处理（见 {@link splitRefs}） */
+  const [pickedSpec, setPickedSpec] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
   /** 兼容性预检结果：安装前先经 manager.search 展示解析到的版本与兼容性 */
   const [searchResults, setSearchResults] = useState<PluginSearchResult[] | null>(null)
@@ -167,6 +182,7 @@ export function ConfigPlugin() {
       if (spec == null)
         return
       setInstallRef(spec)
+      setPickedSpec(spec)
       setSearchResults(null)
     }
     catch (e) {
@@ -260,7 +276,7 @@ export function ConfigPlugin() {
    * 命中明确不兼容的 spec 时中止并提示，其余交给 `manager.install` 走统一队列。
    */
   async function onInstall() {
-    const refs = installRef.trim().split(/[\s,]+/).filter(Boolean)
+    const refs = splitRefs(installRef, pickedSpec)
     if (refs.length === 0 || installing)
       return
     setInstalling(true)
@@ -274,6 +290,7 @@ export function ConfigPlugin() {
         return
       }
       setInstallRef('')
+      setPickedSpec(null)
       await manager.install(refs)
     }
     catch (e) {

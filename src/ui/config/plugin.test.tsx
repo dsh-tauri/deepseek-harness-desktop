@@ -202,6 +202,28 @@ describe('local plugin folder picking', () => {
     expect(manager.install).toHaveBeenCalledExactlyOnceWith(['link:D:/plugins/mine'])
   })
 
+  it('keeps a picked path containing spaces as one spec', async () => {
+    mockLocalCommands('link:D:/My Plugins/mine')
+    render(<ConfigPlugin />)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'plugins.local_dir' })))
+    const input = screen.getByPlaceholderText('plugins.install_placeholder') as HTMLInputElement
+    expect(input.value).toBe('link:D:/My Plugins/mine')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'plugins.install' })))
+    await waitFor(() => expect(manager.search).toHaveBeenCalledExactlyOnceWith(['link:D:/My Plugins/mine']))
+    expect(manager.install).toHaveBeenCalledExactlyOnceWith(['link:D:/My Plugins/mine'])
+  })
+
+  it('splits specs again once the picked path is edited by hand', async () => {
+    mockLocalCommands('link:D:/My Plugins/mine')
+    render(<ConfigPlugin />)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'plugins.local_dir' })))
+    const input = screen.getByPlaceholderText('plugins.install_placeholder') as HTMLInputElement
+    await act(async () => fireEvent.change(input, { target: { value: 'dsh-a, dsh-b  dsh-c' } }))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'plugins.install' })))
+    await waitFor(() => expect(manager.search).toHaveBeenCalledExactlyOnceWith(['dsh-a', 'dsh-b', 'dsh-c']))
+    expect(manager.install).toHaveBeenCalledExactlyOnceWith(['dsh-a', 'dsh-b', 'dsh-c'])
+  })
+
   it('keeps the install box untouched when the folder picker is cancelled', async () => {
     mockLocalCommands(null)
     render(<ConfigPlugin />)
