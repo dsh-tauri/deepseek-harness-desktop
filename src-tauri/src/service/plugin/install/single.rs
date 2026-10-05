@@ -20,6 +20,7 @@ use super::harness_prefer_bundled_pnpm;
 use super::diagnose::{
     git_transport_hint, incompatible_versions, network_error_hint, pick_error_message,
     policy_blocked_versions, policy_verification_network_failure, store_mismatch_hint,
+    PolicyBlockedVersion,
 };
 use super::errors;
 use super::installed_name;
@@ -45,7 +46,8 @@ use crate::service::profile::profile_release_age_excluded;
 ///   （见 [`resolve_missing_targets`]），补不上才沿用 `dsh plugin update <id> --latest`
 ///   让 pnpm 在声明范围内挑最新，再逐项核验是否真的落地（见 [`update_to_latest`]）。
 ///
-/// 逐项核验的结果汇总成一条错误消息（见 [`update_failure_payload`]）。
+/// 逐项核验的结果汇总成一条错误消息（见 [`update_failure_payload`]）：两个阶段各自的结算都
+/// 保留下来，前一段装上的目标不会被后一段的一般错误抹掉（见 [`UpdateFailure`]）。
 pub async fn update_many(app_handle: &AppHandle, specs: &[String]) -> Result<(), String> {
     let mut requested: Vec<(String, Option<String>)> = specs
         .iter()
@@ -65,10 +67,10 @@ pub async fn update_many(app_handle: &AppHandle, specs: &[String]) -> Result<(),
         .collect();
     let mut failures = Vec::new();
     if !explicit.is_empty() {
-        failures.extend(install_targets(app_handle, &explicit).await?);
+        failures.extend(install_targets(app_handle, &explicit).await);
     }
     if !implicit.is_empty() {
-        failures.extend(update_to_latest(app_handle, &implicit).await?);
+        failures.extend(update_to_latest(app_handle, &implicit).await);
     }
     match update_failure_payload(failures) {
         Some(message) => Err(message),
@@ -118,7 +120,7 @@ async fn resolve_missing_targets(
 async fn install_targets(
     app_handle: &AppHandle,
     targets: &[(String, String)],
-) -> Result<Vec<String>, String> {
+) -> Vec<UpdateFailure> {
     let profile = profile_dir(app_handle);
     let specs: Vec<String> = targets
         .iter()
@@ -136,23 +138,23 @@ async fn install_targets(
         args.push(RELEASE_AGE_RELAXED_FLAG.to_string());
     }
     if let Err(e) = run_plugin_command(app_handle, &ids, "add", &args).await {
-        return Err(policy_refusal_from_specs(&specs, &e).unwrap_or(e));
+        return UpdateFailure::stage(&specs, e);
     }
     let mut failures = Vec::new();
     for (index, (id, version)) in targets.iter().enumerate() {
         if let Err(e) =
             verify_update_landed(app_handle, id, before[index].as_deref(), Some(version)).await
         {
-            failures.push(e);
+            failures.push(UpdateFailure::new(id, e));
         }
     }
-    Ok(failures)
+    failures
 }
 
 /// 没有目标版本的条目：`dsh plugin update <id> --latest` 让 pnpm 在声明范围内挑最新，
 /// 逐项核验没落地的那些再尝试一次显式安装（见 [`force_upgrade_spec`]，只对已授权过的目标
 /// 动手；未授权的先由前端走授权流程）。
-async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<String>, String> {
+async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Vec<UpdateFailure> {
     let profile = profile_dir(app_handle);
     let before: Vec<Option<String>> = ids
         .iter()
@@ -166,7 +168,9 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
     if relax_release_age(&targets) {
         args.push(RELEASE_AGE_RELAXED_FLAG.to_string());
     }
-    run_plugin_command(app_handle, ids, "update", &args).await?;
+    if let Err(e) = run_plugin_command(app_handle, ids, "update", &args).await {
+        return UpdateFailure::stage(ids, e);
+    }
     let mut failures = Vec::new();
     let mut forced = Vec::new();
     for (index, id) in ids.iter().enumerate() {
@@ -174,12 +178,12 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
             Ok(()) => {}
             Err(e) => match force_upgrade_spec(id, &e) {
                 Some(spec) => forced.push(spec),
-                None => failures.push(e),
+                None => failures.push(UpdateFailure::new(id, e)),
             },
         }
     }
     if forced.is_empty() {
-        return Ok(failures);
+        return failures;
     }
     log::warn!("dsh plugin update was blocked by the declared source, forcing {forced:?}");
     let forced_ids: Vec<String> = forced
@@ -187,7 +191,8 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
         .map(|spec| split_upgrade_spec(spec).0)
         .collect();
     if let Err(e) = run_plugin_command(app_handle, &forced_ids, "add", &forced).await {
-        return Err(policy_refusal_from_specs(&forced, &e).unwrap_or(e));
+        failures.extend(UpdateFailure::stage(&forced, e));
+        return failures;
     }
     for (index, id) in ids.iter().enumerate() {
         let target = format!("{id}@");
@@ -195,10 +200,10 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
             continue;
         }
         if let Err(e) = verify_update_landed(app_handle, id, before[index].as_deref(), None).await {
-            failures.push(e);
+            failures.push(UpdateFailure::new(id, e));
         }
     }
-    Ok(failures)
+    failures
 }
 
 /// 把面板给的升级条目切成 `(id, 目标版本)`：`aaa@1.2.3` 与 `@scope/aaa@1.2.3` 都按最后
@@ -240,7 +245,7 @@ fn policy_refusal_from_specs(specs: &[String], failure: &str) -> Option<String> 
         return None;
     }
     Some(format!(
-        "PLUGIN_POLICY_BLOCKED: {}",
+        "{POLICY_BLOCKED_PREFIX} {}",
         serde_json::Value::Array(blocked)
     ))
 }
@@ -271,6 +276,56 @@ fn force_upgrade_spec(id: &str, failure: &str) -> Option<String> {
 /// 升级没生效的前缀：`PLUGIN_UPDATE_NO_CHANGE: <JSON>`。
 const UPDATE_HOLD_PREFIX: &str = "PLUGIN_UPDATE_NO_CHANGE:";
 
+/// 发布时长门禁拒绝的前缀：`PLUGIN_POLICY_BLOCKED: <JSON 数组>`（与批量安装路径共用同一形状）。
+const POLICY_BLOCKED_PREFIX: &str = "PLUGIN_POLICY_BLOCKED:";
+
+/// 升级里其余失败的前缀：`PLUGIN_UPDATE_FAILED: <JSON 数组 [{name, message}]>`。
+const UPDATE_FAILED_PREFIX: &str = "PLUGIN_UPDATE_FAILED:";
+
+/// 一条升级失败，以及它归谁。
+///
+/// 批量升级依次走两段（显式安装、隐式 `update --latest`），每段都是一次子进程调用、都可能
+/// 整段失败。只把失败拼成字符串的话两段结算会互相顶掉：后段整段失败会让前段已经装上的目标
+/// 也跟着报失败，前段的失败又会在后段失败时被直接丢掉。带上 id 之后前端才能逐项归因
+/// （见 [`update_failure_payload`]）。
+struct UpdateFailure {
+    /// 归因到的插件 id；无法逐项归因时为空串。
+    id: String,
+    /// 失败消息（可能是 `PLUGIN_UPDATE_NO_CHANGE:` 或 `PLUGIN_POLICY_BLOCKED:` 载荷）。
+    message: String,
+}
+
+impl UpdateFailure {
+    /// 逐项核验的失败：明确归因到这一个 id。
+    fn new(id: &str, message: String) -> Self {
+        Self {
+            id: id.to_string(),
+            message,
+        }
+    }
+
+    /// 整段子进程调用的失败：逐项核验尚未开始（或整批无法区分），归因到这一段点到的每个
+    /// spec。发布时长门禁的拒绝同样在这里按**本次请求的目标**合成精确三元组——pnpm 两个阶段
+    /// 报的文本不同，前端要的是「哪个包、哪个版本」（见 [`policy_refusal_from_specs`]）。
+    fn stage(specs: &[String], message: String) -> Vec<Self> {
+        let message = policy_refusal_from_specs(specs, &message).unwrap_or(message);
+        specs
+            .iter()
+            .map(|spec| Self {
+                id: split_upgrade_spec(spec).0,
+                message: message.clone(),
+            })
+            .collect()
+    }
+}
+
+/// 升级结算载荷里的一条真实失败：与 `PLUGIN_UPDATE_FAILED:` 的 JSON 数组同构。
+#[derive(serde::Serialize)]
+struct UpdateStageFailure {
+    name: String,
+    message: String,
+}
+
 /// 把逐项核验的失败汇成一条错误消息。
 ///
 /// 多个 id 各自没生效时**不能**把每条 `PLUGIN_UPDATE_NO_CHANGE:` 用换行拼起来：前端把前缀
@@ -278,27 +333,67 @@ const UPDATE_HOLD_PREFIX: &str = "PLUGIN_UPDATE_NO_CHANGE:";
 /// 「升级插件 X 失败」，把「授权一下就能装的版本」说成损坏（见
 /// `src/store/modules/plugins/utils.ts` 的 `parseUpdateHold`）。因此把每个没生效的条目收进
 /// 一个 JSON 数组一次性带出去，前端就能逐项归因：能授权的进授权流程，钉死来源的中性提示。
-/// 混进真正的失败（入口构建等）时优先如实报那条——它才是用户要处理的问题。
-fn update_failure_payload(failures: Vec<String>) -> Option<String> {
+/// 真正的失败（入口构建、网络、整段子进程失败……）同样逐条带上 id：前端据 `name` 只判
+/// 点到的那些插件，同一批里已经装上的目标照旧报成功（见 [`UpdateFailure`]）。
+fn update_failure_payload(failures: Vec<UpdateFailure>) -> Option<String> {
+    let mut blocked = Vec::new();
     let mut holds = Vec::new();
     let mut others = Vec::new();
+    let push_blocked = |entries: Vec<PolicyBlockedVersion>, blocked: &mut Vec<PolicyBlockedVersion>| {
+        for entry in entries {
+            if !blocked.contains(&entry) {
+                blocked.push(entry);
+            }
+        }
+    };
     for failure in failures {
-        let payload = failure.strip_prefix(UPDATE_HOLD_PREFIX);
-        match payload.and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok()) {
+        if let Some(payload) = failure.message.strip_prefix(POLICY_BLOCKED_PREFIX) {
+            if let Ok(entries) = serde_json::from_str::<Vec<PolicyBlockedVersion>>(payload) {
+                push_blocked(entries, &mut blocked);
+                continue;
+            }
+        }
+        let policy = policy_blocked_versions(&failure.message);
+        if !policy.is_empty() {
+            push_blocked(policy, &mut blocked);
+            continue;
+        }
+        let payload = failure
+            .message
+            .strip_prefix(UPDATE_HOLD_PREFIX)
+            .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok());
+        match payload {
             Some(value) => holds.push(value),
-            None => others.push(failure),
+            None => others.push(UpdateStageFailure {
+                name: failure.id,
+                message: failure.message,
+            }),
         }
     }
+    let mut messages = Vec::new();
+    if !blocked.is_empty() {
+        messages.push(format!(
+            "{POLICY_BLOCKED_PREFIX} {}",
+            serde_json::to_string(&blocked).unwrap_or_default()
+        ));
+    }
+    if !holds.is_empty() {
+        messages.push(format!(
+            "{UPDATE_HOLD_PREFIX} {}",
+            serde_json::Value::Array(holds)
+        ));
+    }
     if !others.is_empty() {
-        return Some(others.join("\n"));
+        messages.push(format!(
+            "{UPDATE_FAILED_PREFIX} {}",
+            serde_json::to_string(&others).unwrap_or_default()
+        ));
     }
-    if holds.is_empty() {
-        return None;
+    if messages.is_empty() {
+        None
+    } else {
+        Some(messages.join("\n"))
     }
-    Some(format!(
-        "{UPDATE_HOLD_PREFIX} {}",
-        serde_json::Value::Array(holds)
-    ))
 }
 
 /// 升级时转发给 pnpm 的参数：每个 id 后各跟一个 `--latest`。
@@ -951,44 +1046,116 @@ mod tests {
         .is_empty());
     }
 
+    /// 一条 hold 载荷：与 `verify_update_landed` 合成的形状一致。
+    fn hold(name: &str, latest: serde_json::Value, retryable: bool) -> String {
+        format!(
+            "{UPDATE_HOLD_PREFIX} {}",
+            serde_json::json!({"name": name, "version": "1.0.0", "latest": latest, "retryable": retryable})
+        )
+    }
+
+    /// 取消息里某个前缀之后的 JSON 载荷。
+    fn payload_of(message: &str, prefix: &str) -> serde_json::Value {
+        let line = message
+            .split('\n')
+            .find(|line| line.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix} line in {message}"));
+        serde_json::from_str(line.strip_prefix(prefix).expect("prefix")).expect("json payload")
+    }
+
     /// 一批里两个 id 都没生效时，两条 hold 载荷必须并成**一个** JSON 数组：拼成多行会让
     /// 前端 `parseUpdateHold` 解析失败，把「授权一下就能装」说成「升级失败」。
     #[test]
     fn update_failure_payload_merges_holds_into_one_array() {
         let message = update_failure_payload(vec![
-            format!(
-                "{UPDATE_HOLD_PREFIX} {}",
-                serde_json::json!({"name": "a", "version": "1.0.0", "latest": "2.0.0", "retryable": true})
-            ),
-            format!(
-                "{UPDATE_HOLD_PREFIX} {}",
-                serde_json::json!({"name": "b", "version": "1.0.0", "latest": null, "retryable": false})
-            ),
+            UpdateFailure::new("a", hold("a", serde_json::json!("2.0.0"), true)),
+            UpdateFailure::new("b", hold("b", serde_json::json!(null), false)),
         ])
         .expect("message");
 
-        let payload = message.strip_prefix(UPDATE_HOLD_PREFIX).expect("prefix");
-        let parsed: serde_json::Value = serde_json::from_str(payload).expect("array payload");
-        let items = parsed.as_array().expect("array");
+        let items = payload_of(&message, UPDATE_HOLD_PREFIX);
+        let items = items.as_array().expect("array");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["name"], "a");
         assert_eq!(items[1]["retryable"], false);
     }
 
-    /// 真正的失败（入口构建等）不能被 hold 载荷吞掉，否则用户看不到要处理的问题。
+    /// 真正的失败（入口构建等）逐条带上 id 另起一条消息：hold 载荷照旧可解析，用户也能看到
+    /// 到底哪个插件坏了——两者混在一条里会互相顶掉（要么授权项解析失败，要么失败被吞掉）。
     #[test]
-    fn update_failure_payload_prefers_real_failures() {
+    fn update_failure_payload_keeps_real_failures_attributed() {
         let message = update_failure_payload(vec![
-            "PLUGIN_ENTRY_MISSING: a is broken".to_string(),
-            format!(
-                "{UPDATE_HOLD_PREFIX} {}",
-                serde_json::json!({"name": "a", "latest": "2.0.0", "retryable": true})
-            ),
+            UpdateFailure::new("a", "PLUGIN_ENTRY_MISSING: a is broken".to_string()),
+            UpdateFailure::new("b", hold("b", serde_json::json!("2.0.0"), true)),
         ])
         .expect("message");
 
-        assert_eq!(message, "PLUGIN_ENTRY_MISSING: a is broken");
+        let holds = payload_of(&message, UPDATE_HOLD_PREFIX);
+        assert_eq!(holds.as_array().expect("holds").len(), 1);
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("failures");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["name"], "a");
+        assert_eq!(failures[0]["message"], "PLUGIN_ENTRY_MISSING: a is broken");
         assert!(update_failure_payload(Vec::new()).is_none());
+    }
+
+    /// 整段子进程调用失败（逐项核验都没来得及跑）时，每个被点到的 id 都要有一条失败：
+    /// 否则前端只能拿一般错误把整批标红，同批里已经装上的目标也跟着报失败。
+    #[test]
+    fn stage_failures_name_every_target_of_that_stage() {
+        let ids = vec!["aaa".to_string(), "bbb".to_string()];
+        let message = update_failure_payload(UpdateFailure::stage(
+            &ids,
+            "NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry."
+                .to_string(),
+        ))
+        .expect("message");
+
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("failures");
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0]["name"], "aaa");
+        assert_eq!(failures[1]["name"], "bbb");
+        assert_eq!(
+            failures[1]["message"],
+            "NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry."
+        );
+    }
+
+    /// 显式安装阶段被发布时长门禁拦住时，同一段里的目标进 `PLUGIN_POLICY_BLOCKED` 载荷
+    /// （授权流程据此写豁免清单），而不是被当成普通失败丢掉。
+    #[test]
+    fn stage_policy_refusal_stays_authorizable() {
+        let specs = vec!["aaa@1.2.3".to_string(), "bbb".to_string()];
+        let message = update_failure_payload(UpdateFailure::stage(
+            &specs,
+            "ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION  aaa@1.2.3 was published recently".to_string(),
+        ))
+        .expect("message");
+
+        let blocked = payload_of(&message, POLICY_BLOCKED_PREFIX);
+        assert_eq!(
+            blocked,
+            serde_json::json!([{"name": "aaa", "version": "1.2.3"}])
+        );
+    }
+
+    /// 授权后重跑仍然没装上：显式安装那一段的整段失败要归因到被强制重装的那个目标，
+    /// 而不是把整批（含已装上的其它目标）一起报失败。
+    #[test]
+    fn forced_stage_failures_only_name_the_forced_targets() {
+        let forced = vec!["bbb@2.0.0".to_string()];
+        let message = update_failure_payload(UpdateFailure::stage(
+            &forced,
+            "PLUGIN_ADD_FAILED: dsh plugin exited with code 1".to_string(),
+        ))
+        .expect("message");
+
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("failures");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["name"], "bbb");
     }
 
     /// 只有「已授权过的 registry 目标」才补显式安装：未授权时先走授权流程，git / link 目标

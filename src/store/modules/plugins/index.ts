@@ -15,5 +15,12 @@ export type {
   PluginsManagerRuntime,
   PluginsState,
 } from './types'
-export { enrichInstalled, normalizeRef, normalizeRefs, parseBlockedRefusal, refusalNames } from './utils'
-export type { NormalizedRef } from './utils'
+export {
+  enrichInstalled,
+  normalizeRef,
+  normalizeRefs,
+  parseBlockedRefusal,
+  parseUpdateFailures,
+  refusalNames,
+} from './utils'
+export type { NormalizedRef, UpdateFailureEntry } from './utils'
