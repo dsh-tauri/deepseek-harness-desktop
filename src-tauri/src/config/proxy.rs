@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use reqwest::{ClientBuilder, NoProxy, Proxy, Url};
 use tauri::{AppHandle, Runtime};
 
@@ -41,6 +43,36 @@ pub(crate) fn client_builder(value: &str) -> Result<ClientBuilder, String> {
         .no_proxy(NoProxy::from_string("localhost,.localhost,127.0.0.0/8,::1"));
     Ok(builder.no_proxy().proxy(proxy))
 }
+
+/// 子进程代理环境（issue #110）：把配置页的代理地址翻译成核心与插件子进程能读的
+/// 环境变量。
+///
+/// 核心（`@deepseek-ai/dsh-http-proxy`）只在启动时读 `http_proxy` / `https_proxy` /
+/// `no_proxy` 发布代理策略，并给**它自己** spawn 的子进程补 `NODE_USE_ENV_PROXY`；
+/// 桌面端 spawn 的进程不在那条链路上，必须显式下发。
+///
+/// 只写小写名：核心的读取顺序是小写优先、大写兜底，值相同故不重复写；curl、git、
+/// pnpm 同样认小写。`no_proxy` 与 [`client_builder`] 的绕过列表保持一致并补上
+/// Node 自己的匹配规则只认的裸回环地址（`127.0.0.1` / `[::1]`，IPv4 段写法 Node
+/// 不识别）。空值返回空 map：用户没配代理时不注入任何键，子进程照旧继承系统环境。
+///
+/// SOCKS 值原样下发：curl/git/pnpm 认，Node 侧由核心判为不支持后保持直连（与只配
+/// 代理不改代码时一致）。
+pub fn proxy_child_env(value: &str) -> HashMap<String, String> {
+    let url = match normalize_proxy_url(value) {
+        Ok(url) if !url.is_empty() => url,
+        _ => return HashMap::new(),
+    };
+    HashMap::from([
+        ("http_proxy".to_string(), url.clone()),
+        ("https_proxy".to_string(), url.clone()),
+        ("no_proxy".to_string(), CHILD_NO_PROXY.to_string()),
+    ])
+}
+
+/// 子进程的代理绕过列表：既有回环约定（见 [`client_builder`]）加上 Node
+/// `NODE_USE_ENV_PROXY` 匹配 `NO_PROXY` 时要求的裸主机名形式。
+const CHILD_NO_PROXY: &str = "localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1]";
 
 #[cfg(test)]
 mod tests {
@@ -192,6 +224,33 @@ mod tests {
         assert!(request
             .to_ascii_lowercase()
             .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n"));
+    }
+
+    #[test]
+    fn proxy_child_env_exports_policy_names_for_usable_urls_only() {
+        assert!(proxy_child_env("").is_empty());
+        assert!(proxy_child_env("   ").is_empty());
+        assert!(proxy_child_env("socks4://127.0.0.1:1080").is_empty());
+        assert!(proxy_child_env("http://127.0.0.1:7897/path").is_empty());
+
+        let envs = proxy_child_env(" http://user:secret@127.0.0.1:7897 ");
+        let mut keys = envs.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(keys, vec!["http_proxy", "https_proxy", "no_proxy"]);
+        assert_eq!(envs["http_proxy"], "http://user:secret@127.0.0.1:7897/");
+        assert_eq!(envs["https_proxy"], envs["http_proxy"]);
+    }
+
+    #[test]
+    fn proxy_child_env_bypasses_loopback_with_bare_hosts() {
+        let envs = proxy_child_env("socks5h://127.0.0.1:1080");
+        assert!(envs["http_proxy"].starts_with("socks5h://127.0.0.1:1080"));
+        let entries = envs["no_proxy"].split(',').collect::<Vec<_>>();
+        for entry in ["localhost", ".localhost", "127.0.0.1", "127.0.0.0/8", "::1", "[::1]"] {
+            assert!(entries.contains(&entry), "missing {entry}");
+        }
+        assert!(!envs.contains_key("all_proxy"));
+        assert!(!envs.contains_key("NODE_USE_ENV_PROXY"));
     }
 
     #[tokio::test]

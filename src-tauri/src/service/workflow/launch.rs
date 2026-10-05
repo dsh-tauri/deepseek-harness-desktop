@@ -607,6 +607,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         envs.insert("DSH_PREFER_BUNDLED_PNPM".to_string(), "1".to_string());
     }
 
+    // 桌面端代理设置（issue #110）：核心（dsh-http-proxy）在启动时读
+    // `http_proxy` / `https_proxy` / `no_proxy` 发布代理策略，再给**它自己** spawn
+    // 的子进程补 `NODE_USE_ENV_PROXY`；桌面端 spawn 的这个服务进程不在那条链路上，
+    // 必须显式下发，否则配置页的代理只作用于桌面端自身的下载与更新请求。
+    // 最佳努力：空值返回空 map，不覆盖用户已有的同名环境变量。
+    envs.extend(config::proxy::proxy_child_env(&setting.proxy_url));
+
     // 内嵌 WebView 是 `tauri.localhost` 下的跨源沙箱 iframe，`SameSite=Strict` 的
     // browser-session Cookie 不会被携带。载体标记交给 dsh-tauri 插件（载体鉴权适配）：
     // 只有该标记在场时它才覆写 connection 的鉴权闸门，因此同一 profile 下独立运行
