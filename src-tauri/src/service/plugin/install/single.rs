@@ -20,7 +20,7 @@ use super::harness_prefer_bundled_pnpm;
 use super::diagnose::{
     git_transport_hint, incompatible_versions, network_error_hint, pick_error_message,
     policy_blocked_versions, policy_verification_network_failure, store_mismatch_hint,
-    PolicyBlockedVersion,
+    IncompatibleVersion, PolicyBlockedVersion,
 };
 use super::errors;
 use super::installed_name;
@@ -276,6 +276,10 @@ fn force_upgrade_spec(id: &str, failure: &str) -> Option<String> {
 /// 升级没生效的前缀：`PLUGIN_UPDATE_NO_CHANGE: <JSON>`。
 const UPDATE_HOLD_PREFIX: &str = "PLUGIN_UPDATE_NO_CHANGE:";
 
+/// 版本兼容性拒绝的前缀：`PLUGIN_VERSION_INCOMPATIBLE: <JSON 数组 [{name, version, runtime_version}]>`
+/// （与批量安装路径共用同一形状）。
+const INCOMPATIBLE_PREFIX: &str = "PLUGIN_VERSION_INCOMPATIBLE:";
+
 /// 发布时长门禁拒绝的前缀：`PLUGIN_POLICY_BLOCKED: <JSON 数组>`（与批量安装路径共用同一形状）。
 const POLICY_BLOCKED_PREFIX: &str = "PLUGIN_POLICY_BLOCKED:";
 
@@ -307,6 +311,8 @@ impl UpdateFailure {
     /// 整段子进程调用的失败：逐项核验尚未开始（或整批无法区分），归因到这一段点到的每个
     /// spec。发布时长门禁的拒绝同样在这里按**本次请求的目标**合成精确三元组——pnpm 两个阶段
     /// 报的文本不同，前端要的是「哪个包、哪个版本」（见 [`policy_refusal_from_specs`]）。
+    /// 版本兼容性拒绝不做合成：dsh 点名的是它自己解析出来的版本，改写它等于伪造一份用户
+    /// 没见过的授权清单，原样保留（见 [`update_failure_payload`]）。
     fn stage(specs: &[String], message: String) -> Vec<Self> {
         let message = policy_refusal_from_specs(specs, &message).unwrap_or(message);
         specs
@@ -336,6 +342,7 @@ struct UpdateStageFailure {
 /// 真正的失败（入口构建、网络、整段子进程失败……）同样逐条带上 id：前端据 `name` 只判
 /// 点到的那些插件，同一批里已经装上的目标照旧报成功（见 [`UpdateFailure`]）。
 fn update_failure_payload(failures: Vec<UpdateFailure>) -> Option<String> {
+    let mut incompatible = Vec::new();
     let mut blocked = Vec::new();
     let mut holds = Vec::new();
     let mut others = Vec::new();
@@ -346,7 +353,24 @@ fn update_failure_payload(failures: Vec<UpdateFailure>) -> Option<String> {
             }
         }
     };
+    let push_incompatible = |entries: Vec<IncompatibleVersion>,
+                             incompatible: &mut Vec<IncompatibleVersion>| {
+        for entry in entries {
+            if !incompatible.contains(&entry) {
+                incompatible.push(entry);
+            }
+        }
+    };
     for failure in failures {
+        // 版本兼容性拒绝照原样提升到顶层：前端只认这一行里的载荷来挂「授权后重跑」的按钮，
+        // 落进下面的逐项失败里用户就只能看着一条纯文本，无从授权（与批量安装路径同形状）。
+        // 载荷里的版本是 dsh 自己解析出来的那个，不改写——用户授权的是他看得见的东西。
+        if let Some(payload) = failure.message.strip_prefix(INCOMPATIBLE_PREFIX) {
+            if let Ok(entries) = serde_json::from_str::<Vec<IncompatibleVersion>>(payload) {
+                push_incompatible(entries, &mut incompatible);
+                continue;
+            }
+        }
         if let Some(payload) = failure.message.strip_prefix(POLICY_BLOCKED_PREFIX) {
             if let Ok(entries) = serde_json::from_str::<Vec<PolicyBlockedVersion>>(payload) {
                 push_blocked(entries, &mut blocked);
@@ -371,6 +395,12 @@ fn update_failure_payload(failures: Vec<UpdateFailure>) -> Option<String> {
         }
     }
     let mut messages = Vec::new();
+    if !incompatible.is_empty() {
+        messages.push(format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::to_string(&incompatible).unwrap_or_default()
+        ));
+    }
     if !blocked.is_empty() {
         messages.push(format!(
             "{POLICY_BLOCKED_PREFIX} {}",
@@ -796,7 +826,7 @@ async fn run_plugin_command(
                 "dsh refused the {action} for incompatible plugin versions: {incompatible:?}"
             );
             return Err(format!(
-                "PLUGIN_VERSION_INCOMPATIBLE: {}",
+                "{INCOMPATIBLE_PREFIX} {}",
                 serde_json::to_string(&incompatible).unwrap_or_default()
             ));
         }
@@ -1221,6 +1251,78 @@ mod tests {
             policy_refusal_from_specs(&["aaa@next".to_string()], failure),
             None
         );
+    }
+
+    /// 版本兼容性拒绝必须原样留在顶层：前端 `parseBlockedRefusal` 只认这一行的载荷，包进
+    /// `PLUGIN_UPDATE_FAILED:` 之后授权按钮就没了（见评审 4184825751）。载荷里的版本是 dsh
+    /// 自己解析出来的那一个，改写它等于伪造一份用户没见过的授权清单，因此原样带出。
+    #[test]
+    fn incompatible_refusals_reach_the_authorisation_parser() {
+        let specs = vec!["dsh-plugin-guide@0.1.0".to_string()];
+        let refusal = format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::json!([{
+                "name": "dsh-plugin-guide",
+                "version": "0.1.0",
+                "runtime_version": "0.2.0-rc.2",
+            }])
+        );
+
+        let message =
+            update_failure_payload(UpdateFailure::stage(&specs, refusal)).expect("message");
+
+        assert!(message.starts_with(INCOMPATIBLE_PREFIX));
+        assert_eq!(
+            payload_of(&message, INCOMPATIBLE_PREFIX),
+            serde_json::json!([{
+                "name": "dsh-plugin-guide",
+                "version": "0.1.0",
+                "runtime_version": "0.2.0-rc.2",
+            }])
+        );
+        assert!(!message.contains(UPDATE_FAILED_PREFIX));
+    }
+
+    /// 不兼容拒绝与逐项失败同批出现时：拒绝留顶层（授权按钮还在），真正的失败照旧逐条归因，
+    /// 两者互不吞掉。
+    #[test]
+    fn incompatible_refusals_keep_the_other_failures_attributed() {
+        let specs = vec!["aaa@1.0.0".to_string()];
+        let refusal = format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::json!([{"name": "aaa", "version": "1.0.0", "runtime_version": "0.2.0-rc.2"}])
+        );
+        let mut failures = UpdateFailure::stage(&specs, refusal);
+        failures.push(UpdateFailure::new(
+            "bbb",
+            "PLUGIN_ENTRY_MISSING: bbb is broken".to_string(),
+        ));
+
+        let message = update_failure_payload(failures).expect("message");
+        let lines: Vec<&str> = message.split('\n').collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with(INCOMPATIBLE_PREFIX));
+        assert!(lines[1].starts_with(UPDATE_FAILED_PREFIX));
+
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("array");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["name"], "bbb");
+    }
+
+    /// 同一段点到的多个 spec 各带一份同样的拒绝：顶层只留一份，授权清单不出现重复条目。
+    #[test]
+    fn incompatible_refusals_are_deduplicated() {
+        let specs = vec!["aaa@1.0.0".to_string(), "bbb@2.0.0".to_string()];
+        let refusal = format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::json!([{"name": "aaa", "version": "1.0.0", "runtime_version": "0.2.0-rc.2"}])
+        );
+
+        let message = update_failure_payload(UpdateFailure::stage(&specs, refusal)).expect("message");
+
+        let entries = payload_of(&message, INCOMPATIBLE_PREFIX);
+        assert_eq!(entries.as_array().expect("array").len(), 1);
     }
 
     fn preset(id: &str, spec: &str, internal: bool) -> PreinstallPluginInfo {
