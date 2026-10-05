@@ -1,13 +1,42 @@
+import type { AddressInfo } from 'node:net'
 import type { Config as RemoteConfig } from './config/schema'
 import type { RemoteHostContext } from './types/index'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import type { AddressInfo } from 'node:net'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'pathe'
+import { dirname, join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apply, inject, name } from './apply'
-import { clearHostRuntime, knownHostsFilePath, machineProfiles } from './config/runtime'
+import { clearHostRuntime, knownHostsFilePath, machineProfiles, migrateLegacyState, migrationWarningOf } from './config/runtime'
+import { gateway } from './service/gateway'
+import { readHostKeyRecords } from './service/known-hosts.utils'
 import { machine } from './service/machine'
 import { MachineId } from './types/index'
+
+function freePort(): Promise<{ port: number, release: () => Promise<void> }> {
+  const server = createServer()
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = (server.address() as AddressInfo).port
+      resolve({ port, release: () => new Promise<void>((done) => {
+        server.close(() => done())
+      }) })
+    })
+  })
+}
+
+function freePortAt(port: number): Promise<{ port: number, release: () => Promise<void> } | undefined> {
+  const server = createServer()
+  return new Promise((resolve) => {
+    server.once('error', () => resolve(undefined))
+    server.listen(port, '127.0.0.1', () => {
+      resolve({ port, release: () => new Promise<void>((done) => {
+        server.close(() => done())
+      }) })
+    })
+  })
+}
 
 function scriptedHttpServer() {
   const routes: Array<{ kind: string, path: string, handler?: unknown }> = []
@@ -458,6 +487,21 @@ describe('remote plugin', () => {
     expect(disposers).toHaveLength(2)
     for (const disposeAll of disposers) disposeAll()
     expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes every gateway entry and releases its port when the context tears down', async () => {
+    const { disposers } = construct()
+    const free = await freePort()
+    const port = free.port
+    await free.release()
+    const status = await gateway.start({ id: 'entry', kind: 'inbound', upstream: 'http://127.0.0.1:1', port })
+    expect(status.port).toBe(port)
+    expect(status.state).toBe('listening')
+    for (const disposeAll of disposers) disposeAll()
+    await vi.waitFor(() => expect(gateway.status('entry')).toBeUndefined())
+    const rebound = await freePortAt(port)
+    expect(rebound).toBeDefined()
+    await rebound?.release()
   })
 
   it('assembles the plugin declaratively', () => {

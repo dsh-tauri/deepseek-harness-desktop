@@ -3,18 +3,19 @@ import type z from 'schemastery'
 import type { Config as RemoteConfig } from './config/schema'
 import type { RemoteHostContext } from './types/index'
 import { REMOTE_PLUGIN_NAME } from '../shared/constants'
-import { clearHostRuntime, setHostConfig, setMachineDeps, setSyncDeps } from './config/runtime'
+import { clearHostRuntime, migrateLegacyState, setCurrentHostInstance, setHostConfig, setMachineDeps, setSyncDeps } from './config/runtime'
 import { ConfigSchema } from './config/schema'
 import { server } from './server'
+import { gateway } from './service/gateway'
 import { machine } from './service/machine'
 import { transport } from './service/transport'
 import { packSkills, profileAllowlistReader, profileDependenciesReader, skillRootsScanner } from './utils/local'
 
-const SSH_START_EFFECT = `${REMOTE_PLUGIN_NAME}: start`
+const REMOTE_START_EFFECT = `${REMOTE_PLUGIN_NAME}: start`
 
-const SSH_ROUTES_EFFECT = `${REMOTE_PLUGIN_NAME}: routes`
+const REMOTE_ROUTES_EFFECT = `${REMOTE_PLUGIN_NAME}: routes`
 
-const SSH_RUNTIME_EFFECT = `${REMOTE_PLUGIN_NAME}: host runtime`
+const REMOTE_RUNTIME_EFFECT = `${REMOTE_PLUGIN_NAME}: host runtime`
 
 export const name = REMOTE_PLUGIN_NAME
 
@@ -23,6 +24,7 @@ export const inject = ['webServer', 'connection']
 export const Config: z<RemoteConfig> = ConfigSchema
 
 export function apply(ctx: RemoteHostContext, config: RemoteConfig): void {
+  setCurrentHostInstance(ctx)
   setHostConfig(config)
   setMachineDeps({
     transport,
@@ -37,15 +39,19 @@ export function apply(ctx: RemoteHostContext, config: RemoteConfig): void {
   })
 
   ctx.effect(() => {
+    const migrationFailure = migrateLegacyState()
+    if (migrationFailure !== undefined)
+      ctx.logger?.warn?.(`${REMOTE_PLUGIN_NAME}: 旧状态目录迁移未完成，已按新目录空状态启动（旧文件未改动）: ${migrationFailure}`)
     void machine.start().catch(() => undefined)
-  }, SSH_START_EFFECT)
+  }, REMOTE_START_EFFECT)
 
-  ctx.effect(() => server(ctx as unknown as Context), SSH_ROUTES_EFFECT)
+  ctx.effect(() => server(ctx as unknown as Context), REMOTE_ROUTES_EFFECT)
 
   ctx.effect(() => () => {
     void machine.dispose()
+    void gateway.dispose().catch(() => undefined)
     clearHostRuntime()
-  }, SSH_RUNTIME_EFFECT)
+  }, REMOTE_RUNTIME_EFFECT)
 }
 
 export default { apply, Config, inject, name }

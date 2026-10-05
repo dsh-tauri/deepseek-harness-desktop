@@ -2,6 +2,7 @@ import type { MachineDeps, MachineState } from '../service/machine.types'
 import type { SyncDeps } from '../service/sync.types'
 import type { MachineId, MachineProfile, RemoteHostContext, RemoteMachineEvent } from '../types/index'
 import type { Config } from './schema'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import process from 'node:process'
 import { join } from 'pathe'
@@ -51,6 +52,13 @@ let sourceSession = ''
 
 export function setSourceSession(session: string): void {
   sourceSession = session
+}
+
+/** 网关装配时的会话标识保证：未设置则生成一次进程内随机值，注入与判定两侧共用同一枚。 */
+export function ensureSourceSession(): string {
+  if (sourceSession === '')
+    sourceSession = randomBytes(32).toString('hex')
+  return sourceSession
 }
 
 /** 网关进程内会话标识：只有持有它的转发请求才能声明来源分类（未设置时任何声明都不可信）。 */
