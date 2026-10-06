@@ -44,7 +44,7 @@ export function containsHeapOomError(lines: readonly string[]): boolean {
   return lines.some(line => /JavaScript heap out of memory|Ineffective mark-compacts near heap limit/i.test(line))
 }
 
-/** V8 GC 追踪行：`Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB`，括号里是提交的堆总量 */
+/** V8 GC 追踪行：`Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB`，最后一个括号里是提交的堆总量 */
 const HEAP_COMMITTED_MB = /\(\d+(?:\.\d+)?\)\s*->[^(]*\((\d+(?:\.\d+)?)\)\s*MB/
 
 /**
@@ -58,11 +58,13 @@ export function heapPeakFromLogs(lines: readonly string[]): number | undefined {
   let peak: number | undefined
   for (const line of lines) {
     const matched = HEAP_COMMITTED_MB.exec(line)
-    if (!matched)
+    if (!matched) {
       continue
+    }
     const committed = Number(matched[1])
-    if (!Number.isFinite(committed))
+    if (!Number.isFinite(committed)) {
       continue
+    }
     const mb = Math.floor(committed)
     peak = peak === undefined ? mb : Math.max(peak, mb)
   }

@@ -123,7 +123,7 @@
   "errors.inotify_limit": "Harness 服务启动即崩溃：系统文件监视（inotify）数量达到上限。请调高监视上限后重试——例如执行 `sudo sysctl fs.inotify.max_user_watches=524288`（并将 `fs.inotify.max_user_watches=524288` 写入 `/etc/sysctl.conf` 以持久化），然后重启应用。",
   "errors.heap_oom": "Harness 服务因内存耗尽（V8 堆上限）被强制终止：并发会话/子代理过多时，服务进程的内存会超过当前上限并整体崩溃。当前生效的上限是 {{limit}} MB。可在「设置 → 服务内存上限」填入更大的数值（1024–32768），保存后重启服务；也可以先关闭空闲会话或减少并发子代理。",
   "errors.heap_oom_unknown": "Harness 服务因内存耗尽（V8 堆上限）被强制终止：并发会话/子代理过多时，服务进程的内存会超过当前上限并整体崩溃。可在「设置 → 服务内存上限」填入更大的数值（1024–32768），保存后重启服务；也可以先关闭空闲会话或减少并发子代理。",
-  "errors.heap_oom_peak": "日志里崩溃瞬间已用到 {{peak}} MB。",
+  "errors.heap_oom_peak": "日志里崩溃瞬间提交的堆总量为 {{peak}} MB。",
   "errors.patch_entry_unresolved": "补丁层引用了装不出来的插件包，Harness 无法加载整棵插件树：{{detail}}。通常是插件被卸载后，手写的 insert 条目还留在 cordis.patch.yml 里。请移除这些条目（或重新安装对应插件）后重试；也可以点「移除悬空条目」，由桌面端只剥离解析不到的条目（原文件会先备份为 `.bak-<时间戳>`）。",
   "errors.patch_entry_unresolved_item": "{{layer}} 第 {{line}} 行：{{id}} → {{name}}{{note}}",
   "errors.patch_entry_unresolved_declared": "（依赖仍在 package.json 里，重装该插件即可）",

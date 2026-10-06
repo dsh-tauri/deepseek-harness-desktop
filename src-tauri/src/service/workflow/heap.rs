@@ -9,27 +9,104 @@ const AUTO_HEAP_MAX_MB: u64 = 8192;
 /// 安全地表达「本次不显式下发」，让 NODE_OPTIONS 里的上限继续生效。
 const INHERITED_HEAP_LIMIT_MB: u32 = 0;
 
-fn node_options_heap_limit(node_options: &str) -> Option<u32> {
+/// 显式表达 old-space 上限的 flag（含 V8 接受的下划线变体）。
+const HEAP_LIMIT_FLAGS: [&str; 2] = ["--max-old-space-size", "--max_old_space_size"];
+
+/// 百分比形式的 old-space 上限。它的优先级高于 `--max-old-space-size`（V8 实测：
+/// NODE_OPTIONS 里只写 percentage 时，命令行 `--max-old-space-size=1600` 会被无视，
+/// 实际拿到的是物理内存的百分比），因此既要能识别它，也要在显式下发上限时把它从
+/// 子进程环境里摘掉，否则用户设置看似生效、实际被百分比覆盖。
+const HEAP_PERCENTAGE_FLAGS: [&str; 2] = [
+    "--max-old-space-size-percentage",
+    "--max_old_space_size_percentage",
+];
+
+fn heap_flags() -> impl Iterator<Item = &'static str> {
+    HEAP_LIMIT_FLAGS
+        .iter()
+        .chain(HEAP_PERCENTAGE_FLAGS.iter())
+        .copied()
+}
+
+/// 按出现顺序把 NODE_OPTIONS 里的堆 flag 交给 `visit`（`--flag value` 与 `--flag=value` 都认）。
+///
+/// `visit` 的 `bool` 参数表示取值是否是 V8 会接受的形式（size 要正整数、percentage 要
+/// 正数）：解析不出来的取值既改不了上限，也不该把话语权从自动值那里抢走。
+fn for_each_heap_flag(node_options: &str, mut visit: impl FnMut(&'static str, &str, bool)) {
     let mut tokens = node_options.split_whitespace();
     while let Some(token) = tokens.next() {
         let token = token.trim_matches(['"', '\'']);
-        for flag in ["--max-old-space-size", "--max_old_space_size"] {
-            if token == flag {
-                return tokens
+        for flag in heap_flags() {
+            let attached = token.strip_prefix(flag).and_then(|tail| tail.strip_prefix('='));
+            if token != flag && attached.is_none() {
+                continue;
+            }
+            let value = match attached {
+                Some(value) => value.trim_matches(['"', '\'']),
+                None => tokens
                     .next()
-                    .and_then(|value| value.trim_matches(['"', '\'']).parse::<u32>().ok())
-                    .filter(|mb| *mb > 0);
-            }
-            if let Some(value) = token.strip_prefix(flag).and_then(|tail| tail.strip_prefix('=')) {
-                return value
-                    .trim_matches(['"', '\''])
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|mb| *mb > 0);
-            }
+                    .map(|value| value.trim_matches(['"', '\'']))
+                    .unwrap_or_default(),
+            };
+            let is_limit = if HEAP_LIMIT_FLAGS.contains(&flag) {
+                value.parse::<u32>().is_ok_and(|mb| mb > 0)
+            } else {
+                value.parse::<f64>().is_ok_and(|percent| percent > 0.0)
+            };
+            visit(flag, value, is_limit);
+            break;
         }
     }
-    None
+}
+
+/// NODE_OPTIONS 里指定的 old-space 上限（MB）。
+///
+/// 同一个变量里出现多个时以**最后一个**为准——V8 就是这么解析的（实测
+/// `--max-old-space-size=4096 --max-old-space-size=8192` 生效的是 8192），取第一个
+/// 会把实际生效值报小一半。取值解析不出来的条目直接忽略。
+fn node_options_heap_limit(node_options: &str) -> Option<u32> {
+    let mut limit = None;
+    for_each_heap_flag(node_options, |flag, value, is_limit| {
+        if !is_limit || !HEAP_LIMIT_FLAGS.contains(&flag) {
+            return;
+        }
+        if let Ok(mb) = value.parse::<u32>() {
+            limit = Some(mb);
+        }
+    });
+    limit
+}
+
+/// NODE_OPTIONS 是否出现过任何会决定 old-space 上限的 flag（size 或 percentage）。
+///
+/// 解析不出来的取值（`--max-old-space-size=` /`=not-a-number`）不算：V8 会忽略它们，
+/// 让位只会把自动上限白送给一个不生效的 flag。
+pub(super) fn node_options_has_heap_flags(node_options: &str) -> bool {
+    let mut found = false;
+    for_each_heap_flag(node_options, |_, _, is_limit| found |= is_limit);
+    found
+}
+
+/// 摘掉 NODE_OPTIONS 里所有堆 flag，其余选项（`--require` 等）原样保留；全被摘空时返回 None。
+///
+/// 只在桌面端显式下发上限时使用：命令行 `--max-old-space-size` 只压得住 NODE_OPTIONS 里
+/// 的 size，压不住 percentage，留着 percentage 就等于用户设置没生效。
+pub(super) fn node_options_without_heap_flags(node_options: &str) -> Option<String> {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut tokens = node_options.split_whitespace();
+    while let Some(token) = tokens.next() {
+        let bare = token.trim_matches(['"', '\'']);
+        let is_heap_flag = heap_flags().any(|flag| bare == flag || bare.starts_with(&format!("{flag}=")));
+        if !is_heap_flag {
+            kept.push(token);
+            continue;
+        }
+        // `--flag value` 形式：取值是独立 token，必须连它一起丢弃。
+        if !bare.contains('=') {
+            tokens.next();
+        }
+    }
+    (!kept.is_empty()).then(|| kept.join(" "))
 }
 
 /// 进程环境里 NODE_OPTIONS 指定的堆上限（MB）
@@ -38,6 +115,11 @@ pub(super) fn node_options_heap_limit_mb() -> Option<u32> {
         .ok()
         .as_deref()
         .and_then(node_options_heap_limit)
+}
+
+/// 当前进程环境里的 NODE_OPTIONS 是否带了任何堆 flag（size 或 percentage）。
+pub(super) fn node_options_has_heap_flags_env() -> bool {
+    std::env::var("NODE_OPTIONS").is_ok_and(|value| node_options_has_heap_flags(&value))
 }
 
 pub(super) fn auto_heap_limit_mb(total_mb: u64) -> u32 {
@@ -53,15 +135,19 @@ pub(super) fn auto_heap_limit_mb(total_mb: u64) -> u32 {
 /// 「设置了 8192 还提示 8192」就是这么来的）。命令行 `--max-old-space-size`
 /// 的优先级高于 NODE_OPTIONS（V8 实测），所以只要按用户填的值下发就一定能生效。
 /// 用户没填时才把话语权让回 NODE_OPTIONS，返回哨兵 0 表示「不显式下发」。
+///
+/// `inherited` 只看 NODE_OPTIONS 里**有没有**堆 flag，而不是能不能解析出数值：
+/// 只有 `--max-old-space-size-percentage` 时我们解析不出 MB，但它的优先级高于命令行
+/// `--max-old-space-size`，此时显式下发反而会谎报「用户设置已生效」，所以同样让位。
 pub(super) fn resolve_heap_limit_mb(
     configured: Option<u32>,
-    inherited: Option<u32>,
+    inherited: bool,
     total_mb: Option<u64>,
 ) -> Option<u32> {
     if let Some(configured) = configured {
         return Some(configured);
     }
-    if inherited.is_some() {
+    if inherited {
         return Some(INHERITED_HEAP_LIMIT_MB);
     }
     total_mb.filter(|total| *total > 0).map(auto_heap_limit_mb)
@@ -89,7 +175,11 @@ pub(super) fn heap_option_arg(heap_mb: Option<u32>) -> Option<OsString> {
 pub(crate) fn effective_heap_limit_mb(configured: Option<u32>) -> Option<u32> {
     let inherited = node_options_heap_limit_mb();
     effective_limit_mb(
-        resolve_heap_limit_mb(configured, inherited, physical_memory_mb()),
+        resolve_heap_limit_mb(
+            configured,
+            node_options_has_heap_flags_env(),
+            physical_memory_mb(),
+        ),
         inherited,
     )
 }
@@ -138,22 +228,16 @@ mod tests {
 
     #[test]
     fn resolve_preserves_configured_value_and_falls_back_on_unknown_memory() {
-        assert_eq!(resolve_heap_limit_mb(Some(12288), None, Some(16384)), Some(12288));
-        assert_eq!(resolve_heap_limit_mb(None, None, Some(16384)), Some(8192));
-        assert_eq!(resolve_heap_limit_mb(None, None, Some(0)), None);
-        assert_eq!(resolve_heap_limit_mb(None, None, None), None);
+        assert_eq!(resolve_heap_limit_mb(Some(12288), false, Some(16384)), Some(12288));
+        assert_eq!(resolve_heap_limit_mb(None, false, Some(16384)), Some(8192));
+        assert_eq!(resolve_heap_limit_mb(None, false, Some(0)), None);
+        assert_eq!(resolve_heap_limit_mb(None, false, None), None);
     }
 
     #[test]
     fn configured_limit_wins_over_inherited_node_options() {
-        assert_eq!(
-            resolve_heap_limit_mb(Some(1600), Some(8192), Some(32768)),
-            Some(1600)
-        );
-        assert_eq!(
-            resolve_heap_limit_mb(Some(12288), Some(8192), Some(32768)),
-            Some(12288)
-        );
+        assert_eq!(resolve_heap_limit_mb(Some(1600), true, Some(32768)), Some(1600));
+        assert_eq!(resolve_heap_limit_mb(Some(12288), true, Some(32768)), Some(12288));
     }
 
     #[test]
@@ -164,14 +248,28 @@ mod tests {
             "--max-old-space-size \"8192\"",
             "--max_old_space_size=8192",
             "--max_old_space_size 8192",
+            "--max-old-space-size-percentage=50",
+            "--max_old_space_size_percentage 50",
         ] {
-            let inherited = node_options_heap_limit(options);
-            assert_eq!(inherited, Some(8192), "{options}");
+            assert!(node_options_has_heap_flags(options), "{options}");
             assert_eq!(
-                resolve_heap_limit_mb(None, inherited, Some(32768)),
+                resolve_heap_limit_mb(None, true, Some(32768)),
                 Some(INHERITED_HEAP_LIMIT_MB),
                 "{options}"
             );
+        }
+        // 只有 size 时才解析得出数值；percentage 拿不到 MB，但仍算「有堆 flag」。
+        for options in [
+            "--max-old-space-size=8192",
+            "--trace-warnings --max-old-space-size 8192",
+            "--max-old-space-size \"8192\"",
+            "--max_old_space_size=8192",
+            "--max_old_space_size 8192",
+        ] {
+            assert_eq!(node_options_heap_limit(options), Some(8192), "{options}");
+        }
+        for options in ["--max-old-space-size-percentage=50", "--max_old_space_size_percentage 50"] {
+            assert_eq!(node_options_heap_limit(options), None, "{options}");
         }
     }
 
@@ -186,12 +284,53 @@ mod tests {
             "--max-old-space-size 0",
         ] {
             assert_eq!(node_options_heap_limit(options), None, "{options}");
+            assert!(!node_options_has_heap_flags(options), "{options}");
             assert_eq!(
-                resolve_heap_limit_mb(None, node_options_heap_limit(options), Some(16384)),
+                resolve_heap_limit_mb(None, false, Some(16384)),
                 Some(8192),
                 "{options}"
             );
         }
+    }
+
+    /// V8 在同一作用域里取**最后一个** `--max-old-space-size`（实测 4096/8192 组合拿到
+    /// 8192），解析器必须跟它一致，否则会把实际生效值报小。
+    #[test]
+    fn the_last_heap_limit_in_node_options_wins() {
+        assert_eq!(
+            node_options_heap_limit("--max-old-space-size=4096 --max-old-space-size=8192"),
+            Some(8192)
+        );
+        assert_eq!(
+            node_options_heap_limit("--max-old-space-size=8192 --max-old-space-size=4096"),
+            Some(4096)
+        );
+        // 解析失败的条目忽略，前一个有效值仍然算数。
+        assert_eq!(
+            node_options_heap_limit("--max-old-space-size=4096 --max-old-space-size=oops"),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn strips_every_heap_flag_but_keeps_the_rest_of_node_options() {
+        assert_eq!(
+            node_options_without_heap_flags("--require C:/probe.cjs --max-old-space-size=8192"),
+            Some("--require C:/probe.cjs".to_string())
+        );
+        assert_eq!(
+            node_options_without_heap_flags("--max-old-space-size 8192 --trace-warnings"),
+            Some("--trace-warnings".to_string())
+        );
+        assert_eq!(
+            node_options_without_heap_flags("--max-old-space-size-percentage=50 --require a.cjs"),
+            Some("--require a.cjs".to_string())
+        );
+        assert_eq!(
+            node_options_without_heap_flags("--max_old_space_size 8192"),
+            None
+        );
+        assert_eq!(node_options_without_heap_flags("--trace-warnings"), Some("--trace-warnings".to_string()));
     }
 
     #[test]
