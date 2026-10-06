@@ -1320,9 +1320,9 @@ mod tests {
         std::fs::write(
             &bin,
             format!(
-                "require('fs').writeFileSync({:?}, 'ready'); require('fs').writeFileSync({:?}, String(process.pid)); setTimeout(() => process.exit(0), 60000)",
-                ready.to_string_lossy(),
-                service_pid_file.to_string_lossy()
+                "require('fs').writeFileSync({:?}, String(process.pid)); require('fs').writeFileSync({:?}, 'ready'); setTimeout(() => process.exit(0), 60000)",
+                service_pid_file.to_string_lossy(),
+                ready.to_string_lossy()
             ),
         )
         .unwrap();
