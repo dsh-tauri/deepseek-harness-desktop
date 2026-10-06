@@ -3,6 +3,7 @@ import i18next from 'i18next'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { resources } from '../src/i18n/index.resource'
 import { attachStartupDiagnostics } from '../src/store/modules/harness/utils'
+import { readSource } from './setup/read-source'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 
@@ -89,5 +90,43 @@ describe('harness heap i18n contract', () => {
       expect(zh[key], `zh-CN.json missing ${key}`).toBeTypeOf('string')
       expect(en[key], `en-US.json missing ${key}`).toBeTypeOf('string')
     }
+  })
+})
+
+describe('服务内存上限的单位', () => {
+  /** 堆上限所在的那一行（到下一个分隔块为止），单位必须落在输入框自身而不是别处 */
+  function heapRow(): string {
+    const source = readSource('src/ui/config/debug.tsx')
+    const start = source.indexOf('ui.heap_limit')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('<div className="border-t', start)
+    expect(end).toBeGreaterThan(start)
+    return source.slice(start, end)
+  }
+
+  it('输入框内以 InputGroup 后缀给出 MB 单位', () => {
+    const row = heapRow()
+
+    expect(row).toMatch(/<InputGroup[\s>]/)
+    expect(row).toMatch(/<InputGroup\.Input/)
+    expect(row).toMatch(/<InputGroup\.Suffix[^>]*data-testid="dsh-config-heap-unit"[^>]*>\s*MB\s*</)
+    expect(row).not.toMatch(/<Input[\s>]/)
+  })
+
+  it('保留原有的数字输入语义与无障碍标签', () => {
+    const row = heapRow()
+
+    expect(row).toMatch(/data-testid="dsh-config-heap-input"/)
+    expect(row).toMatch(/type="number"/)
+    expect(row).toMatch(/value=\{heapValue\}/)
+    expect(row).toMatch(/placeholder=\{t\('ui\.heap_limit_auto'\)\}/)
+    expect(row).toMatch(/aria-label=\{t\('ui\.heap_limit'\)\}/)
+    expect(row).toMatch(/onChange=\{e => setHeapInput\(e\.target\.value\)\}/)
+  })
+
+  it('从 heroui 具名导入 InputGroup', () => {
+    const source = readSource('src/ui/config/debug.tsx')
+
+    expect(source).toMatch(/import \{[^}]+InputGroup[^}]*\} from '@heroui\/react'/)
   })
 })

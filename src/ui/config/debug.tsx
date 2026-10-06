@@ -1,6 +1,6 @@
 import type { RuntimeInfo } from '@/types'
 import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power } from '@gravity-ui/icons'
-import { Button, Chip, Description, Input, Link, ListBox, Select, Spinner, Switch, Tooltip } from '@heroui/react'
+import { Button, Chip, Description, Input, InputGroup, Link, ListBox, Select, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
@@ -495,15 +495,18 @@ export function ConfigDebug() {
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-medium text-ink">{t('ui.heap_limit')}</span>
           <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
-              variant="secondary"
-              value={heapValue}
-              placeholder={t('ui.heap_limit_auto')}
-              onChange={e => setHeapInput(e.target.value)}
-              className="w-24 h-8 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              aria-label={t('ui.heap_limit')}
-            />
+            <InputGroup variant="secondary" className="w-24 h-8 min-h-8!">
+              <InputGroup.Input
+                type="number"
+                value={heapValue}
+                placeholder={t('ui.heap_limit_auto')}
+                onChange={e => setHeapInput(e.target.value)}
+                className="min-w-0 py-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={t('ui.heap_limit')}
+                data-testid="dsh-config-heap-input"
+              />
+              <InputGroup.Suffix className="px-1.5" data-testid="dsh-config-heap-unit">MB</InputGroup.Suffix>
+            </InputGroup>
             <Button
               size="sm"
               variant="primary"
