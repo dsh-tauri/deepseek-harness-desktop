@@ -114,6 +114,15 @@ export function parseHeaders(raw: string | undefined): Record<string, string> | 
   }
 }
 
+export function listingHeaders(apiKey: string | undefined, headers: Record<string, string> | undefined): Record<string, string> {
+  const owned: Record<string, string> = apiKey === undefined
+    ? { accept: 'application/json' }
+    : { accept: 'application/json', authorization: `Bearer ${apiKey}` }
+  const reserved = new Set(Object.keys(owned).map(name => name.toLowerCase()))
+  const kept = Object.entries(headers ?? {}).filter(([name]) => !reserved.has(name.toLowerCase()))
+  return { ...Object.fromEntries(kept), ...owned }
+}
+
 export function apiKeyRefOf(profile: unknown): string | undefined {
   return nonEmptyText(isRecord(profile) ? profile.apiKeyEnv : undefined)
 }
