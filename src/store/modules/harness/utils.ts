@@ -5,7 +5,7 @@ import type { PatchEntryStripReport, PatchQuarantineReport } from '@/types/plugi
 import { promiseTimeout } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import i18next from 'i18next'
-import { containsHeapOomError, containsInotifyLimitError, pickErrorLines } from '@/components/logs.utils'
+import { containsHeapOomError, containsInotifyLimitError, heapPeakFromLogs, pickErrorLines } from '@/components/logs.utils'
 import { toast } from '@/utils/toast'
 import {
   HEALTH_PROBE_INITIAL_INTERVAL,
@@ -210,7 +210,14 @@ export async function attachStartupDiagnostics(err: unknown, processExited = fal
       diagnosed.inotifyLimitHint = i18next.t('errors.inotify_limit')
     }
     if (processExited && containsHeapOomError(lines)) {
-      diagnosed.heapOomHint = i18next.t('errors.heap_oom')
+      // 提示里报出"崩溃时真正生效的上限"：设置页里的值可能被 NODE_OPTIONS 顶掉，
+      // 所以上限以后端启动链路同一份判定（get_effective_heap_limit_mb）为准。
+      const effectiveLimitMb = await invoke<number | null>('get_effective_heap_limit_mb').catch(() => null)
+      const peakMb = heapPeakFromLogs(lines)
+      const hint = effectiveLimitMb
+        ? i18next.t('errors.heap_oom', { limit: effectiveLimitMb })
+        : i18next.t('errors.heap_oom_unknown')
+      diagnosed.heapOomHint = peakMb === undefined ? hint : `${hint} ${i18next.t('errors.heap_oom_peak', { peak: peakMb })}`
     }
   }
   // 补丁层 YAML 语法错误（issue #525）：真实原因是用户手写的 `cordis.patch.yml`

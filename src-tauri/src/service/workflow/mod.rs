@@ -27,6 +27,7 @@ mod startup;
 mod sweep;
 
 pub use health::proxy_health_check;
+pub(crate) use heap::effective_heap_limit_mb;
 pub use install::install;
 pub use launch::{launch, restart, start};
 pub use process::{

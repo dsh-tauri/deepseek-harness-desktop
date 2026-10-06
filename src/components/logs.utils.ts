@@ -43,3 +43,28 @@ export function containsInotifyLimitError(lines: readonly string[]): boolean {
 export function containsHeapOomError(lines: readonly string[]): boolean {
   return lines.some(line => /JavaScript heap out of memory|Ineffective mark-compacts near heap limit/i.test(line))
 }
+
+/** V8 GC 追踪行：`Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB`，括号里是提交的堆总量 */
+const HEAP_COMMITTED_MB = /\(\d+(?:\.\d+)?\)\s*->[^(]*\((\d+(?:\.\d+)?)\)\s*MB/
+
+/**
+ * 从日志尾部取崩溃瞬间实际提交到的堆上限（MB，取整）。
+ *
+ * V8 堆耗尽时会把 GC 追踪行写进日志，括号里的第二个数就是当时的堆总量；
+ * 它通常略高于配置上限（V8 会略微超发），因此比"设置页里现在填了什么"
+ * 更能说明崩溃现场的真实上限。没有 GC 追踪行时返回 undefined。
+ */
+export function heapPeakFromLogs(lines: readonly string[]): number | undefined {
+  let peak: number | undefined
+  for (const line of lines) {
+    const matched = HEAP_COMMITTED_MB.exec(line)
+    if (!matched)
+      continue
+    const committed = Number(matched[1])
+    if (!Number.isFinite(committed))
+      continue
+    const mb = Math.floor(committed)
+    peak = peak === undefined ? mb : Math.max(peak, mb)
+  }
+  return peak
+}

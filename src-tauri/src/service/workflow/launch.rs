@@ -645,15 +645,25 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     }
     mark_phase("patch_entry_preflight", &mut phase_started);
 
-    let node_options = std::env::var("NODE_OPTIONS").ok();
+    let inherited_heap_mb = super::heap::node_options_heap_limit_mb();
     let heap_mb = super::heap::resolve_heap_limit_mb(
         setting.harness_max_heap_mb,
-        node_options.as_deref(),
+        inherited_heap_mb,
         super::heap::physical_memory_mb(),
     );
-    match heap_mb {
-        Some(mb) => log::info!("Starting Harness process with --max-old-space-size={mb}"),
-        None => log::info!("Starting Harness process with Node default or inherited heap options"),
+    // 提示里说的上限必须与进程真正拿到的上限一致，否则用户会看到「已设置 8192
+    // 还提示 8192」这种自相矛盾的诊断（详见 heap.rs 的优先级说明）。
+    match super::heap::effective_limit_mb(heap_mb, inherited_heap_mb) {
+        Some(mb) => log::info!(
+            "Starting Harness process with effective heap limit {mb} MB (configured={:?}, inherited_from_node_options={:?})",
+            setting.harness_max_heap_mb,
+            inherited_heap_mb
+        ),
+        None => log::info!(
+            "Starting Harness process with the Node default heap limit (configured={:?}, inherited_from_node_options={:?})",
+            setting.harness_max_heap_mb,
+            inherited_heap_mb
+        ),
     }
 
     // dsh 的 Loader 在插件 dispose 时会把组合后的整棵 entry 树回写进
