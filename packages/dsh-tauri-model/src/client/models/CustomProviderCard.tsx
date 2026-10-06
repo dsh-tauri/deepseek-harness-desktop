@@ -9,6 +9,7 @@ import { validateDeepSeekModels } from './DeepSeekModelsEditor.tsx'
 import { EditorFooter } from './EditorFooter.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
 import { protocolLabel } from './protocol-label.ts'
+import { parseRequestHeaders, requestHeaderFailure, requestHeadersRecord } from './requestHeaders.ts'
 import { deriveKeyRef } from './store.ts'
 import { modelStyles as styles } from './styles.ts'
 
@@ -46,6 +47,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   const [baseURL, setBaseURL] = useState('')
   const [protocol, setProtocol] = useState(protocols[0] ?? '')
   const [keyDraft, setKeyDraft] = useState('')
+  const [headersDraft, setHeadersDraft] = useState('')
   const [models, setModels] = useState<readonly ModelDraft[]>([])
   const [busy, setBusy] = useState(false)
   const [listBusy, setListBusy] = useState(false)
@@ -67,14 +69,17 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   const modelFailure = validateDeepSeekModels(models)
   const keyFailure = apiKeyFailure(keyDraft)
 
+  const headers = parseRequestHeaders(headersDraft)
+  const headerFailure = requestHeaderFailure(headers)
+
   const keyValue = keyDraft.trim()
   const ready = route.length > 0 && !routeInvalid && !routeTaken
     && normalizedBaseURL.length > 0 && !baseUrlInvalid && models.length > 0 && modelFailure === undefined
-    && keyFailure === undefined
+    && keyFailure === undefined && headerFailure === undefined
 
   const hint = failure !== undefined || ready
 
-    || keyFailure !== undefined
+    || keyFailure !== undefined || headerFailure !== undefined
 
     || route.length === 0 || routeInvalid || routeTaken || baseUrlInvalid
     ? undefined
@@ -92,6 +97,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         ...displayName.length === 0 ? {} : { displayName },
 
         ...storesKey ? { apiKeyEnv: keyRef } : {},
+        ...headers.length === 0 ? {} : { headers: requestHeadersRecord(headers) },
         api: protocol,
         baseURL: normalizedBaseURL,
         models: models.map(model => ({ ...model })),
@@ -208,6 +214,22 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
           ? null
           : <p className={styles.error}>{t(keyFailure === 'keyBlank' ? 'keyBlankNew' : keyFailure)}</p>}
       </div>
+      <details className={styles.customized}>
+        <summary className={styles.customizedSummary}>{t('requestHeaders')}</summary>
+        <div className={styles.customizedBody}>
+          <textarea
+            className={styles.headersInput}
+            value={headersDraft}
+            placeholder={t('requestHeadersPlaceholder')}
+            aria-label={t('requestHeaders')}
+            aria-invalid={headerFailure !== undefined}
+            disabled={profileDisabled}
+            onChange={(event) => { setHeadersDraft(event.target.value) }}
+          />
+          <p className={styles.advancedHint}>{t('requestHeadersHint')}</p>
+          {headerFailure === undefined ? null : <p className={styles.error}>{t(headerFailure)}</p>}
+        </div>
+      </details>
       <ModelListEditor
         models={models}
         onChange={setModels}
@@ -216,6 +238,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
           baseURL: normalizedBaseURL,
           api: protocol,
           ...keyValue.length === 0 ? {} : { apiKey: keyValue },
+          ...headers.length === 0 ? {} : { headers: requestHeadersRecord(headers) },
         }}
         probeBlocked={baseUrlInvalid
           ? 'customBaseUrlInvalid'

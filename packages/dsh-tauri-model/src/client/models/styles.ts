@@ -588,6 +588,36 @@ select.zGbnIq_input {
   background-size: 12px 12px;
 }
 
+.zGbnIq_headersInput {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  padding: 6px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  resize: vertical;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.zGbnIq_headersInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.zGbnIq_headersInput::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.zGbnIq_headersInput:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .zGbnIq_error {
   margin: 0;
   font-size: 12px;

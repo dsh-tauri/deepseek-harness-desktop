@@ -94,6 +94,26 @@ export function parseProfilePath(raw: string | undefined): string[] {
   }
 }
 
+export function parseHeaders(raw: string | undefined): Record<string, string> | undefined {
+  if (raw === undefined || raw.trim().length === 0)
+    return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed))
+      return undefined
+    const headers: Record<string, string> = {}
+    for (const [name, value] of Object.entries(parsed)) {
+      const trimmed = name.trim()
+      if (trimmed.length > 0 && typeof value === 'string')
+        headers[trimmed] = value
+    }
+    return Object.keys(headers).length === 0 ? undefined : headers
+  }
+  catch {
+    return undefined
+  }
+}
+
 export function apiKeyRefOf(profile: unknown): string | undefined {
   return nonEmptyText(isRecord(profile) ? profile.apiKeyEnv : undefined)
 }

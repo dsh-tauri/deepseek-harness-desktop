@@ -10,6 +10,7 @@ export interface GetEndpointModelsQuery {
   profilePath?: string
   baseURL?: string
   apiKey?: string
+  headers?: string
 }
 
 export interface EndpointModelsResponse {

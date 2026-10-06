@@ -16,6 +16,7 @@ export interface ModelProbeTarget {
   baseURL?: string
   api?: string
   apiKey?: string
+  headers?: Record<string, string>
 }
 
 export interface ModelConfigToolbarProps {

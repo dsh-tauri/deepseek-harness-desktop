@@ -31,6 +31,7 @@ export interface ProbeTarget {
   baseURL?: string
   api?: string
   apiKey?: string
+  headers?: Record<string, string>
 }
 
 export interface ModelListEditorProps {
@@ -286,6 +287,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     ...probe.baseURL === undefined ? {} : { baseURL: probe.baseURL },
     ...probe.api === undefined ? {} : { api: probe.api },
     ...probe.apiKey === undefined ? {} : { apiKey: probe.apiKey },
+    ...probe.headers === undefined ? {} : { headers: probe.headers },
   }
   return (
     <section className={styles.modelCatalog} aria-label={t('models')}>

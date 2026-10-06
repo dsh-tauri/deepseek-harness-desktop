@@ -18,6 +18,7 @@ import {
 import { EditorFooter } from './EditorFooter.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
 import { protocolLabel } from './protocol-label.ts'
+import { parseRequestHeaders, requestHeaderFailure, requestHeadersRecord, requestHeadersText } from './requestHeaders.ts'
 import { deriveKeyRef, protocolChoices } from './store.ts'
 import { modelStyles as styles } from './styles.ts'
 
@@ -100,6 +101,9 @@ function refFor(
 export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const { namespace, schema, settingsPath, operations, t } = props
   const [draft, setDraft] = useState<Record<string, unknown>>(() => draftAt(schema, namespace, settingsPath))
+  const [headersDraft, setHeadersDraft] = useState(
+    () => requestHeadersText(schema.getPath(draft, ['headers'])),
+  )
   const [keyDraft, setKeyDraft] = useState('')
   const [credential, setCredential] = useState<{
     keyRef: string
@@ -158,9 +162,19 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
       ? schema.deletePath(current, [key])
       : schema.setPath(current, [key], value))
   }
+  const setHeaders = (text: string): void => {
+    setHeadersDraft(text)
+    const record = requestHeadersRecord(parseRequestHeaders(text))
+    setDraft(current => Object.keys(record).length === 0
+      ? schema.deletePath(current, ['headers'])
+      : schema.setPath(current, ['headers'], record))
+  }
 
   const modelFailure = validateDeepSeekModels(schema.getPath(draft, ['models']))
   const keyFailure = apiKeyFailure(keyDraft)
+
+  const headers = parseRequestHeaders(headersDraft)
+  const headerFailure = requestHeaderFailure(headers)
 
   const keyValue = keyDraft.trim()
   const credentialRequiredFailure = props.credentialRequired === true
@@ -178,6 +192,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     ...probeBaseURL === undefined ? {} : { baseURL: probeBaseURL },
     ...probeApi === undefined ? {} : { api: probeApi },
     ...keyValue.length === 0 ? {} : { apiKey: keyValue },
+    ...headers.length === 0 ? {} : { headers: requestHeadersRecord(headers) },
   }
 
   const applyOnce = async (): Promise<string | undefined> => {
@@ -194,6 +209,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
         return `${t('model')} ${String(failure.index + 1)}: ${t(failure.key)}`
       }
     }
+
+    if (props.credentialOnly !== true && headerFailure !== undefined)
+      return t(headerFailure)
 
     if (props.credentialOnly !== true && node !== undefined && settingsPath.length === 0) {
       const sectionError = schema.validate(node, next)
@@ -375,6 +393,22 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
                       )
                     : null}
 
+                  <div className={styles.field}>
+                    <span className={styles.fieldLabel}>{t('requestHeaders')}</span>
+                    <textarea
+                      className={styles.headersInput}
+                      value={headersDraft}
+                      placeholder={t('requestHeadersPlaceholder')}
+                      aria-label={t('requestHeaders')}
+                      aria-invalid={headerFailure !== undefined}
+                      disabled={disabled}
+                      onChange={(event) => { setHeaders(event.target.value) }}
+                    />
+                    <span className={styles.advancedHint}>{t('requestHeadersHint')}</span>
+                    <span className={styles.advancedHint}>{t('requestHeadersProbeHint')}</span>
+                    {headerFailure === undefined ? null : <p className={styles.error}>{t(headerFailure)}</p>}
+                  </div>
+
                   {family === 'deepseek'
                     ? (
                         <DeepSeekModelsEditor
@@ -431,6 +465,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
         busy={busy}
         submitDisabled={disabled || layout === 'unknown'
           || (props.credentialOnly !== true && modelFailure !== undefined)
+          || (props.credentialOnly !== true && headerFailure !== undefined)
           || shownKeyFailure !== undefined
           || (props.credentialRequired === true && keyValue.length === 0)}
         submitLabelKey={props.submitLabelKey ?? 'apply'}

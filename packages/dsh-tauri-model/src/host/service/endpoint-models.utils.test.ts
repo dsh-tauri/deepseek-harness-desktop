@@ -6,6 +6,7 @@ import {
   modelsListingUrl,
   normalizeEndpointModel,
   normalizeEndpointModels,
+  parseHeaders,
   parseProfilePath,
 } from './endpoint-models.utils'
 
@@ -85,6 +86,15 @@ describe('profile resolution', () => {
     expect(apiKeyRefOf(section.providers.local)).toBe('LOCAL_API_KEY')
     expect(apiKeyRefOf({ apiKeyEnv: '  ' })).toBeUndefined()
     expect(apiKeyRefOf(undefined)).toBeUndefined()
+  })
+
+  it('parses the query spelling of custom request headers', () => {
+    expect(parseHeaders('{"X-Lab-Token":"lab-639"}')).toEqual({ 'X-Lab-Token': 'lab-639' })
+    expect(parseHeaders('{" A ":"1","B":2,"":"3"}')).toEqual({ A: '1' })
+    expect(parseHeaders('{}')).toBeUndefined()
+    expect(parseHeaders('nope')).toBeUndefined()
+    expect(parseHeaders('[1]')).toBeUndefined()
+    expect(parseHeaders(undefined)).toBeUndefined()
   })
 
   it('appends the listing segment without doubling slashes', () => {

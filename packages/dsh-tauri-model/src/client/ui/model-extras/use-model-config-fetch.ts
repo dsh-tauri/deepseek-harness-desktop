@@ -38,6 +38,7 @@ export function useModelConfigFetch(options: UseModelConfigFetchOptions): UseMod
           ...options.probe.baseURL === undefined ? {} : { baseURL: options.probe.baseURL },
           ...options.probe.api === undefined ? {} : { api: options.probe.api },
           ...options.probe.apiKey === undefined ? {} : { apiKey: options.probe.apiKey },
+          ...options.probe.headers === undefined ? {} : { headers: options.probe.headers },
         }, options.operations),
         ensurePresets(),
       ])
