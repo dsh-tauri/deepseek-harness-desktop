@@ -20,6 +20,7 @@ use super::harness_prefer_bundled_pnpm;
 use super::diagnose::{
     git_transport_hint, incompatible_versions, network_error_hint, pick_error_message,
     policy_blocked_versions, policy_verification_network_failure, store_mismatch_hint,
+    IncompatibleVersion, PolicyBlockedVersion,
 };
 use super::errors;
 use super::installed_name;
@@ -45,7 +46,8 @@ use crate::service::profile::profile_release_age_excluded;
 ///   （见 [`resolve_missing_targets`]），补不上才沿用 `dsh plugin update <id> --latest`
 ///   让 pnpm 在声明范围内挑最新，再逐项核验是否真的落地（见 [`update_to_latest`]）。
 ///
-/// 逐项核验的结果汇总成一条错误消息（见 [`update_failure_payload`]）。
+/// 逐项核验的结果汇总成一条错误消息（见 [`update_failure_payload`]）：两个阶段各自的结算都
+/// 保留下来，前一段装上的目标不会被后一段的一般错误抹掉（见 [`UpdateFailure`]）。
 pub async fn update_many(app_handle: &AppHandle, specs: &[String]) -> Result<(), String> {
     let mut requested: Vec<(String, Option<String>)> = specs
         .iter()
@@ -65,10 +67,10 @@ pub async fn update_many(app_handle: &AppHandle, specs: &[String]) -> Result<(),
         .collect();
     let mut failures = Vec::new();
     if !explicit.is_empty() {
-        failures.extend(install_targets(app_handle, &explicit).await?);
+        failures.extend(install_targets(app_handle, &explicit).await);
     }
     if !implicit.is_empty() {
-        failures.extend(update_to_latest(app_handle, &implicit).await?);
+        failures.extend(update_to_latest(app_handle, &implicit).await);
     }
     match update_failure_payload(failures) {
         Some(message) => Err(message),
@@ -118,7 +120,7 @@ async fn resolve_missing_targets(
 async fn install_targets(
     app_handle: &AppHandle,
     targets: &[(String, String)],
-) -> Result<Vec<String>, String> {
+) -> Vec<UpdateFailure> {
     let profile = profile_dir(app_handle);
     let specs: Vec<String> = targets
         .iter()
@@ -136,23 +138,23 @@ async fn install_targets(
         args.push(RELEASE_AGE_RELAXED_FLAG.to_string());
     }
     if let Err(e) = run_plugin_command(app_handle, &ids, "add", &args).await {
-        return Err(policy_refusal_from_specs(&specs, &e).unwrap_or(e));
+        return UpdateFailure::stage(&specs, e);
     }
     let mut failures = Vec::new();
     for (index, (id, version)) in targets.iter().enumerate() {
         if let Err(e) =
             verify_update_landed(app_handle, id, before[index].as_deref(), Some(version)).await
         {
-            failures.push(e);
+            failures.push(UpdateFailure::new(id, e));
         }
     }
-    Ok(failures)
+    failures
 }
 
 /// 没有目标版本的条目：`dsh plugin update <id> --latest` 让 pnpm 在声明范围内挑最新，
 /// 逐项核验没落地的那些再尝试一次显式安装（见 [`force_upgrade_spec`]，只对已授权过的目标
 /// 动手；未授权的先由前端走授权流程）。
-async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<String>, String> {
+async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Vec<UpdateFailure> {
     let profile = profile_dir(app_handle);
     let before: Vec<Option<String>> = ids
         .iter()
@@ -166,7 +168,9 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
     if relax_release_age(&targets) {
         args.push(RELEASE_AGE_RELAXED_FLAG.to_string());
     }
-    run_plugin_command(app_handle, ids, "update", &args).await?;
+    if let Err(e) = run_plugin_command(app_handle, ids, "update", &args).await {
+        return UpdateFailure::stage(ids, e);
+    }
     let mut failures = Vec::new();
     let mut forced = Vec::new();
     for (index, id) in ids.iter().enumerate() {
@@ -174,12 +178,12 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
             Ok(()) => {}
             Err(e) => match force_upgrade_spec(id, &e) {
                 Some(spec) => forced.push(spec),
-                None => failures.push(e),
+                None => failures.push(UpdateFailure::new(id, e)),
             },
         }
     }
     if forced.is_empty() {
-        return Ok(failures);
+        return failures;
     }
     log::warn!("dsh plugin update was blocked by the declared source, forcing {forced:?}");
     let forced_ids: Vec<String> = forced
@@ -187,7 +191,8 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
         .map(|spec| split_upgrade_spec(spec).0)
         .collect();
     if let Err(e) = run_plugin_command(app_handle, &forced_ids, "add", &forced).await {
-        return Err(policy_refusal_from_specs(&forced, &e).unwrap_or(e));
+        failures.extend(UpdateFailure::stage(&forced, e));
+        return failures;
     }
     for (index, id) in ids.iter().enumerate() {
         let target = format!("{id}@");
@@ -195,10 +200,10 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<
             continue;
         }
         if let Err(e) = verify_update_landed(app_handle, id, before[index].as_deref(), None).await {
-            failures.push(e);
+            failures.push(UpdateFailure::new(id, e));
         }
     }
-    Ok(failures)
+    failures
 }
 
 /// 把面板给的升级条目切成 `(id, 目标版本)`：`aaa@1.2.3` 与 `@scope/aaa@1.2.3` 都按最后
@@ -240,7 +245,7 @@ fn policy_refusal_from_specs(specs: &[String], failure: &str) -> Option<String> 
         return None;
     }
     Some(format!(
-        "PLUGIN_POLICY_BLOCKED: {}",
+        "{POLICY_BLOCKED_PREFIX} {}",
         serde_json::Value::Array(blocked)
     ))
 }
@@ -271,6 +276,62 @@ fn force_upgrade_spec(id: &str, failure: &str) -> Option<String> {
 /// 升级没生效的前缀：`PLUGIN_UPDATE_NO_CHANGE: <JSON>`。
 const UPDATE_HOLD_PREFIX: &str = "PLUGIN_UPDATE_NO_CHANGE:";
 
+/// 版本兼容性拒绝的前缀：`PLUGIN_VERSION_INCOMPATIBLE: <JSON 数组 [{name, version, runtime_version}]>`
+/// （与批量安装路径共用同一形状）。
+const INCOMPATIBLE_PREFIX: &str = "PLUGIN_VERSION_INCOMPATIBLE:";
+
+/// 发布时长门禁拒绝的前缀：`PLUGIN_POLICY_BLOCKED: <JSON 数组>`（与批量安装路径共用同一形状）。
+const POLICY_BLOCKED_PREFIX: &str = "PLUGIN_POLICY_BLOCKED:";
+
+/// 升级里其余失败的前缀：`PLUGIN_UPDATE_FAILED: <JSON 数组 [{name, message}]>`。
+const UPDATE_FAILED_PREFIX: &str = "PLUGIN_UPDATE_FAILED:";
+
+/// 一条升级失败，以及它归谁。
+///
+/// 批量升级依次走两段（显式安装、隐式 `update --latest`），每段都是一次子进程调用、都可能
+/// 整段失败。只把失败拼成字符串的话两段结算会互相顶掉：后段整段失败会让前段已经装上的目标
+/// 也跟着报失败，前段的失败又会在后段失败时被直接丢掉。带上 id 之后前端才能逐项归因
+/// （见 [`update_failure_payload`]）。
+struct UpdateFailure {
+    /// 归因到的插件 id；无法逐项归因时为空串。
+    id: String,
+    /// 失败消息（可能是 `PLUGIN_UPDATE_NO_CHANGE:` 或 `PLUGIN_POLICY_BLOCKED:` 载荷）。
+    message: String,
+}
+
+impl UpdateFailure {
+    /// 逐项核验的失败：明确归因到这一个 id。
+    fn new(id: &str, message: String) -> Self {
+        Self {
+            id: id.to_string(),
+            message,
+        }
+    }
+
+    /// 整段子进程调用的失败：逐项核验尚未开始（或整批无法区分），归因到这一段点到的每个
+    /// spec。发布时长门禁的拒绝同样在这里按**本次请求的目标**合成精确三元组——pnpm 两个阶段
+    /// 报的文本不同，前端要的是「哪个包、哪个版本」（见 [`policy_refusal_from_specs`]）。
+    /// 版本兼容性拒绝不做合成：dsh 点名的是它自己解析出来的版本，改写它等于伪造一份用户
+    /// 没见过的授权清单，原样保留（见 [`update_failure_payload`]）。
+    fn stage(specs: &[String], message: String) -> Vec<Self> {
+        let message = policy_refusal_from_specs(specs, &message).unwrap_or(message);
+        specs
+            .iter()
+            .map(|spec| Self {
+                id: split_upgrade_spec(spec).0,
+                message: message.clone(),
+            })
+            .collect()
+    }
+}
+
+/// 升级结算载荷里的一条真实失败：与 `PLUGIN_UPDATE_FAILED:` 的 JSON 数组同构。
+#[derive(serde::Serialize)]
+struct UpdateStageFailure {
+    name: String,
+    message: String,
+}
+
 /// 把逐项核验的失败汇成一条错误消息。
 ///
 /// 多个 id 各自没生效时**不能**把每条 `PLUGIN_UPDATE_NO_CHANGE:` 用换行拼起来：前端把前缀
@@ -278,27 +339,91 @@ const UPDATE_HOLD_PREFIX: &str = "PLUGIN_UPDATE_NO_CHANGE:";
 /// 「升级插件 X 失败」，把「授权一下就能装的版本」说成损坏（见
 /// `src/store/modules/plugins/utils.ts` 的 `parseUpdateHold`）。因此把每个没生效的条目收进
 /// 一个 JSON 数组一次性带出去，前端就能逐项归因：能授权的进授权流程，钉死来源的中性提示。
-/// 混进真正的失败（入口构建等）时优先如实报那条——它才是用户要处理的问题。
-fn update_failure_payload(failures: Vec<String>) -> Option<String> {
+/// 真正的失败（入口构建、网络、整段子进程失败……）同样逐条带上 id：前端据 `name` 只判
+/// 点到的那些插件，同一批里已经装上的目标照旧报成功（见 [`UpdateFailure`]）。
+fn update_failure_payload(failures: Vec<UpdateFailure>) -> Option<String> {
+    let mut incompatible = Vec::new();
+    let mut blocked = Vec::new();
     let mut holds = Vec::new();
     let mut others = Vec::new();
+    let push_blocked = |entries: Vec<PolicyBlockedVersion>, blocked: &mut Vec<PolicyBlockedVersion>| {
+        for entry in entries {
+            if !blocked.contains(&entry) {
+                blocked.push(entry);
+            }
+        }
+    };
+    let push_incompatible = |entries: Vec<IncompatibleVersion>,
+                             incompatible: &mut Vec<IncompatibleVersion>| {
+        for entry in entries {
+            if !incompatible.contains(&entry) {
+                incompatible.push(entry);
+            }
+        }
+    };
     for failure in failures {
-        let payload = failure.strip_prefix(UPDATE_HOLD_PREFIX);
-        match payload.and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok()) {
+        // 版本兼容性拒绝照原样提升到顶层：前端只认这一行里的载荷来挂「授权后重跑」的按钮，
+        // 落进下面的逐项失败里用户就只能看着一条纯文本，无从授权（与批量安装路径同形状）。
+        // 载荷里的版本是 dsh 自己解析出来的那个，不改写——用户授权的是他看得见的东西。
+        if let Some(payload) = failure.message.strip_prefix(INCOMPATIBLE_PREFIX) {
+            if let Ok(entries) = serde_json::from_str::<Vec<IncompatibleVersion>>(payload) {
+                push_incompatible(entries, &mut incompatible);
+                continue;
+            }
+        }
+        if let Some(payload) = failure.message.strip_prefix(POLICY_BLOCKED_PREFIX) {
+            if let Ok(entries) = serde_json::from_str::<Vec<PolicyBlockedVersion>>(payload) {
+                push_blocked(entries, &mut blocked);
+                continue;
+            }
+        }
+        let policy = policy_blocked_versions(&failure.message);
+        if !policy.is_empty() {
+            push_blocked(policy, &mut blocked);
+            continue;
+        }
+        let payload = failure
+            .message
+            .strip_prefix(UPDATE_HOLD_PREFIX)
+            .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok());
+        match payload {
             Some(value) => holds.push(value),
-            None => others.push(failure),
+            None => others.push(UpdateStageFailure {
+                name: failure.id,
+                message: failure.message,
+            }),
         }
     }
+    let mut messages = Vec::new();
+    if !incompatible.is_empty() {
+        messages.push(format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::to_string(&incompatible).unwrap_or_default()
+        ));
+    }
+    if !blocked.is_empty() {
+        messages.push(format!(
+            "{POLICY_BLOCKED_PREFIX} {}",
+            serde_json::to_string(&blocked).unwrap_or_default()
+        ));
+    }
+    if !holds.is_empty() {
+        messages.push(format!(
+            "{UPDATE_HOLD_PREFIX} {}",
+            serde_json::Value::Array(holds)
+        ));
+    }
     if !others.is_empty() {
-        return Some(others.join("\n"));
+        messages.push(format!(
+            "{UPDATE_FAILED_PREFIX} {}",
+            serde_json::to_string(&others).unwrap_or_default()
+        ));
     }
-    if holds.is_empty() {
-        return None;
+    if messages.is_empty() {
+        None
+    } else {
+        Some(messages.join("\n"))
     }
-    Some(format!(
-        "{UPDATE_HOLD_PREFIX} {}",
-        serde_json::Value::Array(holds)
-    ))
 }
 
 /// 升级时转发给 pnpm 的参数：每个 id 后各跟一个 `--latest`。
@@ -701,7 +826,7 @@ async fn run_plugin_command(
                 "dsh refused the {action} for incompatible plugin versions: {incompatible:?}"
             );
             return Err(format!(
-                "PLUGIN_VERSION_INCOMPATIBLE: {}",
+                "{INCOMPATIBLE_PREFIX} {}",
                 serde_json::to_string(&incompatible).unwrap_or_default()
             ));
         }
@@ -796,35 +921,21 @@ async fn run_plugin_command(
 /// 入口缺失」坏态，若不拦截，下一次启动即崩溃（见 [`ensure_plugin_entry_built`]）。
 /// 包名先解析（预设 package 覆盖 / 清单依赖 basename），解析不到时跳过核验
 /// （警告即可，不误杀成功更新）。
+///
+/// 「版本已达目标」只跳过 [`update_verify_step`] 的指纹判定，**不**跳过入口核验：
+/// 版本正确而声明入口缺失同样是坏态（见该函数说明）。
 async fn verify_update_landed(
     app_handle: &AppHandle,
     id: &str,
     before: Option<&str>,
     expected: Option<&str>,
 ) -> Result<(), String> {
-    if let Some(expected) = expected {
-        // 已经就是用户要的那个版本：pnpm 没有东西可改，指纹自然不变，但请求的状态已经达成
-        // ——显式安装之后这一条必须算成功，否则「装上了」会被报成「没有变化」。
-        if installed_package_version(&profile_dir(app_handle), id).as_deref() == Some(expected) {
-            return Ok(());
-        }
-    }
-    if let Some(before) = before {
-        if dependency_fingerprint(&profile_dir(app_handle), id).as_deref() == Some(before) {
-            let detail = installed_package_version(&profile_dir(app_handle), id)
-                .unwrap_or_else(|| before.to_string());
+    let profile = profile_dir(app_handle);
+    match update_verify_step(&profile, id, before, expected, || known_latest(app_handle, id)) {
+        UpdateVerifyStep::Hold { detail, latest } => {
             // 只有「新版本太新」这一种成因有出路（授权那个精确版本即可过闸），因此把
             // 目标版本与「是否已在豁免清单里」一并带出去：已经授权过还是不动，说明成因
             // 是档案把来源钉死，界面就别再给按钮——否则用户只会反复点一个没用的动作。
-            // 目标版本优先用本次请求带来的版本（面板显示的那个），探测缓存只在没有时才
-            // 兜底：缓存没命中会让 `latest` 为空、`retryable` 判成不可授权，用户点升级
-            // 就只剩一句「没有变化」。
-            let latest = expected
-                .filter(|expected| *expected != detail && is_registry_version(expected))
-                .map(str::to_string)
-                .or_else(|| {
-                    known_latest(app_handle, id).filter(|latest| latest != &detail && is_registry_version(latest))
-                });
             let retryable = latest.as_deref().is_some_and(|latest| {
                 !profile_release_age_excluded(app_handle, &format!("{id}@{latest}"))
             });
@@ -841,6 +952,7 @@ async fn verify_update_landed(
                 })
             ));
         }
+        UpdateVerifyStep::Entry => {}
     }
     let Some(name) = installed_package_name(app_handle, id) else {
         log::warn!("plugin {id} not resolvable to a package name, skipping entry verify");
@@ -858,6 +970,63 @@ async fn verify_update_landed(
         return Err(e);
     }
     Ok(())
+}
+
+/// 升级核验的第一步：这次升级该按「没落地」上报，还是继续核验声明入口。
+///
+/// 版本已经是用户请求的那个目标时**只**跳过指纹判定：pnpm 没有东西可改，指纹自然不变，
+/// 但请求的状态已经达成——显式安装之后这一条必须算成功，否则「装上了」会被报成
+/// 「没有变化」。入口核验**不能**跟着跳过：版本对而声明入口缺失（prepare 未构建、产物被
+/// 删掉）同样是坏态，而 [`run_plugin_command`] 的成功分支会清掉历史插件错误，漏掉这一步
+/// 就等于把坏态报成成功，下一次启动才崩（见 [`ensure_plugin_entry_built`]）。
+///
+/// 探测缓存以闭包传入：失败载荷里的 `latest` 需要它兜底，而读取要 `AppHandle`，
+/// 这一步本身只需要一个档案目录——这样整条判定都能脱离 Tauri 单测。
+fn update_verify_step(
+    profile: &Path,
+    id: &str,
+    before: Option<&str>,
+    expected: Option<&str>,
+    known_latest: impl Fn() -> Option<String>,
+) -> UpdateVerifyStep {
+    let reached = expected.is_some_and(|expected| {
+        installed_package_version(profile, id).as_deref() == Some(expected)
+    });
+    if !reached {
+        if let Some(before) = before {
+            if dependency_fingerprint(profile, id).as_deref() == Some(before) {
+                let detail = installed_package_version(profile, id)
+                    .unwrap_or_else(|| before.to_string());
+                // 目标版本优先用本次请求带来的版本（面板显示的那个），探测缓存只在没有时
+                // 兜底：缓存没命中会让 `latest` 为空，用户点升级就只剩一句「没有变化」。
+                let latest = expected
+                    .filter(|expected| *expected != detail && is_registry_version(expected))
+                    .map(str::to_string)
+                    .or_else(|| {
+                        known_latest().filter(|latest| latest != &detail && is_registry_version(latest))
+                    });
+                log::warn!(
+                    "dsh plugin update made no change for {id}, still at {detail}, newest {latest:?}"
+                );
+                return UpdateVerifyStep::Hold { detail, latest };
+            }
+        }
+    }
+    UpdateVerifyStep::Entry
+}
+
+/// [`update_verify_step`] 的判定结果。
+enum UpdateVerifyStep {
+    /// 指纹没动、请求的目标版本也没达成：这次升级没落地，按 [`UPDATE_HOLD_PREFIX`]
+    /// 载荷上报（`retryable` 由调用方按豁免清单补判）。
+    Hold {
+        /// 当前实际版本（lock 读不出时回落到升级前的指纹版本）。
+        detail: String,
+        /// 可授权的目标版本（非 registry 形状时为 `None`）。
+        latest: Option<String>,
+    },
+    /// 请求的目标版本已达成，或指纹确实变了：继续核验声明入口。
+    Entry,
 }
 
 #[cfg(test)]
@@ -907,44 +1076,116 @@ mod tests {
         .is_empty());
     }
 
+    /// 一条 hold 载荷：与 `verify_update_landed` 合成的形状一致。
+    fn hold(name: &str, latest: serde_json::Value, retryable: bool) -> String {
+        format!(
+            "{UPDATE_HOLD_PREFIX} {}",
+            serde_json::json!({"name": name, "version": "1.0.0", "latest": latest, "retryable": retryable})
+        )
+    }
+
+    /// 取消息里某个前缀之后的 JSON 载荷。
+    fn payload_of(message: &str, prefix: &str) -> serde_json::Value {
+        let line = message
+            .split('\n')
+            .find(|line| line.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix} line in {message}"));
+        serde_json::from_str(line.strip_prefix(prefix).expect("prefix")).expect("json payload")
+    }
+
     /// 一批里两个 id 都没生效时，两条 hold 载荷必须并成**一个** JSON 数组：拼成多行会让
     /// 前端 `parseUpdateHold` 解析失败，把「授权一下就能装」说成「升级失败」。
     #[test]
     fn update_failure_payload_merges_holds_into_one_array() {
         let message = update_failure_payload(vec![
-            format!(
-                "{UPDATE_HOLD_PREFIX} {}",
-                serde_json::json!({"name": "a", "version": "1.0.0", "latest": "2.0.0", "retryable": true})
-            ),
-            format!(
-                "{UPDATE_HOLD_PREFIX} {}",
-                serde_json::json!({"name": "b", "version": "1.0.0", "latest": null, "retryable": false})
-            ),
+            UpdateFailure::new("a", hold("a", serde_json::json!("2.0.0"), true)),
+            UpdateFailure::new("b", hold("b", serde_json::json!(null), false)),
         ])
         .expect("message");
 
-        let payload = message.strip_prefix(UPDATE_HOLD_PREFIX).expect("prefix");
-        let parsed: serde_json::Value = serde_json::from_str(payload).expect("array payload");
-        let items = parsed.as_array().expect("array");
+        let items = payload_of(&message, UPDATE_HOLD_PREFIX);
+        let items = items.as_array().expect("array");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["name"], "a");
         assert_eq!(items[1]["retryable"], false);
     }
 
-    /// 真正的失败（入口构建等）不能被 hold 载荷吞掉，否则用户看不到要处理的问题。
+    /// 真正的失败（入口构建等）逐条带上 id 另起一条消息：hold 载荷照旧可解析，用户也能看到
+    /// 到底哪个插件坏了——两者混在一条里会互相顶掉（要么授权项解析失败，要么失败被吞掉）。
     #[test]
-    fn update_failure_payload_prefers_real_failures() {
+    fn update_failure_payload_keeps_real_failures_attributed() {
         let message = update_failure_payload(vec![
-            "PLUGIN_ENTRY_MISSING: a is broken".to_string(),
-            format!(
-                "{UPDATE_HOLD_PREFIX} {}",
-                serde_json::json!({"name": "a", "latest": "2.0.0", "retryable": true})
-            ),
+            UpdateFailure::new("a", "PLUGIN_ENTRY_MISSING: a is broken".to_string()),
+            UpdateFailure::new("b", hold("b", serde_json::json!("2.0.0"), true)),
         ])
         .expect("message");
 
-        assert_eq!(message, "PLUGIN_ENTRY_MISSING: a is broken");
+        let holds = payload_of(&message, UPDATE_HOLD_PREFIX);
+        assert_eq!(holds.as_array().expect("holds").len(), 1);
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("failures");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["name"], "a");
+        assert_eq!(failures[0]["message"], "PLUGIN_ENTRY_MISSING: a is broken");
         assert!(update_failure_payload(Vec::new()).is_none());
+    }
+
+    /// 整段子进程调用失败（逐项核验都没来得及跑）时，每个被点到的 id 都要有一条失败：
+    /// 否则前端只能拿一般错误把整批标红，同批里已经装上的目标也跟着报失败。
+    #[test]
+    fn stage_failures_name_every_target_of_that_stage() {
+        let ids = vec!["aaa".to_string(), "bbb".to_string()];
+        let message = update_failure_payload(UpdateFailure::stage(
+            &ids,
+            "NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry."
+                .to_string(),
+        ))
+        .expect("message");
+
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("failures");
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0]["name"], "aaa");
+        assert_eq!(failures[1]["name"], "bbb");
+        assert_eq!(
+            failures[1]["message"],
+            "NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry."
+        );
+    }
+
+    /// 显式安装阶段被发布时长门禁拦住时，同一段里的目标进 `PLUGIN_POLICY_BLOCKED` 载荷
+    /// （授权流程据此写豁免清单），而不是被当成普通失败丢掉。
+    #[test]
+    fn stage_policy_refusal_stays_authorizable() {
+        let specs = vec!["aaa@1.2.3".to_string(), "bbb".to_string()];
+        let message = update_failure_payload(UpdateFailure::stage(
+            &specs,
+            "ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION  aaa@1.2.3 was published recently".to_string(),
+        ))
+        .expect("message");
+
+        let blocked = payload_of(&message, POLICY_BLOCKED_PREFIX);
+        assert_eq!(
+            blocked,
+            serde_json::json!([{"name": "aaa", "version": "1.2.3"}])
+        );
+    }
+
+    /// 授权后重跑仍然没装上：显式安装那一段的整段失败要归因到被强制重装的那个目标，
+    /// 而不是把整批（含已装上的其它目标）一起报失败。
+    #[test]
+    fn forced_stage_failures_only_name_the_forced_targets() {
+        let forced = vec!["bbb@2.0.0".to_string()];
+        let message = update_failure_payload(UpdateFailure::stage(
+            &forced,
+            "PLUGIN_ADD_FAILED: dsh plugin exited with code 1".to_string(),
+        ))
+        .expect("message");
+
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("failures");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["name"], "bbb");
     }
 
     /// 只有「已授权过的 registry 目标」才补显式安装：未授权时先走授权流程，git / link 目标
@@ -1010,6 +1251,78 @@ mod tests {
             policy_refusal_from_specs(&["aaa@next".to_string()], failure),
             None
         );
+    }
+
+    /// 版本兼容性拒绝必须原样留在顶层：前端 `parseBlockedRefusal` 只认这一行的载荷，包进
+    /// `PLUGIN_UPDATE_FAILED:` 之后授权按钮就没了（见评审 4184825751）。载荷里的版本是 dsh
+    /// 自己解析出来的那一个，改写它等于伪造一份用户没见过的授权清单，因此原样带出。
+    #[test]
+    fn incompatible_refusals_reach_the_authorisation_parser() {
+        let specs = vec!["dsh-plugin-guide@0.1.0".to_string()];
+        let refusal = format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::json!([{
+                "name": "dsh-plugin-guide",
+                "version": "0.1.0",
+                "runtime_version": "0.2.0-rc.2",
+            }])
+        );
+
+        let message =
+            update_failure_payload(UpdateFailure::stage(&specs, refusal)).expect("message");
+
+        assert!(message.starts_with(INCOMPATIBLE_PREFIX));
+        assert_eq!(
+            payload_of(&message, INCOMPATIBLE_PREFIX),
+            serde_json::json!([{
+                "name": "dsh-plugin-guide",
+                "version": "0.1.0",
+                "runtime_version": "0.2.0-rc.2",
+            }])
+        );
+        assert!(!message.contains(UPDATE_FAILED_PREFIX));
+    }
+
+    /// 不兼容拒绝与逐项失败同批出现时：拒绝留顶层（授权按钮还在），真正的失败照旧逐条归因，
+    /// 两者互不吞掉。
+    #[test]
+    fn incompatible_refusals_keep_the_other_failures_attributed() {
+        let specs = vec!["aaa@1.0.0".to_string()];
+        let refusal = format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::json!([{"name": "aaa", "version": "1.0.0", "runtime_version": "0.2.0-rc.2"}])
+        );
+        let mut failures = UpdateFailure::stage(&specs, refusal);
+        failures.push(UpdateFailure::new(
+            "bbb",
+            "PLUGIN_ENTRY_MISSING: bbb is broken".to_string(),
+        ));
+
+        let message = update_failure_payload(failures).expect("message");
+        let lines: Vec<&str> = message.split('\n').collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with(INCOMPATIBLE_PREFIX));
+        assert!(lines[1].starts_with(UPDATE_FAILED_PREFIX));
+
+        let failures = payload_of(&message, UPDATE_FAILED_PREFIX);
+        let failures = failures.as_array().expect("array");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["name"], "bbb");
+    }
+
+    /// 同一段点到的多个 spec 各带一份同样的拒绝：顶层只留一份，授权清单不出现重复条目。
+    #[test]
+    fn incompatible_refusals_are_deduplicated() {
+        let specs = vec!["aaa@1.0.0".to_string(), "bbb@2.0.0".to_string()];
+        let refusal = format!(
+            "{INCOMPATIBLE_PREFIX} {}",
+            serde_json::json!([{"name": "aaa", "version": "1.0.0", "runtime_version": "0.2.0-rc.2"}])
+        );
+
+        let message = update_failure_payload(UpdateFailure::stage(&specs, refusal)).expect("message");
+
+        let entries = payload_of(&message, INCOMPATIBLE_PREFIX);
+        assert_eq!(entries.as_array().expect("array").len(), 1);
     }
 
     fn preset(id: &str, spec: &str, internal: bool) -> PreinstallPluginInfo {
@@ -1361,6 +1674,85 @@ mod tests {
         // 两侧都读不到 → None，调用方跳过核验：不确定时绝不误报升级失败
         let dir = probe_profile("unreadable", "", None);
         assert_eq!(dependency_fingerprint(&dir, "dsh-probe"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #913：显式升级命中目标版本时必须继续走入口核验。
+    ///
+    /// pnpm 在版本已经满足请求时不会改动 lock，指纹因此保持不变；若把「指纹没动」
+    /// 当成「没升级」上报，用户点名要的那个版本反而被报成失败。
+    #[test]
+    fn reached_target_version_still_verifies_the_entry() {
+        let dir = probe_profile("reached", LOCK_CATALOG, Some("0.19.0"));
+        let fingerprint = dependency_fingerprint(&dir, "dsh-probe");
+        assert_eq!(fingerprint.as_deref(), Some("catalog: @ 0.18.1"));
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            fingerprint.as_deref(),
+            Some("0.19.0"),
+            || None,
+        );
+        assert!(matches!(step, UpdateVerifyStep::Entry), "版本已达目标必须继续核验入口");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 指纹没动、目标版本也没达成 → 仍按「没落地」上报，并带上可授权的目标版本。
+    #[test]
+    fn unchanged_fingerprint_without_the_target_is_still_a_hold() {
+        let dir = probe_profile("hold", LOCK_CATALOG, Some("0.18.1"));
+        let fingerprint = dependency_fingerprint(&dir, "dsh-probe");
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            fingerprint.as_deref(),
+            Some("0.19.0"),
+            || None,
+        );
+        match step {
+            UpdateVerifyStep::Hold { detail, latest } => {
+                assert_eq!(detail, "0.18.1");
+                assert_eq!(latest.as_deref(), Some("0.19.0"));
+            }
+            UpdateVerifyStep::Entry => panic!("指纹未变且目标未达成时必须上报没落地"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 目标版本不是 registry 形状（catalog:/git 地址）时回落到探测缓存，
+    /// 否则界面只剩一句「没有变化」而没有可授权的版本。
+    #[test]
+    fn hold_falls_back_to_the_probed_latest_version() {
+        let dir = probe_profile("fallback-latest", LOCK_CATALOG, Some("0.18.1"));
+        let fingerprint = dependency_fingerprint(&dir, "dsh-probe");
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            fingerprint.as_deref(),
+            Some("https://codeload.github.com/o/r/tar.gz/aaaaaaaaaaaaaaaa"),
+            || Some("0.19.0".to_string()),
+        );
+        match step {
+            UpdateVerifyStep::Hold { latest, .. } => {
+                assert_eq!(latest.as_deref(), Some("0.19.0"));
+            }
+            UpdateVerifyStep::Entry => panic!("指纹未变且目标未达成时必须上报没落地"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 指纹确实变了 → 升级已落地，继续核验入口（不再看版本是否等于目标）。
+    #[test]
+    fn changed_fingerprint_goes_straight_to_entry_verification() {
+        let dir = probe_profile("moved", LOCK_CATALOG, Some("0.19.0"));
+        let step = update_verify_step(
+            &dir,
+            "dsh-probe",
+            Some("catalog: @ 0.17.0"),
+            Some("0.20.0"),
+            || None,
+        );
+        assert!(matches!(step, UpdateVerifyStep::Entry));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -120,6 +120,12 @@ pub(crate) fn build_plugin_envs(
     if let Ok(joined) = std::env::join_paths(paths) {
         envs.insert("PATH".to_string(), joined.to_string_lossy().into_owned());
     }
+    // 桌面端代理设置（issue #110）：核心只在启动时读 `http_proxy` 系环境变量，
+    // 桌面端直接 spawn 的 `dsh plugin` 子进程拿不到配置页里的代理，内网机拉取
+    // 元数据与仓库会直连失败。空值时返回空 map，用户没配代理则零影响。
+    envs.extend(config::proxy::proxy_child_env(
+        &config::get_store_dat_setting(app_handle).proxy_url,
+    ));
     // 用户 git 配置若把 GitHub HTTPS 改写为 SSH（url.<base>.insteadOf），pnpm 的
     // git 传输会落进 SSH 而硬失败；按需隔离子进程 git 配置强制 HTTPS
     // （见 [`git_https_isolation_env`]，未命中改写规则时返回空 map，零影响）。

@@ -11,13 +11,25 @@ export interface NormalizedRef {
 const INCOMPATIBLE_PREFIX = 'PLUGIN_VERSION_INCOMPATIBLE:'
 const POLICY_BLOCKED_PREFIX = 'PLUGIN_POLICY_BLOCKED:'
 const UPDATE_HOLD_PREFIX = 'PLUGIN_UPDATE_NO_CHANGE:'
+const UPDATE_FAILED_PREFIX = 'PLUGIN_UPDATE_FAILED:'
 const INCOMPATIBLE_MESSAGE = /PLUGIN_VERSION_INCOMPATIBLE:|is incompatible with dsh/i
 
+/**
+ * 取一条载荷：升级的两段（显式安装、隐式 `--latest`）各自的结算会被宿主用换行拼成同一条
+ * 错误（见 `update_failure_payload`），因此前缀可能落在任意一行，不能只看首行——否则第二行
+ * 之后的结果全部解析不到，整批会退化成「升级插件 X 失败」。
+ */
+function payloadOf(error: string, prefix: string): string | null {
+  const line = error.split('\n').find(item => item.startsWith(prefix))
+  return line === undefined ? null : line.slice(prefix.length)
+}
+
 export function parseVersions<T>(error: string, prefix: string): T[] | null {
-  if (!error.startsWith(prefix))
+  const payload = payloadOf(error, prefix)
+  if (payload === null)
     return null
   try {
-    const parsed = JSON.parse(error.slice(prefix.length)) as T[]
+    const parsed = JSON.parse(payload) as T[]
     return parsed.length > 0 ? parsed : null
   }
   catch (err) {
@@ -38,10 +50,11 @@ interface UpdateHoldEntry {
  * 「升级插件 X 失败」，把「授权一下就能装上的新版本」说成失败。
  */
 export function parseUpdateHold(error: string): BlockedRefusal | null {
-  if (!error.startsWith(UPDATE_HOLD_PREFIX))
+  const payload = payloadOf(error, UPDATE_HOLD_PREFIX)
+  if (payload === null)
     return null
   try {
-    const parsed = JSON.parse(error.slice(UPDATE_HOLD_PREFIX.length)) as unknown
+    const parsed = JSON.parse(payload) as unknown
     const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed]
     const versions: PolicyBlockedVersion[] = []
     const retryableNames: string[] = []
@@ -72,6 +85,39 @@ export function parseUpdateHold(error: string): BlockedRefusal | null {
   catch (err) {
     console.error(`[PluginsManager] failed to parse ${UPDATE_HOLD_PREFIX} payload:`, err)
     return null
+  }
+}
+
+/** 升级结算里的一条真实失败：宿主把「哪个插件、什么错」逐条带出来（见 `PLUGIN_UPDATE_FAILED`）。 */
+export interface UpdateFailureEntry {
+  name: string
+  message: string
+}
+
+/**
+ * 升级里除「没有变化」「等待授权」之外的失败，逐条归因到插件。
+ *
+ * 没有这份归因时前端只能把整条错误盖到本次提交的每个目标上：同一批里已经被宿主核验装上的
+ * 目标也会跟着报失败（见 #914）。返回空数组表示这条错误没有逐项证据，调用方应保持原来的
+ * 整组归因。
+ */
+export function parseUpdateFailures(error: string): UpdateFailureEntry[] {
+  const payload = payloadOf(error, UPDATE_FAILED_PREFIX)
+  if (payload === null)
+    return []
+  try {
+    const parsed = JSON.parse(payload) as unknown
+    const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed]
+    return entries.flatMap((entry) => {
+      const item = (entry ?? {}) as { name?: unknown, message?: unknown }
+      if (typeof item.name !== 'string' || typeof item.message !== 'string')
+        return []
+      return [{ name: item.name, message: item.message }]
+    })
+  }
+  catch (err) {
+    console.error(`[PluginsManager] failed to parse ${UPDATE_FAILED_PREFIX} payload:`, err)
+    return []
   }
 }
 

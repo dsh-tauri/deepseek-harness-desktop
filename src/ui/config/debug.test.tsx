@@ -116,6 +116,14 @@ afterEach(() => {
 })
 
 describe('配置面板代理地址保存', () => {
+  it('代理地址以普通文本输入框呈现，不做密码遮掩', async () => {
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    expect(proxyInput().type).toBe('text')
+  })
+
   it('保存成功且期间未再编辑时，输入框回落到已保存值', async () => {
     const release = deferUpdate()
     renderDebug()

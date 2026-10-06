@@ -21,7 +21,7 @@ import { defineStore } from 'valtio-define'
 import { toast } from '@/utils/toast'
 import { harness } from '../harness'
 import { onPluginsManagerEvent, triggerPluginsManagerEvent } from './events'
-import { enrichInstalled, normalizeRef, normalizeRefs, parseBlockedRefusal, refusalNames } from './utils'
+import { enrichInstalled, normalizeRef, normalizeRefs, parseBlockedRefusal, parseUpdateFailures, refusalNames } from './utils'
 
 const LOG_LIMIT = 200
 const MAX_ATTEMPTS = 8
@@ -338,6 +338,17 @@ export const plugins = defineStore({
         // 同一判据做幂等，这里也让归因只看仍留在组里的进程。
         const message = errorMessage(error)
         const refusal = parseBlockedRefusal(message)
+        // 升级的结算里，宿主把「哪个目标真的没装上、原因是什么」逐条带出来（见
+        // `PLUGIN_UPDATE_FAILED`）。没有这份逐项证据时只能按整组错误归结，于是一批里已经被
+        // 宿主核验装上的目标也会跟着报失败，汇总里连重启入口都不出现（见 #914）。
+        const failures = new Map(parseUpdateFailures(message).map(entry => [entry.name, entry.message]))
+        const settleFailure = (process: PluginProcess): boolean => {
+          const detail = failures.get(process.name)
+          if (detail === undefined)
+            return false
+          this.finish(group.id, process, { process, ok: false, error: detail, code: errorCode(detail) })
+          return true
+        }
         // 升级：宿主对整批逐项核验过指纹，只有被点名的才没生效。
         // - 没被点名的说明确实装上了，报成功即可，重提一次反而会把它们重新判成「没有变化」；
         // - 还能授权（新版本只是太新，写进档案豁免清单就能过闸）→ 进授权流程，常驻提示带按钮；
@@ -355,6 +366,8 @@ export const plugins = defineStore({
             if (!group.pending.includes(process.id))
               return
             if (names.size > 0 && !names.has(process.name)) {
+              if (settleFailure(process))
+                return
               this.finish(group.id, process, { process, ok: true })
               return
             }
@@ -384,12 +397,26 @@ export const plugins = defineStore({
               blocked.push(process)
               return
             }
+            if (settleFailure(process))
+              return
             process.status = 'pending'
           })
           // 只有当被点名的包确实在本次提交里时才进入授权等待。refusal 常点名传递依赖
           // 等外部包，此时 blocked 为空；若照样返回，runGroup 会因无人调用 resume 永久挂起。
           if (blocked.length > 0)
             return blocked
+        }
+        // 有逐项证据时按目标归因：点名的报它自己的错，没点名的就是宿主已核验装上的目标，
+        // 报成功——它们让「1 个成功 · 1 个失败」的汇总和重启入口都留下来。
+        if (failures.size > 0) {
+          targets.forEach((process) => {
+            if (!group.pending.includes(process.id))
+              return
+            if (settleFailure(process))
+              return
+            this.finish(group.id, process, { process, ok: true })
+          })
+          return []
         }
         targets.forEach(process =>
           this.finish(group.id, process, {
