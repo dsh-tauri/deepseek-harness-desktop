@@ -146,6 +146,17 @@ pub async fn toggle_sidebar() -> Result<bool, String> {
     Ok(true)
 }
 
+/// 用当前保存的代理地址向更新源发一次真实请求，返回连通性结果
+#[tauri::command]
+pub async fn test_proxy(app_handle: AppHandle) -> Result<config::proxy::ProxyTestResult, String> {
+    Ok(config::proxy::test(
+        &config::get_store_dat_setting(&app_handle).proxy_url,
+        config::PROXY_TEST_URL,
+        config::PROXY_TEST_TIMEOUT,
+    )
+    .await)
+}
+
 /// 当前 dsh 主题偏好（light/dark/system），用于让桌面外壳跟随内嵌页面主题
 #[tauri::command]
 pub fn get_dsh_theme(app_handle: AppHandle) -> config::DshTheme {

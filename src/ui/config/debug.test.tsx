@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   settingState: { proxy_url: '', port: 3080, zoom_factor: 1, harness_max_heap_mb: null } as Record<string, unknown>,
   harnessState: { serviceRunning: true, busyAction: null } as Record<string, unknown>,
   harnessUpdaterState: { updateInfo: null } as Record<string, unknown>,
+  proxyTestResult: { ok: true, reason: null, status: 200, latency_ms: 12 } as Record<string, unknown>,
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
@@ -96,6 +97,7 @@ beforeEach(() => {
   mocks.harnessState.serviceRunning = true
   mocks.harnessState.busyAction = null
   mocks.harnessUpdaterState.updateInfo = null
+  mocks.proxyTestResult = { ok: true, reason: null, status: 200, latency_ms: 12 }
   mocks.invoke.mockImplementation((command: string) => {
     if (command === 'get_app_config')
       return Promise.resolve({ ...mocks.settingState })
@@ -103,6 +105,8 @@ beforeEach(() => {
       return Promise.resolve({ app_version: '1.0.0', dsh_version: '1.0.0', node_version: '22.0.0', platform: 'linux', arch: 'x64', service_url: 'http://127.0.0.1:3080', harness_path: '', data_dir: '', node_path: '', pnpm_path: '' })
     if (command === 'get_cli_link_status')
       return Promise.resolve({ enabled: false, shim_exists: false, path_registered: false, user_dsh_preserved: false, bin_dir: '', shim_path: '' })
+    if (command === 'test_proxy')
+      return Promise.resolve({ ...mocks.proxyTestResult })
     return Promise.resolve(null)
   })
 })
@@ -169,5 +173,49 @@ describe('配置面板代理地址保存', () => {
     })
 
     await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+  })
+})
+describe('配置面板代理连通性测试', () => {
+  it('测试按钮在保存值上直接发起测试并提示成功', async () => {
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    fireEvent.click(screen.getByTestId('dsh-proxy-test'))
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('test_proxy'))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('network.test_ok', { variant: 'success' }))
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('输入框有未保存修改时先保存再测试', async () => {
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    fireEvent.change(proxyInput(), { target: { value: EDITED } })
+    fireEvent.click(screen.getByTestId('dsh-proxy-test'))
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ proxyUrl: EDITED }))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('test_proxy'))
+  })
+
+  it('代理不可达时按失败分类提示', async () => {
+    mocks.proxyTestResult = { ok: false, reason: 'connect', status: null, latency_ms: 8 }
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    fireEvent.click(screen.getByTestId('dsh-proxy-test'))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('network.test_connect', { variant: 'danger' }))
+  })
+
+  it('代理地址为空时禁用测试按钮', async () => {
+    mocks.settingState.proxy_url = ''
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(''))
+    expect((screen.getByTestId('dsh-proxy-test') as HTMLButtonElement).disabled).toBe(true)
   })
 })

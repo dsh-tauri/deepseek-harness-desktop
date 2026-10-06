@@ -136,6 +136,17 @@ pub const LOOPBACK_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
 /// spawn → 客户端模块就绪超过该阈值时，日志给出 `STARTUP_SLOW` 归因（正常机器实测 5–8s）。
 pub const SLOW_STARTUP_THRESHOLD: Duration = Duration::from_secs(15);
 
+/// 代理连通性测试的探测目标：更新检查实际依赖的 GitHub 发布源。
+///
+/// 走 `github.com` 而非 `api.github.com`，不受未认证 API 限流约束；该地址可达即代表
+/// 下载与更新检查这条出网链路可用。
+pub const PROXY_TEST_URL: &str = "https://github.com/hairyf/deepseek-harness-desktop/releases.atom";
+
+/// 代理连通性测试的整体请求截止时间（reqwest `.timeout()`：从开始建连到响应头读完）。
+///
+/// 比更新检查的 5s 宽松：手动点击的测试允许慢代理建连，也不至于让用户干等。
+pub const PROXY_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[cfg(test)]
 mod tests {
     use super::get_dsh_service_url;

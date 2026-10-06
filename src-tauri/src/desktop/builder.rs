@@ -1535,6 +1535,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::runtime_ready,
         crate::bridge::get_app_config,
         crate::bridge::update_app_config,
+        crate::bridge::test_proxy,
         crate::bridge::get_launch_on_login,
         crate::bridge::set_launch_on_login,
         crate::bridge::get_cli_link_status,

@@ -611,5 +611,12 @@
   "network.formats": "支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。SOCKS5H 由代理解析目标域名，本机连接保持直连。",
   "network.saved": "代理设置已保存",
   "network.invalid": "请输入有效的代理地址，不要包含路径、查询参数或片段。",
-  "network.save_failed": "无法保存代理设置"
+  "network.save_failed": "无法保存代理设置",
+  "network.test": "测试",
+  "network.test_hint": "用已保存的代理地址访问更新源；输入框里有未保存的修改时会先保存再测试。",
+  "network.test_ok": "代理可用（{{ms}} 毫秒）",
+  "network.test_timeout": "代理无响应，连接超时",
+  "network.test_connect": "无法连接到代理，请检查地址和端口",
+  "network.test_status": "代理可达，但更新源返回 {{status}}",
+  "network.test_failed": "代理测试失败"
 }

@@ -31,6 +31,19 @@ export interface CliLinkStatus {
   shim_path: string
 }
 
+export interface ProxyTestResult {
+  ok: boolean
+  reason: 'invalid' | 'timeout' | 'connect' | 'request' | 'status' | null
+  status: number | null
+  latency_ms: number
+}
+
+const PROXY_TEST_MESSAGE: Record<string, string> = {
+  timeout: 'network.test_timeout',
+  connect: 'network.test_connect',
+  status: 'network.test_status',
+}
+
 export function ConfigDebug() {
   const { t, i18n } = useTranslation()
   const { serviceRunning, busyAction } = useStore(store.harness)
@@ -162,7 +175,7 @@ export function ConfigDebug() {
     },
   })
 
-  const { mutate: onSaveProxy } = useMutation({
+  const { mutate: onSaveProxy, isPending: savingProxy } = useMutation({
     mutationFn: async (value: string) => {
       const proxyUrl = value.trim()
       if (proxyUrl) {
@@ -191,6 +204,21 @@ export function ConfigDebug() {
     },
     onError: (error: unknown) => {
       toast(t(String(error).includes('PROXY_INVALID') ? 'network.invalid' : 'network.save_failed'), { variant: 'danger' })
+    },
+  })
+
+  const { mutate: runProxyTest, isPending: testingProxy } = useMutation({
+    mutationFn: () => invoke<ProxyTestResult>('test_proxy'),
+    onSuccess: (result) => {
+      if (result.ok) {
+        toast(t('network.test_ok', { ms: result.latency_ms }), { variant: 'success' })
+        return
+      }
+      const key = PROXY_TEST_MESSAGE[result.reason ?? ''] ?? 'network.test_failed'
+      toast(t(key, { status: result.status ?? '' }), { variant: 'danger' })
+    },
+    onError: () => {
+      toast(t('network.test_failed'), { variant: 'danger' })
     },
   })
 
@@ -411,6 +439,26 @@ export function ConfigDebug() {
               aria-label={t('network.proxy_url')}
               data-testid="dsh-proxy-url"
             />
+            <Tooltip delay={0}>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-8"
+                onPress={() => {
+                  // 测试只针对已保存的配置：输入框里有未保存的修改时先保存，避免测到旧值
+                  if (proxy === savedProxy) {
+                    runProxyTest()
+                    return
+                  }
+                  onSaveProxy(proxy, { onSuccess: () => runProxyTest() })
+                }}
+                isDisabled={testingProxy || savingProxy || (proxy === '' && savedProxy === '')}
+                data-testid="dsh-proxy-test"
+              >
+                <If cond={testingProxy} then={<Spinner size="sm" color="current" />} else={t('network.test')} />
+              </Button>
+              <Tooltip.Content className="max-w-[320px]">{t('network.test_hint')}</Tooltip.Content>
+            </Tooltip>
             <Button
               size="sm"
               variant="primary"
