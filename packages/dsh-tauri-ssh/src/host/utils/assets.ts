@@ -104,9 +104,17 @@ export function pnpmDownloadUrls(): string[] {
   ]
 }
 
+/** GitHub Release 代理镜像前缀（与桌面端 config::DSH_MIRROR_PREFIXES 保持同一份清单） */
+export const DSH_MIRROR_PREFIXES = [
+  'https://gh-proxy.com/',
+  'https://gh.llkk.cc/',
+  'https://ghfast.top/',
+  'https://ghproxy.net/',
+] as const
+
 export function dshZipDownloadUrls(repo: string, tag: string, assetName: string): string[] {
   const official = `https://github.com/${repo}/releases/download/${tag}/${assetName}`
-  return [official, `https://ghfast.top/${official}`]
+  return [official, ...DSH_MIRROR_PREFIXES.map(prefix => `${prefix}${official}`)]
 }
 
 export function dshNpmTarballUrls(packageName: string, version: string): string[] {

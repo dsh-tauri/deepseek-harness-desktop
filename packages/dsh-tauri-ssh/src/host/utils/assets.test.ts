@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assetMatrixFor,
+  DSH_MIRROR_PREFIXES,
   dshNpmTarballUrls,
   dshZipDownloadUrls,
   nodeDownloadUrls,
@@ -91,10 +92,11 @@ describe('download URL builders', () => {
     ])
   })
 
-  it('builds the packaged zip URL pair (GitHub official → ghfast.top mirror)', () => {
+  it('builds the packaged zip URL list (GitHub official → every proxy mirror)', () => {
+    const asset = 'https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.1.2-rc.1-1/deepseek-harness-pkg-linux.zip'
     expect(dshZipDownloadUrls('dsh-tauri-desk/deepseek-harness-pkg', 'dsh-0.1.2-rc.1-1', 'deepseek-harness-pkg-linux.zip')).toEqual([
-      'https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.1.2-rc.1-1/deepseek-harness-pkg-linux.zip',
-      'https://ghfast.top/https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.1.2-rc.1-1/deepseek-harness-pkg-linux.zip',
+      asset,
+      ...DSH_MIRROR_PREFIXES.map(prefix => `${prefix}${asset}`),
     ])
   })
 

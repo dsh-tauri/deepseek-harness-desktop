@@ -9,10 +9,12 @@ describe('formatLogLine', () => {
     )
   })
 
-  it('strips the ghfast.top mirror wrapper prefix', () => {
-    const url = 'https://ghfast.top/https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.1.x-x/deepseek-harness-pkg-linux.zip'
-    expect(formatLogLine(`Download ${url}`)).toContain('deepseek-harness-pkg-linux.zip')
-    expect(formatLogLine(`Download ${url}`)).not.toContain('ghfast.top')
+  it('strips every mirror wrapper prefix', () => {
+    const asset = 'https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.1.x-x/deepseek-harness-pkg-linux.zip'
+    for (const prefix of ['https://gh-proxy.com/', 'https://gh.llkk.cc/', 'https://ghfast.top/', 'https://ghproxy.net/']) {
+      const formatted = formatLogLine(`Download ${prefix}${asset}`)
+      expect(formatted).toBe('Download dsh-0.1.x-x/deepseek-harness-pkg-linux.zip')
+    }
   })
 
   it('leaves ordinary log lines untouched', () => {

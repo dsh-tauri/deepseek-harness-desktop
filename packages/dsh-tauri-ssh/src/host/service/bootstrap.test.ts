@@ -10,6 +10,7 @@ import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { REMOTE_ROOT } from '../config/constants'
 import { MachineId } from '../types/index'
+import { DSH_MIRROR_PREFIXES } from '../utils/assets'
 import { FALLBACK_DSH_TAG, RECOMMENDED_DSH_VERSION } from '../utils/version'
 import {
   buildInstallScript,
@@ -232,7 +233,7 @@ describe('planRemoteInstall', () => {
     expect(plan.dsh.tag).toBe(DSH_TAG)
     expect(plan.dsh.digest).toBe(LINUX_ASSETS[0]?.digest)
     expect(plan.dsh.urls[0]).toBe(LINUX_ASSETS[0]?.url)
-    expect(plan.dsh.urls[1]).toContain('ghfast.top/')
+    expect(plan.dsh.urls.slice(1).map(url => new URL(url).host)).toEqual([...DSH_MIRROR_PREFIXES].map(prefix => new URL(prefix).host))
     expect(plan.dshEntry).toBe('node_modules/@deepseek-ai/dsh/lib/bin.js')
     expect(plan.dshVersion).toBe(DSH_VERSION)
     expect(plan.notes).toEqual([])

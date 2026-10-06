@@ -25,13 +25,13 @@ pub async fn download_file<'a, R: Runtime>(
     download_file_from_sources(tracker, vec![url]).await
 }
 
-/// 按顺序依次尝试多个下载源（如 GitHub 官方直连 → ghfast.top 镜像兜底），
+/// 按顺序依次尝试多个下载源（GitHub 官方直连 → 多个 GitHub 代理镜像兜底），
 /// 某个源全部重试失败后自动切换下一个源，并通过 `tracker` 在界面上告知用户
 /// 当前使用的下载源；全部源均失败时返回最后一个源的错误并注明尝试过的源数。
 ///
-/// 每个源内部仍走 `download_with_retry` 的断点续传重试；切换源时保留已下载
-/// 的字节续传（镜像透传同一文件，内容一致，且最终有 SHA-256 完整性校验兜底；
-/// 服务端不支持 Range 时 `download_attempt` 会自动清空从头下载）。
+/// 断点续传只在单个源内部生效（`download_with_retry` 的字节缓冲按源独立）：
+/// 换源必然从头下载，避免把不同来源的半成品拼成一个文件；镜像只是原样透传
+/// 官方资产，最终内容仍由 SHA-256 校验兜底。
 pub async fn download_file_from_sources<'a, R: Runtime>(
     tracker: &'a ProgressTracker<'a, R>,
     urls: Vec<String>,
@@ -258,11 +258,14 @@ fn validate_download_url(url: &str) -> Result<(), String> {
                 | "release-assets.githubusercontent.com"
                 | "objects.githubusercontent.com"
                 // 国内镜像：npmmirror 系列（node dist 会 302 到 cdn.npmmirror.com）
-                // 与 ghfast.top 中转（GitHub Release 内容原样透传）
+                // 与 GitHub Release 代理（原样透传，重定向后仍落在镜像自身域名）
                 | "npmmirror.com"
                 | "cdn.npmmirror.com"
                 | "registry.npmmirror.com"
+                | "gh-proxy.com"
+                | "gh.llkk.cc"
                 | "ghfast.top"
+                | "ghproxy.net"
         )
     );
     if parsed.scheme() != "https" || !trusted_host {
@@ -601,10 +604,15 @@ mod tests {
             validate_download_url("https://cdn.npmmirror.com/binaries/node/v22/file.zip").is_ok()
         );
         assert!(validate_download_url("https://registry.npmmirror.com/pnpm/-/pnpm.tgz").is_ok());
-        assert!(validate_download_url(
-            "https://ghfast.top/https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/deepseek-harness-pkg-windows.zip"
-        )
-        .is_ok());
+        for prefix in crate::config::DSH_MIRROR_PREFIXES {
+            assert!(
+                validate_download_url(&format!(
+                    "{prefix}https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/deepseek-harness-pkg-windows.zip"
+                ))
+                .is_ok(),
+                "镜像前缀应被放行: {prefix}"
+            );
+        }
     }
 
     #[tokio::test]

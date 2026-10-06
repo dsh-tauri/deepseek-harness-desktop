@@ -13,9 +13,14 @@ pub const NODE_MIRROR_BASE_URL: &str = "https://npmmirror.com/mirrors/node/";
 pub const DSH_CORE_URL: &str =
     "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/";
 
-/// GitHub Release 的 ghfast.top 中转前缀（透传官方 URL，下载内容一致、
-/// 仍可做 SHA-256 完整性校验），用作官方直连失败时的兜底镜像。
-pub const DSH_MIRROR_PREFIX: &str = "https://ghfast.top/";
+/// GitHub Release 的代理镜像前缀列表（透传官方 URL，下载内容一致、
+/// 仍可做 SHA-256 完整性校验），按实测延迟从低到高排列，官方直连失败时依次兜底。
+pub const DSH_MIRROR_PREFIXES: &[&str] = &[
+    "https://gh-proxy.com/",
+    "https://gh.llkk.cc/",
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+];
 
 /// 捆绑的 pnpm 版本（与 deepseek-harness-pkg 的 packageManager: pnpm@11.7.0 对齐）
 pub const PNPM_VERSION: &str = "11.7.0";

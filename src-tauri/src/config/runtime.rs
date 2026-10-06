@@ -88,10 +88,13 @@ pub fn get_dsh_download_url() -> Result<String, String> {
     Ok(format!("{}{}", DSH_CORE_URL, dsh_pkg_asset_filename()?))
 }
 
-/// 为任意 GitHub Release 资产 URL 生成 ghfast.top 镜像兜底地址
+/// 为任意 GitHub Release 资产 URL 生成全部镜像兜底地址
 /// （透传原 URL，下载内容一致，仍可做 SHA-256 完整性校验）。
-pub fn mirror_download_url(asset_url: &str) -> String {
-    format!("{DSH_MIRROR_PREFIX}{asset_url}")
+pub fn mirror_download_urls(asset_url: &str) -> Vec<String> {
+    DSH_MIRROR_PREFIXES
+        .iter()
+        .map(|prefix| format!("{prefix}{asset_url}"))
+        .collect()
 }
 
 /// 指定 tag 的 DeepSeek Harness 发行版下载地址。
@@ -681,12 +684,13 @@ mod tests {
     }
 
     #[test]
-    fn mirror_url_prepends_ghfast_prefix() {
+    fn mirror_urls_expand_every_prefix() {
         let asset = "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/v1.0.0/deepseek-harness-pkg-windows.zip";
-        assert_eq!(
-            mirror_download_url(asset),
-            format!("{DSH_MIRROR_PREFIX}{asset}")
-        );
+        let urls = mirror_download_urls(asset);
+        assert_eq!(urls.len(), DSH_MIRROR_PREFIXES.len());
+        for (url, prefix) in urls.iter().zip(DSH_MIRROR_PREFIXES) {
+            assert_eq!(url, &format!("{prefix}{asset}"));
+        }
     }
 
     #[test]
