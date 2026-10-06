@@ -2,13 +2,33 @@ import type { Inbox } from '@deepseek-ai/dsh-agent'
 import type { PlatformModuleLoader, SessionResumeOutcome } from '../types'
 import type { CreateUserMessage, PlanSession } from './session.types'
 import { defineService } from 'dsh-tauri'
+import { contentRiskRecoveryRange, eventOf, isContentRiskFailure, lastTurnEndReason } from '../../shared/content-risk'
 import { getCurrentHostInstance } from '../config/runtime'
 
 const CONTINUE_INSTRUCTION = 'Continue the interrupted task from where it stopped. Do not repeat work that is already complete.'
 
+const CONTENT_RISK_CONTINUE_INSTRUCTION = 'The rejected turn was excluded from the visible history. Continue from the retained safe context without recreating or quoting the rejected content. If the missing task cannot be inferred safely, ask the user to restate it.'
+
+const CONTENT_RISK_BOUNDARY_NOTICE = 'Everything below this point was removed from the visible history because the previous request was rejected by content review. The retained context above is intact; continue from it and do not recreate the removed content.'
+
+const CONTENT_RISK_UNSAFE = '无法确定安全恢复边界，未改写会话。请新建会话重述任务，或检查该回合的工具结果内容后重试。'
+
 // dsh ≥0.1.7 的 v4 准入拒绝 `kind: 'plugin'` 包装（format v4 message requires a producer-owned
 // source kind），且上下文行标签直接取 `kind`；两代内核的默认分支都渲染 `kind`。
 const CONTINUE_SOURCE = { kind: 'continue' } as const
+
+// 恢复轮次与普通继续同源，但用 `recovery` 标记：todo 恢复必须跳过——被遮蔽回合的计划
+// 属于已被审核拒绝的内容，重新挂到新回合上会重现同一失败。
+const CONTENT_RISK_CONTINUE_SOURCE = { kind: 'continue', recovery: 'content-risk' } as const
+
+// 遮蔽标记自身必须是非空 user/message：tool/result 只允许一对一改写，system/message
+// 在 node 0 上受限，user/message 是唯一能遮蔽任意区间的表面事件类型。
+const CONTENT_RISK_MARKER_SOURCE = { kind: 'content-risk-recovery' } as const
+
+// 会话日志回传水位事件：内核 `dsh-session-log-deepseek` 按单一水位把水位之后的**原始**事件
+// 塞进 `dsh_session_log` 请求字段（`agent/inbox/spliced` 逐字复制用户输入、工具结果也在内），
+// 表面遮蔽拦不住它；插件层能写的就是这条水位记录。
+const CONTENT_RISK_WATERMARK_EVENT = 'session-log-deepseek/delivery-accepted'
 
 const SETTLED_TURN_END_KINDS = ['completed', 'blocked', 'max-tokens']
 
@@ -26,8 +46,10 @@ export const session = defineService({
   restorePlan(value: PlanSession, messages: readonly unknown[], step: number): void {
     if (step !== 1)
       return
-    const kinds = messages.map(message => (message as { source?: { kind?: string } } | null)?.source?.kind)
-    if (!kinds.includes(CONTINUE_SOURCE.kind) || kinds.includes('user'))
+    const sources = messages.map(message => (message as { source?: { kind?: string, recovery?: string } } | null)?.source)
+    if (!sources.some(source => source?.kind === CONTINUE_SOURCE.kind) || sources.some(source => source?.kind === 'user'))
+      return
+    if (sources.some(source => source?.recovery === CONTENT_RISK_CONTINUE_SOURCE.recovery))
       return
     const events = sessionEvents(value)
     if (events === undefined || typeof value.append !== 'function')
@@ -68,9 +90,13 @@ async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcom
   const createUserMessage = await loadCreateUserMessage(ctx.loader)
   if (ctx.agents.get(sessionId) !== agent || agent.status !== 'idle')
     return { ok: false, code: 409, error: '会话状态已变化，请重新尝试继续' }
+  const recovery = applyContentRiskRecovery(agent.session, createUserMessage)
+  if (recovery === 'unavailable')
+    return { ok: false, code: 409, error: CONTENT_RISK_UNSAFE }
+  const recovered = recovery === 'applied'
   const message = createUserMessage({
-    content: [{ type: 'text', text: CONTINUE_INSTRUCTION }],
-    source: CONTINUE_SOURCE,
+    content: [{ type: 'text', text: recovered ? CONTENT_RISK_CONTINUE_INSTRUCTION : CONTINUE_INSTRUCTION }],
+    source: recovered ? CONTENT_RISK_CONTINUE_SOURCE : CONTINUE_SOURCE,
   })
   const inbox = agent.inbox
   if (!Array.isArray(inbox?.nextTurn) || typeof agent.followup !== 'function')
@@ -124,18 +150,117 @@ async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcom
   return { ok: true }
 }
 
+/**
+ * 审核失败回合的原地恢复：在表面日志末尾追加一条遮蔽标记，让失败回合（含触发拒绝的
+ * 工具结果）不再进入模型可见历史，更早的成功上下文逐字保留。
+ *
+ * `skipped` 表示本轮不是审核失败——走原有继续路径；`unavailable` 表示确认是审核失败
+ * 但无法给出安全边界，调用方必须拒绝自动继续，绝不回放被拒上下文。
+ */
+function applyContentRiskRecovery(value: unknown, createUserMessage: CreateUserMessage): 'skipped' | 'applied' | 'unavailable' {
+  const events = sessionEvents(value)
+  if (events === undefined)
+    return 'skipped'
+  if (!isContentRiskFailure(lastTurnEndReason(events)?.error))
+    return 'skipped'
+  const nodes = sessionSurfaceNodes(value)
+  const append = (value as { append?: unknown } | null)?.append
+  if (nodes === undefined || typeof append !== 'function')
+    return 'unavailable'
+  const range = contentRiskRecoveryRange({ events, nodes })
+  if (range === undefined)
+    return 'unavailable'
+  if (!advanceSessionLogWatermark(value, events, range.watermarkSeq))
+    return 'unavailable'
+  const marker = createUserMessage({
+    content: [{ type: 'text', text: CONTENT_RISK_BOUNDARY_NOTICE }],
+    source: CONTENT_RISK_MARKER_SOURCE,
+  })
+  Reflect.apply(append as (...args: unknown[]) => unknown, value, ['user/message', marker, {
+    surfaceOp: { op: 'replace', startSeq: range.startSeq, endSeq: range.endSeq },
+    sourceEventSeqs: range.shadowedSeqs,
+  }])
+  return 'applied'
+}
+
+/**
+ * 把会话日志回传水位推到被拒回合末尾，返回是否成功。
+ *
+ * 表面遮蔽只改模型可见历史：`dsh_session_log` 从水位之后逐条回传原始事件，被拒文本因此
+ * 仍会到达上游并再次触发同一条拒绝。水位是单值游标（挖不了洞），只能整段推进到失败回合
+ * 的 `turn/end`；更早的成功上下文不重传，只是不再随请求回传。
+ *
+ * 任何一环读不到（会话 id / 格式代缺失，或写入抛错）都必须返回 false——调用方据此拒绝
+ * 自动继续，绝不发出一条仍带着被拒内容的请求。
+ */
+function advanceSessionLogWatermark(value: unknown, events: readonly unknown[], watermarkSeq: number): boolean {
+  const append = (value as { append?: unknown } | null)?.append
+  const sessionId = sessionIdOf(value)
+  const sessionFormatVersion = sessionHeaderVersion(value)
+  if (typeof append !== 'function' || sessionId === undefined || sessionFormatVersion === undefined)
+    return false
+  const seq = sessionSeqOf(value)
+  // 内核折叠时要求 `throughSeq < event.seq`，越界记录会让该会话此后每次请求都报 malformed。
+  if (seq !== undefined && watermarkSeq >= seq)
+    return false
+  const accepted = lastAcceptedWatermark(events, sessionId, sessionFormatVersion)
+  if (accepted !== undefined && accepted >= watermarkSeq)
+    return true
+  try {
+    Reflect.apply(append as (...args: unknown[]) => unknown, value, [CONTENT_RISK_WATERMARK_EVENT, {
+      sessionId,
+      sessionFormatVersion,
+      throughSeq: watermarkSeq,
+    }])
+  }
+  catch {
+    return false
+  }
+  return true
+}
+
+/** 内核 `Session.id`（`brandString` 为恒等，即原始字符串）。 */
+function sessionIdOf(value: unknown): string | undefined {
+  const id = (value as { id?: unknown } | null)?.id
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
+/** 会话格式代：水位事件必须与之一致，否则内核折叠时每条记录都报 malformed。 */
+function sessionHeaderVersion(value: unknown): number | undefined {
+  const version = (value as { header?: { version?: unknown } } | null)?.header?.version
+  return typeof version === 'number' && Number.isSafeInteger(version) && version >= 0 ? version : undefined
+}
+
+/** 下一个事件序号（内核 `Session.seq`）。 */
+function sessionSeqOf(value: unknown): number | undefined {
+  const seq = (value as { seq?: unknown } | null)?.seq
+  return typeof seq === 'number' && Number.isSafeInteger(seq) && seq >= 0 ? seq : undefined
+}
+
+/** 已折叠的最大回传水位，与内核 `acceptedThrough` 同口径（只看本会话、本格式代）。 */
+function lastAcceptedWatermark(events: readonly unknown[], sessionId: string, sessionFormatVersion: number): number | undefined {
+  let watermark: number | undefined
+  for (const entry of events) {
+    const event = eventOf(entry)
+    if (event?.type !== CONTENT_RISK_WATERMARK_EVENT)
+      continue
+    const data = event.data as { sessionId?: unknown, sessionFormatVersion?: unknown, throughSeq?: unknown } | undefined
+    if (data?.sessionId !== sessionId || (data.sessionFormatVersion ?? 0) !== sessionFormatVersion)
+      continue
+    if (typeof data.throughSeq !== 'number' || !Number.isSafeInteger(data.throughSeq) || data.throughSeq < 0)
+      continue
+    if (watermark === undefined || data.throughSeq > watermark)
+      watermark = data.throughSeq
+  }
+  return watermark
+}
+
 function lastTurnEndKind(value: unknown): string | undefined {
   const events = sessionEvents(value)
   if (events === undefined)
     return undefined
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index] as { type?: string, data?: { reason?: { kind?: unknown } } }
-    if (event?.type !== 'turn/end')
-      continue
-    const kind = event.data?.reason?.kind
-    return typeof kind === 'string' ? kind : undefined
-  }
-  return undefined
+  const kind = lastTurnEndReason(events)?.kind
+  return typeof kind === 'string' ? kind : undefined
 }
 
 /** 内核 `Session` 的日志面逐版本漂移：`snapshotEvents()` 为准，`log` / `events` 仅作兜底。 */
@@ -152,6 +277,14 @@ function sessionEvents(value: unknown): readonly unknown[] | undefined {
   if (Array.isArray(session.log))
     return session.log
   return Array.isArray(session.events) ? session.events : undefined
+}
+
+/** 模型可见表面节点（`surface.nodes`）；内核缺这一面时恢复必须退化为人工提示。 */
+function sessionSurfaceNodes(value: unknown): readonly number[] | undefined {
+  if (typeof value !== 'object' || value === null)
+    return undefined
+  const nodes = (value as { surface?: { nodes?: unknown } }).surface?.nodes
+  return Array.isArray(nodes) && nodes.every(node => typeof node === 'number') ? nodes as readonly number[] : undefined
 }
 
 async function loadCreateUserMessage(loader: PlatformModuleLoader | undefined): Promise<CreateUserMessage> {

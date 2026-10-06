@@ -4,7 +4,7 @@ import type { HostContext } from '../types'
 import type { CreateUserMessage, PlanSession } from './session.types'
 import { Context } from '@deepseek-ai/cordis'
 import { agentEvents } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createSystemMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from '../apply'
@@ -614,5 +614,221 @@ describe('session.resume', () => {
       loader: { import: async () => { throw new Error('boom') }, unwrapExports: (value: unknown) => value },
     })
     expect(await session.resume('s1')).toEqual({ ok: false, code: 500, error: 'Error: boom' })
+  })
+})
+
+describe('content risk recovery', () => {
+  interface RecordedSurfaceEvent {
+    type: string
+    data: unknown
+    intent: unknown
+  }
+
+  function contentRiskEvents() {
+    return [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 4, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+      { seq: 5, type: 'turn/start', data: { turn: 2 } },
+      {
+        seq: 9,
+        type: 'turn/end',
+        data: { turn: 2, reason: { kind: 'error', error: { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 } } },
+      },
+    ]
+  }
+
+  function recoverySession(events: unknown = contentRiskEvents(), nodes: readonly number[] = [1, 2, 6, 8], extra: Record<string, unknown> = {}) {
+    const surfaceEvents: RecordedSurfaceEvent[] = []
+    const session = {
+      snapshotEvents: () => events,
+      surface: { nodes },
+      id: 's1',
+      seq: 10,
+      header: { version: 4 },
+      ...extra,
+      append(type: string, data: unknown, intent: unknown) {
+        surfaceEvents.push({ type, data, intent })
+        return { seq: 10 }
+      },
+    }
+    return { session, surfaceEvents }
+  }
+
+  it('shadows the refused turn before continuing and keeps the retained context', async () => {
+    const { session: log, surfaceEvents } = recoverySession()
+    const { followed } = setup({ session: log })
+
+    expect(await session.resume('s1')).toEqual({ ok: true })
+
+    expect(surfaceEvents).toHaveLength(2)
+    expect(surfaceEvents[0]?.type).toBe('session-log-deepseek/delivery-accepted')
+    expect(surfaceEvents[0]?.data).toEqual({ sessionId: 's1', sessionFormatVersion: 4, throughSeq: 9 })
+    expect(surfaceEvents[1]?.type).toBe('user/message')
+    expect(surfaceEvents[1]?.intent).toEqual({
+      surfaceOp: { op: 'replace', startSeq: 6, endSeq: 8 },
+      sourceEventSeqs: [6, 8],
+    })
+    const marker = surfaceEvents[1]?.data as { content: { text: string }[], source: { kind: string } }
+    expect(marker.content[0]?.text.length).toBeGreaterThan(0)
+    expect(marker.source.kind).toBe('content-risk-recovery')
+    expect(followed).toHaveLength(1)
+    expect(followed[0]?.source).toEqual({ kind: 'continue', recovery: 'content-risk' })
+    expect((followed[0]?.content as unknown as { text: string }[])[0]?.text).toContain('excluded')
+  })
+
+  it('advances the upload watermark to the refused turn end before shadowing it', async () => {
+    const { session: log, surfaceEvents } = recoverySession()
+    setup({ session: log })
+
+    expect(await session.resume('s1')).toEqual({ ok: true })
+
+    // 先推水位、再写遮蔽标记：两次 append 都落在同一会话上，且水位早于标记。
+    expect(surfaceEvents.map(entry => entry.type)).toEqual([
+      'session-log-deepseek/delivery-accepted',
+      'user/message',
+    ])
+    expect(surfaceEvents[0]?.intent).toBeUndefined()
+  })
+
+  it('keeps an already advanced watermark and never moves it backwards', async () => {
+    const events = [
+      ...contentRiskEvents(),
+      { seq: 10, type: 'session-log-deepseek/delivery-accepted', data: { sessionId: 's1', sessionFormatVersion: 4, throughSeq: 9 } },
+    ]
+    const { session: log, surfaceEvents } = recoverySession(events)
+    setup({ session: log })
+
+    expect(await session.resume('s1')).toEqual({ ok: true })
+
+    expect(surfaceEvents.map(entry => entry.type)).toEqual(['user/message'])
+  })
+
+  it('refuses to continue when the upload watermark cannot be written', async () => {
+    const { session: log, surfaceEvents } = recoverySession(contentRiskEvents(), [1, 2, 6, 8], { header: {} })
+    const { followed } = setup({ session: log })
+
+    expect(await session.resume('s1')).toEqual({
+      ok: false,
+      code: 409,
+      error: '无法确定安全恢复边界，未改写会话。请新建会话重述任务，或检查该回合的工具结果内容后重试。',
+    })
+    expect(surfaceEvents).toHaveLength(0)
+    expect(followed).toHaveLength(0)
+  })
+
+  it('never replays the refused context and leaves an unrelated failure on the plain path', async () => {
+    const { session: log, surfaceEvents } = recoverySession([
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      {
+        seq: 4,
+        type: 'turn/end',
+        data: { turn: 1, reason: { kind: 'error', error: { message: 'Invalid request: prompt too long', code: 'INVALID_REQUEST', status: 400 } } },
+      },
+    ])
+    const { followed } = setup({ session: log })
+
+    expect(await session.resume('s1')).toEqual({ ok: true })
+
+    expect(surfaceEvents).toHaveLength(0)
+    expect(followed[0]?.source).toEqual({ kind: 'continue' })
+  })
+
+  it('refuses to continue when no safe boundary can be established', async () => {
+    const { followed } = setup({ session: { snapshotEvents: contentRiskEvents } })
+
+    expect(await session.resume('s1')).toEqual({
+      ok: false,
+      code: 409,
+      error: '无法确定安全恢复边界，未改写会话。请新建会话重述任务，或检查该回合的工具结果内容后重试。',
+    })
+    expect(followed).toHaveLength(0)
+  })
+
+  it('refuses to continue when the surface would be emptied entirely', async () => {
+    const { session: log, surfaceEvents } = recoverySession(contentRiskEvents(), [1])
+    const { followed } = setup({ session: log })
+
+    const outcome = await session.resume('s1')
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.ok === false && outcome.code).toBe(409)
+    expect(surfaceEvents).toHaveLength(0)
+    expect(followed).toHaveLength(0)
+  })
+
+  it('does not resurrect the refused turn plan when recovering', () => {
+    const { log, planLog } = setupTurn()
+    log.append('turn/start', { turn: 2 })
+    const refused = [{ content: '被拒回合的计划', status: 'in_progress' }]
+    planLog.append('todo/write', { todos: refused })
+    log.append('turn/end', {
+      turn: 2,
+      reason: { kind: 'error', error: { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 } },
+    })
+
+    log.append('turn/start', { turn: 3 })
+    const writes = () => log.snapshotEvents().filter(event => (event.type as string) === 'todo/write').length
+    const before = writes()
+
+    session.restorePlan(
+      log as unknown as PlanSession,
+      [{ content: [], source: { kind: 'continue', recovery: 'content-risk' } }],
+      1,
+    )
+
+    expect(writes()).toBe(before)
+
+    // 对照组：同一日志位置在普通继续下确实会恢复计划，证明上面的静默来自审核恢复守卫。
+    session.restorePlan(log as unknown as PlanSession, [{ content: [], source: { kind: 'continue' } }], 1)
+    expect(writes()).toBe(before + 1)
+    expect(projectedTodos(log)).toEqual(refused)
+  })
+
+  it('rewrites the refused turn out of the model-visible surface on a real log', async () => {
+    const log = Session.create(SessionId('s1'))
+    log.append('turn/start', { turn: 1 })
+    const systemSeq = log.append('system/message', {
+      turn: 1,
+      step: 1,
+      message: createSystemMessage('SYSTEM PROMPT'),
+    }, { surfaceOp: 'append' }).seq
+    log.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: '检查代理配置' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const callId = ToolCallId('c1')
+    const callSeq = log.append('tool/call', { turn: 1, step: 1, callId, name: 'read_file', arguments: '{}' }).seq
+    log.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: 'proxy: http://127.0.0.1:7890' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append', sourceEventSeqs: [callSeq] })
+    const refusedEndSeq = log.append('turn/end', {
+      turn: 1,
+      reason: { kind: 'error', error: { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 } },
+    }).seq
+    const { followed } = setup({ session: log })
+
+    expect(await session.resume('s1')).toEqual({ ok: true })
+
+    // 水位必须落在被拒回合的 turn/end 上，且内核折叠时接受这条记录。
+    const watermark = log.snapshotEvents().find(event => (event.type as string) === 'session-log-deepseek/delivery-accepted')
+    expect(watermark?.data).toEqual({ sessionId: 's1', sessionFormatVersion: 4, throughSeq: refusedEndSeq })
+
+    const nodes = [...log.surface.nodes]
+    expect(nodes).toHaveLength(2)
+    expect(nodes[0]).toBe(systemSeq)
+    const markerSeq = nodes[1]!
+    expect(markerSeq).toBeGreaterThan(systemSeq)
+    const rendered = log.deriveMessages().map(message => message.content.map(block => 'text' in block ? block.text : block.type).join(''))
+    expect(rendered.join('|')).toContain('SYSTEM PROMPT')
+    expect(rendered.join('|')).toContain('removed from the visible history')
+    expect(rendered.join('|')).not.toContain('检查代理配置')
+    expect(rendered.join('|')).not.toContain('7890')
+    expect(followed).toHaveLength(1)
   })
 })

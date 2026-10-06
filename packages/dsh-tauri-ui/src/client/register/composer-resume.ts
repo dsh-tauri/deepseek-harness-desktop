@@ -6,6 +6,7 @@ import { locale } from '../locales'
 import { resumeComposer } from '../service/composer-resume'
 import {
   isComposerEmpty,
+  isContentRiskTurnEnd,
   paintResumeIcon,
   primaryButtonOf,
   readIconPath,
@@ -33,7 +34,9 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
   let patch: { button: HTMLButtonElement, icon: ComposerIconState } | undefined
   let pending = false
 
-  const resumeLabel = (): string => locale.text('resumeTask')
+  // 审核失败不给普通「继续」：同一会话重放被拒上下文只会再次 400，按钮必须写明
+  // 会改写历史。文案从实时快照现算，任何缓存都会在切会话后说错话。
+  const resumeLabel = (): string => locale.text(isContentRiskTurnEnd(binding?.eventSource?.getSnapshot?.().entries) ? 'recoverContentRisk' : 'resumeTask')
 
   const snapshotNow = (): ComposerSessionSnapshot | undefined => binding?.session?.getSnapshot?.()
 

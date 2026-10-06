@@ -1,6 +1,6 @@
 import type { ComposerSessionEventEntry } from './composer-resume.types'
 import { describe, expect, it } from 'vitest'
-import { isComposerEmpty, lastTurnEndKind, paintResumeIcon, readIconPath, restoreDisabled, restorePrimaryIcon, shouldOfferResume } from './composer-resume.utils'
+import { isComposerEmpty, isContentRiskTurnEnd, lastTurnEndKind, paintResumeIcon, readIconPath, restoreDisabled, restorePrimaryIcon, shouldOfferResume } from './composer-resume.utils'
 
 const ARROW_PATH = 'M8.3125 0.980183C8.66767 1.0531'
 const PLAY_FILL_PATH = 'M14.642 6.285c1.294.777 1.294 2.653 0 3.43l-9.113 5.468c-1.333.8-3.028-.16-3.029-1.715V2.532C2.5.978 4.196.018 5.53.818z'
@@ -169,5 +169,26 @@ describe('paintResumeIcon / restorePrimaryIcon', () => {
     expect(restoreDisabled(true, true, false)).toBe(false)
     expect(restoreDisabled(true, true, true)).toBe(true)
     expect(restoreDisabled(false, false, false)).toBe(false)
+  })
+})
+
+describe('isContentRiskTurnEnd', () => {
+  function entry(reason: { kind?: string, error?: unknown, reason?: unknown }): ComposerSessionEventEntry {
+    return { type: 'event', event: { type: 'turn/end', data: { reason } } }
+  }
+
+  it('offers recovery only for the content-review refusal', () => {
+    expect(isContentRiskTurnEnd([entry({ kind: 'error', error: { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 } })])).toBe(true)
+    expect(isContentRiskTurnEnd([entry({ kind: 'error', error: { message: 'Content Exists Risk', code: 'CONTENT_REJECTED' } })])).toBe(true)
+    expect(isContentRiskTurnEnd([entry({ kind: 'error', error: { message: 'Invalid request: prompt too long', code: 'INVALID_REQUEST', status: 400 } })])).toBe(false)
+    expect(isContentRiskTurnEnd([entry({ kind: 'aborted', reason: { kind: 'user' } })])).toBe(false)
+    expect(isContentRiskTurnEnd([])).toBe(false)
+    expect(isContentRiskTurnEnd(undefined)).toBe(false)
+  })
+
+  it('offers the plain resume for every other interrupted kind', () => {
+    const entries: ComposerSessionEventEntry[] = [{ type: 'event', event: { type: 'turn/end', data: { reason: { kind: 'aborted' } } } }]
+    expect(shouldOfferResume({ session: { running: false, removed: false }, entries })).toBe(true)
+    expect(isContentRiskTurnEnd(entries)).toBe(false)
   })
 })

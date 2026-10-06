@@ -306,3 +306,47 @@ describe('composerResumeFeature', () => {
     h.cleanup()
   })
 })
+
+describe('composerResumeFeature · 内容审核恢复', () => {
+  function refusal(): ComposerSessionEventEntry {
+    return {
+      type: 'event',
+      event: {
+        type: 'turn/end',
+        data: { turn: 1, reason: { kind: 'error', error: { message: 'Content Exists Risk', code: 'INVALID_REQUEST', status: 400 } } },
+      },
+    }
+  }
+
+  it('审核失败时主按钮写明会安全恢复，而不是普通继续', () => {
+    const h = harness({ entries: [turnStart(), refusal()] })
+    expect(h.icon()).toBe(PLAY_FILL_PATH)
+    expect(h.disabled()).toBe(false)
+    expect(h.label()).toBe('recoverContentRisk')
+    h.cleanup()
+  })
+
+  it('切换到普通中断时按钮回到普通继续文案', () => {
+    const h = harness({ entries: [turnStart(), refusal()] })
+    expect(h.label()).toBe('recoverContentRisk')
+
+    h.setEntries([turnStart(), turnEnd('aborted')])
+    expect(h.label()).toBe('resumeTask')
+    h.cleanup()
+  })
+
+  it('点击仍然只请求一次继续，不发送草稿文本', () => {
+    const h = harness({ entries: [turnStart(), refusal()] })
+    const preventDefault = vi.fn()
+    const stopPropagation = vi.fn()
+    const target = new FakeElement()
+    target.closest = () => h.button
+
+    h.click({ target, preventDefault, stopPropagation })
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(stopPropagation).toHaveBeenCalledTimes(1)
+    expect(mocks.resumeComposer).toHaveBeenCalledWith({ sessionId: 's-1' })
+    h.cleanup()
+  })
+})
