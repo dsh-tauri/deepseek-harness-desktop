@@ -226,4 +226,24 @@ describe('配置面板代理连通性测试', () => {
     await waitFor(() => expect(proxyInput().value).toBe(''))
     expect((screen.getByTestId('dsh-proxy-test') as HTMLButtonElement).disabled).toBe(true)
   })
+  it('清空输入框后禁用测试按钮，避免把空地址当成可用代理', async () => {
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    fireEvent.change(proxyInput(), { target: { value: '' } })
+
+    expect((screen.getByTestId('dsh-proxy-test') as HTMLButtonElement).disabled).toBe(true)
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('只输入空白字符时同样禁用测试按钮', async () => {
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    fireEvent.change(proxyInput(), { target: { value: '   ' } })
+
+    expect((screen.getByTestId('dsh-proxy-test') as HTMLButtonElement).disabled).toBe(true)
+  })
 })

@@ -452,7 +452,7 @@ export function ConfigDebug() {
                   }
                   onSaveProxy(proxy, { onSuccess: () => runProxyTest() })
                 }}
-                isDisabled={testingProxy || savingProxy || (proxy === '' && savedProxy === '')}
+                isDisabled={testingProxy || savingProxy || proxy.trim() === ''}
                 data-testid="dsh-proxy-test"
               >
                 <If cond={testingProxy} then={<Spinner size="sm" color="current" />} else={t('network.test')} />
