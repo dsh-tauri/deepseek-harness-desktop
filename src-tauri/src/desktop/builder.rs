@@ -1530,6 +1530,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::download_core,
         crate::bridge::remove_core,
         crate::bridge::update_local_core,
+        crate::bridge::pick_core_package,
+        crate::bridge::import_core,
         crate::bridge::proxy_health_check,
         crate::bridge::get_runtime_info,
         crate::bridge::runtime_ready,

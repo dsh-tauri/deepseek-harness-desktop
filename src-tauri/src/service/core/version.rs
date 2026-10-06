@@ -27,7 +27,7 @@ const BUNDLED_CORE_ID: &str = "app-bundled";
 /// 恒落在应用数据目录之下：槽位是桌面端自己下载的产物，即使清单把激活核心托管到安装
 /// 包资源（离线包 `$Resources/dsh`）也不能让下载产物写进安装目录——那里在 macOS `.app`
 /// 上是签名的只读内容、在 Linux deb 里属于 root，且会随应用升级被覆盖。
-fn dependencies_dir(app_handle: &AppHandle) -> PathBuf {
+pub(super) fn dependencies_dir(app_handle: &AppHandle) -> PathBuf {
     config::get_base_dir(app_handle).join("dependencies")
 }
 

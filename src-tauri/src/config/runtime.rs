@@ -70,7 +70,7 @@ pub fn get_node_download_url() -> Result<String, String> {
 }
 
 /// Harness 发行版资产文件名（按平台与架构）
-fn dsh_pkg_asset_filename() -> Result<String, String> {
+pub fn dsh_pkg_asset_filename() -> Result<String, String> {
     let arch = env::consts::ARCH;
     let os = env::consts::OS;
 

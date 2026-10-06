@@ -45,3 +45,27 @@ pub async fn remove_core(app_handle: AppHandle, id: String) -> Result<(), String
 pub async fn update_local_core(app_handle: AppHandle) -> Result<String, String> {
     core::update_local_core(app_handle).await
 }
+
+/// 选择已下载到本机的 Harness 发行包（`deepseek-harness-pkg-<平台>.zip`）。
+/// 返回选中的路径，未选择时返回 `null`；识别与导入由 `import_core` 完成。
+#[tauri::command]
+pub async fn pick_core_package(app_handle: AppHandle) -> Result<Option<String>, String> {
+    let start = crate::config::get_base_dir(&app_handle).join("packages");
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title("选择 Harness 安装包")
+        .set_directory(&start)
+        .add_filter("Harness 安装包", &["zip", "gz", "tgz"])
+        .pick_file()
+        .await;
+    Ok(picked.map(|handle| handle.path().to_string_lossy().into_owned()))
+}
+
+/// 导入本地 Harness 安装包（issue #138）：校验平台与包结构、比对官方发行摘要、
+/// 解压到历史槽位并激活，返回导入结果（含版本、tag 与是否已校验摘要）。
+#[tauri::command]
+pub async fn import_core(
+    app_handle: AppHandle,
+    path: String,
+) -> Result<core::CoreImportPlan, String> {
+    core::import_local_package(&app_handle, &path).await
+}

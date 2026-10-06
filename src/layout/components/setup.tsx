@@ -1,6 +1,9 @@
 import type { IconComponent } from './loadable'
 import type { SetupStatus } from '@/store/modules/harness'
-import { ArrowRightFromSquare, CircleCheck, CircleExclamation, CircleInfo, Copy, Magnifier, Rocket, ShieldCheck } from '@gravity-ui/icons'
+import type { CoreImportPlan } from '@/types'
+import type { ImportCoreDialogProps } from '@/ui/dialog/import-core'
+import { ArrowRightFromSquare, CircleCheck, CircleExclamation, CircleInfo, Copy, FileArrowUp, Magnifier, Rocket, ShieldCheck } from '@gravity-ui/icons'
+import { useOverlay } from '@overlastic/react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { If, Then } from 'react-if-lite'
@@ -8,7 +11,9 @@ import { useStore } from 'valtio-define'
 import { button } from '@/components/primitives'
 import { store } from '@/store'
 import { containsPatchEntryUnresolved } from '@/store/modules/harness'
+import { ImportCoreDialog } from '@/ui/dialog/import-core'
 import { writeClipboardText } from '@/utils/clipboard'
+import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 import { Loadable } from './loadable'
 
@@ -46,6 +51,7 @@ async function copyLogsHandler(t: (key: string) => string) {
  */
 export function Setup() {
   const { t } = useTranslation()
+  const [importDialog, openImportDialog] = useOverlay<ImportCoreDialogProps, CoreImportPlan>(ImportCoreDialog, { type: 'holder' })
   const {
     status,
     installer,
@@ -68,6 +74,42 @@ export function Setup() {
   const patchEntriesUnresolved = error && containsPatchEntryUnresolved(errorMsg)
   const patchLayerBroken = error && patchLayerHint !== '' && !patchEntriesUnresolved
 
+  /**
+   * 内网机访问不了 GitHub 时，用预先下载的官方安装包装配核心（issue #138）：
+   * 选包 → 导入（校验摘要 + 解压 + 激活）→ 成功后重新走一遍启动流程。
+   * 引擎之外的依赖（Node / pnpm / Git）仍由 `install_dependencies` 负责。
+   */
+  async function importCoreHandler() {
+    let path: string | null
+    try {
+      path = await invoke<string | null>('pick_core_package')
+    }
+    catch (err) {
+      console.error('[Setup] failed to pick the core package:', err)
+      toast(t('core.import_pick_failed'), { variant: 'danger' })
+      return
+    }
+    if (path == null) {
+      return
+    }
+    try {
+      const plan = await openImportDialog({
+        path,
+        runImport: (target: string) => invoke<CoreImportPlan>('import_core', { path: target }),
+      })
+      // 离线导入拿不到官方发行摘要，只能提示用户自行确认安装包来源
+      toast(
+        plan.verified ? t('core.imported_toast', { version: plan.version }) : t('core.imported_unverified_toast', { version: plan.version }),
+        { variant: plan.verified ? 'success' : 'warning' },
+      )
+      await store.harness.boot()
+    }
+    catch (err) {
+      // 取消（关闭对话框）不算失败；导入失败已在对话框里展示完整错误
+      silence(err, 'core import: dialog cancelled or import failed')
+    }
+  }
+
   return (
     <Loadable
       icon={StatusIcon}
@@ -83,7 +125,7 @@ export function Setup() {
       )}
       <If cond={error}>
         <Then>
-          {/* 错误态操作区：重试 / 复制日志 / 安全模式 三按钮放同一行，避免叠罗汉 */}
+          {/* 错误态操作区：重试 / 导入本地安装包 / 复制日志 / 安全模式 放同一行，避免叠罗汉 */}
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               className={button({ tone: 'primary', size: 'sm' })}
@@ -114,6 +156,15 @@ export function Setup() {
               </button>
             </If>
             <button
+              className={button({ tone: 'primary', size: 'sm' })}
+              onClick={() => {
+                void importCoreHandler()
+              }}
+            >
+              <FileArrowUp className="size-4" />
+              {t('buttons.import_core')}
+            </button>
+            <button
               className={button({ tone: 'ghost', size: 'sm' })}
               onClick={() => copyLogsHandler(t)}
             >
@@ -133,8 +184,12 @@ export function Setup() {
           <p className="m-0 text-xs leading-[18px] break-all text-load-muted">
             {t('hints.safe_mode')}
           </p>
+          <p className="m-0 text-xs leading-[18px] break-all text-load-muted">
+            {t('hints.import_core')}
+          </p>
         </Then>
       </If>
+      {importDialog}
     </Loadable>
   )
 }

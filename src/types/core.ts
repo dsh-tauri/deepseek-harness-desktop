@@ -31,3 +31,19 @@ export interface HarnessCore {
   recommendedVersion: string | null
   error?: string | null
 }
+
+/** Rust 侧 service::core::CoreImportPlan 的序列化形态（camelCase） */
+export interface CoreImportPlan {
+  /** 官方 release tag（如 `dsh-0.2.0-rc.2-36556493178`）；内网取不到官方元数据时为本地 tag（`dsh-0.2.0-rc.2-local`） */
+  tag: string
+  /** 包内声明的核心版本（槽位行的版本列） */
+  version: string
+  /** 官方 commit 或本地标记 */
+  commit: string
+  /** 安装包 `sha256:<hex>` 摘要 */
+  digest: string
+  /** 安装包字节数 */
+  size: number
+  /** 是否已对照官方发行摘要校验（内网完全离线时为 false，界面提示自行确认来源） */
+  verified: boolean
+}

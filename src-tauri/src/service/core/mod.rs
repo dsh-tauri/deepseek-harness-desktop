@@ -18,14 +18,18 @@
 //!
 //! 模块划分（参考 `service/cli/`、`service/download/`）：
 //! - [`local`]：本地核心发现（PATH/全局安装目录探测、包目录解析、更新本地核心）
+//! - [`importer`]：本地安装包导入（内网机无法访问 GitHub 时用预先下载的官方
+//!   发行资产装配核心，见 issue #138）
 //! - [`source`]：核心来源与活动入口（`CoreSource` / `HarnessCore` / 活动核心）
 //! - [`version`]：预打包核心多版本管理（列出 / 切换 / 下载 / 卸载）
 
+mod importer;
 mod local;
 mod runtime;
 mod source;
 mod version;
 
+pub use importer::{import_local_package, CoreImportPlan};
 pub use local::{local_core_package_dir, update_local_core};
 // 以下重导出为对外公开 API（部分项当前链路未直接引用，属有意保留，见模块头）。
 #[allow(unused_imports)]
