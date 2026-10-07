@@ -64,16 +64,28 @@ fn for_each_heap_flag(node_options: &str, mut visit: impl FnMut(&'static str, &s
 /// 同一个变量里出现多个时以**最后一个**为准——V8 就是这么解析的（实测
 /// `--max-old-space-size=4096 --max-old-space-size=8192` 生效的是 8192），取第一个
 /// 会把实际生效值报小一半。取值解析不出来的条目直接忽略。
+///
+/// 只要出现可解析的 percentage flag 就返回 None：V8 让 percentage 压过 size（实测
+/// `--max-old-space-size=8192 --max-old-space-size-percentage=50` 在 63 GB 机器上得到
+/// 32413 MB，两个 flag 的先后顺序无关），此时报 size 就是谎报生效值。
 fn node_options_heap_limit(node_options: &str) -> Option<u32> {
     let mut limit = None;
+    let mut has_percentage = false;
     for_each_heap_flag(node_options, |flag, value, is_limit| {
-        if !is_limit || !HEAP_LIMIT_FLAGS.contains(&flag) {
+        if !is_limit {
+            return;
+        }
+        if !HEAP_LIMIT_FLAGS.contains(&flag) {
+            has_percentage = true;
             return;
         }
         if let Ok(mb) = value.parse::<u32>() {
             limit = Some(mb);
         }
     });
+    if has_percentage {
+        return None;
+    }
     limit
 }
 
@@ -326,6 +338,14 @@ mod tests {
             node_options_without_heap_flags("--max-old-space-size-percentage=50 --require a.cjs"),
             Some("--require a.cjs".to_string())
         );
+        // 显式下发上限时真正要摘的组合：size + percentage + 无关选项同时在场，两个堆
+        // flag 都必须消失（留下 percentage 会让命令行上限完全失效）。
+        assert_eq!(
+            node_options_without_heap_flags(
+                "--max-old-space-size=8192 --max-old-space-size-percentage 50 --require C:/probe.cjs"
+            ),
+            Some("--require C:/probe.cjs".to_string())
+        );
         assert_eq!(
             node_options_without_heap_flags("--max_old_space_size 8192"),
             None
@@ -338,6 +358,25 @@ mod tests {
         assert_eq!(node_options_heap_limit("--max-old-space-size=8192"), Some(8192));
         assert_eq!(node_options_heap_limit("--max-old-space-size 1600"), Some(1600));
         assert_eq!(node_options_heap_limit("--max_old_space_size=4096"), Some(4096));
+    }
+
+    /// V8 让 percentage 压过 size（实测 63 GB 机器上 `size=8192 percentage=50` 拿到
+    /// 32413 MB，两个 flag 的先后顺序无关），此时报 size 就是谎报生效值。
+    #[test]
+    fn a_valid_percentage_flag_hides_the_size_flag() {
+        for options in [
+            "--max-old-space-size=8192 --max-old-space-size-percentage=50",
+            "--max-old-space-size-percentage=50 --max-old-space-size=8192",
+            "--max_old_space_size=8192 --max_old_space_size_percentage 50",
+        ] {
+            assert_eq!(node_options_heap_limit(options), None, "{options}");
+            assert!(node_options_has_heap_flags(options), "{options}");
+        }
+        // 解析不出来的 percentage 不生效，size 仍然算数。
+        assert_eq!(
+            node_options_heap_limit("--max-old-space-size=8192 --max-old-space-size-percentage=abc"),
+            Some(8192)
+        );
     }
 
     #[test]
