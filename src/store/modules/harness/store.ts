@@ -255,6 +255,10 @@ export const harness = defineStore({
         return
       try {
         await setting.update({ harnessMaxHeapMb: limitMb })
+        // 写设置是异步的，期间用户可能已经点了「停止」：shutdown 会推进 bootToken，
+        // 此时再重启就是把用户刚停掉的服务又拉起来。
+        if (exitToken !== bootToken)
+          return
         notifyHeapRecovery(limitMb)
         await this.restart()
       }
@@ -826,6 +830,8 @@ export const harness = defineStore({
     async shutdown() {
       if (this.busyAction)
         return
+      // 作废仍在进行的启动/自动恢复流程，否则它们会在停止之后把服务又拉起来
+      ++bootToken
       this.busyAction = 'shutdown'
       // 停止服务后应用回到「已停止」态，配置弹窗已无意义，与 restart 一致地关闭它
       void hooks['config.dialog.hidden'].trigger()
