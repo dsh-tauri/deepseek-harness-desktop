@@ -333,3 +333,14 @@ export function internalPluginReason(
       return translate('status.internal_cancelled')
   }
 }
+
+/**
+ * 自动恢复提示：把「为什么服务自己重启了、现在上限是多少」讲清楚。
+ * 错误页会在下一次启动流程里被清掉，这条 toast 是用户唯一能看到恢复发生的入口。
+ */
+export function notifyHeapRecovery(limitMb: number): void {
+  toast(i18next.t('messages.heap_recovered', { limit: limitMb }), {
+    variant: 'accent',
+    timeout: 10_000,
+  })
+}

@@ -188,6 +188,7 @@
   "messages.heap_changed": "服务内存上限已更改",
   "messages.heap_restart_hint": "重启服务后生效，是否立即重启？",
   "messages.heap_invalid": "服务内存上限必须是 1024 到 32768 之间的整数",
+  "messages.heap_recovered": "Harness 服务因内存耗尽被强制终止，已自动把服务内存上限提高到 {{limit}} MB 并重启；再次发生会继续翻倍，直到上限 32768 MB。",
   "messages.heap_save_failed": "保存服务内存上限失败",
   "messages.reveal_dir_failed": "打开数据目录失败",
   "nav.sidebar_expand": "展开侧边栏",

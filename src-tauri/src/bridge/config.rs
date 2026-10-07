@@ -25,6 +25,19 @@ pub fn get_effective_heap_limit_mb(app_handle: AppHandle) -> Option<u32> {
     )
 }
 
+/// 堆耗尽（V8 code 134）后建议写入的「服务内存上限」（MB）。
+///
+/// 取值 = 当前生效上限 × 2，并封顶在 `config::HARNESS_HEAP_MAX_MB`；返回 None 表示
+/// 已经顶到上限，调用方不该自动重启——那只会用同一个上限再崩一次，应该直接把错误页
+/// 交给用户。判定与启动链路共用 `workflow::heap`，避免前端自己算出一份和实际下发
+/// 不同的数值。
+#[tauri::command]
+pub fn get_heap_recovery_limit_mb(app_handle: AppHandle) -> Option<u32> {
+    crate::service::workflow::recovery_heap_limit_mb(
+        config::get_store_dat_setting(&app_handle).harness_max_heap_mb,
+    )
+}
+
 /// 当前桌面端是否为 dev 构建（`tauri dev` / `pnpm dev:desktop`）。
 ///
 /// 插件用它决定是否挂载只面向开发的调试入口（例如 dsh-tauri-ui 的「UI 组件」页）；

@@ -14,6 +14,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import i18next from 'i18next'
 import { defineStore } from 'valtio-define'
+import { containsHeapOomError } from '@/components/logs.utils'
 import { queryClient } from '@/config/client'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
@@ -31,6 +32,7 @@ import {
   PLUGIN_INACTIVITY_TIMEOUT,
   STARTUP_ABSOLUTE_TIMEOUT,
 } from './constants'
+import { planHeapRecovery } from './heap-recovery'
 import { BoundedReloadGate, SingleFlight, waitForActivityTask } from './readiness'
 import { runtimeExitMessageKey, shouldAcceptRuntimeExit } from './runtime'
 import {
@@ -38,6 +40,7 @@ import {
   checkHealthViaProxy,
   generateTimestampedUrl,
   internalPluginReason,
+  notifyHeapRecovery,
   notifyPatchEntryStrip,
   notifyPatchQuarantine,
   pollHarnessReadiness,
@@ -237,6 +240,27 @@ export const harness = defineStore({
         error.patchLayerHint,
         error.heapOomHint,
       )
+      // 自动恢复（issue #947）：只认「V8 堆耗尽」这一种退出——把上限翻倍写回设置，
+      // 再走与「设置里点了重启」同一条路径（restart 先 shutdown 再 boot，避免在退出
+      // 事件里抢进程槽）。每次翻倍、顶到 HARNESS_HEAP_MAX_MB 后后端返回 null 自然停下；
+      // 不满足条件时原样留在错误页，不覆盖上面的诊断结果。
+      const limitMb = await planHeapRecovery({
+        heapExhausted: containsHeapOomError(error.logLines ?? []),
+        // recovery store 的 state 字段同名，这里读的是「插件修复界面是否已接管」
+        pluginRecoveryRequired: recovery.recovery.required,
+        busy: this.busyAction,
+        queryLimitMb: () => invoke<number | null>('get_heap_recovery_limit_mb'),
+      })
+      if (limitMb === null || exitToken !== bootToken)
+        return
+      try {
+        await setting.update({ harnessMaxHeapMb: limitMb })
+        notifyHeapRecovery(limitMb)
+        await this.restart()
+      }
+      catch (recoverError) {
+        console.error('[Harness] automatic heap recovery failed:', recoverError)
+      }
     },
 
     /**
