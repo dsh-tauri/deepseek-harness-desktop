@@ -381,6 +381,16 @@ describe('buildInstallScript', () => {
       throw new Error('expected npm-tgz')
     expect(plan.dsh.urls).toEqual([mirrorOnly])
   })
+  it('verifies each candidate inside the fallback loop, never after it', async () => {
+    const pkgScript = buildInstallScript(await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers()))
+    expect(pkgScript).toContain('fetch_verified "$TMP/node.tar.gz"')
+    expect(pkgScript).toContain('fetch_verified "$TMP/pnpm.tgz"')
+    expect(pkgScript).toContain('fetch_verified "$TMP/dsh-pkg.zip"')
+    // 校验必须留在逐个候选的循环里：循环外的一次性 verify 会让坏镜像中断兜底
+    expect(pkgScript).not.toContain('verify "$TMP/')
+    const npmScript = buildInstallScript(await planRemoteInstall('Linux 5.15 aarch64', {}, healthyFetchers()))
+    expect(npmScript).toContain('fetch_verified "$TMP/dsh.tgz"')
+  })
 })
 
 describe('install script execution (real POSIX sh)', () => {
@@ -578,6 +588,86 @@ describe('install script execution (real POSIX sh)', () => {
     expect(existsSync(join(root, 'dependencies', 'dsh', 'lib', 'bin.js'))).toBe(true)
     expect(existsSync(join(root, 'runtime', 'bin', 'node'))).toBe(true)
     expect(existsSync(join(root, 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'))).toBe(true)
+  })
+  /**
+   * Same as runScriptServing, but the fake curl serves tampered bytes for the
+   * FIRST mirror of every artifact (the official host) and real bytes from
+   * `servedDir` for the fallback mirror, so a script that verifies only once
+   * after the whole fallback loop cannot recover.
+   */
+  function runScriptWithBrokenFirstSource(script: string, sandbox: string, servedDir: string): Promise<{ code: number, stdout: string, stderr: string }> {
+    const binDir = join(sandbox, 'fake-bin')
+    mkdirSync(binDir, { recursive: true })
+    const fakeCurl = join(binDir, 'curl')
+    writeFileSync(fakeCurl, [
+      '#!/bin/sh',
+      'dst=""',
+      'prev=""',
+      'for arg in "$@"; do',
+      '  if [ "$prev" = "-o" ]; then dst="$arg"; fi',
+      '  prev="$arg"',
+      'done',
+      'url=""',
+      'for arg in "$@"; do url="$arg"; done',
+      'case "$url" in',
+      '  *SHASUMS256.txt) cat "$SERVED/SHASUMS256.txt" > "$dst"; exit 0 ;;',
+      '  *nodejs.org*) printf \'tampered-download-bytes\' > "$dst"; exit 0 ;;',
+      'esac',
+      'if [ -f "$SERVED/$(basename "$url")" ]; then cp "$SERVED/$(basename "$url")" "$dst"; exit 0; fi',
+      'echo "fake curl: no artifact for $url" >&2',
+      'exit 22',
+    ].join('\n'))
+    chmodSync(fakeCurl, 0o755)
+    const scriptPath = join(sandbox, 'install.sh')
+    writeFileSync(scriptPath, script)
+    const run = promisify(execFile)
+    return run('sh', [scriptPath], {
+      env: { ...process.env, HOME: sandbox, SERVED: servedDir, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+    }).then(
+      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
+      (error: { code?: number, stdout?: string, stderr?: string }) =>
+        ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
+    )
+  }
+
+  it('keeps trying the next source when a mirror serves bytes that fail the digest (real POSIX sh)', async () => {
+    const work = tempDir()
+    const served = join(work, 'served')
+    mkdirSync(served, { recursive: true })
+
+    const nodeDir = join(work, 'node-v22.22.0-linux-x64')
+    mkdirSync(join(nodeDir, 'bin'), { recursive: true })
+    mkdirSync(join(nodeDir, 'include'), { recursive: true })
+    writeFileSync(join(nodeDir, 'bin', 'node'), '#!/bin/sh\nexec sh "$@"\n')
+    writeFileSync(join(nodeDir, 'include', 'node'), 'headers\n')
+    const nodeTgz = join(served, 'node-v22.22.0-linux-x64.tar.gz')
+    await promisify(execFile)('tar', ['-czf', nodeTgz, '-C', work, 'node-v22.22.0-linux-x64'])
+    writeFileSync(
+      join(served, 'SHASUMS256.txt'),
+      `${createHash('sha256').update(readFileSync(nodeTgz)).digest('hex')}  node-v22.22.0-linux-x64.tar.gz\n`,
+    )
+
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+    expect(plan.node.urls[0]).toContain('nodejs.org')
+
+    const sandbox = tempDir()
+    // pnpm and dsh are pre-installed so the run exercises the node section,
+    // whose official source is the broken mirror.
+    const root = join(sandbox, REMOTE_ROOT)
+    mkdirSync(join(root, 'dependencies', 'pnpm', 'bin'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), 'placeholder')
+    mkdirSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'placeholder')
+
+    const outcome = await runScriptWithBrokenFirstSource(buildInstallScript(plan), sandbox, served)
+    expect(outcome.stderr).toBe('')
+    expect(outcome.code).toBe(0)
+    // The broken official source is reported, but the fallback mirror installs.
+    expect(outcome.stdout).toContain('改用下一个下载源')
+    expect(outcome.stdout).not.toContain('::dsh failed')
+    expect(outcome.stdout).toContain('node 安装完成')
+    expect(outcome.stdout).toContain('远端初始化完成')
+    expect(existsSync(join(root, 'runtime', 'bin', 'node'))).toBe(true)
   })
 })
 
