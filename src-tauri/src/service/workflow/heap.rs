@@ -1,5 +1,7 @@
 use std::ffi::OsString;
 
+use crate::config::HARNESS_HEAP_MAX_MB;
+
 const AUTO_HEAP_MIN_MB: u64 = 2048;
 
 /// 自动值的上限。取物理内存的一半后再按这个上限收敛。
@@ -202,6 +204,21 @@ pub(crate) fn effective_heap_limit_mb(configured: Option<u32>) -> Option<u32> {
     )
 }
 
+/// 堆耗尽后建议的恢复上限（MB）：在当前生效上限之上翻一档。
+///
+/// 返回 None 表示已经顶到 `HARNESS_HEAP_MAX_MB`（或拿不到当前上限），自动抬升没有
+/// 意义——此时错误页才是正确的归宿。翻倍而不是加固定值，是为了让「自动值刚好不够」
+/// 与「用户填得太小」两种情形都能一次跨过去。
+pub(super) fn next_heap_limit_mb(current: u32) -> Option<u32> {
+    let next = current.saturating_mul(2).min(HARNESS_HEAP_MAX_MB);
+    (next > current).then_some(next)
+}
+
+/// 按当前设置算出「崩溃后该抬到多少」（MB），与启动链路共用同一份生效上限判定。
+pub(crate) fn recovery_heap_limit_mb(configured: Option<u32>) -> Option<u32> {
+    next_heap_limit_mb(effective_heap_limit_mb(configured)?)
+}
+
 #[cfg(windows)]
 pub(super) fn physical_memory_mb() -> Option<u64> {
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
@@ -245,6 +262,16 @@ mod tests {
         // 64GB 机器（用户机器 63.2GiB 的同类量级）：一半是 31615MB，必须仍然钳在自动上限内
         assert_eq!(auto_heap_limit_mb(63231), AUTO_HEAP_MAX_MB as u32);
         assert_eq!(auto_heap_limit_mb(131072), AUTO_HEAP_MAX_MB as u32);
+    }
+
+    #[test]
+    fn recovery_doubles_the_effective_limit_and_stops_at_the_cap() {
+        assert_eq!(next_heap_limit_mb(1600), Some(3200));
+        assert_eq!(next_heap_limit_mb(8192), Some(16384));
+        assert_eq!(next_heap_limit_mb(AUTO_HEAP_MAX_MB as u32), Some(HARNESS_HEAP_MAX_MB));
+        // 已经顶到用户可填的最大值：再抬没有意义，调用方应落到错误页
+        assert_eq!(next_heap_limit_mb(HARNESS_HEAP_MAX_MB), None);
+        assert_eq!(next_heap_limit_mb(HARNESS_HEAP_MAX_MB.saturating_mul(4)), None);
     }
 
     #[test]

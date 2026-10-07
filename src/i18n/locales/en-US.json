@@ -188,6 +188,7 @@
   "messages.heap_changed": "Service memory limit changed",
   "messages.heap_restart_hint": "It takes effect after the service restarts. Restart now?",
   "messages.heap_invalid": "Service memory limit must be an integer between 1024 and 32768",
+  "messages.heap_recovered": "The Harness service ran out of memory and was killed. The service memory limit was raised to {{limit}} MB and the service restarted; it doubles again on the next crash, up to 32768 MB.",
   "messages.heap_save_failed": "Failed to save service memory limit",
   "messages.reveal_dir_failed": "Failed to open the data directory",
   "nav.sidebar_expand": "Expand sidebar",
