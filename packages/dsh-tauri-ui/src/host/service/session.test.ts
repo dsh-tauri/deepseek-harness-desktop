@@ -716,6 +716,31 @@ describe('content risk recovery', () => {
     expect(followed).toHaveLength(0)
   })
 
+  it('refuses to continue when the surface marker cannot be written', async () => {
+    const { session: log } = recoverySession()
+    const attempted: string[] = []
+    const { followed } = setup({
+      session: {
+        ...log,
+        append(type: string) {
+          attempted.push(type)
+          // 水位写成功、遮蔽标记被内核拒绝（节点漂移 / seq 不连续）：必须退化为人工指引。
+          if (type !== 'session-log-deepseek/delivery-accepted')
+            throw new Error('surface replace: sourceEventSeqs must include every shadowed surface node')
+          return { seq: 10 }
+        },
+      },
+    })
+
+    expect(await session.resume('s1')).toEqual({
+      ok: false,
+      code: 409,
+      error: '无法确定安全恢复边界，未改写会话。请新建会话重述任务，或检查该回合的工具结果内容后重试。',
+    })
+    expect(attempted).toEqual(['session-log-deepseek/delivery-accepted', 'user/message'])
+    expect(followed).toHaveLength(0)
+  })
+
   it('never replays the refused context and leaves an unrelated failure on the plain path', async () => {
     const { session: log, surfaceEvents } = recoverySession([
       { seq: 0, type: 'turn/start', data: { turn: 1 } },

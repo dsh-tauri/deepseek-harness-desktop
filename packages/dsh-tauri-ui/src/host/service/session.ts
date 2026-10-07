@@ -176,10 +176,19 @@ function applyContentRiskRecovery(value: unknown, createUserMessage: CreateUserM
     content: [{ type: 'text', text: CONTENT_RISK_BOUNDARY_NOTICE }],
     source: CONTENT_RISK_MARKER_SOURCE,
   })
-  Reflect.apply(append as (...args: unknown[]) => unknown, value, ['user/message', marker, {
-    surfaceOp: { op: 'replace', startSeq: range.startSeq, endSeq: range.endSeq },
-    sourceEventSeqs: range.shadowedSeqs,
-  }])
+  // 水位已经推进、表面却遮蔽失败时，会话会停在「回传被截断但历史照旧」的半成品状态：
+  // 后续请求仍然回放被拒内容，用户却看不到任何原因。内核拒绝 replace（节点漂移、seq
+  // 不连续）会抛错，这里必须吞掉并退化为人工指引，绝不把 500 抛给前端。
+  try {
+    Reflect.apply(append as (...args: unknown[]) => unknown, value, ['user/message', marker, {
+      surfaceOp: { op: 'replace', startSeq: range.startSeq, endSeq: range.endSeq },
+      sourceEventSeqs: range.shadowedSeqs,
+    }])
+  }
+  catch (error) {
+    getCurrentHostInstance()?.logger?.warn?.(`内容审核恢复：遮蔽被拒回合失败，已放弃自动继续（${renderThrown(error)}）`)
+    return 'unavailable'
+  }
   return 'applied'
 }
 
