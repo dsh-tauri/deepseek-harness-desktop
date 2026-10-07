@@ -73,7 +73,7 @@ const LINUX_ASSETS = [
 /** The default injected fetchers (no network): a healthy metadata view. */
 function healthyFetchers(overrides: Partial<{
   listReleases: () => Promise<typeof RELEASES>
-  listAssets: () => Promise<typeof LINUX_ASSETS>
+  listAssets: () => Promise<Array<{ name: string, url: string, digest?: string }>>
   npmDist: () => Promise<{ url: string, mirrorUrl: string, integrity?: string }>
 }> = {}) {
   return {
@@ -254,6 +254,19 @@ describe('planRemoteInstall', () => {
     expect(plan.node.urls[0]).toBe('https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-arm64.tar.gz')
     expect(plan.node.filename).toBe('node-v22.22.0-linux-arm64.tar.gz')
     expect(plan.node.version).toBe('v22.22.0')
+  })
+
+  it('drops every mirror when the release digest is unavailable', async () => {
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers({
+      // The asset exists but the release carries no digest, so nothing can be verified.
+      listAssets: () => Promise.resolve(LINUX_ASSETS.map(asset => ({ name: asset.name, url: asset.url }))),
+    }))
+    if (plan.dsh.kind !== 'pkg-zip')
+      throw new Error('expected pkg-zip')
+    expect(plan.dsh.digest).toBeUndefined()
+    // An unverifiable download must not gain extra writable sources.
+    expect(plan.dsh.urls).toEqual([LINUX_ASSETS[0]?.url])
+    expect(plan.notes.join('\n')).toContain('未取得')
   })
 
   it('derives deterministic URLs and notes skipped verification when metadata fails', async () => {

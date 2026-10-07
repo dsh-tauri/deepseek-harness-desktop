@@ -130,7 +130,8 @@ export async function planRemoteInstall(
       notes.push(`release 资产元数据获取失败（${messageOf(error)}）`)
     }
     if (digest === undefined)
-      notes.push(`未取得 ${zipName} 的可信摘要，将跳过 SHA-256 校验`)
+      notes.push(`未取得 ${zipName} 的可信摘要，将跳过 SHA-256 校验；校验不了就不启用镜像`)
+    const dshUrls = urls ?? dshZipDownloadUrls(repo, resolved.tag, zipName)
     return {
       os,
       arch,
@@ -139,7 +140,8 @@ export async function planRemoteInstall(
       dshEntry: DSH_ZIP_ENTRY,
       dshVersion: resolved.version,
       node,
-      dsh: { kind: 'pkg-zip', urls: urls ?? dshZipDownloadUrls(repo, resolved.tag, zipName), ...digest === undefined ? {} : { digest }, zipName, tag: resolved.tag },
+      // 摘要缺失时脚本会跳过 SHA-256 校验：此时只留官方源，绝不额外放大可写入口。
+      dsh: { kind: 'pkg-zip', urls: digest === undefined ? dshUrls.slice(0, 1) : dshUrls, ...digest === undefined ? {} : { digest }, zipName, tag: resolved.tag },
       pnpm,
       notes,
     }
