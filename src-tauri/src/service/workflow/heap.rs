@@ -1,7 +1,13 @@
 use std::ffi::OsString;
 
 const AUTO_HEAP_MIN_MB: u64 = 2048;
-const AUTO_HEAP_MAX_MB: u64 = 8192;
+
+/// 自动值的上限。取物理内存的一半后再按这个上限收敛。
+///
+/// 曾长期是 8192，实测在 63.2GiB 的机器上偏小：单个大会话的日志（Session.log
+/// 常驻内存）加载后就要 2GB 以上，跑起来峰值轻松越过 8GB，进程在 8.2GB 附近
+/// 以 code 134（SIGABRT）终止。抬高到 16384 后同一会话稳定运行。
+const AUTO_HEAP_MAX_MB: u64 = 16384;
 
 /// 「堆上限交给 NODE_OPTIONS」的哨兵值。
 ///
@@ -235,13 +241,18 @@ mod tests {
         assert_eq!(auto_heap_limit_mb(8192), 4096);
         assert_eq!(auto_heap_limit_mb(12288), 6144);
         assert_eq!(auto_heap_limit_mb(16384), 8192);
-        assert_eq!(auto_heap_limit_mb(32768), 8192);
+        assert_eq!(auto_heap_limit_mb(32768), 16384);
+        // 64GB 机器（用户机器 63.2GiB 的同类量级）：一半是 31615MB，必须仍然钳在自动上限内
+        assert_eq!(auto_heap_limit_mb(63231), AUTO_HEAP_MAX_MB as u32);
+        assert_eq!(auto_heap_limit_mb(131072), AUTO_HEAP_MAX_MB as u32);
     }
 
     #[test]
     fn resolve_preserves_configured_value_and_falls_back_on_unknown_memory() {
         assert_eq!(resolve_heap_limit_mb(Some(12288), false, Some(16384)), Some(12288));
         assert_eq!(resolve_heap_limit_mb(None, false, Some(16384)), Some(8192));
+        // 大内存机器上自动值不再被 8192 截断（issue 里的 8.2GB 崩溃现场）
+        assert_eq!(resolve_heap_limit_mb(None, false, Some(65536)), Some(AUTO_HEAP_MAX_MB as u32));
         assert_eq!(resolve_heap_limit_mb(None, false, Some(0)), None);
         assert_eq!(resolve_heap_limit_mb(None, false, None), None);
     }
