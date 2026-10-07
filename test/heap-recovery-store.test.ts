@@ -25,8 +25,16 @@ const V8_HEAP_OOM_LINE = 'FATAL ERROR: Ineffective mark-compacts near heap limit
 const V8_HEAP_PEAK_LINE = 'Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB'
 const SERVICE_LOG = `${V8_HEAP_OOM_LINE}\n${V8_HEAP_PEAK_LINE}`
 
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
 /** 记录每次 invoke，并按命令给出一条「能跑完一轮 boot」的应答 */
-function stubRuntime(recoveryLimitMb: number | null) {
+function stubRuntime(recoveryLimitMb: number | null, onUpdateConfig?: () => Promise<void>) {
   let healthChecks = 0
   invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'proxy_health_check') {
@@ -50,6 +58,7 @@ function stubRuntime(recoveryLimitMb: number | null) {
       return recoveryLimitMb
     }
     if (command === 'update_app_config') {
+      await onUpdateConfig?.()
       return undefined
     }
     if (command === 'get_app_config') {
@@ -141,5 +150,24 @@ describe('harness heap OOM recovery', () => {
     expect(harness.status).toBe('error')
     expect(harness.heapOomHint).toContain('16384 MB')
     expect(harness.heapOomHint).toContain('8234')
+  })
+
+  it('does not relaunch the service when the user stops it while the new limit is being written', async () => {
+    const entered = deferred()
+    const gate = deferred()
+    stubRuntime(16384, async () => {
+      entered.resolve()
+      await gate.promise
+    })
+
+    const exit = harness.handleProcessExit({ pid: 42, exitCode: 134 })
+    await entered.promise
+    await harness.shutdown()
+    gate.resolve()
+    await exit
+
+    expect(callsOf('launch_harness')).toHaveLength(0)
+    expect(harness.status).toBe('error')
+    expect(harness.errorMsg).toBe('已停止')
   })
 })
