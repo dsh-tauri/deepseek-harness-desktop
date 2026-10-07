@@ -391,13 +391,23 @@ describe('buildInstallScript', () => {
     const npmScript = buildInstallScript(await planRemoteInstall('Linux 5.15 aarch64', {}, healthyFetchers()))
     expect(npmScript).toContain('fetch_verified "$TMP/dsh.tgz"')
   })
+  it('authenticates the node checksum manifest against the pinned digest before trusting it', async () => {
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+    const script = buildInstallScript(plan)
+    // 清单自身也必须过摘要：镜像提供的清单只有在与官方逐字节相同时才被接受，
+    // 否则「镜像改过的运行时 + 镜像改过的清单」会被当成一次合法安装。
+    expect(script).toContain(
+      `fetch_verified "$TMP/SHASUMS256.txt" "sha256:${plan.node.shasumSha256}" "SHASUMS256.txt"`,
+    )
+    expect(script).not.toContain('fetch "$TMP/SHASUMS256.txt"')
+  })
 })
 
 describe('install script execution (real POSIX sh)', () => {
   /**
    * Run one generated script under the real `sh` inside a sandboxed HOME,
    * with a fake `curl` first on PATH that "downloads" tampered bytes and a
-   * SHASUMS256.txt pinning a digest those bytes cannot match.
+   * SHASUMS256.txt whose own bytes cannot match the pinned manifest digest.
    */
   function runScript(script: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
     const binDir = join(sandbox, 'fake-bin')
@@ -573,7 +583,13 @@ describe('install script execution (real POSIX sh)', () => {
     }))
     // The pinned pnpm digest is the real release's; point it at the crafted
     // tarball so the verify step passes against what the fake curl serves.
-    const plan: RemoteInstallPlan = { ...basePlan, pnpm: { ...basePlan.pnpm, sha256: digest(pnpmTgz, 'sha256', 'hex') } }
+    // Same for the node manifest: its own digest is pinned in the plan, so the
+    // crafted SHASUMS256.txt must be declared as the trusted one.
+    const plan: RemoteInstallPlan = {
+      ...basePlan,
+      node: { ...basePlan.node, shasumSha256: digest(join(served, 'SHASUMS256.txt'), 'sha256', 'hex') },
+      pnpm: { ...basePlan.pnpm, sha256: digest(pnpmTgz, 'sha256', 'hex') },
+    }
 
     const sandbox = tempDir()
     const outcome = await runScriptServing(buildInstallScript(plan), sandbox, served)
@@ -647,8 +663,14 @@ describe('install script execution (real POSIX sh)', () => {
       `${createHash('sha256').update(readFileSync(nodeTgz)).digest('hex')}  node-v22.22.0-linux-x64.tar.gz\n`,
     )
 
-    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
-    expect(plan.node.urls[0]).toContain('nodejs.org')
+    const basePlan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+    expect(basePlan.node.urls[0]).toContain('nodejs.org')
+    // The crafted manifest stands in for the official one: pin its own digest so
+    // the run exercises the ARCHIVE fallback, not the manifest check.
+    const plan: RemoteInstallPlan = {
+      ...basePlan,
+      node: { ...basePlan.node, shasumSha256: createHash('sha256').update(readFileSync(join(served, 'SHASUMS256.txt'))).digest('hex') },
+    }
 
     const sandbox = tempDir()
     // pnpm and dsh are pre-installed so the run exercises the node section,
@@ -668,6 +690,42 @@ describe('install script execution (real POSIX sh)', () => {
     expect(outcome.stdout).toContain('node 安装完成')
     expect(outcome.stdout).toContain('远端初始化完成')
     expect(existsSync(join(root, 'runtime', 'bin', 'node'))).toBe(true)
+  })
+
+  it('fails closed when no served manifest matches the pinned digest (real POSIX sh)', async () => {
+    const work = tempDir()
+    const served = join(work, 'served')
+    mkdirSync(served, { recursive: true })
+
+    const nodeDir = join(work, 'node-v22.22.0-linux-x64')
+    mkdirSync(join(nodeDir, 'bin'), { recursive: true })
+    mkdirSync(join(nodeDir, 'include'), { recursive: true })
+    writeFileSync(join(nodeDir, 'bin', 'node'), '#!/bin/sh\nexec sh "$@"\n')
+    writeFileSync(join(nodeDir, 'include', 'node'), 'headers\n')
+    const nodeTgz = join(served, 'node-v22.22.0-linux-x64.tar.gz')
+    await promisify(execFile)('tar', ['-czf', nodeTgz, '-C', work, 'node-v22.22.0-linux-x64'])
+    // A manifest that matches the served archive but NOT the pinned digest: the
+    // whole point is that the archive fallback must not rescue a rewritten manifest.
+    writeFileSync(
+      join(served, 'SHASUMS256.txt'),
+      `${createHash('sha256').update(readFileSync(nodeTgz)).digest('hex')}  node-v22.22.0-linux-x64.tar.gz\n`,
+    )
+
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+
+    const sandbox = tempDir()
+    const root = join(sandbox, REMOTE_ROOT)
+    mkdirSync(join(root, 'dependencies', 'pnpm', 'bin'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), 'placeholder')
+    mkdirSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'placeholder')
+
+    const outcome = await runScriptWithBrokenFirstSource(buildInstallScript(plan), sandbox, served)
+    expect(outcome.stderr).toBe('')
+    expect(outcome.code).toBe(11)
+    expect(outcome.stdout).toContain('checksum mismatch: SHASUMS256.txt')
+    expect(outcome.stdout).not.toContain('node 安装完成')
+    expect(existsSync(join(root, 'runtime'))).toBe(false)
   })
 })
 

@@ -29,7 +29,7 @@ export interface RemoteInstallPlan {
   repo: string
   dshEntry: string
   dshVersion: string
-  node: { urls: string[], shasumUrls: string[], filename: string, version: string }
+  node: { urls: string[], shasumUrls: string[], shasumSha256: string, filename: string, version: string }
   dsh: DshNpmPlan | DshZipPlan
   pnpm: { urls: string[], sha256: string, version: string }
   notes: string[]
