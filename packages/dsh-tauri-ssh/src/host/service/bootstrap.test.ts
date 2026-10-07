@@ -401,6 +401,13 @@ describe('buildInstallScript', () => {
     )
     expect(script).not.toContain('fetch "$TMP/SHASUMS256.txt"')
   })
+  it('fails closed when the remote cannot compute a digest instead of skipping verification', async () => {
+    const script = buildInstallScript(await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers()))
+    expect(script).toContain('REMOTE_INSTALL_NO_DIGEST_TOOL')
+    expect(script).toContain('exit 14')
+    // 摘要工具缺失或失效时必须报错退出：走「跳过校验」会让镜像清单与镜像归档被一起替换后仍然装成功
+    expect(script).not.toContain('远端缺少摘要工具，跳过校验')
+  })
 })
 
 describe('install script execution (real POSIX sh)', () => {
@@ -409,7 +416,7 @@ describe('install script execution (real POSIX sh)', () => {
    * with a fake `curl` first on PATH that "downloads" tampered bytes and a
    * SHASUMS256.txt whose own bytes cannot match the pinned manifest digest.
    */
-  function runScript(script: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
+  function runScript(script: string, sandbox: string, options: { brokenDigestTool?: boolean } = {}): Promise<{ code: number, stdout: string, stderr: string }> {
     const binDir = join(sandbox, 'fake-bin')
     mkdirSync(binDir, { recursive: true })
     const fakeCurl = join(binDir, 'curl')
@@ -434,6 +441,13 @@ describe('install script execution (real POSIX sh)', () => {
       'exit 0',
     ].join('\n'))
     chmodSync(fakeCurl, 0o755)
+    if (options.brokenDigestTool === true) {
+      for (const tool of ['sha256sum', 'shasum']) {
+        const broken = join(binDir, tool)
+        writeFileSync(broken, '#!/bin/sh\nexit 1\n')
+        chmodSync(broken, 0o755)
+      }
+    }
     const scriptPath = join(sandbox, 'install.sh')
     writeFileSync(scriptPath, script)
     const run = promisify(execFile)
@@ -460,6 +474,21 @@ describe('install script execution (real POSIX sh)', () => {
     expect(existsSync(join(sandbox, REMOTE_ROOT, 'tmp'))).toBe(false)
     expect(existsSync(join(sandbox, REMOTE_ROOT, 'runtime.new'))).toBe(false)
     expect(existsSync(join(sandbox, REMOTE_ROOT, 'dependencies', 'dsh'))).toBe(false)
+  })
+
+  /**
+   * The sandbox sha256sum/shasum exist but cannot produce a digest, i.e. the
+   * remote reaches every URL yet cannot verify anything. Installing anyway
+   * would hand the mirror both the runtime and the manifest that vouches for it.
+   */
+  it('refuses to install when the remote cannot compute a digest (real POSIX sh)', async () => {
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+    const sandbox = tempDir()
+    const outcome = await runScript(buildInstallScript(plan), sandbox, { brokenDigestTool: true })
+    expect(outcome.code).toBe(14)
+    expect(outcome.stdout).toContain('REMOTE_INSTALL_NO_DIGEST_TOOL')
+    expect(outcome.stdout).not.toContain('跳过校验')
+    expect(existsSync(join(sandbox, REMOTE_ROOT, 'runtime'))).toBe(false)
   })
 
   it('skips every section when the three components are already installed', async () => {

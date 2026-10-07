@@ -288,8 +288,9 @@ export function buildInstallScript(plan: RemoteInstallPlan): string {
     '    fi',
     '  fi',
     '  if [ -z "$_got" ]; then',
-    '    log verify "警告: 远端缺少摘要工具，跳过校验 $_name"',
-    '    return 0',
+    // 跳过校验等于让镜像同时决定运行时和它的校验依据，这里必须失败而不是放行。
+    '    log failed "REMOTE_INSTALL_NO_DIGEST_TOOL: 远端缺少可用的摘要工具（sha256sum/shasum），无法校验 $_name"',
+    '    exit 14',
     '  fi',
     '  if [ "$_got" != "$_hex" ]; then',
     '    log verify "校验不通过: $_name (want sha$_algo:$_hex, got $_got)"',
