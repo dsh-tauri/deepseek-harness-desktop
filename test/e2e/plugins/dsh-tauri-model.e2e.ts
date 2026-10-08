@@ -229,25 +229,28 @@ describe('L2 客户端', () => {
   }
 
   it('验证模型行的上移/下移真的改变内核模型目录的顺序', async () => {
-    await rpc('settings/mutate', {
-      args: {
-        ns: 'llm-pi-ai',
-        ops: [{
-          op: 'set',
-          path: ['providers', ORDER_ROUTE],
-          value: {
-            displayName: ORDER_ROUTE,
-            api: 'openai-completions',
-            baseURL: 'http://127.0.0.1:9/v1',
-            models: ORDER_MODELS.map(id => ({ id, name: id })),
-          },
-        }],
-      },
-    })
-    expect(await catalogModels(), '前置：目录必须先按声明序就位').toEqual(ORDER_MODELS)
-
-    const app = await newDshPage(browser)
+    let app: Awaited<ReturnType<typeof newDshPage>> | undefined
     try {
+      // 种子路由落在共享 scratch profile 上：从这里开始就必须被 finally 保护，
+      // 否则种完之后的任何一步失败都会把路由留在库里，拖垮后面依赖「无可用提供商」的用例。
+      await rpc('settings/mutate', {
+        args: {
+          ns: 'llm-pi-ai',
+          ops: [{
+            op: 'set',
+            path: ['providers', ORDER_ROUTE],
+            value: {
+              displayName: ORDER_ROUTE,
+              api: 'openai-completions',
+              baseURL: 'http://127.0.0.1:9/v1',
+              models: ORDER_MODELS.map(id => ({ id, name: id })),
+            },
+          }],
+        },
+      })
+      expect(await catalogModels(), '前置：目录必须先按声明序就位').toEqual(ORDER_MODELS)
+
+      app = await newDshPage(browser)
       await openSettings(app.page, app.frame, app.syntheticFallbacks)
       await selectSettingsSection(app.page, app.frame, '模型', app.syntheticFallbacks)
 
@@ -261,6 +264,7 @@ describe('L2 客户端', () => {
       await expect.poll(async () => await firstId.inputValue(), { timeout: 15_000, message: '编辑面板必须列出已声明的模型' })
         .toBe('m-one')
 
+      // 真实鼠标点击：按下时浏览器会把焦点交给按钮，焦点保活必须覆盖这条路径。
       await row.locator(`button[aria-label="${MOVE_DOWN} 1"]`).click()
       await row.getByRole('button', { name: '保存' }).click()
 
@@ -271,8 +275,8 @@ describe('L2 客户端', () => {
       expect(app.errors, '模型重排不得抛出应用级错误').toEqual([])
     }
     finally {
-      await app.close()
-      // 共享 scratch profile 上撤掉种子路由：后续用例（引导弹层、预设反向）依赖「无可用提供商」。
+      if (app !== undefined)
+        await app.close()
       await rpc('settings/mutate', { args: { ns: 'llm-pi-ai', ops: [{ op: 'unset', path: ['providers', ORDER_ROUTE] }] } })
     }
   })

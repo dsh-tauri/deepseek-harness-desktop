@@ -110,6 +110,24 @@ describe.each(['deepseek', 'pi-ai'] as const)('%s model row identity', (kind) =>
     expect((view.getByRole('textbox', { name: 'modelId 2' }) as HTMLInputElement).value).toBe('second')
   })
 
+  it('keeps the edited input focused through a real pointer press on the move button', () => {
+    const view = mount([{ id: 'first' }, { id: 'second' }, { id: 'third' }])
+    const input = view.getByRole('textbox', { name: 'modelId 3' }) as HTMLInputElement
+    input.focus()
+    fireEvent.change(input, { target: { value: 'typed' } })
+
+    const button = view.getByRole('button', { name: 'moveUp 3' })
+    // 真实指针路径：按下（浏览器会尝试把焦点交给按钮）→ 抬起 → 点击。
+    fireEvent.mouseDown(button)
+    expect(document.activeElement, '按下不得把焦点从输入框抢到按钮上').toBe(input)
+    fireEvent.mouseUp(button)
+    fireEvent.click(button)
+
+    expect(view.getByRole('textbox', { name: 'modelId 2' }), '移动后输入框必须还在焦点上').toBe(input)
+    expect(document.activeElement).toBe(input)
+    expect(input.value).toBe('typed')
+  })
+
   it('disables the move buttons on the first and last row', () => {
     const view = mount([{ id: 'first' }, { id: 'second' }])
     const disabled = (name: string): boolean =>

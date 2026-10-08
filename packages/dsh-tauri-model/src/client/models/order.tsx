@@ -13,7 +13,12 @@ export function swappedAt<T>(items: readonly T[], index: number, target: number)
   return next
 }
 
-/** 行尾的「上移 / 下移」按钮组；位置与总数由调用方按 1 起算。 */
+/**
+ * 行尾的「上移 / 下移」按钮组；位置与总数由调用方按 1 起算。
+ *
+ * 按下时取消 `mousedown` 的默认行为：浏览器会在 mousedown 阶段把焦点交给被点的按钮，
+ * 于是正在编辑的输入框会在重排前就丢焦点。取消默认行为不阻断 `click`，键盘激活也不受影响。
+ */
 export function OrderButtons(props: {
   position: number
   count: number
@@ -23,6 +28,9 @@ export function OrderButtons(props: {
   onMove: (delta: number) => void
 }): ReactNode {
   const { position, count, disabled } = props
+  const keepFocus = (event: { preventDefault: () => void }): void => {
+    event.preventDefault()
+  }
   return (
     <>
       <button
@@ -31,6 +39,7 @@ export function OrderButtons(props: {
         aria-label={`${props.upLabel} ${String(position)}`}
         title={props.upLabel}
         disabled={disabled || position <= 1}
+        onMouseDown={keepFocus}
         onClick={() => { props.onMove(-1) }}
       >
         <ArrowUp width={14} height={14} />
@@ -41,6 +50,7 @@ export function OrderButtons(props: {
         aria-label={`${props.downLabel} ${String(position)}`}
         title={props.downLabel}
         disabled={disabled || position >= count}
+        onMouseDown={keepFocus}
         onClick={() => { props.onMove(1) }}
       >
         <ArrowDown width={14} height={14} />
