@@ -15,6 +15,14 @@ export interface ReadinessProbeResult {
    * 那一刻；否则端口起来后最多还要空等满一个常规间隔。
    */
   notListening?: boolean
+  /**
+   * 端口已在监听，但启动页尚未登记（boot page 404/401/5xx，或建连后请求失败）。
+   *
+   * 与 `notListening` 同属「本轮没取任何 bundle、下一刻就可能就绪」的状态：端口门禁
+   * 已通过说明服务进程起来了，剩下的只是它自己的启动尾巴，本轮只发了一次请求
+   * （毫秒级），因此同样改用快扫间隔。
+   */
+  bootPending?: boolean
   phase?: StartupPhase
   reason?: string
 }
@@ -26,8 +34,11 @@ export interface ReadinessPollResult extends ReadinessProbeResult {
 interface PollReadinessOptions {
   probe: () => Promise<ReadinessProbeResult>
   intervalMs: number
-  /** 探测结果标记 `notListening` 时改用的快扫间隔；缺省与 `intervalMs` 相同 */
-  notListeningIntervalMs?: number
+  /**
+   * 探测结果标记 `notListening` / `bootPending` 时改用的快扫间隔；
+   * 缺省与 `intervalMs` 相同。
+   */
+  fastRetryIntervalMs?: number
   maxAttempts?: number
   inactivityTimeoutMs?: number
   absoluteTimeoutMs?: number
@@ -101,7 +112,7 @@ function boundedWait(
 export async function pollReadiness({
   probe,
   intervalMs,
-  notListeningIntervalMs = intervalMs,
+  fastRetryIntervalMs = intervalMs,
   maxAttempts,
   inactivityTimeoutMs,
   absoluteTimeoutMs,
@@ -158,8 +169,9 @@ export async function pollReadiness({
       return { ...result, timeout: afterProbeTimeout }
     }
     if (shouldContinue() && remainingAttempts !== 0) {
+      const fastRetry = result.notListening === true || result.bootPending === true
       const waitMs = boundedWait(
-        result.notListening === true ? notListeningIntervalMs : intervalMs,
+        fastRetry ? fastRetryIntervalMs : intervalMs,
         now(),
         startedAt,
         lastActivityAt,
