@@ -8,6 +8,7 @@ import process from 'node:process'
 import { createInterface } from 'node:readline'
 import { finished } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
+import { patchThemeSettings } from '../../support/theme-settings-patch'
 
 const require = createRequire(import.meta.url)
 
@@ -362,6 +363,16 @@ function locateCoreClient(coreDir: string, pkg: string): string | undefined {
   }
 }
 
+function patchThemeSettingsClient(dshBin: string): void {
+  const target = locateCoreClient(dirname(dirname(dshBin)), 'dsh-client-ui-theme')
+  if (target === undefined)
+    return
+  const source = readFileSync(target, 'utf8')
+  const patched = patchThemeSettings(source)
+  if (patched !== undefined && patched !== source)
+    writeFileSync(target, patched)
+}
+
 /**
  * 放宽官方 composer 的 inert 判定并写下能力标记（幂等，与
  * `src-tauri/src/service/patch/composer.rs` 同源同语义）。
@@ -613,6 +624,7 @@ export async function startDshHost(options: StartDshHostOptions): Promise<DshHos
   const [dshBin] = resolveDshCommand()
   patchRendererSlotOutlet(dshBin)
   patchComposerCwd(dshBin)
+  patchThemeSettingsClient(dshBin)
 
   const { home, profileDir, packages } = await scaffoldDshProfile(options)
   const logPath = join(home, 'dsh-web.log')

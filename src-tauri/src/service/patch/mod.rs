@@ -18,6 +18,7 @@ pub(crate) mod pi_ai_thinking;
 pub(crate) mod plugin_visibility;
 pub(crate) mod renderer;
 pub(crate) mod session;
+pub(crate) mod theme_settings;
 pub(crate) mod workspace;
 pub(crate) mod workspace_view;
 
@@ -33,7 +34,7 @@ use std::path::Path;
 /// 让编排层能看见哪一条出了问题。
 pub(crate) fn apply_all_at(core_dir: &Path) -> Result<(), String> {
     #[allow(clippy::type_complexity)]
-    let patches: [(&str, fn(&Path) -> Result<(), String>); 11] = [
+    let patches: [(&str, fn(&Path) -> Result<(), String>); 12] = [
         ("renderer", renderer::apply_at),
         ("composer", composer::apply_at),
         ("mobile_composer", mobile_composer::apply_at),
@@ -42,6 +43,7 @@ pub(crate) fn apply_all_at(core_dir: &Path) -> Result<(), String> {
         ("llm_session", llm_session::apply_at),
         ("pi_ai_thinking", pi_ai_thinking::apply_at),
         ("model_selection", model_selection::apply_at),
+        ("theme_settings", theme_settings::apply_at),
         ("workspace", workspace::apply_at),
         ("workspace_view", workspace_view::apply_at),
         ("plugin_visibility", plugin_visibility::apply_at),

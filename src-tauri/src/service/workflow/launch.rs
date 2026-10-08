@@ -447,6 +447,9 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // `relatedTarget` 为 null 的 blur 就直接 close()，菜单在 click 之前卸载，鼠标选择
     // 模型 / 推理等级变成空操作（键盘 Enter 正常、浏览器正常）。补丁放行该 blur，菜单外的
     // 点击仍由组件自身的文档级 mousedown 处理器关闭。最佳努力且幂等：锚点缺失时安全跳过。
+    if let Err(e) = crate::service::patch::theme_settings::apply(&app_handle) {
+        log::warn!("theme settings patch failed: {e}");
+    }
     if let Err(e) = crate::service::patch::model_selection::apply(&app_handle) {
         log::warn!("model selection mouse click patch failed: {e}");
     }

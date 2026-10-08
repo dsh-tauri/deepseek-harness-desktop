@@ -130,7 +130,7 @@ jobs:
       - name: Plugin L2 test (legacy core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts
+        run: node node_modules/vitest/vitest.mjs run --project plugin --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts --exclude test/e2e/plugins/dsh-tauri-theme.e2e.ts
 
       - name: Mobile settings composition (legacy core)
         env:
@@ -149,6 +149,14 @@ jobs:
         run: |
           for seed in 101 102 103 104 105; do
             node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts test/e2e/plugins/dsh-tauri-mobile-settings.e2e.ts test/e2e/plugins/dsh-tauri-appearance.e2e.ts test/e2e/plugins/dsh-tauri-appearance-boot.e2e.ts || exit $?
+          done
+
+      - name: Theme settings persistence (current core)
+        env:
+          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
+        run: |
+          for seed in 301 302 303 304 305; do
+            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-theme.e2e.ts || exit $?
           done
 
   # 桌面端 L3 E2E（vitest + WebdriverIO）：
