@@ -999,8 +999,8 @@ fn native_probe_stamp_path(app_handle: &AppHandle) -> PathBuf {
 /// （含原生包自带的产物目录）。
 ///
 /// 全部是廉价的元数据读取（不启动子进程、不递归进包内部）。取「前两层」而不是只取
-/// 顶层，是为了让 scope 包（`@scope/name`）的增删也能被感知；额外记录产物目录的修改
-/// 时间，是因为原地重写 `.node` 只改 `build/Release` 这类目录、不改包目录本身。
+/// 顶层，是为了让 scope 包（`@scope/name`）的增删也能被感知；额外记录产物目录**与其
+/// 内部文件**，是因为原地重写 `.node` 既不改包目录、也不改产物目录本身的时间。
 ///
 /// 任何让指纹**不完整**的情况（目录读不到、条目数超过兜底上限）都返回 `None`：
 /// 不完整的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
@@ -1063,7 +1063,7 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> 
         if name == ".bin" {
             continue;
         }
-        push_probe_stamp_entry(&entry.path(), name, out);
+        push_probe_stamp_entry(&entry.path(), name, out)?;
         if !name.starts_with('@') {
             continue;
         }
@@ -1074,25 +1074,47 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> 
             let Some(inner_name) = inner_name.to_str() else {
                 continue;
             };
-            push_probe_stamp_entry(&inner.path(), &format!("{name}/{inner_name}"), out);
+            push_probe_stamp_entry(&inner.path(), &format!("{name}/{inner_name}"), out)?;
         }
     }
     Some(())
 }
 
-/// 记录一个包的目录时间与其产物目录时间。产物目录不存在时只留包目录一项，
-/// 避免为绝大多数非原生包平白拉长指纹。
-fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) {
+/// 记录一个包的目录时间与其产物目录、目录内文件的时间。产物目录不存在时只留包目录
+/// 一项，避免为绝大多数非原生包平白拉长指纹。
+fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) -> Option<()> {
     out.push(format!("{label}={}", path_modified_nanos(dir)));
     for relative in NATIVE_ARTIFACT_DIRS {
         let artifact = dir.join(relative);
-        if artifact.is_dir() {
-            out.push(format!(
-                "{label}/{relative}={}",
-                path_modified_nanos(&artifact)
-            ));
+        if !artifact.is_dir() {
+            continue;
         }
+        out.push(format!(
+            "{label}/{relative}={}",
+            path_modified_nanos(&artifact)
+        ));
+        push_probe_stamp_artifacts(&artifact, &format!("{label}/{relative}"), out)?;
     }
+    Some(())
+}
+
+/// 记录产物目录内每一项的名字、大小与修改时间：原地覆盖一个已存在的 `.node` 只改文件
+/// 自身的时间，目录的修改时间不变，只记目录就会漏掉这次替换，进而跳过一次本该做的
+/// 探测。元数据读不到时记 `-`（与目录项同样的处理）仍然参与摘要，不静默丢项。
+fn push_probe_stamp_artifacts(dir: &Path, label: &str, out: &mut Vec<String>) -> Option<()> {
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let stamp = match std::fs::metadata(entry.path()) {
+            Ok(meta) => format!("{}:{}", meta.len(), file_modified_nanos(&meta)),
+            Err(_) => "-".to_string(),
+        };
+        out.push(format!("{label}/{name}={stamp}"));
+    }
+    Some(())
 }
 
 fn path_modified_nanos(path: &Path) -> String {
@@ -1655,6 +1677,41 @@ mod tests {
 
         std::fs::remove_dir_all(&modules).unwrap();
         assert!(probe_stamp_modules_digest(&modules).is_none());
+    }
+
+    /// 原地覆盖产物目录里已存在的 `.node` 必须改变指纹：目录的修改时间不变，只有文件
+    /// 自身的时间会变（fixture 用等长的两份内容，只有时间戳能让摘要不同）。条目数超过
+    /// 早先的 512 上限时同样如此 —— 那段规模正是这次改动才开始能缓存的。
+    #[test]
+    fn probe_stamp_detects_in_place_addon_overwrite_beyond_legacy_cap() {
+        let modules = std::env::temp_dir().join(format!(
+            "dsh-probe-stamp-overwrite-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&modules);
+        let release = modules.join("sharp/build/Release");
+        std::fs::create_dir_all(&release).unwrap();
+        let addon = release.join("sharp.node");
+        std::fs::write(&addon, "native-a").unwrap();
+        for index in 0..520 {
+            std::fs::create_dir_all(modules.join(format!("plain-{index}"))).unwrap();
+        }
+
+        let entries = probe_stamp_entries(&modules);
+        assert!(
+            entries.len() > 512,
+            "fixture must exceed the legacy entry cap"
+        );
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/build/Release/sharp.node=8:")));
+
+        let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&addon, "native-b").unwrap();
+        assert_ne!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::remove_dir_all(&modules).unwrap();
     }
 
     fn probe_stamp_entries(dir: &Path) -> Vec<String> {
