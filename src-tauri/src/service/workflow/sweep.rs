@@ -5,7 +5,9 @@ use crate::config;
 use std::fs;
 use std::process::Command;
 
-use super::process::{has_owned_process, kill_pid_tree, terminate_stale_harness_processes};
+use super::process::{
+    has_owned_process, kill_pid_tree, take_startup_sweep, terminate_stale_harness_processes,
+};
 use super::utils::is_port_in_use;
 
 /// 孤儿清扫用的 PID/端口标记文件路径（两行：PID、端口）。
@@ -61,7 +63,12 @@ pub fn sweep_orphan_harness(app_handle: &tauri::AppHandle) {
     // 先按命令行路径清扫所有从本应用 dsh 安装目录启动的孤儿 Harness 实例：
     // 标记文件只记录最近一次会话的 PID，应用多次崩溃/强杀会遗留更早的孤儿。
     // Windows 按入口路径与转发链状态回收，不按共享标记结束另一个仍在运行的 dev 实例。
-    terminate_stale_harness_processes(app_handle);
+    // 启动期只做一次：本次启动已清扫过就跳过（重复枚举同一份进程快照没有新结论）。
+    if take_startup_sweep() {
+        terminate_stale_harness_processes(app_handle);
+    } else {
+        log::debug!("Skipping orphan Harness sweep: already swept during this launch");
+    }
     if cfg!(windows) {
         return;
     }

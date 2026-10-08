@@ -13,6 +13,7 @@
 //! 阶段退出、前端只看到 `HARNESS_NOT_OWNED`（issue #441）。这里在 spawn 之前探测，
 //! 先尝试与核心对齐的捆绑运行时，再尝试重建，最后给出可读的 ABI 诊断。
 
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::Read;
@@ -56,9 +57,12 @@ const NATIVE_PROBE_MARKER: &str = "__DSH_NATIVE_PROBE__";
 /// 修改时间）、核心目录与核心版本、`node_modules` 前两层的条目（名字 + 修改时间）：
 /// 核心更新、node 升级/替换、平台包增删、`node_modules` 被重建都会失配，从而必然
 /// 重新探测。清空依赖目录或删掉这个文件即可强制回到「每次探测」。
+///
+/// 指纹全部条目参与计算后压成 SHA-256 摘要再落盘：真实安装（pnpm 虚拟 store）
+/// 的条目数已远超早先的固定上限，而摘要与条目数无关，比对精度不受规模影响。
 const NATIVE_PROBE_STAMP_FILE: &str = "core-native-probe.stamp.json";
-/// 指纹采集的条目上限：`node_modules` 异常膨胀时不至于把启动拖慢
-const NATIVE_PROBE_STAMP_MAX_ENTRIES: usize = 512;
+/// 指纹采集的条目上限：只在 `node_modules` 异常膨胀时兜底，正常安装远低于它
+const NATIVE_PROBE_STAMP_MAX_ENTRIES: usize = 8192;
 /// 原生模块探测脚本：列出无法被当前运行时加载的原生模块。
 ///
 /// 1. `sharp` / `koffi`：NAPI 可选依赖，缺目标平台包时动态 import 失败（原有修复路径）；
@@ -998,8 +1002,8 @@ fn native_probe_stamp_path(app_handle: &AppHandle) -> PathBuf {
 /// 顶层，是为了让 scope 包（`@scope/name`）的增删也能被感知；额外记录产物目录的修改
 /// 时间，是因为原地重写 `.node` 只改 `build/Release` 这类目录、不改包目录本身。
 ///
-/// 任何让指纹**不完整**的情况（目录读不到、条目数超出上限而只能截断）都返回 `None`：
-/// 截断过的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
+/// 任何让指纹**不完整**的情况（目录读不到、条目数超过兜底上限）都返回 `None`：
+/// 不完整的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
 fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path) -> Option<String> {
     use std::fmt::Write as _;
 
@@ -1016,17 +1020,30 @@ fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path)
         crate::service::core::active_version(app_handle).unwrap_or_default()
     );
 
+    let modules = probe_stamp_modules_digest(&core_root.join("node_modules"))?;
+    let _ = write!(key, "\nmodules={modules}");
+    Some(probe_stamp_digest(&key))
+}
+
+/// `node_modules` 指纹摘要：条目只受兜底上限约束（真实安装的规模远小于它），
+/// 摘要长度与条目数无关，因此既不截断、也不因规模放弃缓存。
+fn probe_stamp_modules_digest(modules: &Path) -> Option<String> {
     let mut entries: Vec<String> = Vec::new();
-    collect_probe_stamp_entries(&core_root.join("node_modules"), &mut entries)?;
+    collect_probe_stamp_entries(modules, &mut entries)?;
     if entries.len() > NATIVE_PROBE_STAMP_MAX_ENTRIES {
+        log::warn!(
+            "core native probe stamp skipped: {} entries exceed the cap",
+            entries.len()
+        );
         return None;
     }
     entries.sort_unstable();
-    for entry in entries {
-        key.push('\n');
-        key.push_str(&entry);
-    }
-    Some(key)
+    Some(probe_stamp_digest(&entries.join("\n")))
+}
+
+/// 指纹摘要：长度固定，与参与计算的条目数无关
+fn probe_stamp_digest(key: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(key.as_bytes()))
 }
 
 /// 原生包自带的产物目录，与 `NATIVE_PROBE_SCRIPT` 的候选判定同源
@@ -1599,6 +1616,64 @@ fn command_output_tail(output: &std::process::Output) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 指纹摘要必须与条目规模无关：真实安装的条目数已超过早先的固定上限，
+    /// 若还按条目数放弃缓存，结论戳永远写不下来（每次启动都重跑两个 node 子进程）。
+    #[test]
+    fn probe_stamp_digest_is_stable_and_size_independent() {
+        let modules = std::env::temp_dir().join(format!("dsh-probe-stamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&modules);
+        std::fs::create_dir_all(modules.join(".bin")).unwrap();
+        std::fs::create_dir_all(modules.join("@deepseek-ai/dsh-plugin")).unwrap();
+        std::fs::create_dir_all(modules.join("sharp/build/Release")).unwrap();
+        std::fs::write(modules.join(".bin/dsh"), "shim").unwrap();
+
+        let entries = probe_stamp_entries(&modules);
+        assert!(entries.iter().any(|entry| entry.starts_with("sharp=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/build/Release=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("@deepseek-ai/dsh-plugin=")));
+        assert!(!entries.iter().any(|entry| entry.starts_with(".bin")));
+
+        let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
+        assert!(digest.starts_with("sha256:"));
+        assert_eq!(digest.len(), "sha256:".len() + 64);
+        assert_eq!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::write(modules.join(".bin/dsh"), "another shim").unwrap();
+        assert_eq!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::create_dir_all(modules.join("plain")).unwrap();
+        let with_plain = probe_stamp_modules_digest(&modules).unwrap();
+        assert_ne!(digest, with_plain);
+
+        std::fs::write(modules.join("sharp/build/Release/sharp.node"), "native").unwrap();
+        assert_ne!(with_plain, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::remove_dir_all(&modules).unwrap();
+        assert!(probe_stamp_modules_digest(&modules).is_none());
+    }
+
+    fn probe_stamp_entries(dir: &Path) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_probe_stamp_entries(dir, &mut out).unwrap();
+        out.sort_unstable();
+        out
+    }
+
+    /// 指纹长度不随条目数增长：条目多寡只影响摘要输入，不影响落盘体积。
+    #[test]
+    fn probe_stamp_digest_length_does_not_grow_with_entries() {
+        let wide = (0..4000)
+            .map(|index| format!("pkg-{index}=1"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(probe_stamp_digest(&wide).len(), "sha256:".len() + 64);
+        assert_ne!(probe_stamp_digest(&wide), probe_stamp_digest("pkg-0=1"));
+    }
 
     #[test]
     fn package_names_allow_plain_and_scoped_names_only() {

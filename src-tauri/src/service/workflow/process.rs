@@ -51,6 +51,20 @@ fn owned_process_lock() -> &'static Mutex<Option<OwnedProcess>> {
     OWNED_PROCESS.get_or_init(|| Mutex::new(None))
 }
 
+/// 本次启动是否已按 dsh 入口路径清扫过历史残留。
+///
+/// 启动期的两处清扫（setup 的 sweep_orphan_harness 与 launch 前的那次）读的是同一份
+/// 进程快照：两次之间没有任何进程由本应用拉起，结论不会变化，而 Windows 上一次全量
+/// 枚举约 0.3–0.6s，重复执行纯属浪费启动时间。
+static STARTUP_SWEEP_DONE: AtomicBool = AtomicBool::new(false);
+
+/// 取用一次清扫机会：本次启动已清扫过时返回 false，调用方跳过重复清扫。
+///
+/// 先取后清，并发调用里只有一个真正执行。
+pub(super) fn take_startup_sweep() -> bool {
+    !STARTUP_SWEEP_DONE.swap(true, Ordering::SeqCst)
+}
+
 /// 记录新持有的 Harness 根进程（Unix，启动成功后调用）。
 #[cfg(not(windows))]
 pub(super) fn set_owned_process(pid: u32) {
@@ -58,6 +72,7 @@ pub(super) fn set_owned_process(pid: u32) {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     *guard = Some(OwnedProcess { pid });
+    STARTUP_SWEEP_DONE.store(false, Ordering::SeqCst);
 }
 
 /// 若调用方 owns 该进程（Windows 额外存句柄），记录之。
@@ -67,6 +82,8 @@ pub(super) fn set_owned_process_with_handle(pid: u32, handle: usize) {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     *guard = Some(OwnedProcess { pid, handle });
+    // 本应用此后持有自己的 Harness：再次启动前必须重新确认没有残留
+    STARTUP_SWEEP_DONE.store(false, Ordering::SeqCst);
 }
 
 /// 原子取出持有的进程（PID+句柄一起）。取走者负责关闭 Windows 句柄；

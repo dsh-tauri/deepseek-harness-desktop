@@ -19,8 +19,8 @@ use super::process::set_owned_process_with_handle;
 #[cfg(unix)]
 use super::process::warn_if_inotify_watch_limit_low;
 use super::process::{
-    has_owned_process, on_owned_process_exit, stop, terminate_stale_harness_processes, LaunchGuard,
-    LAUNCH_GUARD,
+    has_owned_process, on_owned_process_exit, stop, take_startup_sweep,
+    terminate_stale_harness_processes, LaunchGuard, LAUNCH_GUARD,
 };
 use super::status;
 use super::sweep::persist_harness_pid;
@@ -291,11 +291,19 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // .harness.pid 标记中）持续占用配置端口与 dependencies/dsh 的文件句柄，
     // 不清扫会导致端口一路漂移（3080→…→3085，issue #91）并让后续目录互换
     // 失败（os error 32）。按命令行路径精确匹配本应用 dsh 服务，不会误杀
-    // 用户其它 node 程序（debug 构建为 no-op，见 terminate_stale_harness_processes）。
+    // 用户其它 node 程序。
+    //
+    // setup 阶段（workflow::sweep_orphan_harness）已在本次启动里清扫过一次，
+    // 期间本应用没有拉起任何进程，重复枚举同一份快照没有新结论（Windows 上
+    // 一次全量枚举约 0.3–0.6s），因此只在尚未清扫时才执行。
     {
         let handle = app_handle.clone();
         if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
-            terminate_stale_harness_processes(&handle);
+            if take_startup_sweep() {
+                terminate_stale_harness_processes(&handle);
+            } else {
+                log::debug!("Skipping pre-launch stale Harness sweep: already swept during this launch");
+            }
         })
         .await
         {
