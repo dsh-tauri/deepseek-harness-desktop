@@ -21,17 +21,18 @@
  * - reconnect：需要可达的 `ssh dev` 别名机器。
  */
 
+import type { IncomingMessage } from 'node:http'
+import type { Duplex } from 'node:stream'
 import type { Connection, Server as SshServer } from 'ssh2'
 import type { MachineProfile, RemoteHostContext, RemoteSession } from '../../../packages/dsh-tauri-remote/src/host/types/index'
 import { Buffer } from 'node:buffer'
 import { execSync } from 'node:child_process'
 import { createHash, generateKeyPairSync } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer as createHttpServer, type IncomingMessage } from 'node:http'
+import { createServer as createHttpServer } from 'node:http'
 import { createServer, connect as tcpConnect } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import process from 'node:process'
-import { Duplex } from 'node:stream'
 import { join } from 'pathe'
 import { Server } from 'ssh2'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -877,9 +878,9 @@ describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
     socket.on('data', (chunk: Buffer) => {
       pending = Buffer.concat([pending, chunk])
       while (pending.length >= 2) {
-        const opcode = pending[0]! & 0x0f
+        const opcode = pending[0]! & 0x0F
         const masked = (pending[1]! & 0x80) !== 0
-        let length = pending[1]! & 0x7f
+        let length = pending[1]! & 0x7F
         let offset = 2
         if (length === 126) {
           if (pending.length < 4)

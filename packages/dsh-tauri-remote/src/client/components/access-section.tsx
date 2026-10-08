@@ -107,7 +107,10 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
             />
           </Field>
           <div className="col-span-12 flex items-center gap-[8px] text-[12px] leading-[18px] text-tertiary">
-            <span>{status.localPort === undefined ? t('access.listen.noUpstream') : t('access.listen.upstream')}{status.localPort === undefined ? '' : ` 127.0.0.1:${status.localPort}`}</span>
+            <span>
+              {status.localPort === undefined ? t('access.listen.noUpstream') : t('access.listen.upstream')}
+              {status.localPort === undefined ? '' : ` 127.0.0.1:${status.localPort}`}
+            </span>
           </div>
         </div>
       </Block>
@@ -176,17 +179,19 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
 
       <Block title={t('access.link.title')}>
         <div className="flex flex-col gap-[12px]">
-          {status.link === undefined ? null : (
-            <>
-              <div className="flex flex-wrap items-center gap-[8px]">
-                <code className="break-all text-[12px] leading-[18px] text-secondary" data-testid="access-link">{status.link}</code>
-                <Button variant="ghost" size="sm" data-testid="access-link-copy" onClick={() => void copyLink(status.link ?? '')}>{t('access.link.copy')}</Button>
-              </div>
-              {status.qr === undefined
-                ? <span className="text-[12px] leading-[18px] text-tertiary" data-testid="access-link-loopback">{t('access.link.loopbackHint')}</span>
-                : <img className="h-[160px] w-[160px] rounded-[8px] bg-white p-[8px]" src={status.qr} alt={t('access.link.qr')} data-testid="access-link-qr" />}
-            </>
-          )}
+          {status.link === undefined
+            ? null
+            : (
+                <>
+                  <div className="flex flex-wrap items-center gap-[8px]">
+                    <code className="break-all text-[12px] leading-[18px] text-secondary" data-testid="access-link">{status.link}</code>
+                    <Button variant="ghost" size="sm" data-testid="access-link-copy" onClick={() => void copyLink(status.link ?? '')}>{t('access.link.copy')}</Button>
+                  </div>
+                  {status.qr === undefined
+                    ? <span className="text-[12px] leading-[18px] text-tertiary" data-testid="access-link-loopback">{t('access.link.loopbackHint')}</span>
+                    : <img className="h-[160px] w-[160px] rounded-[8px] bg-white p-[8px]" src={status.qr} alt={t('access.link.qr')} data-testid="access-link-qr" />}
+                </>
+              )}
           {status.link === undefined && status.maskLink !== undefined ? <code className="break-all text-[12px] leading-[18px] text-tertiary" data-testid="access-mask-link">{status.maskLink}</code> : null}
           {status.link === undefined && status.maskLink === undefined ? <span className="text-[12px] leading-[18px] text-tertiary" data-testid="access-link-none">{t('access.link.none')}</span> : null}
           {status.link === undefined && status.maskLink !== undefined ? <span className="text-[12px] leading-[18px] text-tertiary">{t('access.link.maskedHint')}</span> : null}
@@ -209,16 +214,18 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
               }}
             />
           </Field>
-          {tunnelMode !== 'token' ? null : (
-            <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
-              <Field className="col-span-6" label={t('access.tunnel.token')}>
-                <Input className="box-border w-full" type="password" value={token} data-testid="access-tunnel-token" onChange={event => setToken(event.target.value)} />
-              </Field>
-              <Field className="col-span-6" label={t('access.tunnel.hostname')}>
-                <Input className="box-border w-full" value={tunnelHost} placeholder="dsh.example.com" data-testid="access-tunnel-hostname" onChange={event => setHostname(event.target.value)} />
-              </Field>
-            </div>
-          )}
+          {tunnelMode !== 'token'
+            ? null
+            : (
+                <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
+                  <Field className="col-span-6" label={t('access.tunnel.token')}>
+                    <Input className="box-border w-full" type="password" value={token} data-testid="access-tunnel-token" onChange={event => setToken(event.target.value)} />
+                  </Field>
+                  <Field className="col-span-6" label={t('access.tunnel.hostname')}>
+                    <Input className="box-border w-full" value={tunnelHost} placeholder="dsh.example.com" data-testid="access-tunnel-hostname" onChange={event => setHostname(event.target.value)} />
+                  </Field>
+                </div>
+              )}
           <div className="flex flex-wrap items-center gap-[8px]">
             <Button
               variant="primary"
@@ -246,34 +253,40 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
             </Button>
             <span className="text-[12px] leading-[18px] text-tertiary" data-testid="access-tunnel-state">{t(tunnelStateKeyOf(status))}</span>
           </div>
-          {status.tunnel.url === undefined ? null : (
-            <div className="flex flex-wrap items-center gap-[8px]">
-              <code className="break-all text-[12px] leading-[18px] text-secondary" data-testid="access-tunnel-url">{status.tunnel.url}</code>
-              <Button variant="ghost" size="sm" onClick={() => void copyLink(status.tunnel.link ?? status.tunnel.url ?? '')}>{t('access.link.copy')}</Button>
-            </div>
-          )}
+          {status.tunnel.url === undefined
+            ? null
+            : (
+                <div className="flex flex-wrap items-center gap-[8px]">
+                  <code className="break-all text-[12px] leading-[18px] text-secondary" data-testid="access-tunnel-url">{status.tunnel.url}</code>
+                  <Button variant="ghost" size="sm" onClick={() => void copyLink(status.tunnel.link ?? status.tunnel.url ?? '')}>{t('access.link.copy')}</Button>
+                </div>
+              )}
           {status.tunnel.port === undefined ? null : <span className="text-[12px] leading-[18px] text-tertiary">{`${t('access.tunnel.port')} 127.0.0.1:${status.tunnel.port}`}</span>}
           {status.tunnel.mode === 'token' && status.tunnel.state !== 'stopped' ? <span className="text-[12px] leading-[18px] text-tertiary">{t('access.tunnel.dashboardHint')}</span> : null}
           {status.tunnel.error === undefined ? null : <p className="m-0 text-[12px] leading-[18px] text-error" role="alert" data-testid="access-tunnel-error">{status.tunnel.error}</p>}
-          {status.tunnel.events.length === 0 ? null : (
-            <div className="flex flex-col gap-[2px]" data-testid="access-tunnel-events">
-              {status.tunnel.events.slice(-EVENT_TAIL).map(event => (
-                <span key={event.seq} className="break-all text-[12px] leading-[18px] text-tertiary">{`${event.ts} ${event.line}`}</span>
-              ))}
-            </div>
-          )}
+          {status.tunnel.events.length === 0
+            ? null
+            : (
+                <div className="flex flex-col gap-[2px]" data-testid="access-tunnel-events">
+                  {status.tunnel.events.slice(-EVENT_TAIL).map(event => (
+                    <span key={event.seq} className="break-all text-[12px] leading-[18px] text-tertiary">{`${event.ts} ${event.line}`}</span>
+                  ))}
+                </div>
+              )}
         </div>
       </Block>
 
-      {status.events.length === 0 ? null : (
-        <Block title={t('access.events.title')}>
-          <div className="flex flex-col gap-[2px]" data-testid="access-events">
-            {status.events.slice(-EVENT_TAIL).map(event => (
-              <span key={event.seq} className="break-all text-[12px] leading-[18px] text-tertiary">{`${event.ts} ${event.line}`}</span>
-            ))}
-          </div>
-        </Block>
-      )}
+      {status.events.length === 0
+        ? null
+        : (
+            <Block title={t('access.events.title')}>
+              <div className="flex flex-col gap-[2px]" data-testid="access-events">
+                {status.events.slice(-EVENT_TAIL).map(event => (
+                  <span key={event.seq} className="break-all text-[12px] leading-[18px] text-tertiary">{`${event.ts} ${event.line}`}</span>
+                ))}
+              </div>
+            </Block>
+          )}
     </div>
   )
 
