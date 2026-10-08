@@ -121,6 +121,13 @@ describe('bubbleContent', () => {
       .toEqual({ title: '会话一', description: '系统运行中', loading: true })
   })
 
+  it('selects the tool-activity copy for a working session by its tool name', () => {
+    expect(bubbleContent({ id: '0', title: '会话一', liveActivity: { name: 'grep' } }, 'working'))
+      .toEqual({ title: '会话一', description: '正在检索', loading: true })
+    expect(bubbleContent({ id: '0', title: '会话一', liveActivity: { name: 'write' } }, 'working'))
+      .toEqual({ title: '会话一', description: '正在修改', loading: true })
+  })
+
   it('keeps the subagent prefix and selects the running copy', () => {
     expect(bubbleContent({ id: '0', origin: 'subagent', title: '会话一' }, 'running'))
       .toEqual({ title: '子代理 · 会话一', description: '任务运行中', loading: true })

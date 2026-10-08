@@ -175,7 +175,7 @@ export function bubbleContent(session: BubbleSession, motion: Motion) {
   const fallbackCopy = motion === 'waiting'
     ? statusCopy(session.phase === 'approval' ? 'approval' : 'waiting', seed)
     : motion === 'working'
-      ? statusCopy(toolActivityGroup(String((session.liveActivity as Record<string, unknown> | undefined)?.name ?? '')), seed)
+      ? activityCopy(toolActivityGroup(String((session.liveActivity as Record<string, unknown> | undefined)?.name ?? '')), seed)
       : statusCopy(motion, seed)
 
   const candidates = [
