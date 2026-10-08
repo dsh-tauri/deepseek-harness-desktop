@@ -21,11 +21,20 @@ export const IFRAME_FRAME_GRACE_TIMEOUT = 5000
 /**
  * 服务就绪探测间隔。
  *
- * 固定 1s，不退避：端口未监听时的探测只花 connect 超时（250ms），端口起来后一轮
- * 探测约 0.3-0.5s；退避却会让「服务已就绪」最多晚 5s 才被发现，而这正是启动
- * 尾段的全部剩余时间。
+ * 固定 1s，不退避：端口起来后一轮探测约 0.3-0.5s，退避却会让「服务已就绪」最多
+ * 晚 5s 才被发现，而这正是启动尾段的全部剩余时间；端口未监听的轮次改用
+ * HEALTH_PROBE_NOT_LISTENING_INTERVAL。
  */
 export const HEALTH_PROBE_INTERVAL = 1000
+
+/**
+ * 端口尚未被监听时的探测间隔。
+ *
+ * Rust 侧门禁在端口能绑上时直接判定未监听（<1ms），这一轮探测几乎零成本，于是
+ * 用快扫去撞「端口开始监听」那一刻：常规 1s 间隔下，端口起来后平均还要空等 ~0.5s
+ * 才会被下一次探测发现。只有明确标记 notListening 的轮次用它，其余失败仍走 1s。
+ */
+export const HEALTH_PROBE_NOT_LISTENING_INTERVAL = 250
 
 /** 服务启动阶段：无活动 / 绝对上限 */
 export const STARTUP_INACTIVITY_TIMEOUT = 180000

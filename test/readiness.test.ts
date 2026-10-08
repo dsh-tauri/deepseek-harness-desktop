@@ -22,6 +22,49 @@ describe('pollReadiness', () => {
     expect(attempts).toBe(3)
   })
 
+  it('fast-polls while the service port is not listening yet', async () => {
+    const waits: number[] = []
+    let attempts = 0
+    const result = await pollReadiness({
+      probe: async () => {
+        attempts++
+        return attempts < 3
+          ? { healthy: false, notOwned: false, notListening: true }
+          : { healthy: true, notOwned: false }
+      },
+      intervalMs: 1000,
+      notListeningIntervalMs: 250,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds)
+      },
+    })
+
+    expect(result.healthy).toBe(true)
+    expect(waits).toEqual([250, 250])
+  })
+
+  it('keeps the regular cadence for failures that are not a missing listener', async () => {
+    const waits: number[] = []
+    let attempts = 0
+    const result = await pollReadiness({
+      probe: async () => {
+        attempts++
+        return attempts < 2
+          ? { healthy: false, notOwned: false, notListening: true }
+          : { healthy: false, notOwned: false, reason: 'boot page returned 404 Not Found' }
+      },
+      intervalMs: 1000,
+      notListeningIntervalMs: 250,
+      maxAttempts: 3,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds)
+      },
+    })
+
+    expect(result.healthy).toBe(false)
+    expect(waits).toEqual([250, 1000])
+  })
+
   it('recovers when client modules become ready after the old attempt window', async () => {
     let attempts = 0
     const result = await pollReadiness({

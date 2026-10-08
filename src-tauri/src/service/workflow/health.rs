@@ -11,11 +11,20 @@ use super::startup;
 use super::utils;
 
 /// 客户端 bundle 的并发探测度：足以吃满回环带宽，又不会把刚起来的服务进程
-/// 压到无暇响应 WebView 自己的并发加载。
-const HEALTH_PROBE_CONCURRENCY: usize = 16;
+/// 压到无暇响应 WebView 自己的并发加载。实测 93 个 bundle 约 18MB，16 路要 300ms
+/// 上下，提高并发能直接缩短启动尾段的这一轮全量校验。
+const HEALTH_PROBE_CONCURRENCY: usize = 48;
 
 /// 读取 Harness 首页并解析本次启动实际声明的客户端模块。
 async fn client_probe_endpoints(port: u16) -> Result<Vec<String>, String> {
+    // 端口能绑上就说明还没有任何进程在监听它，此时发起 HTTP 探测只会吃满
+    // 建连超时（`LOOPBACK_CONNECT_TIMEOUT`）。绑定成功是「未监听」的充分证据，
+    // 判定成本不足 1ms；绑定失败则照旧走 HTTP 探测，不会把占用误判成未监听。
+    if !utils::is_port_in_use(port) {
+        return Err(format!(
+            "HARNESS_NOT_READY: Harness service is not listening yet (port {port})"
+        ));
+    }
     let client = utils::loopback_http_client(config::HEALTH_CHECK_TIMEOUT)
         .map_err(|e| format!("HARNESS_HEALTH_CLIENT_FAILED: {e}"))?;
     let root = format!("{}/", config::get_dsh_service_url(port));
@@ -142,6 +151,24 @@ pub async fn proxy_health_check(port: u16) -> Result<String, String> {
     ))
 }
 
+/// 就绪提交窗口的 ownership 判定：进程槽位仍在、或 `launch` 仍在进行（此时无持有
+/// 进程只是启动中的临时态）都放行，只有两者都不成立才是真退出。
+fn ownership_recheck_signal(owned: bool, launch_in_progress: bool) -> Result<(), String> {
+    if owned || launch_in_progress {
+        return Ok(());
+    }
+    Err(not_owned_probe_signal(false).to_string())
+}
+
+/// 复核本应用是否仍持有 Harness 进程（纯内存，不发 HTTP）。
+///
+/// 就绪轮询通过后、iframe 挂载前仍可能退出，因此提交前要复核一次 ownership。历史上
+/// 这里重跑完整健康探测，代价是重新拉取全部客户端 bundle（实测 93 个 / 18MB / 311ms），
+/// 而 ownership 只取决于进程槽位与启动守卫，故改用这条查询。
+pub fn recheck_ownership() -> Result<(), String> {
+    ownership_recheck_signal(has_owned_process(), LAUNCH_GUARD.load(Ordering::SeqCst))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,29 +184,25 @@ mod tests {
         assert!(not_owned_probe_signal(false).starts_with("HARNESS_NOT_OWNED"));
     }
 
-    #[tokio::test]
-    async fn boot_probe_reports_connection_refusal_with_underlying_cause() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        let error = client_probe_endpoints(port).await.unwrap_err();
-        assert!(
-            error.starts_with("HARNESS_BOOT_MANIFEST_REQUEST_FAILED:"),
-            "{error}"
+    /// 提交窗口的 ownership 复核只读内存状态：仍持有进程、或 launch 仍在进行都应
+    /// 放行，只有两者都不成立才判为退出，且文案与探测路径一致（错误页据此识别）。
+    #[test]
+    fn ownership_recheck_only_fails_when_process_is_gone() {
+        assert!(ownership_recheck_signal(true, false).is_ok());
+        assert!(ownership_recheck_signal(true, true).is_ok());
+        assert!(ownership_recheck_signal(false, true).is_ok());
+        assert_eq!(
+            ownership_recheck_signal(false, false).unwrap_err(),
+            "HARNESS_NOT_OWNED: no Harness process is owned by this app"
         );
-        assert!(error.contains("connect=true"), "{error}");
-        assert!(!error.contains("elapsed_ms="), "{error}");
-        assert!(error.contains("source:"), "{error}");
-        assert!(
-            error.contains(&format!("http://127.0.0.1:{port}/")),
-            "{error}"
-        );
-        assert_eq!(client_probe_endpoints(port).await.unwrap_err(), error);
     }
 
+    /// 端口未监听时必须由门禁直接判定，不再等 HTTP 建连超时。
+    ///
+    /// 失败原因同时是前端判定「服务尚未监听」的依据（据此走快扫节奏），因此
+    /// 文案与耗时都要锁死：既不能退回建连超时，也不能变成 ownership 丢失信号。
     #[tokio::test]
-    async fn boot_probe_gives_up_on_closed_port_without_os_connect_timeout() {
+    async fn boot_probe_reports_unlistening_port_without_waiting_for_connect_timeout() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -188,11 +211,45 @@ mod tests {
         let error = client_probe_endpoints(port).await.unwrap_err();
         let elapsed = started.elapsed();
 
-        assert!(error.contains("connect=true"), "{error}");
-        assert!(
-            elapsed < std::time::Duration::from_secs(1),
-            "closed-port probe waited {elapsed:?}"
+        assert_eq!(
+            error,
+            format!("HARNESS_NOT_READY: Harness service is not listening yet (port {port})")
         );
+        assert!(
+            elapsed < std::time::Duration::from_millis(150),
+            "unlistening-port probe waited {elapsed:?}"
+        );
+    }
+
+    /// 门禁只覆盖「端口未监听」：端口已被监听但不应答时，仍要如实上报为
+    /// 响应超时（`connect=false`），不能把两种失败混为一谈——前端据此区分
+    /// 「还在启动」与「起来了但不响应」。
+    #[tokio::test]
+    async fn boot_probe_still_reports_response_timeout_when_port_is_listening() {
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, mut hold) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0; 4096];
+                let _ = socket.read(&mut request).await;
+                let _ = hold.await;
+                drop(socket);
+            }
+        });
+
+        let result = client_probe_endpoints(port).await;
+        let _ = release.send(());
+        server.await.unwrap();
+        let error = result.unwrap_err();
+        assert!(
+            error.starts_with("HARNESS_BOOT_MANIFEST_REQUEST_FAILED:"),
+            "{error}"
+        );
+        assert!(error.contains("connect=false"), "{error}");
+        assert!(error.contains("timeout=true"), "{error}");
     }
 
     #[tokio::test]

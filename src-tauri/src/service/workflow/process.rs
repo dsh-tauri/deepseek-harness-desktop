@@ -16,6 +16,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::status;
 use super::sweep::harness_pid_path;
+use super::utils::wait_for_port_release;
 
 /// 当前持有的 Harness 根进程意外退出时通知前端的专用事件。
 pub(super) const HARNESS_PROCESS_EXITED_EVENT: &str = "harness-process-exited";
@@ -27,6 +28,9 @@ pub(super) struct HarnessProcessExitedPayload {
     pub(super) pid: u32,
     pub(super) exit_code: Option<i64>,
 }
+
+/// 结束进程后等待端口回落的上限（正常情况毫秒级返回，只有真占用才等到上限）。
+const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// 启动守卫：并发调用 `launch` 时只允许一个真正拉起 dsh 进程
 pub(crate) static LAUNCH_GUARD: AtomicBool = AtomicBool::new(false);
@@ -452,17 +456,14 @@ try {
         .unwrap_or_else(|error| error.into_inner())
         .as_ref()
         .map(|process| process.pid);
-    let mut found = 0;
+    // 结束进程后不再固定补睡：端口释放实测是毫秒级（taskkill 返回后约 1ms），
+    // 而紧随其后的启动会以 `wait_for_port_release` 等到端口真正回落，固定睡眠
+    // 只是把这段滞后放大成白等。
     for (pid, created) in orphan_harness_pids(&output.stdout, dsh_bin, owned_pid) {
-        if matches_process_creation(pid, created, || {
+        let _ = matches_process_creation(pid, created, || {
             log::warn!("Terminating orphan Harness service process {pid} (from dsh install dir)");
             kill_pid_tree(pid);
-        }) {
-            found += 1;
-        }
-    }
-    if found > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(800));
+        });
     }
 }
 
@@ -648,7 +649,6 @@ pub fn terminate_stale_harness_processes(app_handle: &tauri::AppHandle) {
             log::error!("Failed to enumerate stale Harness service processes");
             return;
         };
-        let mut found = 0;
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let Some((pid, cmdline)) = parse_ps_line(line) else {
                 continue;
@@ -656,14 +656,8 @@ pub fn terminate_stale_harness_processes(app_handle: &tauri::AppHandle) {
             if !is_harness_command_line(cmdline, dsh_bin_str) {
                 continue;
             }
-            found += 1;
             log::warn!("Terminating stale Harness service process {pid} (from dsh install dir)");
             kill_pid_tree(pid);
-        }
-        if found > 0 {
-            // 与 stop() 同理：信号发完后 PID 回收与端口释放还有短暂滞后，
-            // 让出一点时间避免紧随其后的启动探测撞上尚未释放的端口。
-            std::thread::sleep(std::time::Duration::from_millis(800));
         }
     }
 }
@@ -697,8 +691,15 @@ pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 清理孤儿清扫标记：正常停止的实例不应被下次启动当作残留
     let _ = fs::remove_file(harness_pid_path(&app_handle));
 
-    // 给系统一点时间释放端口 (重要！)
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    // 端口释放滞后是毫秒级，固定睡眠只会把这段时间放大成白等；以端口真正
+    // 回落为准，最坏情况仍退化为原先的等待上限。
+    {
+        let port = config::get_store_dat_setting(&app_handle).port;
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            wait_for_port_release(port, PORT_RELEASE_WAIT)
+        })
+        .await;
+    }
 
     status::set_status(status::Status::Stopped);
     status::emit_status(&app_handle);
@@ -723,7 +724,8 @@ pub fn stop_for_installer(app_handle: &tauri::AppHandle) {
     // 正常停止路径同样清理清扫标记（崩溃路径才需要下次启动清扫）
     let _ = fs::remove_file(harness_pid_path(app_handle));
     log::info!("Harness stopped and port released for installer handoff");
-    std::thread::sleep(std::time::Duration::from_millis(800));
+    let port = config::get_store_dat_setting(app_handle).port;
+    wait_for_port_release(port, PORT_RELEASE_WAIT);
 }
 
 /// 应用退出时同步回收 Harness 进程。
