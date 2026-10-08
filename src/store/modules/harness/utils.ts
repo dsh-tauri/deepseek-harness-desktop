@@ -8,8 +8,8 @@ import i18next from 'i18next'
 import { containsHeapOomError, containsInotifyLimitError, heapPeakFromLogs, pickErrorLines } from '@/components/logs.utils'
 import { toast } from '@/utils/toast'
 import {
+  HEALTH_PROBE_FAST_RETRY_INTERVAL,
   HEALTH_PROBE_INTERVAL,
-  HEALTH_PROBE_NOT_LISTENING_INTERVAL,
   LOG_TAIL_MAX_BYTES,
   STARTUP_INACTIVITY_TIMEOUT,
 } from './constants'
@@ -126,11 +126,24 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
         reason: message,
       }
     }
+    if (message.includes('boot page returned') || message.includes('HARNESS_BOOT_MANIFEST_REQUEST_FAILED')) {
+      // 端口已在监听、启动页尚未登记：本轮只发了一次请求、没取任何 bundle，下一刻
+      // 就可能就绪，快扫能把这 1s 空等压到 ~0.25s（实测启动尾段正是白等满一个常规
+      // 间隔）。仍记一行 warn：这个窗口通常是插件 boot 登记的尾巴，是启动慢的实证。
+      console.warn('[Harness] health check failed, retrying:', err)
+      return {
+        healthy: false,
+        notOwned: false,
+        bootPending: true,
+        phase: 'process-boot',
+        reason: message,
+      }
+    }
     if (message.includes('502') || message.includes('Bad Gateway')) {
       console.warn('[Harness] transient 502 during health check, retrying')
     }
     else {
-      // 单次探测失败是启动期的常态：服务尚未就绪、boot page 还是 404 等都会走到
+      // 单次探测失败是启动期的常态：服务尚未就绪、部分 bundle 还没登记等都会走到
       // 这里，而轮询会一直重试到该阶段 deadline；真正的失败由 startupError 以
       // errors.startup_* 报出。逐次记 ERROR 只会造成「满屏错误但其实启动正常」。
       console.warn('[Harness] health check failed, retrying:', err)
@@ -177,7 +190,7 @@ export function pollHarnessReadiness(
   return pollReadiness({
     probe: checkHealthViaProxy,
     intervalMs: HEALTH_PROBE_INTERVAL,
-    notListeningIntervalMs: HEALTH_PROBE_NOT_LISTENING_INTERVAL,
+    fastRetryIntervalMs: HEALTH_PROBE_FAST_RETRY_INTERVAL,
     inactivityTimeoutMs: STARTUP_INACTIVITY_TIMEOUT,
     absoluteTimeoutMs,
     shouldContinue,

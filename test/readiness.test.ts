@@ -33,7 +33,32 @@ describe('pollReadiness', () => {
           : { healthy: true, notOwned: false }
       },
       intervalMs: 1000,
-      notListeningIntervalMs: 250,
+      fastRetryIntervalMs: 250,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds)
+      },
+    })
+
+    expect(result.healthy).toBe(true)
+    expect(waits).toEqual([250, 250])
+  })
+
+  /**
+   * 端口已在监听、启动页尚未登记时同样快扫：这一轮只发了一次请求（毫秒级），却让
+   * 启动尾段白等满一个常规间隔（实测 boot page 404 之后多等 1000ms 才重试）。
+   */
+  it('fast-polls while the listening service has no boot page yet', async () => {
+    const waits: number[] = []
+    let attempts = 0
+    const result = await pollReadiness({
+      probe: async () => {
+        attempts++
+        return attempts < 3
+          ? { healthy: false, notOwned: false, bootPending: true, reason: 'boot page returned 404 Not Found' }
+          : { healthy: true, notOwned: false }
+      },
+      intervalMs: 1000,
+      fastRetryIntervalMs: 250,
       wait: async (milliseconds) => {
         waits.push(milliseconds)
       },
@@ -54,7 +79,7 @@ describe('pollReadiness', () => {
           : { healthy: false, notOwned: false, reason: 'boot page returned 404 Not Found' }
       },
       intervalMs: 1000,
-      notListeningIntervalMs: 250,
+      fastRetryIntervalMs: 250,
       maxAttempts: 3,
       wait: async (milliseconds) => {
         waits.push(milliseconds)
