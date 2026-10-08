@@ -1098,9 +1098,11 @@ fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) -> Opt
     Some(())
 }
 
-/// 记录产物目录内每一项的名字、大小与修改时间：原地覆盖一个已存在的 `.node` 只改文件
-/// 自身的时间，目录的修改时间不变，只记目录就会漏掉这次替换，进而跳过一次本该做的
-/// 探测。元数据读不到即返回 `None`：读不到就不能断言「和上次一样」，宁可重跑探测。
+/// 记录产物目录内每一项的名字、大小与修改时间，并递归下钻嵌套产物目录：原地覆盖一个
+/// 已存在的 `.node` 只改文件自身的时间，目录的修改时间不变，只记目录就会漏掉这次替换，
+/// 进而跳过一次本该做的探测；`prebuilds/<platform>/addon.node` 这类文件连第一层都不在，
+/// 只记一层同样会漏。元数据读不到即返回 `None`：读不到就不能断言「和上次一样」，宁可
+/// 重跑探测。
 fn push_probe_stamp_artifacts(dir: &Path, label: &str, out: &mut Vec<String>) -> Option<()> {
     for entry in std::fs::read_dir(dir).ok()? {
         let entry = entry.ok()?;
@@ -1108,7 +1110,14 @@ fn push_probe_stamp_artifacts(dir: &Path, label: &str, out: &mut Vec<String>) ->
         let Some(name) = name.to_str() else {
             continue;
         };
-        out.push(format!("{label}/{name}={}", artifact_stamp(&entry.path())?));
+        let path = entry.path();
+        let label = format!("{label}/{name}");
+        out.push(format!("{label}={}", artifact_stamp(&path)?));
+        // 链接（pnpm 的包目录、junction）不下钻：跟随链接会把同一份内容记两次，
+        // 自指的链接还会绕成死循环。链接自身的目标大小与时间已经记在上面一项里。
+        if entry.file_type().ok()?.is_dir() {
+            push_probe_stamp_artifacts(&path, &label, out)?;
+        }
     }
     Some(())
 }
@@ -1736,6 +1745,40 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(artifact_stamp(&addon).is_none());
         assert!(push_probe_stamp_artifacts(&dir, "sharp/build/Release", &mut Vec::new()).is_none());
+    }
+
+    /// 嵌套产物目录（`prebuilds/<platform>/addon.node`）里的原地覆盖同样必须改变指纹：
+    /// 这个文件既不在产物目录的第一层、也不会改到任何已记录目录的时间，只记一层的实现
+    /// 会漏掉它并跳过探测。
+    #[test]
+    fn probe_stamp_detects_in_place_overwrite_below_nested_artifact_directory() {
+        let modules = std::env::temp_dir().join(format!(
+            "dsh-probe-stamp-nested-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&modules);
+        let nested = modules.join("sharp/prebuilds/win32-x64");
+        std::fs::create_dir_all(&nested).unwrap();
+        let addon = nested.join("addon.node");
+        std::fs::write(&addon, "native-a").unwrap();
+
+        let entries = probe_stamp_entries(&modules);
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64/addon.node=8:")));
+
+        let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&addon, "native-b").unwrap();
+        assert_ne!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::remove_dir_all(&modules).unwrap();
     }
 
     fn probe_stamp_entries(dir: &Path) -> Vec<String> {
