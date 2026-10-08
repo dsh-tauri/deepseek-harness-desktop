@@ -18,9 +18,14 @@ export const IFRAME_LOAD_TIMEOUT = 20000
  */
 export const IFRAME_FRAME_GRACE_TIMEOUT = 5000
 
-/** 健康探测退避区间（1s 起、1.5 倍递增、封顶 5s） */
-export const HEALTH_PROBE_INITIAL_INTERVAL = 1000
-export const HEALTH_PROBE_MAX_INTERVAL = 5000
+/**
+ * 服务就绪探测间隔。
+ *
+ * 固定 1s，不退避：端口未监听时的探测只花 connect 超时（250ms），端口起来后一轮
+ * 探测约 0.3-0.5s；退避却会让「服务已就绪」最多晚 5s 才被发现，而这正是启动
+ * 尾段的全部剩余时间。
+ */
+export const HEALTH_PROBE_INTERVAL = 1000
 
 /** 服务启动阶段：无活动 / 绝对上限 */
 export const STARTUP_INACTIVITY_TIMEOUT = 180000

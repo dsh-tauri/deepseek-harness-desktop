@@ -2,11 +2,17 @@
 
 use std::sync::atomic::Ordering;
 
+use futures_util::StreamExt;
+
 use crate::config;
 
 use super::process::{has_owned_process, LAUNCH_GUARD};
 use super::startup;
 use super::utils;
+
+/// 客户端 bundle 的并发探测度：足以吃满回环带宽，又不会把刚起来的服务进程
+/// 压到无暇响应 WebView 自己的并发加载。
+const HEALTH_PROBE_CONCURRENCY: usize = 16;
 
 /// 读取 Harness 首页并解析本次启动实际声明的客户端模块。
 async fn client_probe_endpoints(port: u16) -> Result<Vec<String>, String> {
@@ -67,6 +73,55 @@ fn all_client_modules_ready(ready: usize, total: usize) -> bool {
     total > 0 && ready == total
 }
 
+/// 并发探测全部客户端 bundle，返回（就绪数量，按地址顺序排列的失败明细）。
+///
+/// 单个 bundle 动辄数百 KB，串行探测在 90 个模块上要 600ms 以上，而这段耗时正好
+/// 压在启动尾段的关键路径上：模块就绪后仍要等整轮探测走完才算就绪。
+///
+/// 结果按入参顺序回填，而不是按完成顺序：失败明细会拼进返回给前端的就绪原因，
+/// 前端靠它判断「是否出现新进展」（变化即刷新无活动计时）。顺序随并发抖动的话，
+/// 同一组失败每轮都会被当成新进展，把无活动超时一路拖到绝对上限。
+async fn probe_client_bundles(
+    client: &reqwest::Client,
+    endpoints: Vec<String>,
+) -> (usize, Vec<String>) {
+    let mut outcomes = futures_util::stream::iter(endpoints.into_iter().enumerate())
+        .map(|(index, endpoint)| async move {
+            let failure = match client.get(&endpoint).send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    if utils::looks_like_plugin_bundle(status.is_success(), &body) {
+                        None
+                    } else {
+                        let failure = format!("{endpoint} returned {status} (not a plugin bundle)");
+                        log::debug!("Health check failed: {failure}");
+                        Some(failure)
+                    }
+                }
+                Err(err) => {
+                    log::debug!("Health check {endpoint}: {err}");
+                    Some(format!("{endpoint}: {err}"))
+                }
+            };
+            (index, failure)
+        })
+        .buffer_unordered(HEALTH_PROBE_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    outcomes.sort_unstable_by_key(|(index, _)| *index);
+
+    let mut ready = 0usize;
+    let mut failures = Vec::with_capacity(outcomes.len());
+    for (_, failure) in outcomes {
+        match failure {
+            Some(failure) => failures.push(failure),
+            None => ready += 1,
+        }
+    }
+    (ready, failures)
+}
+
 /// 健康检查（通过 Rust 代理，避免 WebView CORS 问题）
 pub async fn proxy_health_check(port: u16) -> Result<String, String> {
     if !has_owned_process() {
@@ -76,28 +131,7 @@ pub async fn proxy_health_check(port: u16) -> Result<String, String> {
         .map_err(|e| format!("HARNESS_HEALTH_CLIENT_FAILED: {e}"))?;
     let endpoints = client_probe_endpoints(port).await?;
     let total = endpoints.len();
-    let mut ready = 0usize;
-    let mut failures = Vec::with_capacity(total);
-
-    for endpoint in endpoints {
-        match client.get(&endpoint).send().await {
-            Ok(response) => {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                if utils::looks_like_plugin_bundle(status.is_success(), &body) {
-                    ready += 1;
-                    continue;
-                }
-                let failure = format!("{endpoint} returned {status} (not a plugin bundle)");
-                log::debug!("Health check failed: {failure}");
-                failures.push(failure);
-            }
-            Err(err) => {
-                log::debug!("Health check {endpoint}: {err}");
-                failures.push(format!("{endpoint}: {err}"));
-            }
-        }
-    }
+    let (ready, failures) = probe_client_bundles(&client, endpoints).await;
     if all_client_modules_ready(ready, total) {
         startup::note_client_modules_ready(ready, total);
         return Ok(format!("healthy - {ready}/{total} client modules ready"));
@@ -232,5 +266,73 @@ mod tests {
         assert!(!all_client_modules_ready(1, 2));
         assert!(all_client_modules_ready(2, 2));
         assert!(!all_client_modules_ready(0, 0));
+    }
+
+    /// 并发探测必须保住失败明细的地址顺序，并且真的在并发。
+    ///
+    /// 顺序：失败明细会拼进返回给前端的就绪原因，前端靠它判断「是否出现新进展」
+    /// （变化即刷新无活动计时）。按完成顺序回填的话，同一组失败每轮都会被当成
+    /// 新进展，把无活动超时一路拖到绝对上限。
+    /// 并发：串行探测在 90 个模块上要 600ms 以上，这段耗时正好压在启动尾段。
+    #[tokio::test]
+    async fn client_bundle_probe_keeps_endpoint_order_and_runs_concurrently() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let delay = std::time::Duration::from_millis(200);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let paths = [
+            "/plugins/slow/client.js",
+            "/plugins/ready/client.js",
+            "/plugins/markup/client.js",
+        ];
+        let server = tokio::spawn(async move {
+            for _ in 0..paths.len() {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                let read = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..read]).to_string();
+                let body = if request.contains("/plugins/ready/") {
+                    "export const ready = true;"
+                } else {
+                    "<!doctype html><html></html>"
+                };
+                tokio::spawn(async move {
+                    // 每个响应都压后同样长的时间：串行要 3×200ms，并发只要约 200ms
+                    tokio::time::sleep(delay).await;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let endpoints = paths
+            .iter()
+            .map(|path| format!("http://127.0.0.1:{port}{path}"))
+            .collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+        let (ready, failures) = probe_client_bundles(&client, endpoints.clone()).await;
+        let elapsed = started.elapsed();
+        let served = tokio::time::timeout(std::time::Duration::from_secs(10), server).await;
+        served
+            .expect("bundle fixture did not serve every request")
+            .unwrap();
+
+        assert_eq!(ready, 1);
+        assert_eq!(
+            failures,
+            vec![
+                format!("{} returned 200 OK (not a plugin bundle)", endpoints[0]),
+                format!("{} returned 200 OK (not a plugin bundle)", endpoints[2]),
+            ]
+        );
+        assert!(
+            elapsed < delay * 2,
+            "probe waited {elapsed:?} for three endpoints"
+        );
     }
 }

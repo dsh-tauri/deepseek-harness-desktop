@@ -1,11 +1,13 @@
 //! shim 共享脚本片段（纯文本常量，作为 format! 的参数嵌入各构建函数）。
 //!
 //! shim 文本必须全英文：cmd/ps1 按系统代码页解析，中文注释会乱码成命令执行。
-//! 变量约定：cmd 用 `%NODE_BIN%` / `%NODE_DIR%` / `%GIT_DIR%` / `%DSH_BIN%` /
-//! `%PNPM_BIN%`，ps1 用 `$nodeBin` / `$nodeDir` / `$gitDir` / `$dshBin` /
-//! `$pnpmBin`，sh 用同名大写下划线形式。路径全部由桌面端在生成 shim 时按
-//! 依赖映射表解析后写死（不再假设 `<AppData>/dependencies/<name>` 布局）；
-//! 这些常量里的 `{`/`}` 是字面量（由 format! 的参数占位符区分）。
+//! 变量约定：cmd 用 `%NODE_BIN%` / `%NODE_DIR%` / `%DSH_BIN%` / `%PNPM_BIN%`，
+//! ps1 用 `$nodeBin` / `$nodeDir` / `$gitDir` / `$dshBin` / `$pnpmBin`，sh 用同名
+//! 大写下划线形式。cmd 侧不设 `GIT_DIR`：该变量对 Git 是仓库目录语义，导出会给所有
+//! 子进程注入一个假仓库根；捆绑 Git 目录由构建函数直接内联进 PATH 注入行。路径全部
+//! 由桌面端在生成 shim 时按依赖映射表解析后写死（不再假设
+//! `<AppData>/dependencies/<name>` 布局）；这些常量里的 `{`/`}` 是字面量（由
+//! format! 的参数占位符区分）。
 
 // ---------------------------------------------------------------------------
 // shim 共享片段：node 解析逻辑（dsh / pnpm shim 共用）

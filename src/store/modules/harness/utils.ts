@@ -8,8 +8,7 @@ import i18next from 'i18next'
 import { containsHeapOomError, containsInotifyLimitError, heapPeakFromLogs, pickErrorLines } from '@/components/logs.utils'
 import { toast } from '@/utils/toast'
 import {
-  HEALTH_PROBE_INITIAL_INTERVAL,
-  HEALTH_PROBE_MAX_INTERVAL,
+  HEALTH_PROBE_INTERVAL,
   LOG_TAIL_MAX_BYTES,
   STARTUP_INACTIVITY_TIMEOUT,
 } from './constants'
@@ -157,7 +156,7 @@ export function startupError(
   return error
 }
 
-/** 带退避的服务就绪轮询（探测实现固定为 Rust 代理健康检查） */
+/** 服务就绪轮询（探测实现固定为 Rust 代理健康检查） */
 export function pollHarnessReadiness(
   absoluteTimeoutMs: number,
   shouldContinue: () => boolean,
@@ -165,9 +164,7 @@ export function pollHarnessReadiness(
 ): Promise<ReadinessPollResult> {
   return pollReadiness({
     probe: checkHealthViaProxy,
-    intervalMs: HEALTH_PROBE_INITIAL_INTERVAL,
-    maxIntervalMs: HEALTH_PROBE_MAX_INTERVAL,
-    backoffFactor: 1.5,
+    intervalMs: HEALTH_PROBE_INTERVAL,
     inactivityTimeoutMs: STARTUP_INACTIVITY_TIMEOUT,
     absoluteTimeoutMs,
     shouldContinue,
