@@ -34,7 +34,11 @@ function deferred() {
 }
 
 /** 记录每次 invoke，并按命令给出一条「能跑完一轮 boot」的应答 */
-function stubRuntime(recoveryLimitMb: number | null, onUpdateConfig?: () => Promise<void>) {
+function stubRuntime(
+  recoveryLimitMb: number | null,
+  onUpdateConfig?: () => Promise<void>,
+  onPatchRepair?: (command: string) => Promise<void>,
+) {
   let healthChecks = 0
   invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'proxy_health_check') {
@@ -47,6 +51,10 @@ function stubRuntime(recoveryLimitMb: number | null, onUpdateConfig?: () => Prom
     }
     if (command === 'read_service_logs') {
       return SERVICE_LOG
+    }
+    if (command === 'quarantine_broken_patch_layers' || command === 'enter_safe_mode' || command === 'strip_unresolved_patch_entries') {
+      await onPatchRepair?.(command)
+      return { quarantined: [], failures: [], layers: [] }
     }
     if (command === 'detect_plugin_recovery') {
       return { plugins: [], reason: 'unknown', detail: '', rawError: '' }
@@ -150,6 +158,33 @@ describe('harness heap OOM recovery', () => {
     expect(harness.status).toBe('error')
     expect(harness.heapOomHint).toContain('16384 MB')
     expect(harness.heapOomHint).toContain('8234')
+  })
+
+  it('reserves the patch repair action before its first await so exit recovery cannot restart underneath it', async () => {
+    const entered = deferred()
+    const gate = deferred()
+    stubRuntime(16384, undefined, async (command) => {
+      if (command === 'quarantine_broken_patch_layers') {
+        entered.resolve()
+        await gate.promise
+      }
+    })
+
+    const repair = harness.quarantineBrokenPatchLayers()
+    expect(harness.busyAction).toBe('repair')
+    await entered.promise
+
+    await harness.handleProcessExit({ pid: 42, exitCode: 134 })
+    expect(callsOf('get_heap_recovery_limit_mb')).toHaveLength(0)
+    expect(callsOf('update_app_config')).toHaveLength(0)
+    expect(callsOf('launch_harness')).toHaveLength(0)
+
+    gate.resolve()
+    await repair
+
+    expect(harness.busyAction).toBe(null)
+    expect(callsOf('launch_harness')).toHaveLength(1)
+    expect(harness.status).toBe('ready')
   })
 
   it('does not relaunch the service when the user stops it while the new limit is being written', async () => {

@@ -169,4 +169,21 @@ describe('unresolved-entry recovery wiring', () => {
   it('backs the file up before rewriting it', () => {
     expect(rustSource).toContain('backup_path(&layer, "bak"')
   })
+
+  it('routes every recovery entry through the shared busy reservation', () => {
+    for (const call of [
+      'runPatchRepair(\'safe-mode\'',
+      'runPatchRepair(\'quarantine\'',
+      'runPatchRepair(\'strip\'',
+    ]) {
+      expect(storeSource).toContain(call)
+    }
+    // 忙态必须在修复动作的第一次 await 之前占住：顺序反过来就等于没占，
+    // 退出处理器的自动恢复仍会在修复途中把它自己的重启插进来。
+    const reserve = storeSource.indexOf('this.busyAction = \'repair\'')
+    const repair = storeSource.indexOf('await repair()')
+    expect(reserve).toBeGreaterThan(-1)
+    expect(repair).toBeGreaterThan(-1)
+    expect(reserve).toBeLessThan(repair)
+  })
 })
