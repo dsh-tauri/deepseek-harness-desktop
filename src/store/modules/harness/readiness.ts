@@ -8,6 +8,13 @@ export type ReadinessTimeout = 'inactivity' | 'absolute'
 export interface ReadinessProbeResult {
   healthy: boolean
   notOwned: boolean
+  /**
+   * 服务端口尚未被监听（本地门禁直接判定，探测几乎零成本）。
+   *
+   * 这是启动早期的正常态而非失败：轮询据此改用快扫间隔，去撞端口开始监听的
+   * 那一刻；否则端口起来后最多还要空等满一个常规间隔。
+   */
+  notListening?: boolean
   phase?: StartupPhase
   reason?: string
 }
@@ -19,8 +26,8 @@ export interface ReadinessPollResult extends ReadinessProbeResult {
 interface PollReadinessOptions {
   probe: () => Promise<ReadinessProbeResult>
   intervalMs: number
-  maxIntervalMs?: number
-  backoffFactor?: number
+  /** 探测结果标记 `notListening` 时改用的快扫间隔；缺省与 `intervalMs` 相同 */
+  notListeningIntervalMs?: number
   maxAttempts?: number
   inactivityTimeoutMs?: number
   absoluteTimeoutMs?: number
@@ -94,8 +101,7 @@ function boundedWait(
 export async function pollReadiness({
   probe,
   intervalMs,
-  maxIntervalMs = intervalMs,
-  backoffFactor = 1,
+  notListeningIntervalMs = intervalMs,
   maxAttempts,
   inactivityTimeoutMs,
   absoluteTimeoutMs,
@@ -109,7 +115,6 @@ export async function pollReadiness({
   let lastKey = ''
   let lastResult: ReadinessProbeResult = { healthy: false, notOwned: false }
   let remainingAttempts = maxAttempts
-  let nextIntervalMs = intervalMs
 
   while (shouldContinue() && remainingAttempts !== 0) {
     const beforeProbeTimeout = timedOut(
@@ -154,7 +159,7 @@ export async function pollReadiness({
     }
     if (shouldContinue() && remainingAttempts !== 0) {
       const waitMs = boundedWait(
-        nextIntervalMs,
+        result.notListening === true ? notListeningIntervalMs : intervalMs,
         now(),
         startedAt,
         lastActivityAt,
@@ -162,7 +167,6 @@ export async function pollReadiness({
         absoluteTimeoutMs,
       )
       await wait(waitMs)
-      nextIntervalMs = Math.min(maxIntervalMs, Math.max(intervalMs, nextIntervalMs * backoffFactor))
     }
   }
 

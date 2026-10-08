@@ -22,6 +22,19 @@ describe('harness health probe logging', () => {
     expect(warn).not.toHaveBeenCalled()
   })
 
+  it('treats an unlistened port as a normal early-startup state', async () => {
+    invokeMock.mockRejectedValue(
+      new Error('HARNESS_NOT_READY: Harness service is not listening yet (port 3081)'),
+    )
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const result = await checkHealthViaProxy()
+
+    expect(result.notListening).toBe(true)
+    expect(result.notOwned).toBe(false)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
   it('still records one retry line with the reason when the probe fails', async () => {
     invokeMock.mockRejectedValue(new Error('HARNESS_NOT_READY: boot page returned 404 Not Found'))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})

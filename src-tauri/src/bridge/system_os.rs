@@ -17,6 +17,14 @@ pub async fn proxy_health_check(app_handle: AppHandle) -> Result<String, String>
     crate::service::workflow::proxy_health_check(port).await
 }
 
+/// 就绪提交窗口的 ownership 复核：只读后端进程槽位与启动守卫，不发 HTTP。
+///
+/// 失败时返回与探测路径同一条 `HARNESS_NOT_OWNED` 信号，错误页据此识别进程退出。
+#[tauri::command]
+pub fn harness_ownership() -> Result<(), String> {
+    crate::service::workflow::recheck_ownership()
+}
+
 /// 运行时/版本/诊断信息（侧边栏展示）
 #[tauri::command]
 pub async fn get_runtime_info(app_handle: AppHandle) -> Result<config::RuntimeInfo, String> {

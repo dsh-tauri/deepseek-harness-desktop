@@ -41,6 +41,9 @@ function stubRuntime(
 ) {
   let healthChecks = 0
   invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+    if (command === 'harness_ownership') {
+      return undefined
+    }
     if (command === 'proxy_health_check') {
       healthChecks += 1
       // 第一次：退出后的归属探测——旧进程已经没了

@@ -9,6 +9,7 @@ import { containsHeapOomError, containsInotifyLimitError, heapPeakFromLogs, pick
 import { toast } from '@/utils/toast'
 import {
   HEALTH_PROBE_INTERVAL,
+  HEALTH_PROBE_NOT_LISTENING_INTERVAL,
   LOG_TAIL_MAX_BYTES,
   STARTUP_INACTIVITY_TIMEOUT,
 } from './constants'
@@ -84,8 +85,8 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
 
     const lower = result.toLowerCase()
     if (lower.startsWith('healthy')) {
-      // 正常路径不写日志：探测每次启动至少跑两遍（就绪轮询 + completeReadiness 复核），
-      // 成功噪音只会盖住真正有用的失败重试行。
+      // 正常路径不写日志：就绪轮询每 1s 成功一次，成功噪音只会盖住真正有用的
+      // 失败重试行。
       return {
         healthy: true,
         notOwned: false,
@@ -110,6 +111,17 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
       return {
         healthy: false,
         notOwned: true,
+        phase: 'process-boot',
+        reason: message,
+      }
+    }
+    if (message.includes('not listening yet')) {
+      // 端口还没被监听：Rust 门禁直接判定，属启动早期正常态。静默返回并让轮询改用
+      // 快扫间隔；若在这里记 warn，250ms 的节奏会刷满控制台。
+      return {
+        healthy: false,
+        notOwned: false,
+        notListening: true,
         phase: 'process-boot',
         reason: message,
       }
@@ -165,6 +177,7 @@ export function pollHarnessReadiness(
   return pollReadiness({
     probe: checkHealthViaProxy,
     intervalMs: HEALTH_PROBE_INTERVAL,
+    notListeningIntervalMs: HEALTH_PROBE_NOT_LISTENING_INTERVAL,
     inactivityTimeoutMs: STARTUP_INACTIVITY_TIMEOUT,
     absoluteTimeoutMs,
     shouldContinue,

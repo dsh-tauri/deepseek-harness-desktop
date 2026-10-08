@@ -432,17 +432,22 @@ export const harness = defineStore({
       if (token !== bootToken)
         return false
 
-      // poll 通过与 ready 提交之间仍可能退出。进入提交窗口后再复核一次 ownership，
-      // 既能捕获窗口开启前已丢失的退出事件，也让窗口内事件用 token 中止本次提交。
-      const finalProbe = await checkHealthViaProxy()
+      // poll 通过与 ready 提交之间仍可能退出，因此提交窗口开启前复核一次 ownership；
+      // 但不再为此重跑全量探测（实测 93 个 / 18MB / 311ms，纯粹推迟 iframe 挂载）：
+      // ownership 只取决于后端进程槽位与启动守卫，纯内存查询即可判定。上一轮 poll 已
+      // 确认就绪，故只有 ownership 丢失才推翻结果，短暂 IPC 失败不降级。
+      let ownershipFailure: string | null = null
+      try {
+        await invoke('harness_ownership')
+      }
+      catch (err) {
+        ownershipFailure = String(err)
+      }
       if (token !== bootToken)
         return false
-      // 上一轮 poll 已确认就绪；这里只让 ownership 丢失推翻结果，短暂探测失败不降级。
-      if (finalProbe.notOwned) {
+      if (ownershipFailure?.includes('HARNESS_NOT_OWNED')) {
         this.serviceRunning = false
-        const phase = finalProbe.phase ?? this.startupPhase
-        const reason = finalProbe.reason ?? (this.startupReason || i18next.t('errors.no_readiness_reason'))
-        throw startupError(phase, reason, 'exited')
+        throw startupError('process-boot', ownershipFailure, 'exited')
       }
 
       const readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
