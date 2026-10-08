@@ -278,7 +278,14 @@ mod tests {
     async fn client_bundle_probe_keeps_endpoint_order_and_runs_concurrently() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let delay = std::time::Duration::from_millis(200);
+        // 完成顺序与端点顺序刻意相反：最慢的是第一个失败，第三个失败先完成。
+        // 按完成顺序回填的话失败明细会变成 [2, 0]，只有真按入参顺序排序才得到 [0, 2]。
+        let delays = [
+            std::time::Duration::from_millis(400),
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(150),
+        ];
+        let serial = delays.iter().sum::<std::time::Duration>();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let paths = [
@@ -292,14 +299,17 @@ mod tests {
                 let mut request = [0; 4096];
                 let read = socket.read(&mut request).await.unwrap();
                 let request = String::from_utf8_lossy(&request[..read]).to_string();
-                let body = if request.contains("/plugins/ready/") {
+                let index = paths
+                    .iter()
+                    .position(|path| request.contains(*path))
+                    .expect("request path is one of the probed endpoints");
+                let body = if index == 1 {
                     "export const ready = true;"
                 } else {
                     "<!doctype html><html></html>"
                 };
                 tokio::spawn(async move {
-                    // 每个响应都压后同样长的时间：串行要 3×200ms，并发只要约 200ms
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep(delays[index]).await;
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len(),
@@ -330,8 +340,9 @@ mod tests {
                 format!("{} returned 200 OK (not a plugin bundle)", endpoints[2]),
             ]
         );
+        // 串行要跑满三段延迟之和（≥650ms），并发只等最慢的那一段（约 400ms）
         assert!(
-            elapsed < delay * 2,
+            elapsed < serial,
             "probe waited {elapsed:?} for three endpoints"
         );
     }
