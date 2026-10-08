@@ -65,6 +65,9 @@ catalogs:
     h3:
       specifier: 2.0.1-rc.31
       version: 2.0.1-rc.31
+    ipaddr.js:
+      specifier: ^2.5.0
+      version: 2.5.0
     valtio:
       specifier: ^2.3.2
       version: 2.3.2
@@ -573,6 +576,9 @@ importers:
       hookable:
         specifier: catalog:utils
         version: 6.1.1
+      ipaddr.js:
+        specifier: 'catalog:'
+        version: 2.5.0
       ofetch:
         specifier: catalog:utils
         version: 1.5.1
@@ -4944,6 +4950,10 @@ packages:
   ip-address@10.7.2:
     resolution: {integrity: sha512-7H/2gFSIitxc0hG3nOI1glS8QLo/EHBFFLk8vEUjXY/xu0AdL8jZ9U1IzO2PUm0d2D/ofQcAifb0g6OBkt8U7w==}
     engines: {node: '>= 12'}
+
+  ipaddr.js@2.5.0:
+    resolution: {integrity: sha512-aq+t5NAc+cS6rZQQVWC2x98CPqGtKKTMDd4Gaodv0wShnItdKg/51djkGJ1hqH+Oy0ivDftCbSLCQob8zso01w==}
+    engines: {node: '>= 10'}
 
   iron-webcrypto@1.2.1:
     resolution: {integrity: sha512-feOM6FaSr6rEABp/eDfVseKyTMDt+KGpeB35SkVn9Tyn0CqvVsY3EwI0v5i8nMHyJnzCIQf7nsy3p41TPkJZhg==}
@@ -10733,6 +10743,8 @@ snapshots:
       tslib: 2.8.1
 
   ip-address@10.7.2: {}
+
+  ipaddr.js@2.5.0: {}
 
   iron-webcrypto@1.2.1: {}
 

@@ -20,7 +20,11 @@ function makeHost(rejection: 401 | 403 | undefined) {
       return false
     },
   }
-  setCurrentHostInstance({ connection })
+  setCurrentHostInstance({
+    connection,
+    web: { registerFetchProvider: () => () => {} },
+    loader: { import: async () => undefined, unwrapExports: value => value },
+  })
   return { connection, calls }
 }
 
@@ -125,7 +129,12 @@ describe('gate.attach with the carrier marker', () => {
 
   it('stays inert and warns when the core lacks the gates', () => {
     const warn = vi.fn()
-    setCurrentHostInstance({ connection: {} as never, logger: { warn } })
+    setCurrentHostInstance({
+      connection: {} as never,
+      logger: { warn },
+      web: { registerFetchProvider: () => () => {} },
+      loader: { import: async () => undefined, unwrapExports: value => value },
+    })
 
     gate.attach()()
 

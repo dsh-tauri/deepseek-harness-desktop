@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ConnectionGate } from '../routes/index.type'
+import type { HostPluginLoader, WebRuntimeService } from './harness'
 
 export * from './harness'
 
@@ -17,4 +18,6 @@ export interface ConnectionHost {
   logger?: {
     warn?: (message: string, error?: unknown) => void
   }
+  web: WebRuntimeService
+  loader: HostPluginLoader
 }

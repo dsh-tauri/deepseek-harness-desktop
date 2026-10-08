@@ -49,6 +49,31 @@ export interface HostPluginLoader {
   unwrapExports: (exports: unknown) => unknown
 }
 
+export interface WebFetchRequest {
+  readonly url: string
+}
+
+export type WebFetchBody
+  = | { readonly kind: 'html', readonly content: string }
+    | { readonly kind: 'text', readonly content: string }
+
+export interface WebFetchResult {
+  readonly url: string
+  readonly statusCode: number
+  readonly body: WebFetchBody
+  readonly truncated: boolean
+}
+
+export interface WebFetchProviderService {
+  readonly id: string
+  available: () => boolean
+  fetch: (request: WebFetchRequest, signal?: AbortSignal) => Promise<WebFetchResult>
+}
+
+export interface WebRuntimeService {
+  registerFetchProvider: (provider: WebFetchProviderService) => () => void
+}
+
 /**
  * 宿主 ctx：上游 cordis `Context`（含全部宿主服务增广）+ 桌面端自有服务。
  *
@@ -63,6 +88,7 @@ export type IndexInjectRow
 export type HostContext = Omit<Context, 'sessions'> & {
   sessions: SessionStore
   webServer: WebServerService
+  web: WebRuntimeService
   loader: HostPluginLoader
   on: Context['on'] & ((event: 'webserver/index-inject', listener: (table: IndexInjectRow[]) => void) => () => void)
 }

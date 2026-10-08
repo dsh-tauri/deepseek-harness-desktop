@@ -111,6 +111,7 @@ catalog:
   '@tauri-apps/plugin-os': ^2.3.2
   '@tauri-apps/plugin-store': ^2.4.4
   h3: 2.0.1-rc.31
+  ipaddr.js: ^2.5.0
   valtio: ^2.3.2
 
 catalogs:
