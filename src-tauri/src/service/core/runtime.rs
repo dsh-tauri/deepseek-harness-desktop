@@ -1027,16 +1027,12 @@ fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path)
 
 /// `node_modules` 指纹摘要：条目只受兜底上限约束（真实安装的规模远小于它），
 /// 摘要长度与条目数无关，因此既不截断、也不因规模放弃缓存。
+///
+/// 上限在采集途中即时判定：越过上限的指纹注定作废，继续把整棵树读完只是白等 ——
+/// 能触发这个上限的树动辄几十万条，而这段耗时正好压在启动关键路径上。
 fn probe_stamp_modules_digest(modules: &Path) -> Option<String> {
     let mut entries: Vec<String> = Vec::new();
-    collect_probe_stamp_entries(modules, &mut entries)?;
-    if entries.len() > NATIVE_PROBE_STAMP_MAX_ENTRIES {
-        log::warn!(
-            "core native probe stamp skipped: {} entries exceed the cap",
-            entries.len()
-        );
-        return None;
-    }
+    collect_probe_stamp_entries(modules, &mut entries, NATIVE_PROBE_STAMP_MAX_ENTRIES)?;
     entries.sort_unstable();
     Some(probe_stamp_digest(&entries.join("\n")))
 }
@@ -1052,7 +1048,10 @@ const NATIVE_ARTIFACT_DIRS: [&str; 4] = ["build/Release", "build/Debug", "prebui
 /// 采集指纹条目：`node_modules` 顶层（`.bin` 跳过，`.pnpm` 只记自身）与 scope 目录的
 /// 下一层，每项再带上其原生包产物目录。任一目录读不到即返回 `None` —— 不完整的指纹
 /// 不能用来断言「和上次一样」，少记一项就可能漏掉一次真实变化。
-fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> {
+///
+/// 条目数一旦越过 `cap` 立刻返回 `None`，不再继续遍历：这份指纹无论如何都会作废，
+/// 把剩下几十万条读完只是把启动关键路径拉长。
+fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>, cap: usize) -> Option<()> {
     let reader = std::fs::read_dir(dir).ok()?;
     for entry in reader {
         let entry = entry.ok()?;
@@ -1063,7 +1062,7 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> 
         if name == ".bin" {
             continue;
         }
-        push_probe_stamp_entry(&entry.path(), name, out)?;
+        push_probe_stamp_entry(&entry.path(), name, out, cap)?;
         if !name.starts_with('@') {
             continue;
         }
@@ -1074,7 +1073,7 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> 
             let Some(inner_name) = inner_name.to_str() else {
                 continue;
             };
-            push_probe_stamp_entry(&inner.path(), &format!("{name}/{inner_name}"), out)?;
+            push_probe_stamp_entry(&inner.path(), &format!("{name}/{inner_name}"), out, cap)?;
         }
     }
     Some(())
@@ -1082,18 +1081,36 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> 
 
 /// 记录一个包的目录时间与其产物目录、目录内文件的时间。产物目录不存在时只留包目录
 /// 一项，避免为绝大多数非原生包平白拉长指纹。
-fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) -> Option<()> {
-    out.push(format!("{label}={}", path_modified_nanos(dir)));
+fn push_probe_stamp_entry(
+    dir: &Path,
+    label: &str,
+    out: &mut Vec<String>,
+    cap: usize,
+) -> Option<()> {
+    push_probe_stamp_item(out, format!("{label}={}", path_modified_nanos(dir)), cap)?;
     for relative in NATIVE_ARTIFACT_DIRS {
         let artifact = dir.join(relative);
         if !artifact.is_dir() {
             continue;
         }
-        out.push(format!(
-            "{label}/{relative}={}",
-            path_modified_nanos(&artifact)
-        ));
-        push_probe_stamp_artifacts(&artifact, &format!("{label}/{relative}"), out)?;
+        push_probe_stamp_item(
+            out,
+            format!("{label}/{relative}={}", path_modified_nanos(&artifact)),
+            cap,
+        )?;
+        push_probe_stamp_artifacts(&artifact, &format!("{label}/{relative}"), out, cap)?;
+    }
+    Some(())
+}
+
+/// 记入一项指纹条目；越过 `cap` 即放弃整份指纹。
+///
+/// 只有第一处越界会写日志（调用链随即逐层返回 `None`），因此一次采集最多一条。
+fn push_probe_stamp_item(out: &mut Vec<String>, item: String, cap: usize) -> Option<()> {
+    out.push(item);
+    if out.len() > cap {
+        log::warn!("core native probe stamp skipped: more than {cap} entries");
+        return None;
     }
     Some(())
 }
@@ -1103,7 +1120,12 @@ fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) -> Opt
 /// 进而跳过一次本该做的探测；`prebuilds/<platform>/addon.node` 这类文件连第一层都不在，
 /// 只记一层同样会漏。元数据读不到即返回 `None`：读不到就不能断言「和上次一样」，宁可
 /// 重跑探测。
-fn push_probe_stamp_artifacts(dir: &Path, label: &str, out: &mut Vec<String>) -> Option<()> {
+fn push_probe_stamp_artifacts(
+    dir: &Path,
+    label: &str,
+    out: &mut Vec<String>,
+    cap: usize,
+) -> Option<()> {
     for entry in std::fs::read_dir(dir).ok()? {
         let entry = entry.ok()?;
         let name = entry.file_name();
@@ -1112,11 +1134,11 @@ fn push_probe_stamp_artifacts(dir: &Path, label: &str, out: &mut Vec<String>) ->
         };
         let path = entry.path();
         let label = format!("{label}/{name}");
-        out.push(format!("{label}={}", artifact_stamp(&path)?));
+        push_probe_stamp_item(out, format!("{label}={}", artifact_stamp(&path)?), cap)?;
         // 链接（pnpm 的包目录、junction）不下钻：跟随链接会把同一份内容记两次，
         // 自指的链接还会绕成死循环。链接自身的目标大小与时间已经记在上面一项里。
         if entry.file_type().ok()?.is_dir() {
-            push_probe_stamp_artifacts(&path, &label, out)?;
+            push_probe_stamp_artifacts(&path, &label, out, cap)?;
         }
     }
     Some(())
@@ -1740,11 +1762,23 @@ mod tests {
         assert!(artifact_stamp(&addon).is_none());
         std::fs::write(&addon, "native").unwrap();
         assert!(artifact_stamp(&addon).is_some());
-        assert!(push_probe_stamp_artifacts(&dir, "sharp/build/Release", &mut Vec::new()).is_some());
+        assert!(push_probe_stamp_artifacts(
+            &dir,
+            "sharp/build/Release",
+            &mut Vec::new(),
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_some());
 
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(artifact_stamp(&addon).is_none());
-        assert!(push_probe_stamp_artifacts(&dir, "sharp/build/Release", &mut Vec::new()).is_none());
+        assert!(push_probe_stamp_artifacts(
+            &dir,
+            "sharp/build/Release",
+            &mut Vec::new(),
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_none());
     }
 
     /// 嵌套产物目录（`prebuilds/<platform>/addon.node`）里的原地覆盖同样必须改变指纹：
@@ -1781,9 +1815,35 @@ mod tests {
         std::fs::remove_dir_all(&modules).unwrap();
     }
 
+    /// 越过条目上限时必须就地放弃，而不是把整棵树读完再作废：能触发上限的树动辄几十万
+    /// 条，读完这一段只是白等（这份指纹注定作废）。断言采集恰好在越界处停手。
+    #[test]
+    fn probe_stamp_cap_aborts_traversal_immediately() {
+        let dir = std::env::temp_dir().join(format!("dsh-probe-stamp-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for index in 0..100 {
+            std::fs::create_dir_all(dir.join(format!("pkg-{index}"))).unwrap();
+        }
+
+        let mut capped = Vec::new();
+        assert!(collect_probe_stamp_entries(&dir, &mut capped, 4).is_none());
+        assert_eq!(
+            capped.len(),
+            5,
+            "traversal must stop right after crossing the cap"
+        );
+
+        let mut full = Vec::new();
+        assert!(collect_probe_stamp_entries(&dir, &mut full, NATIVE_PROBE_STAMP_MAX_ENTRIES).is_some());
+        assert_eq!(full.len(), 100);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     fn probe_stamp_entries(dir: &Path) -> Vec<String> {
         let mut out = Vec::new();
-        collect_probe_stamp_entries(dir, &mut out).unwrap();
+        collect_probe_stamp_entries(dir, &mut out, NATIVE_PROBE_STAMP_MAX_ENTRIES).unwrap();
         out.sort_unstable();
         out
     }
