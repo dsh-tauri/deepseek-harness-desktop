@@ -1100,7 +1100,7 @@ fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) -> Opt
 
 /// 记录产物目录内每一项的名字、大小与修改时间：原地覆盖一个已存在的 `.node` 只改文件
 /// 自身的时间，目录的修改时间不变，只记目录就会漏掉这次替换，进而跳过一次本该做的
-/// 探测。元数据读不到时记 `-`（与目录项同样的处理）仍然参与摘要，不静默丢项。
+/// 探测。元数据读不到即返回 `None`：读不到就不能断言「和上次一样」，宁可重跑探测。
 fn push_probe_stamp_artifacts(dir: &Path, label: &str, out: &mut Vec<String>) -> Option<()> {
     for entry in std::fs::read_dir(dir).ok()? {
         let entry = entry.ok()?;
@@ -1108,13 +1108,15 @@ fn push_probe_stamp_artifacts(dir: &Path, label: &str, out: &mut Vec<String>) ->
         let Some(name) = name.to_str() else {
             continue;
         };
-        let stamp = match std::fs::metadata(entry.path()) {
-            Ok(meta) => format!("{}:{}", meta.len(), file_modified_nanos(&meta)),
-            Err(_) => "-".to_string(),
-        };
-        out.push(format!("{label}/{name}={stamp}"));
+        out.push(format!("{label}/{name}={}", artifact_stamp(&entry.path())?));
     }
     Some(())
+}
+
+/// 单个产物文件的指纹项：大小与修改时间缺一不可，读不到就没有可比的指纹。
+fn artifact_stamp(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(format!("{}:{}", meta.len(), file_modified_nanos(&meta)))
 }
 
 fn path_modified_nanos(path: &Path) -> String {
@@ -1712,6 +1714,28 @@ mod tests {
         assert_ne!(digest, probe_stamp_modules_digest(&modules).unwrap());
 
         std::fs::remove_dir_all(&modules).unwrap();
+    }
+
+    /// 产物文件元数据读不到时必须让整份指纹作废（返回 `None`）：写占位符会让「这次
+    /// 读不到」与「上次也没读到」得到同一个摘要，从而跳过一次本该做的探测。
+    #[test]
+    fn probe_stamp_requires_readable_artifact_metadata() {
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-probe-stamp-artifact-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let addon = dir.join("sharp.node");
+
+        assert!(artifact_stamp(&addon).is_none());
+        std::fs::write(&addon, "native").unwrap();
+        assert!(artifact_stamp(&addon).is_some());
+        assert!(push_probe_stamp_artifacts(&dir, "sharp/build/Release", &mut Vec::new()).is_some());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(artifact_stamp(&addon).is_none());
+        assert!(push_probe_stamp_artifacts(&dir, "sharp/build/Release", &mut Vec::new()).is_none());
     }
 
     fn probe_stamp_entries(dir: &Path) -> Vec<String> {
