@@ -1,4 +1,4 @@
-import type { RemoteAuthScope, RemotePasswordRecord } from '../types/index'
+import type { RemoteAuthScope, RemotePasswordRecord, RemoteTunnelConfig, RemoteTunnelStatus } from '../types/index'
 
 export interface RemoteAccessListen {
   address: string
@@ -17,7 +17,7 @@ export interface RemoteAccessDocument {
   enabled: boolean
   listen: RemoteAccessListen
   auth: RemoteAccessAuthDocument
-  tunnel: Record<string, unknown>
+  tunnel: RemoteTunnelConfig
 }
 
 /** `POST /access` 请求体：字段缺省表示保持原值（`password` 为只写字段）。 */
@@ -72,7 +72,8 @@ export interface RemoteAccessStatus {
   maskLink?: string
   /** 链接的二维码 dataURL；回环监听时不生成。 */
   qr?: string
-  tunnel?: Record<string, unknown>
+  /** 公网隧道读面：配置 + 运行期状态（完整分支才带 Token 与链接二维码）。 */
+  tunnel?: RemoteTunnelStatus
   localPort?: number
   error?: string
   warnings?: string[]

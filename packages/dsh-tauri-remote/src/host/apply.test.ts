@@ -201,8 +201,9 @@ describe('remote plugin', () => {
     expect(panelRoutes.map(route => `${route.kind} ${route.path}`)).toEqual([
       `exact ${BASE}/access`,
       `exact ${BASE}/access/token`,
+      `exact ${BASE}/access/tunnel`,
     ])
-    expect(panelRoutes.map(route => typeof route.handler)).toEqual(['function', 'function'])
+    expect(panelRoutes.map(route => typeof route.handler)).toEqual(['function', 'function', 'function'])
   })
 
   it('starts switched off and persists the enable switch', async () => {

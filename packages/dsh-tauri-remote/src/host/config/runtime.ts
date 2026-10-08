@@ -1,5 +1,6 @@
 import type { MachineDeps, MachineState } from '../service/machine.types'
 import type { SyncDeps } from '../service/sync.types'
+import type { TunnelDeps } from '../service/tunnel.types'
 import type { MachineId, MachineProfile, RemoteHostContext, RemoteMachineEvent } from '../types/index'
 import type { Config } from './schema'
 import { randomBytes } from 'node:crypto'
@@ -47,6 +48,7 @@ let knownHostsPath = ''
 let eventCapacity = EVENT_RING_CAPACITY
 let deps: MachineDeps | undefined
 let syncDeps: SyncDeps | undefined
+let tunnelDeps: TunnelDeps | undefined
 let migrated = false
 let migrationWarning: string | undefined
 let sourceSession = ''
@@ -107,6 +109,39 @@ export function knownHostsFilePath(): string {
 
 export function accessDocumentPath(): string {
   return join(stateDir(), ACCESS_DOCUMENT)
+}
+
+/** 本机 DSH 服务端口：宿主 webserver 的实监听端口优先，`DSH_WEB_PORT` 仅作回退（非桌面载体没有该变量）。 */
+export function hostServicePort(): number | undefined {
+  try {
+    const port = getCurrentHostInstance().webServer.port
+    if (isServicePort(port))
+      return port
+  }
+  catch {
+    // keep: 宿主实例可能尚未绑定（或已随插件卸载清空），回退进程环境变量
+  }
+  const fallback = Number(process.env.DSH_WEB_PORT)
+  return isServicePort(fallback) ? fallback : undefined
+}
+
+export function localUpstream(): string | undefined {
+  const port = hostServicePort()
+  return port === undefined ? undefined : `http://127.0.0.1:${port}`
+}
+
+/** 上游 authority 绑定凭据的铸造：宿主实例尚未绑定（或已随插件卸载清空）时放弃本次铸造，不阻断转发。 */
+export async function mintAuthenticatedUrl(authority: string): Promise<string | undefined> {
+  try {
+    return await getCurrentHostInstance().connection?.authenticatedUrl(`http://${authority}/`)
+  }
+  catch {
+    return undefined
+  }
+}
+
+function isServicePort(port: unknown): port is number {
+  return typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65535
 }
 
 /**
@@ -191,6 +226,16 @@ export function syncRuntimeDeps(): SyncDeps {
   return syncDeps
 }
 
+export function setTunnelDeps(next: TunnelDeps): void {
+  tunnelDeps = next
+}
+
+export function tunnelRuntimeDeps(): TunnelDeps {
+  if (tunnelDeps === undefined)
+    throw new TypeError('tunnelRuntimeDeps: 隧道面依赖尚未装配，apply.ts 需先调用 setTunnelDeps(deps)')
+  return tunnelDeps
+}
+
 export function clearHostRuntime(): void {
   // 使在途 attempt 失效：未完成的 performConnect/performInstall 恢复执行时会比对 generation，
   // 若不等则不再对外拨号（否则它们的续跑会读到下一个 runtime 的 deps，把连接打到别人的 transport 上）。
@@ -204,6 +249,7 @@ export function clearHostRuntime(): void {
   eventCapacity = EVENT_RING_CAPACITY
   deps = undefined
   syncDeps = undefined
+  tunnelDeps = undefined
   migrated = false
   migrationWarning = undefined
   sourceSession = ''

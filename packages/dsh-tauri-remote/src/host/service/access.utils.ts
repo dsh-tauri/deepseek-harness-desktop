@@ -1,5 +1,5 @@
 import type { NetworkInterfaceInfo } from 'node:os'
-import type { RemoteAuthPolicy, RemoteAuthScope, RemotePasswordRecord } from '../types/index'
+import type { RemoteAuthPolicy, RemoteAuthScope, RemotePasswordRecord, RemoteTunnelStatus } from '../types/index'
 import type { RemoteAccessAddress, RemoteAccessBody, RemoteAccessDocument, RemoteAccessParse, RemoteAccessStatus, RemoteAddressFamily, RemoteAddressScope } from './access.types'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -20,6 +20,8 @@ const DOCUMENT_KEYS = new Set(['version', 'enabled', 'listen', 'auth', 'tunnel']
 const LISTEN_KEYS = new Set(['address', 'port'])
 
 const AUTH_KEYS = new Set(['enabled', 'password', 'token', 'scope'])
+
+const TUNNEL_KEYS = new Set(['enabled', 'mode', 'token', 'hostname'])
 
 const SCOPES: readonly RemoteAuthScope[] = ['public_only', 'all']
 
@@ -42,7 +44,7 @@ export function defaultAccessDocument(): RemoteAccessDocument {
     enabled: false,
     listen: { address: DEFAULT_ACCESS_ADDRESS, port: DEFAULT_ACCESS_PORT },
     auth: { enabled: false, password: null, token: null, scope: 'public_only' },
-    tunnel: {},
+    tunnel: { enabled: false, mode: 'quick', token: null, hostname: null },
   }
 }
 
@@ -218,7 +220,12 @@ export function maskLinkOf(host: string, port: number, hasToken: boolean): strin
   return buildLink(host, port, hasToken ? MASK : null)
 }
 
-/** 脱敏（S4 §6）：只保留开关、监听、认证开关与 scope、地址清单、掩码链接与状态，绝不带 Token / 二维码 / 本机明细。 */
+/** 公网隧道的访问链接：隧道地址本身已是 https，Token 语义与局域网链接一致。 */
+export function buildTunnelLink(url: string, token: string | null): string {
+  return token === null || token === '' ? `${url}/` : `${url}/?auth=${encodeURIComponent(token)}`
+}
+
+/** 脱敏（S4 §6）：只保留开关、监听、认证开关/scope 与凭据存在性、地址清单、掩码链接与状态，绝不带 Token / 二维码 / 本机明细。 */
 export function redactStatus(status: RemoteAccessStatus): RemoteAccessStatus {
   return {
     version: status.version,
@@ -227,19 +234,25 @@ export function redactStatus(status: RemoteAccessStatus): RemoteAccessStatus {
     listening: status.listening,
     listen: status.listen,
     port: status.port,
-    auth: { enabled: status.auth.enabled, scope: status.auth.scope },
+    auth: {
+      enabled: status.auth.enabled,
+      scope: status.auth.scope,
+      ...status.auth.hasPassword === undefined ? {} : { hasPassword: status.auth.hasPassword },
+      ...status.auth.hasToken === undefined ? {} : { hasToken: status.auth.hasToken },
+    },
     addresses: status.addresses,
     events: status.events,
     ...status.recommended === undefined ? {} : { recommended: status.recommended },
     ...status.maskLink === undefined ? {} : { maskLink: status.maskLink },
-    ...status.tunnel === undefined ? {} : { tunnel: withoutToken(status.tunnel) },
+    ...status.tunnel === undefined ? {} : { tunnel: redactTunnel(status.tunnel) },
     ...status.error === undefined ? {} : { error: status.error },
     ...status.warnings === undefined ? {} : { warnings: status.warnings },
   }
 }
 
-export function withoutToken(value: Record<string, unknown>): Record<string, unknown> {
-  const { token, ...rest } = value
+/** 隧道脱敏：保留配置与运行期状态，去掉凭据与只属于完整分支的链接/二维码。 */
+export function redactTunnel(status: RemoteTunnelStatus): RemoteTunnelStatus {
+  const { token, link, qr, ...rest } = status
   return rest
 }
 
@@ -261,12 +274,7 @@ function readKnown(raw: Record<string, unknown>, document: RemoteAccessDocument,
     warnings.push('access.json 的 enabled 非法，已回落 false')
   readListen(raw.listen, document, warnings)
   readAuth(raw.auth, document, warnings)
-  if (raw.tunnel === undefined)
-    return
-  if (isPlainObject(raw.tunnel))
-    document.tunnel = raw.tunnel
-  else
-    warnings.push('access.json 的 tunnel 非法，已丢弃')
+  readTunnel(raw.tunnel, document, warnings)
 }
 
 function readListen(value: unknown, document: RemoteAccessDocument, warnings: string[]): void {
@@ -322,6 +330,35 @@ function readAuth(value: unknown, document: RemoteAccessDocument, warnings: stri
     document.auth.token = value.token
   else if (value.token !== undefined && value.token !== null)
     warnings.push('access.json 的 auth.token 非法，已丢弃')
+}
+
+function readTunnel(value: unknown, document: RemoteAccessDocument, warnings: string[]): void {
+  if (value === undefined)
+    return
+  if (!isPlainObject(value)) {
+    warnings.push('access.json 的 tunnel 非法，已回落默认')
+    return
+  }
+  for (const key of Object.keys(value)) {
+    if (!TUNNEL_KEYS.has(key))
+      warnings.push(`access.json 丢弃未知键 tunnel.${key}`)
+  }
+  if (typeof value.enabled === 'boolean')
+    document.tunnel.enabled = value.enabled
+  else if (value.enabled !== undefined)
+    warnings.push('access.json 的 tunnel.enabled 非法，已回落 false')
+  if (value.mode === 'quick' || value.mode === 'token')
+    document.tunnel.mode = value.mode
+  else if (value.mode !== undefined)
+    warnings.push('access.json 的 tunnel.mode 非法，已回落 quick')
+  if (typeof value.token === 'string' && value.token !== '')
+    document.tunnel.token = value.token
+  else if (value.token !== undefined && value.token !== null)
+    warnings.push('access.json 的 tunnel.token 非法，已丢弃')
+  if (typeof value.hostname === 'string' && value.hostname !== '')
+    document.tunnel.hostname = value.hostname
+  else if (value.hostname !== undefined && value.hostname !== null)
+    warnings.push('access.json 的 tunnel.hostname 非法，已丢弃')
 }
 
 /** 只校验形态、不校验可用性：损坏的记录必须原样保留，才能让 S2 的「认证存储损坏」引导生效（S2 §11）。 */

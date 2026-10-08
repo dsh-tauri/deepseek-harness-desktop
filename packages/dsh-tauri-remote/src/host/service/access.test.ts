@@ -101,9 +101,39 @@ function freePort(): Promise<number> {
 
 function occupy(host: string, port: number): Promise<() => Promise<void>> {
   const server = createServer()
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
     server.listen(port, host, () => resolve(() => new Promise<void>(done => server.close(() => done()))))
   })
+}
+
+/** 与 gateway.ts 的端口回落上限对齐：真实候选端口 = 首选 + 该上限。 */
+const PORT_FALLBACK_LIMIT = 20
+
+async function occupyRange(size: number): Promise<{ base: number, release: () => Promise<void> }> {
+  for (let base = 20_000; base + size < 60_000; base += 256) {
+    const releases: Array<() => Promise<void>> = []
+    for (let offset = 0; offset < size; offset++) {
+      try {
+        releases.push(await occupy('127.0.0.1', base + offset))
+      }
+      catch {
+        break
+      }
+    }
+    if (releases.length === size) {
+      return {
+        base,
+        release: async () => {
+          for (const release of releases.reverse())
+            await release()
+        },
+      }
+    }
+    for (const release of releases.reverse())
+      await release()
+  }
+  throw new Error('测试断言失败：本机找不到连续空闲端口段')
 }
 
 function sessionCookieOf(headers: IncomingHttpHeaders): string {
@@ -245,6 +275,21 @@ describe('access 监听生命周期', () => {
     }
   })
 
+  it('候选端口全部被占用时进入 error，并给出含尝试范围的可读原因', async () => {
+    const { base, release } = await occupyRange(PORT_FALLBACK_LIMIT + 1)
+    try {
+      const status = await access.apply({ enabled: true, address: '127.0.0.1', port: base })
+      expect(status.listening).toBe(false)
+      expect(status.state).toBe('error')
+      expect(status.error).toContain(`已尝试 ${base}-${base + PORT_FALLBACK_LIMIT}`)
+      expect(status.link).toBeUndefined()
+      expect(status.events.at(-1)?.line).toContain('入站暴露未开启')
+    }
+    finally {
+      await release()
+    }
+  })
+
   it('选择全部网卡时链接使用本机评分最高的可达地址，绝不出现 0.0.0.0', async () => {
     const port = await freePort()
     const status = await enable('0.0.0.0', port)
@@ -287,7 +332,27 @@ describe('access 监听生命周期', () => {
     expect(storedDocument()).toEqual({ ...defaultAccessDocument(), enabled: true, listen: { address: '203.0.113.7', port: 3088 } })
   })
 
-  it('缺失 DSH_WEB_PORT 时明确报错而不是硬编码上游端口', async () => {
+  it('缺少 DSH_WEB_PORT 时用宿主 webserver 的实监听端口作为上游（非桌面载体）', async () => {
+    delete process.env.DSH_WEB_PORT
+    setCurrentHostInstance({
+      webServer: { register: () => () => {}, port: upstream.port },
+      effect: () => {},
+      connection: {
+        authenticatedUrl: (base: string) => {
+          mintAuthorities.push(new URL(base).host)
+          return `${base}?token=launch-token`
+        },
+      },
+    } as unknown as RemoteHostContext)
+    const status = await enable()
+    expect(status.listening).toBe(true)
+    expect(status.localPort).toBe(upstream.port)
+    const reply = await call(status.port, '/')
+    expect(reply.status).toBe(200)
+    expect(reply.body).toBe('<html>dsh</html>')
+  })
+
+  it('宿主 webserver 与 DSH_WEB_PORT 都缺失时明确报错而不是硬编码上游端口', async () => {
     delete process.env.DSH_WEB_PORT
     const status = await access.apply({ enabled: true })
     expect(status.listening).toBe(false)

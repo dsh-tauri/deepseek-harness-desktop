@@ -87,6 +87,8 @@ const ACCESS_ROUTE_ORDER = [
   `POST ${PREFIX}/access`,
   `POST ${PREFIX}/access/token`,
   `DELETE ${PREFIX}/access/token`,
+  `POST ${PREFIX}/access/tunnel`,
+  `DELETE ${PREFIX}/access/tunnel`,
 ]
 
 describe('shell ↔ plugin identity contract', () => {

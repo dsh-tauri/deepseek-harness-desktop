@@ -1,20 +1,20 @@
-import type { RemoteAuthPolicy, RemoteGatewayTokenProvider, RemoteHostContext } from '../types/index'
+import type { RemoteAuthPolicy } from '../types/index'
 import type { RemoteAccessBody, RemoteAccessDocument, RemoteAccessEvent, RemoteAccessEventKind, RemoteAccessState, RemoteAccessStatus } from './access.types'
-import process from 'node:process'
 import { defineService } from 'dsh-tauri'
 import { toDataURL } from 'qrcode'
 import { messageOf } from '../../shared/error'
-import { getCurrentHostInstance } from '../config/runtime'
+import { hostServicePort, localUpstream, mintAuthenticatedUrl } from '../config/runtime'
 import { createLinkToken, createSessionSecret } from '../utils/auth'
 import { isAuthConfigured } from '../utils/source'
-import { addressProblemOf, buildLink, enumerateAddresses, isLoopbackListen, linkHostOf, maskLinkOf, patchAccessDocument, policyOf, readAccessDocument, withoutToken, writeAccessDocument } from './access.utils'
+import { addressProblemOf, buildLink, buildTunnelLink, enumerateAddresses, isLoopbackListen, linkHostOf, maskLinkOf, patchAccessDocument, policyOf, readAccessDocument, writeAccessDocument } from './access.utils'
 import { gateway } from './gateway'
+import { tunnel } from './tunnel'
 
 const ENTRY_ID = 'inbound'
 
 const EVENT_CAPACITY = 50
 
-const NO_LOCAL_PORT = '无法确定本机 DSH 端口（进程缺少 DSH_WEB_PORT），未开启入站暴露'
+const NO_LOCAL_PORT = '无法确定本机 DSH 端口（宿主 webserver 未暴露端口且进程缺少 DSH_WEB_PORT），未开启入站暴露'
 
 const SESSION_SECRET = createSessionSecret()
 
@@ -41,7 +41,9 @@ export const access = defineService({
     const host = listening ? linkHostOf(document.listen.address, addresses) : undefined
     const link = host === undefined || port === 0 ? undefined : buildLink(host, port, document.auth.token)
     const recommended = addresses.find(item => item.recommended)?.address
-    const local = localPort()
+    const local = hostServicePort()
+    const tunnelStatus = await tunnel.status()
+    const tunnelLink = tunnelStatus.url === undefined ? undefined : buildTunnelLink(tunnelStatus.url, document.auth.token)
     const state: RemoteAccessState = problem !== undefined ? 'error' : listening ? 'listening' : 'stopped'
     const status: RemoteAccessStatus = {
       version: document.version,
@@ -61,7 +63,7 @@ export const access = defineService({
       ...recommended === undefined ? {} : { recommended },
       ...link === undefined ? {} : { link },
       ...host === undefined || port === 0 ? {} : { maskLink: maskLinkOf(host, port, document.auth.token !== null) },
-      ...Object.keys(document.tunnel).length === 0 ? {} : { tunnel: withoutToken(document.tunnel) },
+      tunnel: tunnelLink === undefined ? tunnelStatus : { ...tunnelStatus, link: tunnelLink, qr: await toDataURL(tunnelLink) },
       ...local === undefined ? {} : { localPort: local },
       ...problem === undefined ? {} : { error: problem },
       ...parsed.warnings.length === 0 ? {} : { warnings: parsed.warnings },
@@ -144,7 +146,7 @@ async function activate(document: RemoteAccessDocument): Promise<void> {
       upstream,
       port: document.listen.port,
       host: document.listen.address,
-      tokenProvider: tokenProvider(),
+      tokenProvider: mintAuthenticatedUrl,
       auth: () => access.policy(),
     })
     failure = undefined
@@ -161,31 +163,6 @@ async function fail(reason: string): Promise<void> {
   failure = reason
   await gateway.stop(ENTRY_ID)
   note('state', `入站暴露未开启：${reason}`)
-}
-
-function localPort(): number | undefined {
-  const port = Number(process.env.DSH_WEB_PORT)
-  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined
-}
-
-/** 上游按运行期读取：宿主服务端口上浮后新进程按新的 DSH_WEB_PORT 重建入口，配置不写死端口。 */
-function localUpstream(): string | undefined {
-  const port = localPort()
-  return port === undefined ? undefined : `http://127.0.0.1:${port}`
-}
-
-/** 宿主实例可能尚未绑定（或已随插件卸载清空）：此时放弃本次铸造并透传上游响应，不阻断转发（S2 §6）。 */
-function tokenProvider(): RemoteGatewayTokenProvider {
-  return async (authority) => {
-    let connection: RemoteHostContext['connection']
-    try {
-      connection = getCurrentHostInstance().connection
-    }
-    catch {
-      return undefined
-    }
-    return connection?.authenticatedUrl(`http://${authority}/`)
-  }
 }
 
 function note(kind: RemoteAccessEventKind, line: string): void {

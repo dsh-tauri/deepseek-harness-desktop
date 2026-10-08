@@ -238,6 +238,38 @@ export interface RemoteSessionTicket {
   expiresAt: number
 }
 
+/** 公网隧道模式：`quick` 免账号随机域名；`token` 用具名隧道凭据，公开主机名由控制台指向本机口袋。 */
+export type RemoteTunnelMode = 'quick' | 'token'
+
+export type RemoteTunnelState = 'stopped' | 'starting' | 'running' | 'error'
+
+/** `access.json` 的 `tunnel` 段：只落配置，运行期状态一律内存态。 */
+export interface RemoteTunnelConfig {
+  enabled: boolean
+  mode: RemoteTunnelMode
+  token: string | null
+  hostname: string | null
+}
+
+export interface RemoteTunnelEvent {
+  seq: number
+  ts: string
+  kind: 'state' | 'process'
+  line: string
+}
+
+/** 隧道读面：配置（完整分支保留 `token`）+ 运行期状态；`link`/`qr` 只出现在完整分支。 */
+export interface RemoteTunnelStatus extends Omit<RemoteTunnelConfig, 'token'> {
+  state: RemoteTunnelState
+  events: RemoteTunnelEvent[]
+  token?: string
+  url?: string
+  port?: number
+  link?: string
+  qr?: string
+  error?: string
+}
+
 export type RemoteGatewayEntryKind = 'inbound' | 'tunnel' | 'outbound'
 
 export type RemoteGatewayEntryState = 'listening' | 'stopped'
@@ -310,6 +342,8 @@ export interface HostWebRoute {
 
 export interface HostWebServer {
   register: (route: HostWebRoute) => () => void
+  /** 上游 webserver 的实监听端口（`port 0` 时为系统分配值）；宿主未暴露时缺省。 */
+  port?: number
 }
 
 export interface RemoteHostContext {

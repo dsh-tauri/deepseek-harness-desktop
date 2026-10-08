@@ -70,7 +70,18 @@ function statusFixture(): RemoteAccessStatus {
     link: 'http://192.168.1.5:3089/?auth=secret-token',
     maskLink: 'http://192.168.1.5:3089/?auth=***',
     qr: 'data:image/png;base64,QUJD',
-    tunnel: { enabled: true, mode: 'quick', token: 'tunnel-secret', hostname: 'x.trycloudflare.com' },
+    tunnel: {
+      enabled: true,
+      mode: 'quick',
+      hostname: 'x.trycloudflare.com',
+      token: 'tunnel-secret',
+      state: 'running',
+      events: [{ seq: 1, ts: '2026-10-05T00:00:00.000Z', kind: 'process', line: 'cloudflared 已启动' }],
+      url: 'https://x.trycloudflare.com',
+      port: 3089,
+      link: 'https://x.trycloudflare.com/?auth=secret-token',
+      qr: 'data:image/png;base64,QUJD',
+    },
     localPort: 3080,
     error: '示例错误',
     warnings: ['丢弃未知键 foo'],
@@ -131,17 +142,27 @@ describe('parseAccessDocument', () => {
     expect(parsed.warnings).toEqual(['access.json 的 listen.address 非法，已回落 127.0.0.1', 'access.json 的 listen.port 非法，已回落 3088'])
   })
 
-  it('tunnel 段逐字保留（S5 的键不属于本子 Spec 的解析范围）', () => {
+  it('tunnel 段按契约逐键解析（token 与 hostname 都保留）', () => {
     const tunnel = { enabled: true, mode: 'token', token: 'cf-token', hostname: 'dsh.example.com' }
     const parsed = parseAccessDocument(JSON.stringify({ tunnel }))
     expect(parsed.document.tunnel).toEqual(tunnel)
     expect(parsed.warnings).toEqual([])
   })
 
-  it('非对象的 tunnel 段落丢弃并告警', () => {
+  it('tunnel 段的未知键丢弃并告警，非法值逐键回落', () => {
+    const parsed = parseAccessDocument(JSON.stringify({ tunnel: { enabled: 'yes', mode: 'named', extra: 1 } }))
+    expect(parsed.document.tunnel).toEqual({ enabled: false, mode: 'quick', token: null, hostname: null })
+    expect(parsed.warnings).toEqual([
+      'access.json 丢弃未知键 tunnel.extra',
+      'access.json 的 tunnel.enabled 非法，已回落 false',
+      'access.json 的 tunnel.mode 非法，已回落 quick',
+    ])
+  })
+
+  it('非对象的 tunnel 段回落默认并告警', () => {
     const parsed = parseAccessDocument(JSON.stringify({ tunnel: 'quick' }))
-    expect(parsed.document.tunnel).toEqual({})
-    expect(parsed.warnings).toEqual(['access.json 的 tunnel 非法，已丢弃'])
+    expect(parsed.document.tunnel).toEqual({ enabled: false, mode: 'quick', token: null, hostname: null })
+    expect(parsed.warnings).toEqual(['access.json 的 tunnel 非法，已回落默认'])
   })
 
   it('形态合法但不可用的密码记录原样保留，供网关判定「认证存储损坏」', () => {
@@ -342,12 +363,12 @@ describe('patchAccessDocument', () => {
 })
 
 describe('redactStatus', () => {
-  it('非回环只保留开关、监听、认证开关与 scope、地址清单与掩码链接', () => {
+  it('非回环只保留开关、监听、认证开关与 scope、凭据存在性、地址清单与掩码链接', () => {
     const redacted = redactStatus(statusFixture())
     expect(redacted.link).toBeUndefined()
     expect(redacted.qr).toBeUndefined()
     expect(redacted.localPort).toBeUndefined()
-    expect(redacted.auth).toEqual({ enabled: true, scope: 'public_only' })
+    expect(redacted.auth).toEqual({ enabled: true, scope: 'public_only', hasPassword: true, hasToken: true })
     expect(redacted.maskLink).toBe('http://192.168.1.5:3089/?auth=***')
     expect(redacted.listen).toEqual({ address: '192.168.1.5', port: 3088 })
     expect(redacted.port).toBe(3089)
@@ -363,9 +384,18 @@ describe('redactStatus', () => {
     expect(text).not.toContain('localPort')
   })
 
-  it('tunnel 段两种模式都不带 token', () => {
-    expect(statusFixture().tunnel).toMatchObject({ token: 'tunnel-secret' })
-    expect(redactStatus(statusFixture()).tunnel).toEqual({ enabled: true, mode: 'quick', hostname: 'x.trycloudflare.com' })
+  it('隧道段脱敏后保留配置与状态，但不含 Token、链接与二维码', () => {
+    expect(statusFixture().tunnel?.token).toBe('tunnel-secret')
+    const redacted = redactStatus(statusFixture()).tunnel
+    expect(redacted).toEqual({
+      enabled: true,
+      mode: 'quick',
+      hostname: 'x.trycloudflare.com',
+      state: 'running',
+      events: [{ seq: 1, ts: '2026-10-05T00:00:00.000Z', kind: 'process', line: 'cloudflared 已启动' }],
+      url: 'https://x.trycloudflare.com',
+      port: 3089,
+    })
   })
 })
 
