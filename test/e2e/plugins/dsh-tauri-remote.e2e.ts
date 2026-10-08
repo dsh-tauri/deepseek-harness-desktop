@@ -25,12 +25,13 @@ import type { Connection, Server as SshServer } from 'ssh2'
 import type { MachineProfile, RemoteHostContext, RemoteSession } from '../../../packages/dsh-tauri-remote/src/host/types/index'
 import { Buffer } from 'node:buffer'
 import { execSync } from 'node:child_process'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, type IncomingMessage } from 'node:http'
 import { createServer, connect as tcpConnect } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import process from 'node:process'
+import { Duplex } from 'node:stream'
 import { join } from 'pathe'
 import { Server } from 'ssh2'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -795,6 +796,7 @@ describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
   /** 远端 DSH 的替身：按启动 token 铸造会话 cookie，其余请求必须带对 cookie 才放行。 */
   async function startUpstream(port = 0): Promise<Upstream> {
     const requests: RemoteRequest[] = []
+    const upgraded = new Set<Duplex>()
     const server = createHttpServer((request, response) => {
       const url = request.url ?? ''
       requests.push({
@@ -829,15 +831,105 @@ describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
     await new Promise<void>((resolve) => {
       server.listen(port, '127.0.0.1', () => resolve())
     })
+    server.on('upgrade', (request, socket) => {
+      // 升级后的 socket 已脱离 server 的连接跟踪，必须自己记账才能在收尾时销毁。
+      upgraded.add(socket)
+      socket.on('close', () => upgraded.delete(socket))
+      requests.push({
+        url: request.url ?? '',
+        host: request.headers.host,
+        encoding: request.headers['accept-encoding'],
+        cookie: request.headers.cookie,
+      })
+      acceptWebSocket(request, socket)
+    })
     return {
       port: (server.address() as { port: number }).port,
       requests,
       close: async () => {
+        for (const socket of upgraded)
+          socket.destroy()
+        upgraded.clear()
+        server.closeAllConnections()
         await new Promise<void>((resolve) => {
           server.close(() => resolve())
         })
       },
     }
+  }
+
+  /** 远端 DSH 的 WebSocket 端点替身：同样要求会话 cookie，回显每一帧文本/二进制。 */
+  function acceptWebSocket(request: IncomingMessage, socket: Duplex): void {
+    const key = request.headers['sec-websocket-key']
+    if (request.headers.cookie !== `dsh-session=${TOKEN}` || typeof key !== 'string') {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    echoFrames(socket)
+  }
+
+  /** 最小帧编解码：只认单帧文本/二进制与关闭帧，足以证明升级链路端到端可用。 */
+  function echoFrames(socket: Duplex): void {
+    let pending = Buffer.alloc(0)
+    socket.on('data', (chunk: Buffer) => {
+      pending = Buffer.concat([pending, chunk])
+      while (pending.length >= 2) {
+        const opcode = pending[0]! & 0x0f
+        const masked = (pending[1]! & 0x80) !== 0
+        let length = pending[1]! & 0x7f
+        let offset = 2
+        if (length === 126) {
+          if (pending.length < 4)
+            return
+          length = pending.readUInt16BE(2)
+          offset = 4
+        }
+        const maskLength = masked ? 4 : 0
+        if (pending.length < offset + maskLength + length)
+          return
+        const mask = masked ? pending.subarray(offset, offset + 4) : undefined
+        const payload = Buffer.from(pending.subarray(offset + maskLength, offset + maskLength + length))
+        if (mask !== undefined) {
+          for (let index = 0; index < payload.length; index++)
+            payload[index] = payload[index]! ^ mask[index % 4]!
+        }
+        pending = pending.subarray(offset + maskLength + length)
+        if (opcode === 0x8) {
+          socket.write(Buffer.from([0x88, 0x00]))
+          socket.end()
+          return
+        }
+        if (opcode === 0x1 || opcode === 0x2)
+          socket.write(frameOf(opcode, payload))
+      }
+    })
+  }
+
+  function frameOf(opcode: number, payload: Buffer): Buffer {
+    if (payload.length < 126)
+      return Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload])
+    const extended = Buffer.alloc(2)
+    extended.writeUInt16BE(payload.length)
+    return Buffer.concat([Buffer.from([0x80 | opcode, 126]), extended, payload])
+  }
+
+  function echoOnce(socket: WebSocket, text: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('e2e: WebSocket 回显超时')), 15_000)
+      socket.addEventListener('open', () => socket.send(text))
+      socket.addEventListener('message', (event) => {
+        clearTimeout(timer)
+        resolve(String(event.data))
+        socket.close()
+      })
+      socket.addEventListener('error', () => {
+        clearTimeout(timer)
+        reject(new Error('e2e: WebSocket 升级失败'))
+      })
+    })
   }
 
   /**
@@ -1100,4 +1192,30 @@ describe('e2e outbound gateway (loopback ssh2 protocol server)', () => {
       await harness.dispose()
     }
   }, 120_000)
+
+  it('carries a WebSocket upgrade end to end through the outbound gateway', async () => {
+    const upstream = await startUpstream()
+    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    try {
+      const profile = profileFor(sshdProxy.port, upstream.port)
+      harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
+      const link = await harness.manager.connect(profile.id)
+      const gatewayPort = new URL(link.tunnelBaseUrl).port
+
+      // 全部 RPC 与对话流都跑在这条 WebSocket 上：升级链路必须端到端可用
+      const echoUrl = `${link.tunnelBaseUrl.replace(/^http/u, 'ws')}/api/remote.mux`
+      const echoed = await echoOnce(new WebSocket(echoUrl), 'ping-through-tunnel')
+      expect(echoed).toBe('ping-through-tunnel')
+
+      const upgrade = upstream.requests.find(record => record.url === '/api/remote.mux')
+      expect(upgrade, '远端替身必须收到升级请求').toBeDefined()
+      expect(upgrade?.cookie, '升级请求同样由网关注入铸造出的会话 cookie').toBe(`dsh-session=${TOKEN}`)
+      expect(upgrade?.host).toBe(`127.0.0.1:${gatewayPort}`)
+      harness.log(`upgraded through ${link.tunnelBaseUrl} and echoed a frame`)
+    }
+    finally {
+      await harness.dispose()
+      await upstream.close()
+    }
+  }, 90_000)
 })
