@@ -3,14 +3,15 @@ import type { RemoteKey } from '../locales/index'
 import { Button, Globe, Icon, SegmentedControl } from 'dsh-tauri-ui/client'
 import { cn, useListenParent, useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
-import { REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC, REMOTE_TABS_ID, SETTINGS_OPEN_MESSAGE, SETTINGS_SECTION_ID } from '../constants/index'
+import { REMOTE_TAB_ACCESS, REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC, REMOTE_TABS_ID, SETTINGS_OPEN_MESSAGE, SETTINGS_SECTION_ID } from '../constants/index'
 import * as service from '../service/machines'
 import { store } from '../store/index'
 import { errorTextOf } from '../utils/error'
+import { AccessSection } from './access-section'
 import { MachinesSection } from './machines-section'
 import { SyncPanel } from './sync-panel'
 
-type RemoteTab = typeof REMOTE_TAB_MACHINES | typeof REMOTE_TAB_SYNC
+type RemoteTab = typeof REMOTE_TAB_MACHINES | typeof REMOTE_TAB_SYNC | typeof REMOTE_TAB_ACCESS
 
 interface RemoteSectionProps {
   t: (key: RemoteKey) => string
@@ -19,6 +20,7 @@ interface RemoteSectionProps {
 const TAB_KEYS: Record<RemoteTab, RemoteKey> = {
   [REMOTE_TAB_MACHINES]: 'tabs.machines',
   [REMOTE_TAB_SYNC]: 'tabs.sync',
+  [REMOTE_TAB_ACCESS]: 'tabs.access',
 }
 
 function MigrationWarning({ warning, t }: { warning: string, t: (key: RemoteKey) => string }): ReactNode {
@@ -48,7 +50,7 @@ export function RemoteSection({ t }: RemoteSectionProps): ReactNode {
   useListenParent(SETTINGS_OPEN_MESSAGE, (message) => {
     if (message.section !== SETTINGS_SECTION_ID)
       return
-    if (message.tab === REMOTE_TAB_MACHINES || message.tab === REMOTE_TAB_SYNC)
+    if (message.tab === REMOTE_TAB_MACHINES || message.tab === REMOTE_TAB_SYNC || message.tab === REMOTE_TAB_ACCESS)
       openTab(message.tab)
   })
 
@@ -87,7 +89,7 @@ export function RemoteSection({ t }: RemoteSectionProps): ReactNode {
     )
   }
 
-  const tabs: RemoteTab[] = [REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC]
+  const tabs: RemoteTab[] = [REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC, REMOTE_TAB_ACCESS]
 
   return (
     <div className="flex flex-col gap-[12px] max-w-[960px] text-primary" data-testid="remote-section">
@@ -98,7 +100,7 @@ export function RemoteSection({ t }: RemoteSectionProps): ReactNode {
           value={tab}
           options={tabs.map(value => ({ value, label: t(TAB_KEYS[value]) }))}
           onChange={(next) => {
-            if (next === REMOTE_TAB_MACHINES || next === REMOTE_TAB_SYNC)
+            if (next === REMOTE_TAB_MACHINES || next === REMOTE_TAB_SYNC || next === REMOTE_TAB_ACCESS)
               openTab(next)
           }}
         />
@@ -120,7 +122,7 @@ export function RemoteSection({ t }: RemoteSectionProps): ReactNode {
           >
             {value === REMOTE_TAB_MACHINES
               ? <MachinesSection t={t} />
-              : <SyncPanel t={t} />}
+              : value === REMOTE_TAB_SYNC ? <SyncPanel t={t} /> : <AccessSection t={t} />}
           </div>
         )
       })}

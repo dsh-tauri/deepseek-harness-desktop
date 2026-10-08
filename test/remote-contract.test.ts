@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { PLUGIN_ID, REMOTE_TAB_MACHINES as PLUGIN_TAB_MACHINES, REMOTE_TAB_SYNC as PLUGIN_TAB_SYNC, SETTINGS_SECTION_ID } from '../packages/dsh-tauri-remote/src/client/constants/index'
-import { REMOTE_SECTION, REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC } from '../src/layout/components/nav-bridge'
+import { PLUGIN_ID, REMOTE_TAB_ACCESS as PLUGIN_TAB_ACCESS, REMOTE_TAB_MACHINES as PLUGIN_TAB_MACHINES, REMOTE_TAB_SYNC as PLUGIN_TAB_SYNC, SETTINGS_SECTION_ID } from '../packages/dsh-tauri-remote/src/client/constants/index'
+import { REMOTE_SECTION, REMOTE_TAB_ACCESS, REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC } from '../src/layout/components/nav-bridge'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const PLUGIN = 'dsh-tauri-remote'
@@ -99,7 +99,7 @@ describe('shell ↔ plugin identity contract', () => {
   })
 
   it('the shell deep-link tabs are the tabs the plugin keys its panels by', () => {
-    expect([REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC]).toEqual([PLUGIN_TAB_MACHINES, PLUGIN_TAB_SYNC])
+    expect([REMOTE_TAB_MACHINES, REMOTE_TAB_SYNC, REMOTE_TAB_ACCESS]).toEqual([PLUGIN_TAB_MACHINES, PLUGIN_TAB_SYNC, PLUGIN_TAB_ACCESS])
   })
 
   it('both generated clients inline the plugin prefix on every call', () => {

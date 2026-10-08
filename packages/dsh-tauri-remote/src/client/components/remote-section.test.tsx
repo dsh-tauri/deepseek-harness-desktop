@@ -55,7 +55,7 @@ describe('remoteSection', () => {
     expect(screen.queryByText('t:tabs.machines')).toBeNull()
   })
 
-  it('点击开启：settings.set 落定后原位切换到 Tabs（SSH 机器 / 同步到远端）', async () => {
+  it('点击开启：settings.set 落定后原位切换到 Tabs（远端机器 / 同步到远端 / 本机访问）', async () => {
     bootWire()
     render(<RemoteSection t={t as never} />)
     await waitFor(() => expect(screen.getByTestId('remote-enable')).toBeTruthy())
@@ -64,7 +64,7 @@ describe('remoteSection', () => {
     await waitFor(() => expect(screen.getByTestId('remote-tabs')).toBeTruthy())
     expect(sent.some(call => call.url === `${baseURL}/settings` && call.http === 'POST')).toBe(true)
     const tabs = screen.getAllByRole('tab')
-    expect(tabs.map(tab => tab.textContent)).toEqual(['t:tabs.machines', 't:tabs.sync'])
+    expect(tabs.map(tab => tab.textContent)).toEqual(['t:tabs.machines', 't:tabs.sync', 't:tabs.access'])
     expect(screen.queryByTestId('remote-hero')).toBeNull()
     expect(screen.getByRole('tab', { selected: true }).textContent).toBe('t:tabs.machines')
   })

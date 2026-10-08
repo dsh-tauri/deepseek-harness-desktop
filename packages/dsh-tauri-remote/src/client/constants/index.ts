@@ -8,6 +8,7 @@ export const SETTINGS_SECTION_ORDER = 50
 
 export const REMOTE_TAB_MACHINES = 'machines'
 export const REMOTE_TAB_SYNC = 'sync'
+export const REMOTE_TAB_ACCESS = 'access'
 export const REMOTE_TABS_ID = 'dsh-tauri-remote-tabs'
 export const SETTINGS_OPEN_MESSAGE = 'dsh://settings:open'
 

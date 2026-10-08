@@ -10,6 +10,9 @@ export const REMOTE_TAB_MACHINES = 'machines'
 /** 同步到远端标签页 id。 */
 export const REMOTE_TAB_SYNC = 'sync'
 
+/** 本机访问（入站暴露与公网隧道）标签页 id。 */
+export const REMOTE_TAB_ACCESS = 'access'
+
 /**
  * 导航栏回调桥：把每个导航栏动作翻译成一条宿主 → iframe 协议消息。
  *

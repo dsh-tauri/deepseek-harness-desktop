@@ -32,6 +32,28 @@ function StateDot(): ReactNode {
   return null
 }
 
+function Field({ label, children, ...rest }: Props): ReactNode {
+  return createElement('div', rest, createElement('span', null, label as never), children as never)
+}
+
+function Select({ options, value, onChange, label, ...rest }: Props & {
+  options: Array<{ value: string, label: string }>
+  value: string
+  onChange: (next: string) => void
+  label?: string
+}): ReactNode {
+  return createElement(
+    'select',
+    {
+      'aria-label': label,
+      'value': value,
+      'onChange': (event: { target: { value: string } }) => onChange(event.target.value),
+      ...rest,
+    },
+    options.map(option => createElement('option', { key: option.value, value: option.value }, option.label)),
+  )
+}
+
 function Globe(): ReactNode {
   return null
 }
@@ -84,12 +106,14 @@ function Switch({ checked, onChange, label, disabled, title, className }: {
 
 export const uiMock = {
   Button,
+  Field,
   Globe,
   Icon,
   Input,
   Modal,
   Pill,
   SegmentedControl,
+  Select,
   StateDot,
   Switch,
 }
