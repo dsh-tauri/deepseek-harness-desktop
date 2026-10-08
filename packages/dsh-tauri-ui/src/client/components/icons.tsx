@@ -1,9 +1,13 @@
 // 引用源 @gravity-ui/icons · 逐名转发 @gravity-ui/icons/<Name> · 版本 未记录（registry.ts 无该条目）· hash 未记录（registry.ts 无该条目）
 export { default as Alarm } from '@gravity-ui/icons/Alarm'
+export { default as ArrowChevronDown } from '@gravity-ui/icons/ArrowChevronDown'
+export { default as ArrowChevronUp } from '@gravity-ui/icons/ArrowChevronUp'
+export { default as ArrowDown } from '@gravity-ui/icons/ArrowDown'
 export { default as ArrowLeft } from '@gravity-ui/icons/ArrowLeft'
 export { default as ArrowRight } from '@gravity-ui/icons/ArrowRight'
 export { default as ArrowRightFromSquare } from '@gravity-ui/icons/ArrowRightFromSquare'
 export { default as ArrowRotateRight } from '@gravity-ui/icons/ArrowRotateRight'
+export { default as ArrowUp } from '@gravity-ui/icons/ArrowUp'
 export { default as ArrowUpRight } from '@gravity-ui/icons/ArrowUpRight'
 export { default as ArrowUturnCcwLeft } from '@gravity-ui/icons/ArrowUturnCcwLeft'
 export { default as Calendar } from '@gravity-ui/icons/Calendar'

@@ -3,6 +3,7 @@ import type { DeepSeekModelDraft } from './DeepSeekModelsEditor.tsx'
 import type { ModelsKey } from './locales.ts'
 import { ChevronDown, ChevronRight, TrashBin } from 'dsh-tauri-ui/client'
 import { ModelInputTypes } from './ModelInputTypes.tsx'
+import { OrderButtons } from './order.tsx'
 import { modelStyles as styles } from './styles.ts'
 
 interface CapacityInput {
@@ -28,6 +29,9 @@ interface ModelRowProps {
   onChange: (model: DeepSeekModelDraft) => void
   onToggle: () => void
   onRemove: () => void
+  /** 省略时不渲染「上移 / 下移」按钮组（调用方不可写时）。 */
+  onMove?: (delta: number) => void
+  count: number
   trailing?: ReactNode
   advanced?: ReactNode
 }
@@ -54,6 +58,18 @@ export function ModelRow(props: ModelRowProps): ReactNode {
           />
         ))}
         {props.trailing}
+        {props.onMove === undefined
+          ? null
+          : (
+              <OrderButtons
+                position={position}
+                count={props.count}
+                disabled={disabled}
+                upLabel={t('moveUp')}
+                downLabel={t('moveDown')}
+                onMove={props.onMove}
+              />
+            )}
         <button
           type="button"
           className={styles.iconButton}

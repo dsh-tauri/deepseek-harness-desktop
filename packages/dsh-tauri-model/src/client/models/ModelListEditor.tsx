@@ -11,6 +11,7 @@ import { TEMPLATE_COMPAT_PROTOCOL } from '../service/model-compat'
 import { AutoConfigAllButton, ModelCompatFields, modelExtrasTranslate, ModelFetchConfigButton } from '../ui/model-extras'
 import { formatCapacity, parseCapacity } from './DeepSeekModelsEditor.tsx'
 import { ModelRow } from './ModelRow.tsx'
+import { swappedAt } from './order.tsx'
 import { modelStyles as styles } from './styles.ts'
 
 export type ModelDraft = DeepSeekModelDraft
@@ -112,6 +113,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const capacityText = (model: ModelDraft, index: number, field: CapacityField): string =>
     editing.get(bufferKey(index, field)) ?? capacitySpelling(numberOf(model, field))
 
+  /** 删除一行：位置键的缓冲左移一位，被删行的缓冲丢弃。 */
   const reindexOnRemove = (
     current: ReadonlyMap<string, string>,
     index: number,
@@ -125,6 +127,38 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
       next.set(at > index ? key.replace(/^\d+/, String(at - 1)) : key, value)
     }
     return next
+  }
+
+  /** 删除时下标左移、上移/下移时两个下标互换：位置键的缓冲与展开态都必须跟着行走。 */
+  const reindexOnMove = (index: number, target: number): void => {
+    const shift = (at: number): number => at === index ? target : at === target ? index : at
+    setEditing((current) => {
+      const next = new Map<string, string>()
+      for (const [key, value] of current) {
+        const at = Number(key.slice(0, key.indexOf(':')))
+        const field = key.slice(key.indexOf(':') + 1)
+        next.set(`${String(shift(at))}:${field}`, value)
+      }
+      return next
+    })
+    setExpanded((current) => {
+      const next = new Set(current)
+      const movedFrom = next.delete(index)
+      const movedTo = next.delete(target)
+      if (movedFrom)
+        next.add(target)
+      if (movedTo)
+        next.add(index)
+      return next
+    })
+  }
+
+  const move = (index: number, delta: number): void => {
+    const next = swappedAt(models, index, index + delta)
+    if (next === undefined)
+      return
+    reindexOnMove(index, index + delta)
+    onChange(next)
   }
 
   const toggleExpanded = (index: number): void => {
@@ -341,6 +375,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             key={rowKeys[index]}
             model={model}
             position={index + 1}
+            count={models.length}
             inputField="input"
             inputFallback={inputDefaults.get(textOf(model, 'id')) ?? props.defaultInput}
             inputLoading={catalogProvider !== undefined && catalog === undefined}
@@ -381,6 +416,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                 onPatch={(next) => { patch(index, next) }}
               />
             )}
+            {...disabled ? {} : { onMove: (delta: number) => { move(index, delta) } }}
             onRemove={() => {
               onChange(models.filter((_model, at) => at !== index))
               setExpanded((current) => {
