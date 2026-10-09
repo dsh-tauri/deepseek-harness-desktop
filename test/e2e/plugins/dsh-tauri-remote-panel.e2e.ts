@@ -77,7 +77,15 @@ async function openAccessPanel(app: DshPage): Promise<void> {
     await app.frame.locator(ENABLE).first().click()
     await app.frame.locator(TABS).waitFor({ state: 'attached', timeout: 30_000 })
   }
-  await app.frame.getByRole('tab', { name: '本机访问' }).click()
+  // iframe 内的指针命中偶发丢失（与监听地址下拉同一现象），因此按 aria-selected 重试点击。
+  const tab = app.frame.locator(TABS).getByRole('tab', { name: '本机访问' })
+  await tab.waitFor({ state: 'visible', timeout: 30_000 })
+  await expect.poll(async () => {
+    if (await tab.getAttribute('aria-selected') === 'true')
+      return 'true'
+    await tab.click({ timeout: 5_000 }).catch(() => undefined)
+    return await tab.getAttribute('aria-selected')
+  }, { timeout: 60_000 }).toBe('true')
   await app.frame.locator(PANEL).waitFor({ state: 'attached', timeout: 20_000 })
 }
 
