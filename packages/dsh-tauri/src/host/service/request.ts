@@ -1,5 +1,6 @@
 import type { Middleware } from 'h3'
 import type { IncomingMessage } from 'node:http'
+import type { TLSSocket } from 'node:tls'
 import type { ConnectionGate } from '../types'
 import { getServerContext } from 'dsh-h3/utils'
 
@@ -27,9 +28,13 @@ export const guard: Middleware = async (event, next) => {
       event.res.status = 403
       return { error: 'Change operation is limited to local machine (127.0.0.1) calls only' }
     }
-    if (req.headers.origin !== undefined && URL.parse(req.headers.origin)?.host !== req.headers.host) {
-      event.res.status = 403
-      return { error: 'cross-origin-request' }
+    if (req.headers.origin !== undefined) {
+      const origin = URL.parse(req.headers.origin)
+      const localOrigin = URL.parse(`${(req.socket as TLSSocket).encrypted ? 'https' : 'http'}://${req.headers.host}`)
+      if (!origin || !req.headers.host || origin.origin !== localOrigin?.origin) {
+        event.res.status = 403
+        return { error: 'cross-origin-request' }
+      }
     }
   }
 
