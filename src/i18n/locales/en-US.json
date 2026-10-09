@@ -115,6 +115,7 @@
   "errors.startup_absolute": "Harness exceeded the maximum allowed time for {{phase}}. Last readiness status: {{reason}}",
   "errors.startup_exited": "Harness exited during {{phase}}. Last readiness status: {{reason}}",
   "errors.process_exited_with_code": "Harness stopped unexpectedly (exit code {{code}}). Restart to continue.",
+  "errors.process_exited_native_crash": "The Harness process was killed by the system (exit code {{code}}, a native Windows crash). This is not a heap exhaustion: no JavaScript exception will appear in the log. A graphics driver or a native module is the usual cause. Restart to continue.",
   "errors.process_exited_without_code": "Harness stopped unexpectedly. Restart to continue.",
   "errors.no_readiness_reason": "No readiness reason was reported.",
   "errors.client_boot_stalled": "The client remained on Loading plugins after all bounded reload attempts.",

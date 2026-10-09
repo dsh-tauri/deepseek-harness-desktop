@@ -107,7 +107,8 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
     if (message.includes('HARNESS_NOT_OWNED')) {
       // dsh 进程已退出（典型如插件冲突导致启动即崩溃），继续等只会白白耗完
       // 当前阶段 deadline，让调用方立刻结束并展示日志里的真实错误。
-      console.warn('[Harness] dsh process exited during startup, failing fast')
+      // 运行期崩溃走的是另一条路径（handleProcessExit），这里能到就说明还在启动轮询里。
+      console.warn('[Harness] dsh process exited before readiness, failing fast')
       return {
         healthy: false,
         notOwned: true,
