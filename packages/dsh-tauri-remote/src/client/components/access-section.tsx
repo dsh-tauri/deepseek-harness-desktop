@@ -18,6 +18,9 @@ const MODES: readonly TunnelMode[] = ['quick', 'token']
 
 const EVENT_TAIL = 6
 
+/** 隧道进程日志尾：cloudflared 启动期会刷很多行，面板只保留最近几条。 */
+const PROCESS_TAIL = 4
+
 const WILDCARD = '0.0.0.0'
 
 const LOOPBACK = '127.0.0.1'
@@ -51,6 +54,9 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
   const tunnelMode = mode ?? status.tunnel.mode
   const tunnelHost = hostname ?? status.tunnel.hostname ?? ''
   const busy = view.busy
+  // cloudflared 的进程日志很密：状态行单独常驻，进程尾只留最近几条，关键结论不被刷掉。
+  const tunnelStateLine = status.tunnel.events.filter(event => event.kind === 'state').at(-1)?.line
+  const tunnelTail = status.tunnel.events.filter(event => event.kind === 'process').slice(-PROCESS_TAIL)
 
   return (
     <div className="flex flex-col gap-[12px] max-w-[960px] text-primary" data-testid="access-section">
@@ -84,6 +90,7 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
         <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
           <Field className="col-span-6" label={t('access.listen.address')}>
             <Select
+              label={t('access.listen.address')}
               options={addressOptionsOf(status.addresses, t)}
               value={listenAddress}
               onChange={(next) => {
@@ -123,6 +130,7 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
               checked={status.auth.enabled}
               disabled={busy}
               label={t('access.auth.enable')}
+              data-testid="access-auth-toggle"
               onChange={next => void service.apply({ authEnabled: next })}
             />
           </div>
@@ -149,7 +157,7 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
                 onChange={event => setPassword(event.target.value)}
               />
             </Field>
-            <div className="col-span-3 flex gap-[8px]">
+            <div className="col-span-6 flex gap-[8px]">
               <Button
                 variant="outline"
                 size="sm"
@@ -162,6 +170,18 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
                 }}
               >
                 {t('access.auth.passwordSave')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy || status.auth.hasPassword !== true}
+                data-testid="access-password-clear"
+                onClick={() => {
+                  setPassword('')
+                  void service.apply({ password: null })
+                }}
+              >
+                {t('access.auth.passwordClear')}
               </Button>
             </div>
           </div>
@@ -264,11 +284,14 @@ export function AccessSection({ t }: AccessSectionProps): ReactNode {
           {status.tunnel.port === undefined ? null : <span className="text-[12px] leading-[18px] text-tertiary">{`${t('access.tunnel.port')} 127.0.0.1:${status.tunnel.port}`}</span>}
           {status.tunnel.mode === 'token' && status.tunnel.state !== 'stopped' ? <span className="text-[12px] leading-[18px] text-tertiary">{t('access.tunnel.dashboardHint')}</span> : null}
           {status.tunnel.error === undefined ? null : <p className="m-0 text-[12px] leading-[18px] text-error" role="alert" data-testid="access-tunnel-error">{status.tunnel.error}</p>}
-          {status.tunnel.events.length === 0
+          {tunnelStateLine === undefined
+            ? null
+            : <span className="break-all text-[12px] leading-[18px] text-secondary" data-testid="access-tunnel-ready">{tunnelStateLine}</span>}
+          {tunnelTail.length === 0
             ? null
             : (
                 <div className="flex flex-col gap-[2px]" data-testid="access-tunnel-events">
-                  {status.tunnel.events.slice(-EVENT_TAIL).map(event => (
+                  {tunnelTail.map(event => (
                     <span key={event.seq} className="break-all text-[12px] leading-[18px] text-tertiary">{`${event.ts} ${event.line}`}</span>
                   ))}
                 </div>

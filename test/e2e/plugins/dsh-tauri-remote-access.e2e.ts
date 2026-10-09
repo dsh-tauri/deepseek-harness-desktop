@@ -72,8 +72,9 @@ async function disable(): Promise<AccessStatus> {
   return response.body
 }
 
+/** 每个用例收尾：关暴露、关认证并清掉本用例设下的密码，共享宿主不把凭据留给后续文件。 */
 afterEach(async () => {
-  await disable()
+  await writeAccess({ enabled: false, authEnabled: false, password: null })
 })
 
 describe('入站暴露路由（真实 dsh 宿主）', () => {

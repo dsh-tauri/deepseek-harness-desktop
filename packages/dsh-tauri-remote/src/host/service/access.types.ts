@@ -20,14 +20,14 @@ export interface RemoteAccessDocument {
   tunnel: RemoteTunnelConfig
 }
 
-/** `POST /access` 请求体：字段缺省表示保持原值（`password` 为只写字段）。 */
+/** `POST /access` 请求体：字段缺省表示保持原值（`password` 只写，`null` 表示清除已设密码）。 */
 export interface RemoteAccessBody {
   enabled?: boolean
   address?: string
   port?: number
   authEnabled?: boolean
   scope?: RemoteAuthScope
-  password?: string
+  password?: string | null
 }
 
 export type RemoteAccessState = 'stopped' | 'listening' | 'error'

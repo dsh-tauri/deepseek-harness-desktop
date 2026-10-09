@@ -173,7 +173,8 @@ export interface AccessBody {
   port?: number
   authEnabled?: boolean
   scope?: AccessScope
-  password?: string
+  /** `null` 表示清除已设密码。 */
+  password?: string | null
 }
 
 export interface TunnelBody {

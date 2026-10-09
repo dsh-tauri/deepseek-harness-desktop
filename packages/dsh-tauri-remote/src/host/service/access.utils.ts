@@ -128,7 +128,10 @@ export function patchAccessDocument(document: RemoteAccessDocument, body: Remote
       throw new TypeError('invalid scope')
     next.auth.scope = body.scope
   }
-  if (body.password !== undefined) {
+  if (body.password === null) {
+    next.auth.password = null
+  }
+  else if (body.password !== undefined) {
     if (typeof body.password !== 'string' || body.password === '')
       throw new TypeError('invalid password')
     next.auth.password = hashPassword(body.password)

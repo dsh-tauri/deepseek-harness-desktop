@@ -120,7 +120,7 @@ describe('接入面板', () => {
     await screen.findByTestId('access-tunnel-url')
     expect(screen.getByTestId('access-tunnel-url').textContent).toBe('https://bold-fox-abc.trycloudflare.com')
     expect(screen.getByTestId('access-tunnel-state').textContent).toBe(en['access.tunnel.state.running'])
-    expect(screen.getByTestId('access-tunnel-events').textContent).toContain('公网隧道已就绪')
+    expect(screen.getByTestId('access-tunnel-ready').textContent).toContain('公网隧道已就绪')
   })
 
   it('具名模式：切到 token 模式后请求体带凭据与公开主机名', async () => {
@@ -134,6 +134,27 @@ describe('接入面板', () => {
     fireEvent.click(screen.getByTestId('access-tunnel-start'))
     await waitFor(() => {
       expect(sent.at(-1)?.body).toEqual({ mode: 'token', token: 'cf-token', hostname: 'dsh.example.com' })
+    })
+  })
+
+  it('设置与清除访问密码都走 /access 的 password 字段', async () => {
+    const base = { enabled: true, scope: 'public_only', hasToken: false }
+    once(
+      replies.ok(statusPayload({ auth: { ...base, hasPassword: false } })),
+      replies.ok(statusPayload({ auth: { ...base, hasPassword: true } })),
+      replies.ok(statusPayload({ auth: { ...base, hasPassword: false } })),
+    )
+    render(<AccessSection t={t} />)
+    await screen.findByTestId('access-password-save')
+    fireEvent.change(screen.getByPlaceholderText(en['access.auth.noPassword']), { target: { value: 'hunter2' } })
+    fireEvent.click(screen.getByTestId('access-password-save'))
+    await waitFor(() => {
+      expect(sent.at(-1)?.body).toEqual({ password: 'hunter2' })
+    })
+    await screen.findByPlaceholderText(en['access.auth.hasPassword'])
+    fireEvent.click(screen.getByTestId('access-password-clear'))
+    await waitFor(() => {
+      expect(sent.at(-1)?.body).toEqual({ password: null })
     })
   })
 

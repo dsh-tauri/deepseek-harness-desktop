@@ -453,5 +453,8 @@ describe('access 认证与来源判定（经真实网关）', () => {
     expect(password?.algo).toBe('pbkdf2-sha256')
     expect(verifyPassword('hunter2', password)).toBe(true)
     expect(readFileSync(documentFile(), 'utf8')).not.toContain('hunter2')
+    const cleared = await access.apply({ password: null })
+    expect(cleared.auth.hasPassword).toBe(false)
+    expect(storedDocument().auth.password).toBeNull()
   })
 })

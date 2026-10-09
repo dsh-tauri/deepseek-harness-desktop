@@ -328,6 +328,14 @@ describe('buildLink / maskLinkOf', () => {
 })
 
 describe('patchAccessDocument', () => {
+  it('password: null 清除已设密码，字符串则写入新哈希', () => {
+    const document = { ...defaultAccessDocument(), auth: { enabled: true, password: { algo: 'pbkdf2-sha256' as const, salt: 's', iterations: 1, hash: 'h' }, token: null, scope: 'public_only' as const } }
+    expect(patchAccessDocument(document, { password: null }, []).auth.password).toBeNull()
+    const written = patchAccessDocument(document, { password: 'next-pass' }, []).auth.password
+    expect(written?.algo).toBe('pbkdf2-sha256')
+    expect(written?.hash).not.toBe('h')
+  })
+
   it('缺省字段保持原值，password 为只写字段', () => {
     const document = { ...defaultAccessDocument(), enabled: true, auth: { enabled: true, password: null, token: 'keep', scope: 'all' as const } }
     const next = patchAccessDocument(document, { port: 4100 }, [entry('10.1.2.3')])
