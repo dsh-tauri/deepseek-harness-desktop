@@ -2,10 +2,11 @@ import type { ClientContext } from 'dsh-tauri/client'
 import type { MachineRow } from '../types/index'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { baseURL } from '../apis/index'
 import { store } from '../store/index'
 import { answer, replies, resetWire, sent } from '../test-utils/client-mock'
 import { pollFeature } from './poll'
+
+const baseURL = '/api/tauri/ssh'
 
 vi.mock('dsh-tauri/client', async () => (await import('../test-utils/client-mock')).clientMock)
 

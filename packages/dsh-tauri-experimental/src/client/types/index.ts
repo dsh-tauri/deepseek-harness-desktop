@@ -1,8 +1,9 @@
-import type { LiveSnapshot as ApiLiveSnapshot, TurnFileChange as ApiTurnFileChange, SummaryPayload } from '../apis/index.type'
+import type { GetApiTauriExperimentalLiveResponse, GetApiTauriExperimentalSummaryResponse } from '../apis/index.type'
 
-export type { TurnFileStatus } from '../apis/index.type'
-
-export interface TurnFileChange extends ApiTurnFileChange {}
+export type LiveSnapshot = Exclude<GetApiTauriExperimentalLiveResponse, { error: string }>
+type SummaryPayload = Exclude<GetApiTauriExperimentalSummaryResponse, { error: string }>
+export type TurnFileChange = SummaryPayload['turns'][number]['files'][number]
+export type TurnFileStatus = TurnFileChange['status']
 
 export interface TurnSummary extends Omit<SummaryPayload['turns'][number], 'hasBaseline'> {
   hasBaseline?: boolean
@@ -11,8 +12,6 @@ export interface TurnSummary extends Omit<SummaryPayload['turns'][number], 'hasB
 export interface SessionSummary extends Omit<SummaryPayload, 'turns'> {
   turns: TurnSummary[]
 }
-
-export interface LiveSnapshot extends ApiLiveSnapshot {}
 
 export type LocaleKey
   = | 'runningChanged'

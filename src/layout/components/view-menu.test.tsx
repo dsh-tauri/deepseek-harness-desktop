@@ -28,7 +28,10 @@ const { store, userAgent, openOverlay, openUrl, toggleDevtools } = vi.hoisted(()
 vi.mock('@/store', () => ({ store }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'macos' }))
-vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: [] }) }))
+vi.mock('@tanstack/react-query', () => ({
+  useQuery: () => ({ data: [] }),
+  useQueryClient: () => ({ ensureQueryData: () => Promise.resolve('dsh-tauri') }),
+}))
 vi.mock('@overlastic/react', () => ({ useOverlay: () => openOverlay }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [{}] }))

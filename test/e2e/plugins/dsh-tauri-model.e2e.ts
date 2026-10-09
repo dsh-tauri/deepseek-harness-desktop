@@ -31,9 +31,9 @@ import {
   waitForCredentialModal,
 } from '../support/browser'
 
-const PRESETS_PATH = '/api/desktop/dsh-tauri-model/presets'
-const ENDPOINT_MODELS_PATH = '/api/desktop/dsh-tauri-model/endpoint/models'
-const CONFIG_OPEN_PATH = '/api/desktop/dsh-tauri-model/config/open'
+const PRESETS_PATH = '/api/tauri/model/presets'
+const ENDPOINT_MODELS_PATH = '/api/tauri/model/endpoint/models'
+const CONFIG_OPEN_PATH = '/api/tauri/model/config/open'
 
 /** 设置文件名（`packages/dsh-tauri-model/src/shared/constants.ts`）。 */
 const SETTINGS_FILE = 'settings.yaml'

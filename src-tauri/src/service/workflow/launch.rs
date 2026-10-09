@@ -19,14 +19,16 @@ use super::process::set_owned_process_with_handle;
 #[cfg(unix)]
 use super::process::warn_if_inotify_watch_limit_low;
 use super::process::{
-    has_owned_process, on_owned_process_exit, stop, terminate_stale_harness_processes, LaunchGuard,
-    LAUNCH_GUARD,
+    has_owned_process, on_owned_process_exit, stop, take_startup_sweep,
+    terminate_stale_harness_processes, LaunchGuard, LAUNCH_GUARD,
 };
 use super::status;
 use super::sweep::persist_harness_pid;
 #[cfg(windows)]
 use super::sweep::{dsh_bin_open_error, relaunch_marker_path, relaunch_via_shell_escape};
-use super::utils::{is_port_in_use, rotate_service_log, spawn_output_readers};
+use super::utils::{
+    is_port_in_use, rotate_service_log, spawn_output_readers, wait_for_port_release,
+};
 use super::win_inspector;
 
 #[cfg(windows)]
@@ -75,21 +77,6 @@ fn build_harness_args(
         OsString::from("--no-open"),
     ]);
     args
-}
-
-/// 轮询等待配置端口释放为空闲（端口本来就空闲则立即返回）。
-///
-/// async（tokio）实现，避免长时间阻塞启动线程。与 `stop()` 里“给系统一点时间
-/// 释放端口”的目的一致，但以“端口确实空闲”为准而不是固定睡 800ms——因此
-/// 端口很快释放时几乎不额外耗时，只有真占用才等到超时。
-async fn wait_for_port_release(port: u16) {
-    let deadline = tokio::time::Instant::now() + PORT_RELEASE_WAIT;
-    while tokio::time::Instant::now() < deadline {
-        if !is_port_in_use(port) {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-    }
 }
 
 /// 从起始端口向上查找第一个空闲端口，绝不结束未知的端口占用进程。
@@ -291,11 +278,19 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // .harness.pid 标记中）持续占用配置端口与 dependencies/dsh 的文件句柄，
     // 不清扫会导致端口一路漂移（3080→…→3085，issue #91）并让后续目录互换
     // 失败（os error 32）。按命令行路径精确匹配本应用 dsh 服务，不会误杀
-    // 用户其它 node 程序（debug 构建为 no-op，见 terminate_stale_harness_processes）。
+    // 用户其它 node 程序。
+    //
+    // setup 阶段（workflow::sweep_orphan_harness）已在本次启动里清扫过一次，
+    // 期间本应用没有拉起任何进程，重复枚举同一份快照没有新结论（Windows 上
+    // 一次全量枚举约 0.3–0.6s），因此只在尚未清扫时才执行。
     {
         let handle = app_handle.clone();
         if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
-            terminate_stale_harness_processes(&handle);
+            if take_startup_sweep() {
+                terminate_stale_harness_processes(&handle);
+            } else {
+                log::debug!("Skipping pre-launch stale Harness sweep: already swept during this launch");
+            }
         })
         .await
         {
@@ -328,7 +323,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 端口”误判为仍占用，从而把配置端口永久顶高（dev 热更新下 3081→3082→…
     // 一路漂移，表现为“端口持续累加 + 首次启动超时、刷新后恢复”）。先留出
     // 窗口等配置端口回落为空闲，再决定是否真的逐级递增。
-    wait_for_port_release(setting.port).await;
+    // 有界轮询是阻塞等待，交给阻塞线程池，避免占用启动所在的 Tokio 执行线程。
+    {
+        let port = setting.port;
+        let _ =
+            tauri::async_runtime::spawn_blocking(move || wait_for_port_release(port, PORT_RELEASE_WAIT))
+                .await;
+    }
     let available_port = find_available_port(setting.port)?;
     if available_port != setting.port {
         log::info!(
@@ -953,7 +954,6 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::TcpListener;
 
     #[test]
     fn occupied_port_advances_to_a_free_port() {
@@ -1021,32 +1021,6 @@ mod tests {
         assert_eq!(text[0], "--max-old-space-size=4096");
         assert_eq!(text[1], "D:/core/lib/bin.js");
         assert!(!text.contains(&"--patch".to_string()));
-    }
-
-    /// 模拟“上个会话残留进程刚被杀、端口仍在释放”的场景：先占用端口，随后在
-    /// 另一线程释放。验证 `wait_for_port_release` 在端口回落后立即返回，而不是
-    /// 等到完整等待窗口——这正是避免端口永久顶高（dev 热更新下 3081→3082→…）
-    /// 的关键行为。
-    #[tokio::test]
-    async fn wait_for_port_release_returns_shortly_after_port_is_released() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind held test port");
-        let held = listener.local_addr().expect("read held port").port();
-
-        // 端口此刻确实被占用（模拟残留进程仍在监听）
-        assert!(is_port_in_use(held));
-        let releaser = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            drop(listener);
-        });
-
-        let started = std::time::Instant::now();
-        wait_for_port_release(held).await;
-        // 端口 150ms 后释放 + 80ms 轮询间隔，应远小于 1.5s 等待上限
-        assert!(
-            started.elapsed() < std::time::Duration::from_millis(800),
-            "wait_for_port_release should return shortly after the port is released, not wait the full window"
-        );
-        releaser.join().expect("port releaser thread");
     }
 
     /// 「duplicate loader entry」竞态签名的判定：只认 exit code 1 + stderr 含

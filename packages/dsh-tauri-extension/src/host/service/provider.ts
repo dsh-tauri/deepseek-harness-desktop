@@ -1,7 +1,10 @@
+import type { PanelExtensionHost } from '../types'
 import { existsSync } from 'node:fs'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
-import { getCurrentHostInstance, providerRuntime } from '../config/runtime'
+import { providerRuntime } from '../config/runtime'
 import { providerHooks } from '../events'
+import { server } from '../server'
 import { agents } from './agents'
 import { loadFilesystemSkillPlugin } from './provider.utils'
 import { skills } from './skills'
@@ -13,7 +16,8 @@ export const provider = defineService({
       .catch((error: unknown) => {
         void providerHooks.callHook('provider:error', error)
         const message = error instanceof Error ? error.message : String(error)
-        getCurrentHostInstance().logger.error(`dsh-tauri-extension: failed to mount filesystem skill provider: ${message}`)
+        const host = getServerContext<PanelExtensionHost>(server)
+        host.logger.error(`dsh-tauri-extension: failed to mount filesystem skill provider: ${message}`)
       })
     return providerRuntime.chain
   },
@@ -25,7 +29,7 @@ async function remount(packagedDir: string): Promise<void> {
   if (providerRuntime.disposed)
     return
   void providerHooks.callHook('provider:before-remount')
-  const host = getCurrentHostInstance()
+  const host = getServerContext<PanelExtensionHost>(server)
   const plugin = await loadFilesystemSkillPlugin(host.loader)
   if (providerRuntime.fiber !== undefined) {
     const old = providerRuntime.fiber

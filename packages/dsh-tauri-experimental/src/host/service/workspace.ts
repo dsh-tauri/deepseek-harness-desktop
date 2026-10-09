@@ -1,3 +1,4 @@
+import type { HostContext, WorkspaceProbe } from '../types'
 /**
  * host/service/workspace.ts — 会话工作区资格（只读推演）。
  *
@@ -11,12 +12,13 @@
  * `process.cwd()` 兜底：宿主进程的工作目录未必是会话工作区。
  */
 
-import type { WorkspaceProbe } from '../types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { resolve } from 'pathe'
 import { RUNNING_CHANGES_REASON_GIT_UNAVAILABLE as REASON_GIT_UNAVAILABLE } from '../../shared/constants'
 import { REASON_GIT_REQUIRED, REASON_UNSAFE_WORKSPACE } from '../config/constants'
-import { getCurrentHostInstance, probeCache, probeRefreshing } from '../config/runtime'
+import { probeCache, probeRefreshing } from '../config/runtime'
+import { server } from '../server'
 import { gitInRepo } from '../utils/git'
 import { canonicalWorkspacePath, isSystemSensitivePath, workspaceKey } from '../utils/workspace'
 
@@ -48,7 +50,7 @@ function sessionOf(sessionId: string): any {
   if (!sessionId)
     return undefined
   try {
-    const ctx = getCurrentHostInstance()
+    const ctx = getServerContext<HostContext>(server)
     return ctx.sessions?.get?.(sessionId)
       ?? ctx.sessions?.list?.().find((session: any) => session?.id === sessionId)
   }

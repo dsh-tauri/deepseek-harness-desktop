@@ -102,9 +102,12 @@ describe('runtime exit store', () => {
           return { service_url: 'http://127.0.0.1:31415' }
         return finalRuntimeInfo
       }
+      if (command === 'harness_ownership')
+        return undefined
       if (command === 'proxy_health_check') {
         healthChecks++
-        if (healthChecks <= 2)
+        // 第一次是就绪轮询；此后只剩退出事件处理器的归属探测——那时进程已经没了
+        if (healthChecks === 1)
           return 'Healthy'
         throw new Error('HARNESS_NOT_OWNED: process exited during readiness commit')
       }
@@ -127,17 +130,16 @@ describe('runtime exit store', () => {
     expect(harness.errorLogs).toContain('Error: process exited during readiness commit')
   })
 
-  it('preserves a successful readiness poll across a transient owned recheck', async () => {
-    let healthChecks = 0
+  it('preserves a successful readiness poll across a transient ownership recheck', async () => {
     invoke.mockImplementation(async (command: string) => {
       if (command === 'launch_harness')
         return undefined
       if (command === 'get_runtime_info')
         return { service_url: 'http://127.0.0.1:31415' }
-      if (command === 'proxy_health_check') {
-        healthChecks++
-        return healthChecks === 1 ? 'Healthy' : 'HARNESS_NOT_READY: transient response'
-      }
+      if (command === 'proxy_health_check')
+        return 'Healthy'
+      if (command === 'harness_ownership')
+        throw new Error('HARNESS_NOT_READY: transient response')
       throw new Error(`unexpected invoke: ${command}`)
     })
 
@@ -149,18 +151,15 @@ describe('runtime exit store', () => {
   })
 
   it('clears running when the final ownership recheck detects an exit without an event', async () => {
-    let healthChecks = 0
     invoke.mockImplementation(async (command: string) => {
       if (command === 'launch_harness')
         return undefined
       if (command === 'get_runtime_info')
         return { service_url: 'http://127.0.0.1:31415' }
-      if (command === 'proxy_health_check') {
-        healthChecks++
-        if (healthChecks === 1)
-          return 'Healthy'
+      if (command === 'proxy_health_check')
+        return 'Healthy'
+      if (command === 'harness_ownership')
         throw new Error('HARNESS_NOT_OWNED: process exited before readiness commit')
-      }
       if (command === 'read_service_logs')
         return 'Error: process exited before readiness commit'
       throw new Error(`unexpected invoke: ${command}`)

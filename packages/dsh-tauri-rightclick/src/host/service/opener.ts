@@ -1,7 +1,8 @@
 import type { OperationResult } from '../types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService, openDirectory, openUrl } from 'dsh-tauri'
 import { PLUGIN_ID } from '../../shared/constants'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import { mutationQueue } from './mutation-queue'
 
 /** 宿主打开能力：默认浏览器打开 http/https 外链、文件管理器打开本地目录。 */
@@ -37,7 +38,7 @@ export const opener = defineService({
 
 function warn(message: string, error: unknown): void {
   try {
-    getCurrentHostInstance().logger?.warn?.(`[${PLUGIN_ID}] ${message}:`, error)
+    getServerContext(server).logger?.warn?.(`[${PLUGIN_ID}] ${message}:`, error)
   }
   catch {}
 }

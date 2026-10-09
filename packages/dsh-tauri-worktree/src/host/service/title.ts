@@ -1,11 +1,14 @@
+import type { HostContext } from '../types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { get, isString } from 'lodash-es'
-import { getCurrentHostInstance, pendingWorktreeTitles } from '../config/runtime'
+import { pendingWorktreeTitles } from '../config/runtime'
+import { server } from '../server'
 
 /** 宿主实例在插件卸载后就取不到了（读取即抛错），补标题这种锦上添花的能力绝不因此冒泡。 */
 function hostInstance(): any {
   try {
-    return getCurrentHostInstance()
+    return getServerContext<HostContext>(server)
   }
   catch {
     return undefined

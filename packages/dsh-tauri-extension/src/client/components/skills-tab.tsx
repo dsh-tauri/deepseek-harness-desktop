@@ -47,8 +47,14 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     let current = true
     void getSkills().then(
       (body) => {
-        if (current)
+        if (current) {
+          if ('error' in body) {
+            setSkills([])
+            setToast({ text: failText(t, new Error(body.error)), seq: Date.now() })
+            return
+          }
           setSkills(body.skills)
+        }
       },
       (error: unknown) => {
         if (current) {
@@ -66,6 +72,8 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     setBusy(true)
     try {
       const body = await postSkillsRefresh()
+      if ('error' in body)
+        throw new Error(body.error)
       setSkills(body.skills)
     }
     catch {
@@ -82,6 +90,10 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
       later(() => void getSkills().then((body) => {
         if (!mounted.current)
           return
+        if ('error' in body) {
+          tick()
+          return
+        }
         setSkills(body.skills)
         if (!predicate(body.skills))
           tick()
@@ -94,6 +106,8 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     setBusy(true)
     try {
       const body = await getSkill({ name: skill.name })
+      if ('error' in body)
+        throw new Error(body.error)
       setPreview(!skill.editable)
       setEditor({ mode: skill.editable ? 'edit' : 'view', name: skill.name, description: skill.description, whenToUse: skill.whenToUse ?? '', modelInvocable: skill.invocation.modelInvocable, userInvocable: skill.invocation.userInvocable, content: body.content })
     }
@@ -181,7 +195,10 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
         await new Promise<void>(resolve => later(resolve, delay))
         if (!mounted.current)
           return
-        setSkills((await getSkills()).skills)
+        const body = await getSkills()
+        if ('error' in body)
+          throw new Error(body.error)
+        setSkills(body.skills)
       }
     }
     catch (error) { setFormError(error instanceof Error ? error.message : String(error)) }

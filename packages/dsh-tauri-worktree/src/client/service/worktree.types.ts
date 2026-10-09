@@ -1,4 +1,4 @@
-import type { WorktreeCreate } from '../apis/index.type'
+import type { PostApiTauriWorktreeResponse as WorktreeCreate } from '../apis/index.type'
 
 export interface ActionResult {
   ok: boolean

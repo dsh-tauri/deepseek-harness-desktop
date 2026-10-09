@@ -1,6 +1,7 @@
-import type { OperationResult } from '../types'
+import type { HostContext, OperationResult } from '../types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import { ledger } from './ledger'
 
 export const workspace = defineService({
@@ -38,7 +39,7 @@ interface WorkspaceRegistry {
 
 function registryOf(): WorkspaceRegistry | undefined {
   try {
-    return getCurrentHostInstance().workspaceRegistry as WorkspaceRegistry
+    return getServerContext<HostContext>(server).workspaceRegistry as WorkspaceRegistry
   }
   catch {
     return undefined
@@ -47,7 +48,7 @@ function registryOf(): WorkspaceRegistry | undefined {
 
 async function workspaceOf(path: string): Promise<any> {
   try {
-    return await getCurrentHostInstance().workspaceRegistry.resolveByPath(path)
+    return await getServerContext<HostContext>(server).workspaceRegistry.resolveByPath(path)
   }
   catch {
     return null

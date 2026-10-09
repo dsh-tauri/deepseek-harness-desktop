@@ -2,7 +2,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useRafFn, useTimeoutFn } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useListen } from '@/hooks/use-listen'
 
 /** 拖拽的水平方向。 */
@@ -368,12 +368,6 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
     pressedRef.current = false
     endDrag()
   })
-
-  // keep:effect 拉起后端鼠标设备流（光标位置与左键状态都来自它）；命令幂等，
-  // 渲染期调用会在每次重渲染重复发起 IPC。
-  useEffect(() => {
-    void invoke('start_pet_mouse_stream').catch(() => {})
-  }, [])
 
   return {
     dragging,

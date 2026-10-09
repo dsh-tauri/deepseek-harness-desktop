@@ -8,8 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetTestDshHome, testDshHome } from '../../../../.test/test-utils'
 import { PLUGIN_ID, RUNNING_CHANGES_REASON_SNAPSHOT_FAILED, RUNNING_CHANGES_REASON_WORKSPACE_CHANGED } from '../../shared/constants'
 import { LOCK_BARRIER_TIMEOUT_MS } from '../config/constants'
-import { clearHostRuntime, resetHostRuntime, setCurrentHostInstance, workspaceQueue } from '../config/runtime'
+import { disposeRuntime, resetHostRuntime, workspaceQueue } from '../config/runtime'
 import { runningChangesHooks } from '../events'
+import { server } from '../server'
 import { WorkspaceLockTimeoutError } from '../utils/lock'
 import { capture } from './capture'
 import { ledger } from './ledger'
@@ -30,15 +31,18 @@ const temporaryDirectories: string[] = []
 const originalQueueRun = workspaceQueue.run
 
 /** 绑定的宿主实例：会话 cwd 指向当前 fixture 的工作区（capture 自己解析工作区，不再收 cwd）。 */
+const disposers: Array<() => void> = []
+
 let hostCwd = ''
 
 function bindHost(cwd: string): void {
   hostCwd = cwd
-  setCurrentHostInstance({
+  disposers.push(server({
+    webServer: { register: () => () => {} },
     sessions: {
       get: (id: string) => ({ id, header: { cwd: hostCwd } }),
     },
-  })
+  } as never))
 }
 
 async function fixture(): Promise<{ worktree: string }> {
@@ -138,7 +142,8 @@ afterEach(async () => {
   // 卸载捕获编排器：实时轮询的定时器与在飞的 git 子进程都会握着工作区，
   // Windows 上直接 rmdir 会 EBUSY。先停表、再给子进程一点退出时间。
   capture.dispose()
-  clearHostRuntime()
+  disposeRuntime()
+  disposers.splice(0).forEach(dispose => dispose())
   workspaceQueue.run = originalQueueRun
   for (const hook of capturedHooks.splice(0))
     runningChangesHooks.removeHook('turn:captured', hook)

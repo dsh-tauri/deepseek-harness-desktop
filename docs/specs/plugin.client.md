@@ -52,7 +52,7 @@ $$\text{client/index.ts} \longrightarrow \begin{bmatrix} \text{register/} \\ \te
 | **`constants/`** | 静态常量 | 声明 slot 名、注册 ID、storage key、排序权重；跨 half 常量放 `src/shared/`[cite: 2]。 |
 | **`types/`** | 类型定义 | 导出跨文件共享的 interface / type，纯类型无实现[cite: 2]。单一模块专属的类型不入此目录，而是与所属模块**同目录同名**，命名为 `<module>.types.ts`（如 `components/sidebar.types.ts`、`store/modules/settings.types.ts`）；此目录仅保留被多个模块共享的类型。 |
 | **`locales/`** | 本地化字典 | 纯词典定义与 `defineLocale` 导出，无业务代码。 |
-| **`apis/`** | HTTP 出口 | **唯一允许发请求的层**。路径匹配路由，导出 `get*`/`post*`/`delete*` 函数及 DTO。 |
+| **`apis/`** | HTTP 出口 | **唯一允许发请求的层**。由 `dsh-h3/genapi` 根据 `host/server/index.ts` 生成请求函数及 DTO，路径、body、query 与服务端注册一致。 |
 | **`store/`** | 状态管理 | 包含 `index.ts`（纯聚合）与 `modules/<domain>.ts`（一领域一文件，包含 `state` 与同步 `actions`）[cite: 1]。 |
 | **`register/`** | 副作用注册 | **唯一允许登记副作用的层**。使用 `defineRegister` 处理槽位、订阅、观察者与 DOM 补丁[cite: 1]。 |
 | **`service/`** | 领域服务 | 包含 Query（`fetch*`/`load*`）与 Action（领域动作）原型，无副作用生命周期。 |
@@ -107,8 +107,10 @@ $$\text{client/index.ts} \longrightarrow \begin{bmatrix} \text{register/} \\ \te
 
 ### 5. API 层 (`apis/`)
 
-* **唯一允许发请求的层**。使用 `dsh-tauri/client` 导出的 `fetch`，严禁使用 `axios` 或 `window.fetch`。
-* 命名格式为 `HTTP动词 + 领域名词`（如 `getBindings`、`postCreate`）。DTO 存放在 `apis/index.type.ts`，领域模型存放在 `types/`[cite: 2]。
+* **唯一允许发请求的层**。JSON 请求使用 `dsh-tauri/client` 导出的 `ofetch`（与既有 `fetch` 为同一 JSON 实例，不是流式传输）；严禁使用 `axios` 或 `window.fetch`。
+* `apis/index.ts` 与 `apis/index.type.ts` 由根目录 `genapi.config.ts` 使用 `dsh-h3/genapi` 从 `host/server/index.ts` 生成，修改服务契约后运行 `pnpm genapi`，禁止手改生成结果或恢复 `genapi.pipeline.ts`。插件路径统一为 `/api/tauri/<插件短名>`（如 `/api/tauri/ssh/machines`），生成类型与消费方按新路径同步，不建立旧 URL 或 DTO 名别名。
+* 请求函数名使用 `HTTP动词 + 路径领域名词`，通过根配置的 transform/patch 保持必要的既有操作名；body/query 必须传入生成函数对应参数，不能误当请求 options。业务类型可从生成响应的成功分支派生，保留真实错误联合，不复制另一套 DTO。
+* 保持现有 JSON 传输：插件生成文件使用 `dsh-tauri/client` 的 `ofetch` 与 type-only `FetchOptions`；桌面壳 SSH 的 `src/apis/remote.ts` 使用 `./http` 的 invoke 适配，不改用浏览器原生 fetch。
 
 ### 6. UI 与样式 (`components/`, `styles/`, `hooks/`)
 
@@ -160,7 +162,7 @@ $$\text{client/index.ts} \longrightarrow \begin{bmatrix} \text{register/} \\ \te
 * [ ] **服务原型**：`service/` 函数严格划分为 Query 与 Action 原型，无副作用 API[cite: 1]。
 * [ ] **副作用收敛**：无裸写原生定时器、DOM 观察器或事件监听，全部由 controller 托管[cite: 1]。
 * [ ] **注册层薄度**：`register/*.ts` 仅做登记编排，>150 行的代码已将逻辑下沉至 `service/`。
-* [ ] **请求纯度**：所有网络请求集中于 `apis/`，统一使用 `dsh-tauri/client` 导出的 `fetch`。
+* [ ] **请求纯度**：所有网络请求集中于 `apis/`，JSON 请求统一使用 `dsh-tauri/client` 的 JSON 实例 `ofetch`/`fetch`，不把该实例作为流式传输。
 * [ ] **依赖与本地化**：无第三方库直接 import；本地化统一采用 `defineLocale`[cite: 1]。
 * [ ] **类型/工具归属**：单一模块专属的类型/工具是否与所属模块**同目录同名**（`<module>.types.ts` / `<module>.utils.ts`），`types/`、`utils/` 是否只留真正跨模块共享的文件？
 * [ ] **零无意义封装**：不存在 `function f(x) { return lodashFn(x) }` 这类纯转调包装；手写处理逻辑（裁剪、比较、排序、去重、取值、判空）一律改用 `dsh-tauri/client` 转出的 `lodash-es`。

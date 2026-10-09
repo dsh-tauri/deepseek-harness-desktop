@@ -123,7 +123,7 @@ impl Installable for Dsh {
         config::get_dsh_install_path(app)
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
-        config::get_dsh_binary_path(app).exists()
+        crate::service::core::active_dsh_binary(app).is_file()
     }
     fn record_mapping(&self, app: &AppHandle) {
         // 记录**当前生效的根**而不是清单托管根：随包资源构建（离线包）里用户可以把内核

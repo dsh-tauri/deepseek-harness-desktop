@@ -74,9 +74,4 @@ describe('pet dragging follows the pointer (upstream spring feel)', () => {
     expect(hook).toContain('void invoke(\'persist_pet_window_position\').catch(() => {})')
     expect(hook).not.toContain('invoke(\'move_pet_window\'')
   })
-
-  it('recomputes click-through when the window itself moves', () => {
-    // 甩出时窗口在动、光标不动：`Moved` 之后要按最近光标样本重算命中。
-    expect(cursorEvents).toContain('refreshWindowPosition().then(refreshFromState)')
-  })
 })

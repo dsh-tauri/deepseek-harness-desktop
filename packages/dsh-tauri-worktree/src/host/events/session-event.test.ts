@@ -4,15 +4,24 @@
  * 锁住的契约：只有登记过的工作树会话在首个请求头落盘时补一次标题；其它事件、其它会话都不触发。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearHostRuntime, pendingWorktreeTitles, setCurrentHostInstance } from '../config/runtime'
+import { pendingWorktreeTitles, resetRuntime } from '../config/runtime'
+import { server } from '../server'
 import { handleSessionEvent } from './session-event'
 
+const disposers: Array<() => void> = []
+
+function disposeServers(): void {
+  for (const dispose of disposers.splice(0))
+    dispose()
+}
+
 function hostWith(refresh: ReturnType<typeof vi.fn>): void {
-  setCurrentHostInstance({ get: () => ({ refresh }), logger: { warn: () => {} } })
+  disposers.push(server({ get: () => ({ refresh }), logger: { warn: () => {} }, webServer: { register: () => () => {} } } as never))
 }
 
 afterEach(() => {
-  clearHostRuntime()
+  disposeServers()
+  resetRuntime()
 })
 
 describe('handleSessionEvent：工作树会话标题接线', () => {

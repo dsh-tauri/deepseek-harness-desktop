@@ -6,11 +6,33 @@ export interface InputState {
 
 export interface InputActions {
   setDraft: (text: string) => void
+  persistDraft?: () => void
   addImages?: (ids: string[]) => boolean
   removeImage?: (id: string) => void
   addAttachments?: (ids: string[]) => boolean
   removeAttachment?: (id: string) => void
   submit: () => void
+}
+
+export interface DraftReference {
+  readonly source: string
+  readonly ref: string
+  readonly offset: number
+  readonly length: number
+  readonly label: string
+  readonly clipboardText: string
+  readonly appearance?: 'session' | 'file' | 'folder'
+  readonly invalid?: boolean
+}
+
+export interface SessionDraft {
+  readonly text: string
+  readonly references: readonly DraftReference[]
+}
+
+export interface SessionInputRuntime {
+  readonly draftSnapshot?: SessionDraft
+  setDraft: (draft: string | SessionDraft) => void
 }
 
 export interface SessionListSnapshot {
@@ -21,6 +43,7 @@ export interface SessionListSnapshot {
 export interface SessionsRuntime {
   create: (opts: { cwd: string, sessionId: string }) => Promise<string>
   open: (sessionId: string) => void
+  binding?: (sessionId: string) => { ctx?: unknown } | undefined
   provideInfo?: (sessionId: string) => { props?: { inputActions?: InputActions } } | undefined
   refresh: () => Promise<void>
   list: {

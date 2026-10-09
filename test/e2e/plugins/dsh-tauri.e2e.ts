@@ -23,10 +23,10 @@ import { resolveDshCommand, resolveNodeBin, scaffoldDshProfile } from '../suppor
 const EMBEDDED_ENV = 'DSH_TAURI_EMBEDDED'
 
 /** 产品可见的 `/api/**` 路由，用于把「401 被降级」与「路由缺失」区分开。 */
-const PET_STREAM_PATH = '/api/desktop/dsh-tauri-pet/session/stream'
+const PET_STREAM_PATH = '/api/tauri/pet/session/stream'
 
 /** 仓库内不存在的插件 id：注入态下它证明请求已越过鉴权层落到路由层。 */
-const UNMOUNTED_PATH = '/api/desktop/dsh-tauri-unmounted-probe/ping'
+const UNMOUNTED_PATH = '/api/tauri/unmounted-probe/ping'
 
 const READY_RE = /http:\/\/127\.0\.0\.1:\d\S*/
 const READY_TIMEOUT_MS = 90_000

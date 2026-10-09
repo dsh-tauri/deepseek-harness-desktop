@@ -53,7 +53,7 @@ function openInAppSession(): OpenInAppSession | undefined {
 
 async function configPath(): Promise<string | undefined> {
   try {
-    const response = await postConfigOpen({ params: { dry: '1' }, ignoreResponseError: true })
+    const response = await postConfigOpen({ dry: '1' }, { ignoreResponseError: true })
     return response.ok === true && typeof response.path === 'string' && response.path.length > 0 ? response.path : undefined
   }
   catch {

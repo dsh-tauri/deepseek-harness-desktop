@@ -9,9 +9,8 @@ const fixtureRoot = resolve(process.cwd(), '.temp')
 const fixture = vi.hoisted(() => ({ home: '' }))
 
 vi.mock('dsh-tauri', async () => {
-  const [service, runtime, driver] = await Promise.all([
+  const [service, driver] = await Promise.all([
     import('../../../../dsh-tauri/src/host/service'),
-    import('../../../../dsh-tauri/src/host/config/runtime'),
     import('../../../../dsh-tauri/src/host/utils/driver'),
   ])
   return {
@@ -19,7 +18,7 @@ vi.mock('dsh-tauri', async () => {
       return fixture.home
     },
     defineService: service.defineService,
-    defineHostRuntime: runtime.defineHostRuntime,
+    guard: () => undefined,
     fsAtomicDriver: driver.fsAtomicDriver,
   }
 })

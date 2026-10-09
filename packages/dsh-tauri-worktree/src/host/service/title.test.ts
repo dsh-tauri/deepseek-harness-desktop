@@ -5,8 +5,16 @@
  * 官方刷新缺席、抛错都只告警，绝不影响会话本身。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearHostRuntime, pendingWorktreeTitles, setCurrentHostInstance } from '../config/runtime'
+import { pendingWorktreeTitles, resetRuntime } from '../config/runtime'
+import { server } from '../server'
 import { worktreeTitle } from './title'
+
+const disposers: Array<() => void> = []
+
+function disposeServers(): void {
+  for (const dispose of disposers.splice(0))
+    dispose()
+}
 
 interface SetupOptions {
   refresh?: (session: unknown) => Promise<unknown>
@@ -16,17 +24,19 @@ interface SetupOptions {
 
 function setup(options: SetupOptions = {}): { refresh: ReturnType<typeof vi.fn> } {
   const refresh = vi.fn(options.refresh ?? (async () => {}))
-  setCurrentHostInstance({
+  disposers.push(server({
     get: (name: string) => (name === 'sessionTitle' && options.withService !== false ? { refresh } : undefined),
     logger: { warn: options.warn ?? (() => {}) },
-  })
+    webServer: { register: () => () => {} },
+  } as never))
   return { refresh }
 }
 
 const session = { id: 'session-target' }
 
 afterEach(() => {
-  clearHostRuntime()
+  disposeServers()
+  resetRuntime()
 })
 
 describe('worktreeTitle.refresh', () => {
@@ -95,7 +105,8 @@ describe('worktreeTitle.refresh', () => {
   })
 
   it('宿主实例缺席时静默返回，不抛出', async () => {
-    clearHostRuntime()
+    disposeServers()
+    resetRuntime()
     pendingWorktreeTitles.add('session-target')
 
     await expect(worktreeTitle.refresh(session)).resolves.toBeUndefined()

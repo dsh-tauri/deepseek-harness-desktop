@@ -6,7 +6,7 @@
  * locale / layout），因此 `ClientContext` 就是增强后的 cordis `Context`，不再自行声明
  * 自包含接口。本文件同时是客户端全部类型（上游类型 + Tauri 桥/适配层协议）的唯一出口。
  *
- * 【基准】@deepseek-ai/* 0.2.0-rc.2（版本由 pnpm-workspace.yaml 的 `dsh` catalog 钉住）。
+ * 【基准】@deepseek-ai/* 0.2.1-alpha.1（版本由 pnpm-workspace.yaml 的 `dsh` catalog 钉住）。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'

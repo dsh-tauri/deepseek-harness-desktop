@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { OverlaysProvider, useOverlay } from '@overlastic/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,7 +12,6 @@ const { desktopUpdater } = vi.hoisted(() => ({
     downloading: false,
     downloadProgress: 0,
     downloadAndOpen: vi.fn(),
-    openInstaller: vi.fn(),
   },
 }))
 
@@ -27,12 +27,21 @@ function Launcher() {
   return <button onClick={handleOpen}>Open update</button>
 }
 
+let client: QueryClient
+
 function openDialog() {
-  render(<StrictMode><OverlaysProvider><Launcher /></OverlaysProvider></StrictMode>)
+  render(
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <OverlaysProvider><Launcher /></OverlaysProvider>
+      </QueryClientProvider>
+    </StrictMode>,
+  )
   fireEvent.click(screen.getByText('Open update'))
 }
 
 beforeEach(() => {
+  client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
   desktopUpdater.updateInfo = {
     currentVersion: '0.21.1',
     version: '0.21.2',
@@ -43,7 +52,6 @@ beforeEach(() => {
   desktopUpdater.downloading = false
   desktopUpdater.downloadProgress = 0
   desktopUpdater.downloadAndOpen.mockReset()
-  desktopUpdater.openInstaller.mockReset()
 })
 
 afterEach(() => {
@@ -74,11 +82,44 @@ describe('desktop update dialog', () => {
     expect((await screen.findByRole('button', { name: 'update.open_installer' })).textContent).toBe('update.open_installer')
   })
 
-  it('opens the installer instead of downloading when the package already exists', async () => {
+  it('closes after an existing installer is opened successfully', async () => {
     desktopUpdater.updateInfo!.downloaded = true
+    desktopUpdater.downloadAndOpen.mockResolvedValue(true)
     openDialog()
     fireEvent.click(await screen.findByRole('button', { name: 'update.open_installer' }))
-    expect(desktopUpdater.openInstaller).toHaveBeenCalledExactlyOnceWith('C:/installer.exe')
-    expect(desktopUpdater.downloadAndOpen).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'update.open_installer' })).toBeNull()
+    })
+    expect(desktopUpdater.downloadAndOpen).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the dialog open when the installer cannot be opened', async () => {
+    desktopUpdater.updateInfo!.downloaded = true
+    desktopUpdater.downloadAndOpen.mockResolvedValue(false)
+    openDialog()
+    fireEvent.click(await screen.findByRole('button', { name: 'update.open_installer' }))
+    await vi.waitFor(() => {
+      expect(desktopUpdater.downloadAndOpen).toHaveBeenCalledOnce()
+    })
+    expect(screen.queryByRole('button', { name: 'update.open_installer' })).not.toBeNull()
+  })
+
+  it('disables the primary action while installer handoff is pending', async () => {
+    let finish!: (opened: boolean) => void
+    const pending = new Promise<boolean>((resolve) => {
+      finish = resolve
+    })
+    desktopUpdater.updateInfo!.downloaded = true
+    desktopUpdater.downloadAndOpen.mockReturnValue(pending)
+    openDialog()
+    const primary = await screen.findByRole<HTMLButtonElement>('button', { name: 'update.open_installer' })
+    fireEvent.click(primary)
+    await vi.waitFor(() => {
+      expect(primary.disabled).toBe(true)
+    })
+    finish(false)
+    await vi.waitFor(() => {
+      expect(primary.disabled).toBe(false)
+    })
   })
 })

@@ -6,18 +6,18 @@
 
 import type { HostContext } from './types'
 import { PLUGIN_ID } from '../shared/constants'
-import { clearHostRuntime, resetHostRuntime, setCurrentHostInstance } from './config/runtime'
+import { disposeRuntime, resetHostRuntime } from './config/runtime'
 import { handleAgentStatus } from './events/agent-status'
 import { handlePreStep } from './events/pre-step'
 import { handleSessionDisposed } from './events/session-disposed'
 import { handleSessionEvent } from './events/session-event'
 import { handlePreExecute } from './events/tools-pre-execute'
-import { routes } from './routes'
+import { server } from './server'
 import { capture } from './service/capture'
 
 export function apply(ctx: HostContext): void {
   resetHostRuntime()
-  setCurrentHostInstance(ctx)
+  ctx.effect(() => server(ctx), `${PLUGIN_ID}: routes`)
 
   ctx.on('agent/pre-step', handlePreStep)
   ctx.on('tools/pre-execute', handlePreExecute)
@@ -25,7 +25,6 @@ export function apply(ctx: HostContext): void {
   ctx.on('agent/status', handleAgentStatus)
   ctx.on('session/disposed', handleSessionDisposed)
 
-  ctx.effect(() => routes(ctx), `${PLUGIN_ID}: routes`)
   ctx.effect(() => () => capture.dispose(), `${PLUGIN_ID}: turn capture`)
-  ctx.effect(() => () => clearHostRuntime(), `${PLUGIN_ID}: host runtime`)
+  ctx.effect(() => () => disposeRuntime(), `${PLUGIN_ID}: host runtime`)
 }

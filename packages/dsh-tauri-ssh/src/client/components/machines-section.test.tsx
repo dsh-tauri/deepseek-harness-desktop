@@ -6,12 +6,13 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/dom'
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { baseURL } from '../apis/index'
 import { en } from '../locales/index'
 import * as service from '../service/machines'
 import { store } from '../store/index'
 import { answer, replies, resetWire, sent } from '../test-utils/client-mock'
 import { MachinesSection } from './machines-section'
+
+const baseURL = '/api/tauri/ssh'
 
 vi.mock('dsh-tauri-ui/client', async () => (await import('../test-utils/ui-mock')).uiMock)
 vi.mock('dsh-tauri/client', async () => (await import('../test-utils/client-mock')).clientMock)

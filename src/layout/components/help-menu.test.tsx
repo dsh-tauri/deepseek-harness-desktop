@@ -23,7 +23,10 @@ const { userAgent, openUrl, writeText, toast, toggleDevtools } = vi.hoisted(() =
 
 vi.mock('@/store', () => ({ store: { desktopUpdater: { updateInfo: null }, setting: { zoom: vi.fn() } } }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
-vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: [] }) }))
+vi.mock('@tanstack/react-query', () => ({
+  useQuery: () => ({ data: [] }),
+  useQueryClient: () => ({ ensureQueryData: () => Promise.resolve('dsh-tauri') }),
+}))
 vi.mock('@overlastic/react', () => ({ useOverlay: () => vi.fn() }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('i18next', () => ({ default: { t: (key: string) => key } }))

@@ -1,8 +1,10 @@
-import type { CheckoutInfo, OperationResult, PendingHandoff } from '../types'
+import type { CheckoutInfo, HostContext, OperationResult, PendingHandoff } from '../types'
 import { randomUUID } from 'node:crypto'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { get } from 'lodash-es'
-import { getCurrentHostInstance, pendingWorktreeTitles } from '../config/runtime'
+import { pendingWorktreeTitles } from '../config/runtime'
+import { server } from '../server'
 import { worktreeHandoffText } from '../utils/worktree-facts'
 import { checkoutContext } from './checkout-context'
 import { sessionContext } from './session-context'
@@ -16,7 +18,7 @@ export const handoff = defineService({
   ): Promise<OperationResult<{ targetSessionId: string, seedLength: number }>> {
     const inherited = await createInherited(sourceSessionId, { cwd, parentSession: sourceSessionId, targetSessionId })
     if (!inherited.ok)
-      getCurrentHostInstance().logger?.warn?.(`dsh-tauri-worktree: session inheritance failed for ${targetSessionId}: ${inherited.error}`)
+      getServerContext<HostContext>(server).logger?.warn?.(`dsh-tauri-worktree: session inheritance failed for ${targetSessionId}: ${inherited.error}`)
     return inherited
   },
 
@@ -71,7 +73,7 @@ export const handoff = defineService({
   },
 
   async complete(pending: PendingHandoff): Promise<void> {
-    const ctx = getCurrentHostInstance()
+    const ctx = getServerContext<HostContext>(server)
     const { sourceAgent, targetSessionId, binding } = pending
     const sourceSession = sourceAgent.session
     try {
@@ -126,7 +128,7 @@ async function createInherited(
     targetSessionId?: string
   },
 ): Promise<OperationResult<{ targetSessionId: string, seedLength: number }>> {
-  const ctx = getCurrentHostInstance()
+  const ctx = getServerContext<HostContext>(server)
   const agent = ctx.agents?.get?.(sourceSessionId)
   const sourceSession = agent?.session ?? sessionContext.peek(sourceSessionId)
   if (!sourceSession)
@@ -161,7 +163,7 @@ async function createAgent(
   seed: readonly unknown[],
   parentSession = sourceSession.id,
 ): Promise<any> {
-  const ctx = getCurrentHostInstance()
+  const ctx = getServerContext<HostContext>(server)
   const presets = ctx.get?.('agentPresets')
   const parentPreset = sourceAgent
     ? (presets?.composedPreset(sourceAgent.ctx) ?? sourceSession.header?.agentPreset)

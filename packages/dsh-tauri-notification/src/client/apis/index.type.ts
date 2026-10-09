@@ -1,8 +1,6 @@
-export type TurnEndResult = {
-  reason?: string;
-  turn?: number;
-};
+export type GetApiTauriNotificationTurnEndResponse = { reason?: undefined | string; turn?: undefined | number };
+export type GetApiTauriNotificationTurnEndQuerySessionId = undefined | string;
 
-export interface GetTurnEndQuery {
-  sessionId?: string;
+export interface GetApiTauriNotificationTurnEndQuery {
+  sessionId?: GetApiTauriNotificationTurnEndQuerySessionId;
 }

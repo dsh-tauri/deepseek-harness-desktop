@@ -1,4 +1,4 @@
-import type { ArchivedListPayload } from '../../apis/index.type'
+import type { GetApiTauriArchiveSessionArchiveResponse as ArchivedListPayload } from '../../apis/index.type'
 
 /** 归档页排序方式，同时作用于「组」与「组内聊天」（更新时间 / 创建时间 / 标题）。 */
 export type ArchiveSort = 'updatedAt' | 'createdAt' | 'title'

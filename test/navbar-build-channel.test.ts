@@ -47,6 +47,8 @@ const UPDATE_INFO = {
   downloaded: false,
 }
 const getAppIdentifier = vi.fn<() => Promise<string>>()
+const openExternalUrl = vi.fn()
+const checkDesktopUpdate = vi.fn()
 let client: QueryClient
 let i18n: I18n
 
@@ -63,6 +65,7 @@ function renderNavbar() {
 }
 
 beforeEach(async () => {
+  vi.stubGlobal('CSS', { escape: (value: string) => value.replace(/[^\w-]/g, character => `\\${character}`) })
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   i18n = createInstance()
   await i18n.init({
@@ -73,10 +76,16 @@ beforeEach(async () => {
   })
   desktopUpdater.updateInfo = null
   getAppIdentifier.mockReset().mockResolvedValue('dsh-tauri')
+  openExternalUrl.mockReset()
+  checkDesktopUpdate.mockReset().mockResolvedValue(null)
   mockWindows('main')
-  mockIPC((command) => {
+  mockIPC((command, args) => {
     if (command === 'plugin:app|identifier')
       return getAppIdentifier()
+    if (command === 'open_external_url')
+      return openExternalUrl(args)
+    if (command === 'check_desktop_update')
+      return checkDesktopUpdate()
     if (command === 'get_dsh_plugins')
       return []
     if (command === 'plugin:window|is_maximized')
@@ -92,10 +101,59 @@ afterEach(async () => {
   client.clear()
   desktopUpdater.updateInfo = null
   clearMocks()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
 describe('navbar build channel', () => {
+  it.each(['dsh-tauri', 'dsh-tauri-nightly'])('waits for a pending identifier before checking updates for %s', async (identifier) => {
+    const pending = Promise.withResolvers<string>()
+    getAppIdentifier.mockReturnValue(pending.promise)
+    const check = checkDesktopUpdate
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    expect(check).not.toHaveBeenCalled()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+
+    await act(async () => pending.resolve(identifier))
+    if (identifier === 'dsh-tauri-nightly') {
+      await waitFor(() => expect(openExternalUrl).toHaveBeenCalledOnce())
+      expect(check).not.toHaveBeenCalled()
+    }
+    else {
+      await waitFor(() => expect(check).toHaveBeenCalledOnce())
+      expect(openExternalUrl).not.toHaveBeenCalled()
+    }
+    expect(getAppIdentifier).toHaveBeenCalledOnce()
+  })
+
+  it('does not guess the update channel when a pending identifier lookup fails', async () => {
+    const pending = Promise.withResolvers<string>()
+    getAppIdentifier.mockReturnValue(pending.promise)
+    const check = checkDesktopUpdate
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    await act(async () => pending.reject(new Error('IDENTIFIER_FAILED')))
+    await waitFor(() => expect(warning).toHaveBeenCalledWith('[Navbar] check update failed:', expect.any(Error)))
+    expect(check).not.toHaveBeenCalled()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+  })
+
+  it('opens the nightly release page instead of checking for a stable installer', async () => {
+    getAppIdentifier.mockResolvedValue('dsh-tauri-nightly')
+    const check = checkDesktopUpdate
+    await client.prefetchQuery({ queryKey: queryKeys.appIdentifier, queryFn: getIdentifier })
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith({ url: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/nightly' }))
+    expect(check).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('navbar-test-update-dialog')).toBeNull()
+  })
+
   it.each([
     { language: 'zh-CN', label: '夜间构建版本', updateLabel: '更新可用', updateInfo: null },
     { language: 'zh-CN', label: '夜间构建版本', updateLabel: '更新可用', updateInfo: UPDATE_INFO },

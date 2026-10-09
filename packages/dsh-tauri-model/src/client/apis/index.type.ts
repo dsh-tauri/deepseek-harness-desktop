@@ -1,38 +1,24 @@
-export type OpenModelsConfigResponse = {
-  ok?: boolean;
-  path?: string;
-  opened?: "file" | "directory";
-  error?: string;
-};
-export type EndpointModelsResponse = {
-  ok?: boolean;
-  url?: string;
-  models?: EndpointModelCard[];
-  error?: string;
-};
-export type EndpointModelCard = {
-  id: string;
-  name?: string;
-  contextWindow?: number;
-  maxTokens?: number;
-};
-export type PresetsResponse = {
-  ok?: boolean;
-  source?: string;
-  fetchedAt?: string;
-  stale?: boolean;
-  count?: number;
-  presets?: Record<string, readonly number[]>;
-  error?: string;
-};
+export type PostApiTauriModelConfigOpenResponse = { ok?: undefined | false | true; path?: undefined | string; opened?: undefined | "file" | "directory"; error?: undefined | string };
+export type PostApiTauriModelConfigOpenQueryDry = undefined | string;
+export type GetApiTauriModelEndpointModelsResponse = { ok?: undefined | false | true; url?: undefined | string; models?: undefined | { id: string; name?: undefined | string; contextWindow?: undefined | number; maxTokens?: undefined | number }[]; error?: undefined | string };
+export type GetApiTauriModelEndpointModelsQueryNs = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryProfilePath = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryBaseURL = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryApiKey = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryHeaders = undefined | string;
+export type GetApiTauriModelPresetsResponse = { ok?: undefined | false | true; source?: undefined | string; fetchedAt?: undefined | string; stale?: undefined | false | true; count?: undefined | number; presets?: undefined | { [key: string]: number[] }; error?: undefined | string };
+export type GetApiTauriModelPresetsQueryForce = undefined | string;
 
-export interface GetEndpointModelsQuery {
-  ns?: string;
-  profilePath?: string;
-  baseURL?: string;
-  apiKey?: string;
-  headers?: string;
+export interface PostApiTauriModelConfigOpenQuery {
+  dry?: PostApiTauriModelConfigOpenQueryDry;
 }
-export interface GetPresetsQuery {
-  force?: string;
+export interface GetApiTauriModelEndpointModelsQuery {
+  ns?: GetApiTauriModelEndpointModelsQueryNs;
+  profilePath?: GetApiTauriModelEndpointModelsQueryProfilePath;
+  baseURL?: GetApiTauriModelEndpointModelsQueryBaseURL;
+  apiKey?: GetApiTauriModelEndpointModelsQueryApiKey;
+  headers?: GetApiTauriModelEndpointModelsQueryHeaders;
+}
+export interface GetApiTauriModelPresetsQuery {
+  force?: GetApiTauriModelPresetsQueryForce;
 }

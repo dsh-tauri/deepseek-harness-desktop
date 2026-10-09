@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { ConnectionGate } from '../routes/index.type'
+import type { ConnectionGate } from './harness'
 
 export * from './harness'
 

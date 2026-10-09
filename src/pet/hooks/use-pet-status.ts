@@ -1,6 +1,6 @@
-import { useMount } from '@reause/core'
+import { useMount, useUnmount } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useListen } from '@/hooks/use-listen'
 import { PET_SIZE_DEFAULT_PERCENT, PET_SIZE_MAX_PERCENT, PET_SIZE_MIN_PERCENT } from '../constants'
 
@@ -28,16 +28,26 @@ export interface PetStatus {
 export function usePetStatus(): PetStatus | null {
   const [status, setStatus] = useState<PetStatus | null>(null)
 
-  // 挂载时拉一次初值，此后跟随 `pet://status` 推送（订阅随卸载自动注销）
+  const revisionRef = useRef(0)
+  useUnmount(() => {
+    revisionRef.current++
+  })
   useMount(() => {
+    const initialRevision = revisionRef.current
     void invoke<PetStatus>('get_pet_status')
-      .then(setStatus)
+      .then((initial) => {
+        if (revisionRef.current === initialRevision)
+          setStatus(initial)
+      })
       .catch((error) => {
         console.warn('[pet] PET_STATUS_LOAD_FAILED:', error)
       })
   })
 
-  useListen<PetStatus>('pet://status', event => setStatus(event.payload))
+  useListen<PetStatus>('pet://status', (event) => {
+    revisionRef.current++
+    setStatus(event.payload)
+  })
 
   return status
 }

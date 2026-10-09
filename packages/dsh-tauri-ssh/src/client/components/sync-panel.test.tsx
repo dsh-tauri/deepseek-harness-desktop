@@ -5,11 +5,12 @@ import { fireEvent, screen, waitFor } from '@testing-library/dom'
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { baseURL } from '../apis/index'
 import { en } from '../locales/index'
 import { store } from '../store/index'
 import { answer, replies, resetWire, sent } from '../test-utils/client-mock'
 import { SyncPanel } from './sync-panel'
+
+const baseURL = '/api/tauri/ssh'
 
 vi.mock('dsh-tauri-ui/client', async () => (await import('../test-utils/ui-mock')).uiMock)
 

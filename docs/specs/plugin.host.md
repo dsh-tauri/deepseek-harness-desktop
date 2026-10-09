@@ -14,7 +14,7 @@
 * **彻底删除与零包袱**：彻底清理废弃逻辑、兼容层与存根代码，严禁保留 `legacy`/`compat` 文件。文件移动/重命名统一使用 `git mv`。
 * **单向依赖流**：
 
-$$\text{apply.ts (装配)} \longrightarrow \begin{bmatrix} \text{routes/} \\ \text{tools/} \\ \text{events/} \\ \text{prompts/} \end{bmatrix} \longrightarrow \text{service/ (业务领域)} \longrightarrow \begin{bmatrix} \text{storage/} \\ \text{utils/} \end{bmatrix}$$
+$$\text{apply.ts (装配)} \longrightarrow \begin{bmatrix} \text{server/routes/} \\ \text{tools/} \\ \text{events/} \\ \text{prompts/} \end{bmatrix} \longrightarrow \text{service/ (业务领域)} \longrightarrow \begin{bmatrix} \text{storage/} \\ \text{utils/} \end{bmatrix}$$
 
 
 
@@ -27,16 +27,16 @@ $$\text{apply.ts (装配)} \longrightarrow \begin{bmatrix} \text{routes/} \\ \te
 | 目录/文件 | 职责说明 | 关键约束 |
 | --- | --- | --- |
 | **`apply.ts`** | 装配入口 | 仅做声明式组装（工具/事件/提示词/路由），控制在 30~50 行以内，不含业务逻辑。 |
-| **`config/`** | 配置与单例 | `runtime.ts`: 导出内存单例及 `setCurrentHostInstance`/`getCurrentHostInstance` 宿主绑定。<br>
+| **`config/`** | 配置与运行状态 | `runtime.ts`: 仅保存业务内存状态及 reset/dispose，不保存宿主 Context；没有业务状态时删除该文件。<br>
 
 <br>`constants.ts`: 静态常量与配置，严禁硬编码 Magic Number/String；只登记**两个及以上模块**消费的常量（单一消费方的常量归属见 [plugin.baisc.md](./plugin.baisc.md) 的《通用协议：常量归属》），`config/` 下不允许出现 `*.types.ts`。 |
 | **`types/`** | 类型定义 | 导出领域模型、DTO、输入输出接口（纯类型定义）。单一模块专属的类型与所属模块**同目录同名**，命名为 `<module>.types.ts`（如 `service/worktree.types.ts`）；此目录仅保留被多个模块共享的类型（如 `index.ts`）——跨模块共享的**宿主面类型**（`SessionHost` / `PanelExtensionHost` 等）统一放 `types/index.ts`。 |
 | **`storage/`** | 持久化实例 | `index.ts` 纯粹导出持久化驱动实例，不包含任何业务读写逻辑。 |
-| **`routes/`** | HTTP 路由层 *(可选)* | 遵循“文件路径 = URL 路径”，且**目录层级 = URL 层级**（`routes/session/open/path/post.ts` → `<前缀>/session/open/path`）。仅做协议解析、DTO 校验与 Service 调用，不含业务实现。`disposer.*({ kind, path })` 的 `path` **一律直接写字面量**（统一前缀 `/api/desktop/<plugin-id>`），禁止为路由路径定义 `*_ROUTE` 常量，也不再使用 `API_PREFIX` 之类的拼接常量。 |
+| **`server/`** | HTTP 服务层 *(可选)* | `index.ts` 使用 `dsh-h3` 的 `defineWebServer` 声明服务，`routes/` 保存 H3 handler。handler 文件按 URL 层级与方法落位（如 `server/routes/session/open/path/post.ts`），不根据文件名自动注册路由；URL 与方法以 `server/index.ts` 的显式注册为唯一依据，仅做协议解析、DTO 校验与 Service 调用。入口以 `app.post('/api/tauri/<插件短名>/session/open/path', handler)` 等直接注册完整字面量，禁止路径常量、拼接与自造路由宏。 |
 | **`tools/`** | Agent 工具层 *(可选)* | 单工具单文件，包含声明、JSON Schema 与 execute 编排。 |
 | **`prompts/`** | 系统提示词层 *(可选)* | 拆分为常驻提示词 (`*-section.ts`) 与动态单次上下文注入 (`*-context.ts`)。 |
 | **`events/`** | 事件监听层 *(可选)* | 宿主生命周期事件处理（如 `turn/end`、工具前置拦截等）。 |
-| **`service/`** | 领域服务层 | 全员使用 `defineService`。唯一可读写 storage 和访问宿主能力（`ctx`/`host`）的层。 |
+| **`service/`** | 领域服务层 | 领域服务使用 `defineService`，统一承接业务 storage 读写与宿主能力访问；共享请求中间件属于基础设施例外。 |
 | **`utils/`** | 底层工具纯函数 | 纯粹、无状态，不包含业务上下文与契约宏。返回标准操作结果 `{ ok: boolean, ... }`。单一模块专属的工具与所属模块**同目录同名**，命名为 `<module>.utils.ts`；此目录仅保留被多个模块共享的纯函数（如 `git.ts`、`paths.ts`）。 |
 
 ---
@@ -49,7 +49,9 @@ packages/dsh-tauri-worktree/src/host/
 ├── config/ (runtime.ts | constants.ts)
 ├── types/index.ts             # 仅跨多模块共享类型；单模块专属类型与其模块同目录同名
 ├── storage/index.ts           # 仅导出 storage 实例
-├── routes/                    # RESTful 文件路由 (例: delete.ts -> DELETE /api/worktree)
+├── server/
+│   ├── index.ts               # defineWebServer + 原生 app 方法注册
+│   └── routes/                # handler 文件；URL 与方法由 index.ts 显式注册
 ├── tools/                     # Agent 工具定义 (create-worktree.ts, checkout-worktree.ts)
 ├── prompts/                   # 提示词注入 (worktree-section.ts, checkout-context.ts)
 ├── events/                    # 事件监听 (session-event.ts, tools-execute.ts)
@@ -72,8 +74,10 @@ packages/dsh-tauri-worktree/src/host/
 * 超过 2 行的回调必须抽离至 `events/` 或 `prompts/`。禁止创建全局 `deps` 对象透传。
 
 ```typescript
+import { server } from './server'
+
 export function apply(ctx: HostContext): void {
-  setCurrentHostInstance(ctx) // 1. 绑定宿主能力（仅 service 层可通过 getCurrentHostInstance() 读取）
+  ctx.effect(() => server(ctx), 'plugin: routes')
 
   ctx.tools.register(createWorktreeTool())
   ctx.tools.register(checkoutWorktreeTool())
@@ -81,15 +85,16 @@ export function apply(ctx: HostContext): void {
   ctx.on('tools/execute', (exec, next) => handleToolsExecute(exec, next))
   ctx.systemPrompt.context(checkoutContextProvider)
   ctx.systemPrompt.section(worktreeSectionProvider)
-  
-  ctx.effect(() => routes(ctx), 'plugin: routes')
 }
 
 ```
 
 **2. 配置与状态层 (`config/`)**
 
-* `runtime.ts` 导出内存单例与宿主绑定函数 (`setCurrentHostInstance` / `getCurrentHostInstance`)。宿主进程按 `--profile` 启动，单进程内插件仅挂载一次，模块级单例安全。必须包含清除/销毁机制以防内存泄漏。
+* `dsh-h3` 基线为 `0.2.1`，Context 泛型由上游原生支持：`import { getServerContext, getServerOptions } from 'dsh-h3/utils'`。
+
+* `runtime.ts` 仅导出业务内存状态及清除/销毁函数；Context 与服务配置由 `dsh-h3` 管理，禁止重新实现 `defineHostRuntime`、宿主 set/get 槽或路由依赖副本。`server(ctx, options)` 返回的 disposer 必须由 `ctx.effect` 托管。
+* `server` 必须先于依赖它的恢复任务、事件监听及服务调用激活；服务内从 `dsh-h3/utils` 导入 `getServerContext` 和 `getServerOptions`，使用原生 `getServerContext<HostContext>(server)`；激活前和卸载后不得读取 Context。请求内的实例配置使用 `getServerOptions<Options>(event)`，禁止在 `dsh-tauri` 重导出或另建泛型兼容层。
 
 **3. 持久化层 (`storage/`)**
 
@@ -99,13 +104,22 @@ export function apply(ctx: HostContext): void {
 **4. 业务领域服务层 (`service/`)**
 
 * 统一使用 `dsh-tauri` 的 `defineService` 宏声明，禁止自造宏。
-* `routes/`、`tools/`、`events/`、`prompts/` 严禁直接接触宿主对象或底层 `storage`，必须通过服务层间接访问。
+* `server/routes/`、`tools/`、`events/`、`prompts/` 不直接执行业务宿主操作或读写 `storage`，必须通过领域服务访问；路由读取实例配置与共享安全中间件检查请求来源不属于业务穿透。
 
-**5. 路由形态 (`routes/`)**
+**5. 服务与路由形态 (`server/index.ts`、`server/routes/`)**
 
-* **默认 RESTful 资源化**：URL 只描述资源，动作由 HTTP 方法承担。文件按方法命名（`get.ts` → `GET`、`post.ts` → `POST`、`put.ts` → `PUT`、`delete.ts` → `DELETE`），同一资源路径的多个方法在 `routes/index.ts` 里分行声明、由 `defineRoutes` 收敛为一行注册（例：`tasks/get.ts` + `tasks/post.ts` + `tasks/put.ts` + `tasks/delete.ts` → `GET|POST|PUT|DELETE <前缀>/tasks`）。
+* **原生服务入口**：`export const server = defineWebServer<Options>((app) => { ... })`，无配置时省略泛型。共享安全检查在入口统一 `app.use(guard)`，业务 handler 不重复鉴权。精确路由不经过官方 `/api` 前缀闸门；桌面 `gate` 放行登录 401 不代表取消 Host/Origin 的 403。
+* **统一命名空间**：插件 API 使用 `/api/tauri/<插件短名>`，例如 `dsh-tauri-rightclick` 对应 `/api/tauri/rightclick`；包名与注册标识不变。根资源不强加末尾斜杠，不保留旧路径别名。服务注册、生成客户端、Rust 桥接白名单与 SSE 订阅必须同步。
+* **默认 RESTful 资源化**：URL 只描述资源，动作由 HTTP 方法承担。文件按方法命名（`get.ts`、`post.ts`、`put.ts`、`delete.ts`），同一资源的多个方法在 `server/index.ts` 使用 `app.get/post/put/delete` 分别注册；不恢复 `defineRoutes` 或原共享 routes 实现。
+* **方法与请求体契约**：沿用 H3/dsh-h3 原生方法处理，GET 包含 HEAD，未注册 OPTIONS 时返回 405；不恢复 `desktopPreflight` 或固定 `MAX_REQUEST_BODY_BYTES`。业务输入仍必须校验。
 * **动作端点例外**：无法表达为资源状态迁移的操作，允许 `POST /<资源>/<动作>`（`/tasks/toggle`、`/tasks/run`、`/skills/refresh`、`/import/apply`、`/mcp/check`、`/restart` 等）。动作名必须是动词性领域词，且不得与标准方法语义重复；能用方法表达的写入一律不许写成动作端点。
-* **禁止**：用动作后缀表达 CRUD（`/create`、`/update`、`/delete`、`/save`、`/remove`）——一律改为标准方法 + 资源路径；同一 `(kind, path)` 不得重复声明。
+* **禁止**：用动作后缀表达 CRUD（`/create`、`/update`、`/delete`、`/save`、`/remove`）——一律改为标准方法 + 资源路径；同一 `(method, path)` 不得重复声明。
+
+**6. API 生成契约**
+
+* 使用根目录 `genapi.config.ts` 的 `dsh-h3/genapi` 与既有 ofetch preset，输入为 `host/server/index.ts`，输出为客户端 `apis/index.ts` 和 `apis/index.type.ts`；禁止恢复本地 `genapi.pipeline.ts` 或手写同一套生成逻辑。
+* 注册必须使用直接的 `app.get/post/...` 调用与静态完整路径，不能通过动态循环、路径拼接或注册 helper 隐藏。handler 中的 `getQuery<Query>(event)`、`readBody<Body>(event)` 必须位于 handler 本体，不能藏在嵌套回调内；只用 `as Query` 不足以声明生成契约。
+* 响应类型须可 JSON 序列化并由 handler 推导或显式声明。若为 `defineEventHandler` 指定 request 泛型，必须同时保证 response 不退化成 unknown；服务返回值、错误分支与客户端类型须一致。
 
 ---
 
@@ -113,9 +127,9 @@ export function apply(ctx: HostContext): void {
 
 * [ ] **装配精简**：`apply.ts` 是否仅包含声明式注册（无逻辑内联/过度嵌套）？
 * [ ] **状态收口**：内存 Map/Set 是否收拢于 `config/runtime.ts`？是否存在参数击穿透传？
-* [ ] **服务约束**：是否全员使用 `defineService`？文件名与导出标识符是否一致？方法名是否为该领域的动作动词且全仓无同义词混用？
-* [ ] **签名收口**：服务方法参数是否按需声明且不含 `ctx`/`host`？是否仅 `service/` 内部使用 `getCurrentHostInstance()`？
-* [ ] **路由纯度**：`routes/` 是否仅负责协议解析与 DTO 校验？无直接操作 `storage`/宿主对象/系统命令行为？
+* [ ] **服务约束**：领域服务是否使用 `defineService`（共享请求中间件除外）？文件名与导出标识符是否一致？方法名是否为该领域的动作动词且全仓无同义词混用？
+* [ ] **签名收口**：领域服务参数是否按需声明且不含 `ctx`/`host`（载体 `gate.attach` 除外）？是否仅领域服务内部使用 `getServerContext<HostContext>(server)`，且无独立宿主槽？
+* [ ] **路由纯度**：`server/routes/` 是否仅负责协议解析与 DTO 校验？无直接操作 `storage`/宿主对象/系统命令行为？
 * [ ] **路由形态**：URL 是否为资源路径 + 标准方法（方法命名文件）；动作端点是否仅限 `POST /<资源>/<动作>`，且路径里没有 `/create`、`/update`、`/delete`、`/save`、`/remove` 这类 CRUD 动作后缀？
 * [ ] **存储抽象**：`storage/index.ts` 是否仅导出驱动实例？
 * [ ] **工具解耦**：`utils/` 是否无状态、脱离业务上下文且未引入契约宏？

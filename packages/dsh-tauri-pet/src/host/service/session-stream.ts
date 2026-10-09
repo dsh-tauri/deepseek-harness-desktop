@@ -1,14 +1,15 @@
 import type { PetSessionPayload, SessionStreamSink } from '../types'
 import type { PetSessionEvent, PetSessionPeer, ProjectionRegistryLike, TitleServiceLike } from './session-stream.types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import {
   closeSessionBus,
-  getCurrentHostInstance,
   isSessionBusAttached,
   knownSessions,
   setSessionBusDispose,
   sinks,
 } from '../config/runtime'
+import { server } from '../server'
 import { createPetSessionReducer } from './session-stream.utils'
 
 /**
@@ -68,7 +69,7 @@ function attachSessionBus(): void {
   if (isSessionBusAttached())
     return
   // 惰性解析：apply 时服务未必就绪（装配顺序不保证），首个消费者接入时才读。
-  const ctx = getCurrentHostInstance()
+  const ctx = getServerContext(server)
   titleService = ctx.get?.('sessionTitle') as TitleServiceLike | undefined
   projections = ctx.get?.('sessionProjections') as ProjectionRegistryLike | undefined
   const disposeEvent = ctx.on('session/event', handleSessionEvent) as () => void
@@ -154,7 +155,7 @@ function asPetEvent(event: unknown): PetSessionEvent {
 function projectedTitleOf(session: unknown): string | undefined {
   if (projections === undefined) {
     try {
-      projections = getCurrentHostInstance().get?.('sessionProjections') as ProjectionRegistryLike | undefined
+      projections = getServerContext(server).get?.('sessionProjections') as ProjectionRegistryLike | undefined
     }
     catch {
       return undefined

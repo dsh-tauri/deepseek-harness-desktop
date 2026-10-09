@@ -1,172 +1,160 @@
-export type ActionResult = {
-  ok?: boolean;
-  error?: string;
+export type GetApiTauriSchedulerTasksResponse = {
+  tasks: {
+    id: string;
+    name: string;
+    schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+    prompt: string;
+    recommendationId?: undefined | string;
+    workspaceId?: undefined | string;
+    permission?: undefined | string;
+    provider?: undefined | string;
+    model?: undefined | string;
+    reasoningEffort?: undefined | string;
+    module?: undefined | string;
+    agentPreset?: undefined | string;
+    enabled: false | true;
+    createdAt: string;
+    updatedAt: string;
+    lastRunAt?: undefined | string;
+    nextRunAt?: undefined | string;
+    waiting?: undefined | false | true;
+  }[];
 };
-export type RunListResponse = {
-  runs: SchedulerRun[];
+export type GetApiTauriSchedulerTasksQuerySearch = undefined | string;
+export type PostApiTauriSchedulerTasksResponse = {
+  ok?: undefined | false | true;
+  task?:
+    | undefined
+    | {
+        id: string;
+        name: string;
+        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+        prompt: string;
+        recommendationId?: undefined | string;
+        workspaceId?: undefined | string;
+        permission?: undefined | string;
+        provider?: undefined | string;
+        model?: undefined | string;
+        reasoningEffort?: undefined | string;
+        module?: undefined | string;
+        agentPreset?: undefined | string;
+        enabled: false | true;
+        createdAt: string;
+        updatedAt: string;
+        lastRunAt?: undefined | string;
+        nextRunAt?: undefined | string;
+        waiting?: undefined | false | true;
+      };
+  error?: undefined | string;
 };
-export type SchedulerRun = {
-  id: string;
-  taskId: string;
-  taskName: string;
-  trigger: RunTrigger;
-  status: RunStatus;
-  scheduledFor: string;
-  startedAt: string;
-  finishedAt?: string;
-  sessionId?: string;
-  error?: string;
+export type PutApiTauriSchedulerTasksResponse = {
+  ok?: undefined | false | true;
+  task?:
+    | undefined
+    | {
+        id: string;
+        name: string;
+        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+        prompt: string;
+        recommendationId?: undefined | string;
+        workspaceId?: undefined | string;
+        permission?: undefined | string;
+        provider?: undefined | string;
+        model?: undefined | string;
+        reasoningEffort?: undefined | string;
+        module?: undefined | string;
+        agentPreset?: undefined | string;
+        enabled: false | true;
+        createdAt: string;
+        updatedAt: string;
+        lastRunAt?: undefined | string;
+        nextRunAt?: undefined | string;
+        waiting?: undefined | false | true;
+      };
+  error?: undefined | string;
 };
-export type RunTrigger = "schedule" | "manual";
-export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted" | "skipped" | "cancelled";
-export type SchedulerOptions = {
-  workspaces: Array<{ id: string; path: string; title: string }>;
-  permissions: Array<PermissionOption>;
+export type DeleteApiTauriSchedulerTasksResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type PostApiTauriSchedulerTasksToggleResponse = {
+  ok?: undefined | false | true;
+  task?:
+    | undefined
+    | {
+        id: string;
+        name: string;
+        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+        prompt: string;
+        recommendationId?: undefined | string;
+        workspaceId?: undefined | string;
+        permission?: undefined | string;
+        provider?: undefined | string;
+        model?: undefined | string;
+        reasoningEffort?: undefined | string;
+        module?: undefined | string;
+        agentPreset?: undefined | string;
+        enabled: false | true;
+        createdAt: string;
+        updatedAt: string;
+        lastRunAt?: undefined | string;
+        nextRunAt?: undefined | string;
+        waiting?: undefined | false | true;
+      };
+  error?: undefined | string;
+};
+export type PostApiTauriSchedulerTasksRunResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type GetApiTauriSchedulerHistoryResponse = { runs: { id: string; taskId: string; taskName: string; trigger: "schedule" | "manual"; status: "queued" | "running" | "succeeded" | "failed" | "interrupted" | "skipped" | "cancelled"; scheduledFor: string; startedAt: string; finishedAt?: undefined | string; sessionId?: undefined | string; error?: undefined | string }[] };
+export type GetApiTauriSchedulerHistoryQueryTaskId = undefined | string;
+export type DeleteApiTauriSchedulerHistoryResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type GetApiTauriSchedulerOptionsResponse = {
+  workspaces: { id: string; path: string; title: string }[];
+  permissions: { value: string; name: string; description?: undefined | string }[];
   defaultPermission: string;
-  models: Array<ModelOption>;
-  failures: Array<ModelCatalogFailure>;
-  defaultModel: ModelOption | null;
+  models: { provider: string; providerLabel: string; model: string; label: string; description?: undefined | string; reasoning?: undefined | { efforts: { id: string; name: string; description?: undefined | string }[]; defaultEffort?: undefined | string } }[];
+  failures: { provider: string; providerLabel: string; message: string }[];
+  defaultModel: null | { provider: string; providerLabel: string; model: string; label: string; description?: undefined | string; reasoning?: undefined | { efforts: { id: string; name: string; description?: undefined | string }[]; defaultEffort?: undefined | string } };
 };
-export type PermissionOption = {
-  value: string;
-  name: string;
-  description?: string;
-};
-export type ModelOption = {
-  provider: string;
-  providerLabel: string;
-  model: string;
-  label: string;
-  description?: string;
-  reasoning?: ModelReasoning;
-};
-export type ModelReasoning = {
-  efforts: Array<ModelReasoningEffort>;
-  defaultEffort?: string;
-};
-export type ModelReasoningEffort = {
-  id: string;
-  name: string;
-  description?: string;
-};
-export type ModelCatalogFailure = {
-  provider: string;
-  providerLabel: string;
-  message: string;
-};
-export type TaskListResponse = {
-  tasks: SchedulerTask[];
-};
-export type SchedulerTask = {
-  id: string;
-  name: string;
-  schedule: SchedulerSchedule;
-  prompt: string;
-  recommendationId?: string;
-  workspaceId?: string;
-  permission?: string;
-  provider?: string;
-  model?: string;
-  reasoningEffort?: string;
-  module?: string;
-  agentPreset?: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastRunAt?: string;
-  nextRunAt?: string;
-  /** 派生视图字段：已到点但受并发上限压住未启动；不落盘，读取路径每次重算。 */
-  waiting?: boolean;
-};
-export type SchedulerSchedule = OnceSchedule | HourlySchedule | DailySchedule | IntervalSchedule | WorkdaysSchedule | WeeklySchedule | MonthlySchedule | CustomSchedule;
-export type OnceSchedule = {
-  kind: "once";
-  at: string;
-  timeZone: string;
-};
-export type HourlySchedule = {
-  kind: "hourly";
-  minute: number;
-  timeZone: string;
-};
-export type DailySchedule = {
-  kind: "daily";
-  time: string;
-  timeZone: string;
-};
-export type IntervalSchedule = {
-  kind: "interval";
-  everyMinutes: number;
-  anchor?: string;
-  timeZone: string;
-};
-export type WorkdaysSchedule = {
-  kind: "workdays";
-  time: string;
-  timeZone: string;
-};
-export type WeeklySchedule = {
-  kind: "weekly";
-  weekdays: Weekday[];
-  time: string;
-  timeZone: string;
-};
-export type Weekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
-export type MonthlySchedule = {
-  kind: "monthly";
-  day: number;
-  time: string;
-  timeZone: string;
-};
-export type CustomSchedule = {
-  kind: "custom";
-  everyDays: number;
-  anchor: string;
-  time: string;
-  timeZone: string;
-};
-export type SchedulerScheduleInput = { kind: "once"; at: string; timeZone?: string } | { kind: "hourly"; minute: number; timeZone?: string } | { kind: "daily"; time: string; timeZone?: string } | { kind: "interval"; everyMinutes: number; anchor?: string; timeZone?: string } | { kind: "workdays"; time: string; timeZone?: string } | { kind: "weekly"; weekdays: readonly Weekday[]; time: string; timeZone?: string } | { kind: "monthly"; day: number; time: string; timeZone?: string } | { kind: "custom"; everyDays: number; anchor?: string; time: string; timeZone?: string };
-export type TaskActionResult = {
-  ok?: boolean;
-  task?: SchedulerTask;
-  error?: string;
-};
+export type PostApiTauriSchedulerRunsRecoverResponse = { ok?: undefined | false | true; error?: undefined | string };
 
-export interface IdBody {
-  id: string;
-}
-export interface TaskCreateBody {
+export interface PostApiTauriSchedulerTasksBody {
   name: string;
-  schedule: SchedulerScheduleInput;
+  schedule: { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string };
   prompt: string;
-  recommendationId?: string;
-  workspaceId?: string;
-  permission?: string;
-  provider?: string;
-  model?: string;
-  reasoningEffort?: string;
-  enabled?: boolean;
+  recommendationId?: undefined | string;
+  workspaceId?: undefined | string;
+  permission?: undefined | string;
+  provider?: undefined | string;
+  model?: undefined | string;
+  reasoningEffort?: undefined | string;
+  enabled?: undefined | false | true;
 }
-export interface TaskUpdateBody {
+export interface PutApiTauriSchedulerTasksBody {
   id: string;
-  name?: string;
-  schedule?: SchedulerScheduleInput;
-  prompt?: string;
-  recommendationId?: string;
-  workspaceId?: string;
-  permission?: string;
-  provider?: string;
-  model?: string;
-  reasoningEffort?: string;
-  enabled?: boolean;
+  name?: undefined | string;
+  schedule?: undefined | { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string };
+  prompt?: undefined | string;
+  recommendationId?: undefined | string;
+  workspaceId?: undefined | string;
+  permission?: undefined | string;
+  provider?: undefined | string;
+  model?: undefined | string;
+  reasoningEffort?: undefined | string;
+  enabled?: undefined | false | true;
 }
-export interface TaskToggleBody {
+export interface DeleteApiTauriSchedulerTasksBody {
   id: string;
-  enabled: boolean;
 }
-export interface GetHistoryQuery {
-  taskId?: string;
+export interface PostApiTauriSchedulerTasksToggleBody {
+  id: string;
+  enabled: false | true;
 }
-export interface GetTasksQuery {
-  search?: string;
+export interface PostApiTauriSchedulerTasksRunBody {
+  id: string;
+}
+export interface DeleteApiTauriSchedulerHistoryBody {
+  id: string;
+}
+export interface GetApiTauriSchedulerTasksQuery {
+  search?: GetApiTauriSchedulerTasksQuerySearch;
+}
+export interface GetApiTauriSchedulerHistoryQuery {
+  taskId?: GetApiTauriSchedulerHistoryQueryTaskId;
 }

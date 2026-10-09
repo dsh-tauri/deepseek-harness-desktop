@@ -56,7 +56,9 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "dsh-h3": "catalog:",
     "dsh-tauri": "workspace:*",
+    "h3": "catalog:",
     "lodash-es": "catalog:utils",
     "pathe": "catalog:utils",
     "unstorage": "catalog:utils"

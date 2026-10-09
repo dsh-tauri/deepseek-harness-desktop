@@ -1,4 +1,4 @@
-import type { RoutesContext } from 'dsh-tauri'
+import type { Context } from '@deepseek-ai/cordis'
 
 export interface IndexInjectEntry {
   kind: 'global'
@@ -12,7 +12,8 @@ export interface IndexInjectTable {
 
 export type IndexInjectListener = (table: IndexInjectTable) => void
 
-export interface HostContext extends RoutesContext {
+export interface HostContext {
+  webServer: Context['webServer']
   on: (event: 'webserver/index-inject', listener: IndexInjectListener) => () => void
   effect: (callback: () => (() => void) | void, name?: string) => void
   get: (name: string) => unknown

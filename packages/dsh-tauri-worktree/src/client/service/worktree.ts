@@ -1,4 +1,4 @@
-import type { WorktreeStatus } from '../apis/index.type'
+import type { GetApiTauriWorktreeStatusResponse as WorktreeStatus } from '../apis/index.type'
 import type { ActionResult, CheckoutOutcome, CreateOutcome, DiscardOutcome, DiscardProgress } from './worktree.types'
 import { get } from 'dsh-tauri/client'
 import { deleteWorktree, getStatus, postBindings, postCheckouts, postWorktree } from '../apis'

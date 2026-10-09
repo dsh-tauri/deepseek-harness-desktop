@@ -1,3 +1,4 @@
+import type { PanelExtensionHost } from '../types'
 import type {
   HostSkill,
   HostSkillDefinition,
@@ -8,11 +9,12 @@ import type {
   SkillSourceEntry,
 } from './skills.types'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { orderBy } from 'lodash-es'
 import { isAbsolute, relative, resolve, sep } from 'pathe'
 import { SKILL_NAME_RE, SKILLS_DATA_DIR } from '../config/constants'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import { storage } from '../storage'
 import { skillDir, skillFilePath } from '../utils/paths.utils'
 import { rmtree } from './rmtree'
@@ -23,7 +25,7 @@ const STATE_FILE_NAME = 'state.json'
 export const skills = defineService({
   // --- Skill 基础操作 ---
   async get(name: string): Promise<HostSkillDefinition | null> {
-    return (await getCurrentHostInstance().skills.get(name)) ?? null
+    return (await getServerContext<PanelExtensionHost>(server).skills.get(name)) ?? null
   },
 
   save(input: SkillInput, file?: string): string {
@@ -49,7 +51,7 @@ export const skills = defineService({
 
   // --- Skill 视图/展示目录 ---
   async getCatalog(): Promise<SkillRow[]> {
-    const hostSkills = await getCurrentHostInstance().skills.list()
+    const hostSkills = await getServerContext<PanelExtensionHost>(server).skills.list()
     const sources = await readSources()
     const rows = await Promise.all(hostSkills.map(skill => toSkillRow(skill, sources)))
     return orderBy(rows, [row => row.repository === undefined], ['asc'])

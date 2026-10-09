@@ -1,9 +1,10 @@
 import type { Inbox } from '@deepseek-ai/dsh-agent'
-import type { PlatformModuleLoader, SessionResumeOutcome } from '../types'
+import type { HostContext, PlatformModuleLoader, SessionResumeOutcome } from '../types'
 import type { CreateUserMessage, PlanSession } from './session.types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { contentRiskRecoveryRange, eventOf, isContentRiskFailure, lastTurnEndReason } from '../../shared/content-risk'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 
 const CONTINUE_INSTRUCTION = 'Continue the interrupted task from where it stopped. Do not repeat work that is already complete.'
 
@@ -76,7 +77,7 @@ export const session = defineService({
 // --- internal ---
 
 async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcome> {
-  const ctx = getCurrentHostInstance()
+  const ctx = getServerContext<HostContext>(server)
   const agent = ctx?.agents?.get?.(sessionId)
   if (agent === undefined || agent === null)
     return { ok: false, code: 404, error: '会话不存在或尚未运行' }
@@ -186,7 +187,7 @@ function applyContentRiskRecovery(value: unknown, createUserMessage: CreateUserM
     }])
   }
   catch (error) {
-    getCurrentHostInstance()?.logger?.warn?.(`内容审核恢复：遮蔽被拒回合失败，已放弃自动继续（${renderThrown(error)}）`)
+    getServerContext<HostContext>(server)?.logger?.warn?.(`内容审核恢复：遮蔽被拒回合失败，已放弃自动继续（${renderThrown(error)}）`)
     return 'unavailable'
   }
   return 'applied'

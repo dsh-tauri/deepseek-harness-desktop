@@ -1,8 +1,15 @@
 import type { AddressInfo } from 'node:net'
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
-import { setCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import { endpointModels } from './endpoint-models'
+
+const disposers: Array<() => void> = []
+
+function disposeServers(): void {
+  for (const dispose of disposers.splice(0))
+    dispose()
+}
 
 interface ListingHit {
   url: string
@@ -39,16 +46,17 @@ async function listingEndpoint(): Promise<{ baseURL: string, hits: ListingHit[] 
 
 function bindHost(baseURL: string, apiKeyEnv?: string): void {
   const section = { providers: { lab: { baseURL, ...apiKeyEnv === undefined ? {} : { apiKeyEnv } } } }
-  setCurrentHostInstance({
+  disposers.push(server({
     get: (name: string) => name === 'settings'
       ? { get: () => section }
       : { resolve: async () => ({ value: 'sk-lab-639' }) },
-  } as never)
+    webServer: { register: () => () => {} },
+  } as never))
 }
 
 describe('endpointModels.list', () => {
   afterEach(async () => {
-    setCurrentHostInstance(undefined)
+    disposeServers()
     const closing = servers.splice(0).map(server => new Promise<void>((resolve) => {
       server.close(() => resolve())
     }))

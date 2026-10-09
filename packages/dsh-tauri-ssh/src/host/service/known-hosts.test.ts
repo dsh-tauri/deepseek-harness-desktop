@@ -4,13 +4,13 @@ import * as fsPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'pathe'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearHostRuntime, setKnownHostsPath } from '../config/runtime'
+import { resetRuntime, setKnownHostsPath } from '../config/runtime'
 import { MachineId } from '../types/index'
 import { knownHosts } from './known-hosts'
 import { fingerprintHostKey } from './known-hosts.utils'
 
 function open(file: string): typeof knownHosts {
-  clearHostRuntime()
+  resetRuntime()
   setKnownHostsPath(file)
   return knownHosts
 }

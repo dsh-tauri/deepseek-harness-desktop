@@ -12,7 +12,7 @@ import {
 } from '@gravity-ui/icons'
 import { Button, Chip, Description, Dropdown, Label, Separator } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getIdentifier } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -81,6 +81,12 @@ import { RemoteSwitcher } from './remote-switcher'
  *  查询缓存，缓存由根布局订阅 `dsh-plugins-updated` 写入）
  */
 const TAURI_PLUGIN_ID = 'dsh-tauri'
+
+const APP_IDENTIFIER_QUERY = {
+  queryKey: queryKeys.appIdentifier,
+  queryFn: getIdentifier,
+  staleTime: Infinity,
+}
 
 const HELP_LINKS = {
   'documentation': 'https://dshtauri.mintlify.site',
@@ -240,13 +246,10 @@ export interface NavbarProps {
 
 export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onViewCommand, onOpenMachineManager, onOpenSyncToRemote }: NavbarProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const isFullscreen = useMacOSFullscreen()
   const isMaximized = useMaximized()
-  const { data: appIdentifier } = useQuery({
-    queryKey: queryKeys.appIdentifier,
-    queryFn: getIdentifier,
-    staleTime: Infinity,
-  })
+  const { data: appIdentifier } = useQuery(APP_IDENTIFIER_QUERY)
   // 只读取「dsh-tauri 插件是否已安装」；查询键与「插件」面板共用（同一份缓存），
   // 挂载时自动拉取，服务重启 / 插件操作后的失效由 store 与该缓存同步共同保证。
   const { data: plugins = [] } = useQuery({
@@ -407,6 +410,11 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
   /** 「检查更新」：先检查，有更新才弹框；检查失败提示错误而非「已是最新」 */
   async function handleCheckUpdate() {
     try {
+      const identifier = await queryClient.ensureQueryData(APP_IDENTIFIER_QUERY)
+      if (identifier === 'dsh-tauri-nightly') {
+        await invoke('open_external_url', { url: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/nightly' })
+        return
+      }
       const info = await store.desktopUpdater.check()
       if (info)
         handleOpenUpdateDialog()

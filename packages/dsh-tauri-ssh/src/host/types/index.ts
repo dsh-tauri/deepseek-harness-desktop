@@ -1,5 +1,5 @@
+import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { Buffer } from 'node:buffer'
-import type { IncomingMessage, ServerResponse } from 'node:http'
 
 export type MachineId = string & { readonly __machineId: unique symbol }
 
@@ -220,11 +220,7 @@ export interface SshSession {
   close: () => Promise<void>
 }
 
-export interface HostWebRoute {
-  kind: 'exact' | 'prefix'
-  path: string
-  handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
-}
+export type HostWebRoute = WebRoute
 
 export interface HostWebServer {
   register: (route: HostWebRoute) => () => void

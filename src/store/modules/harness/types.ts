@@ -3,8 +3,15 @@ import type { StartupPhase } from './readiness'
 /** 安装/启动流程阶段状态 */
 export type SetupStatus = 'checking' | 'installing' | 'starting' | 'preinstall' | 'ready' | 'error'
 
-/** 侧边栏忙碌标记：标识当前正在执行的服务操作 */
-export type SidebarBusyAction = 'restart' | 'shutdown' | 'start' | 'openBrowser' | null
+/**
+ * 侧边栏忙碌标记：标识当前正在执行的服务操作。`repair` 是补丁层修复动作（安全模式/
+ * 隔离/剥离）：它们在第一个 await 之前就占住标记并作废在飞的启动链，退出处理器里的
+ * 自动恢复才不会与这些动作自己的重启抢同一次启动。
+ */
+export type SidebarBusyAction = 'repair' | 'restart' | 'shutdown' | 'start' | 'openBrowser' | null
+
+/** 补丁层修复动作：先改文件再重启，恢复报告决定重启时展示哪种提示 */
+export type PatchRepairAction = 'safe-mode' | 'quarantine' | 'strip'
 
 /** Rust 侧 harness-process-exited 事件载荷（camelCase）。 */
 export interface HarnessProcessExitedPayload {

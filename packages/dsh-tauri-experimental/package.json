@@ -58,8 +58,10 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "dsh-h3": "catalog:",
     "dsh-tauri": "workspace:*",
     "dsh-tauri-ui": "workspace:*",
+    "h3": "catalog:",
     "hookable": "catalog:utils",
     "pathe": "catalog:utils",
     "unstorage": "catalog:utils"

@@ -1,8 +1,4 @@
-import type { HostContext } from 'dsh-tauri'
 import type { SessionStreamSink } from '../types'
-import { defineHostRuntime } from 'dsh-tauri'
-
-export const { setCurrentHostInstance, getCurrentHostInstance } = defineHostRuntime<HostContext>()
 
 /** 已接入的 SSE 消费者（断连即移除）。 */
 export const sinks = new Set<SessionStreamSink>()
@@ -29,12 +25,10 @@ export function closeSessionBus(): void {
   knownSessions.clear()
 }
 
-/** 插件卸载收尾：结束在途连接、注销监听、丢弃标记并解绑宿主实例。 */
-export function clearHostRuntime(): void {
+export function resetRuntime(): void {
   const open = [...sinks]
   sinks.clear()
   closeSessionBus()
-  setCurrentHostInstance(undefined)
   for (const sink of open)
     sink.close()
 }

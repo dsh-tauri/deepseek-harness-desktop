@@ -115,6 +115,7 @@
   "errors.startup_absolute": "Harness 在{{phase}}阶段超过最长允许时间。最后的就绪状态：{{reason}}",
   "errors.startup_exited": "Harness 在{{phase}}阶段退出。最后的就绪状态：{{reason}}",
   "errors.process_exited_with_code": "Harness 意外停止（退出码 {{code}}）。请重新启动以继续。",
+  "errors.process_exited_native_crash": "Harness 进程被系统强制终止（退出码 {{code}}，Windows 原生崩溃）。这不是内存耗尽，日志里不会有 JS 异常；常见原因是显卡驱动或某个原生模块。请重新启动以继续。",
   "errors.process_exited_without_code": "Harness 意外停止。请重新启动以继续。",
   "errors.no_readiness_reason": "后端未报告就绪原因。",
   "errors.client_boot_stalled": "客户端在全部有界刷新尝试后仍停留在 Loading plugins。",

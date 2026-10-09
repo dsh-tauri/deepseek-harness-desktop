@@ -29,9 +29,14 @@ describe('tooling configuration contracts', () => {
     const vite = await resolveConfig({ configFile: path.join(root, 'vite.config.ts') }, 'serve')
     const source = path.join(root, 'src')
     expect(vite.resolve.alias).toContainEqual({ find: '@', replacement: source })
-    for (const config of [rootConfig, unitConfig]) {
-      expect(config.resolve?.alias).toEqual({ '@': source })
-    }
+    expect(rootConfig.resolve?.alias).toEqual({ '@': source })
+    expect(unitConfig.resolve?.alias).toEqual({
+      '@': source,
+      'dsh-tauri/client': path.join(root, 'packages/dsh-tauri/src/client/index.ts'),
+      'dsh-tauri': path.join(root, 'packages/dsh-tauri/src/index.ts'),
+      'dsh-tauri-ui/client': path.join(root, 'packages/dsh-tauri-ui/src/client/index.ts'),
+      'dsh-tauri-ui': path.join(root, 'packages/dsh-tauri-ui/src/index.ts'),
+    })
     const unit = runtime.projects.find(project => project.name === 'unit')!
     const resolved = await unit.vite.pluginContainer.resolveId('@/config/query-keys')
     expect(resolved?.id.replaceAll('\\', '/')).toBe(`${root.replaceAll('\\', '/')}src/config/query-keys.ts`)
@@ -171,7 +176,6 @@ describe('tooling configuration contracts', () => {
       'tooling.config.ts',
       'bump.config.ts',
       'genapi.config.ts',
-      'genapi.pipeline.ts',
       'scripts/build-debug.ts',
       'scripts/build-plugins.ts',
       'scripts/rebuild-macos-icon.ts',

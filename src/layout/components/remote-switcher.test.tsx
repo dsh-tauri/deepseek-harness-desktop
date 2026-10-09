@@ -91,20 +91,20 @@ beforeEach(() => {
     if (command !== 'remote')
       throw new Error(`Unexpected native command: ${command}`)
     switch (args?.method) {
-      case 'GET /api/desktop/dsh-tauri-ssh/machines':
+      case 'GET /api/tauri/ssh/machines':
         if (engineUnreachable)
           throw new TypeError('fetch failed')
         return { enabled: engineEnabled, items: engineMachines, discovered: [] }
-      case 'GET /api/desktop/dsh-tauri-ssh/machines/events': {
+      case 'GET /api/tauri/ssh/machines/events': {
         const { sinceSeq } = args.payload as { sinceSeq: number }
         return { items: eventItems.filter(item => item.seq >= sinceSeq) }
       }
-      case 'POST /api/desktop/dsh-tauri-ssh/machines/connect': {
+      case 'POST /api/tauri/ssh/machines/connect': {
         const { machineId } = args.payload as { machineId: string }
         engineMachines = engineMachines.map(machine => machine.id === machineId ? { ...machine, state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' } : machine)
         return { tunnelBaseUrl: 'http://127.0.0.1:4001' }
       }
-      case 'POST /api/desktop/dsh-tauri-ssh/machines/disconnect': {
+      case 'POST /api/tauri/ssh/machines/disconnect': {
         const { machineId } = args.payload as { machineId: string }
         engineMachines = engineMachines.map(machine => machine.id === machineId ? { ...machine, state: 'disconnected', tunnelBaseUrl: undefined } : machine)
         return {}
@@ -199,7 +199,7 @@ describe('remoteSwitcher 交互与降级', () => {
     engineEnabled = false
     renderSwitcher()
     await waitFor(() => {
-      expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'GET /api/desktop/dsh-tauri-ssh/machines', payload: null })
+      expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'GET /api/tauri/ssh/machines', payload: null })
       expect(queryClient.getQueryState(queryKeys.remoteMachines)?.status).toBe('success')
       expect(queryClient.getQueryState(queryKeys.remoteMachines)?.fetchStatus).toBe('idle')
     })
@@ -221,7 +221,7 @@ describe('remoteSwitcher 交互与降级', () => {
     const menu = await openMenu()
     expect(within(menu).getByText('alpha').closest('[role="menuitem"]')?.textContent).toContain('remote.state.connected')
     expect(within(menu).getByText('remote.disconnect_active')).toBeTruthy()
-    expect(requests('POST /api/desktop/dsh-tauri-ssh/machines/connect')).toHaveLength(0)
+    expect(requests('POST /api/tauri/ssh/machines/connect')).toHaveLength(0)
   })
 
   it('点击本地项：回本地并撤销挂起切换', async () => {
@@ -245,7 +245,7 @@ describe('remoteSwitcher 交互与降级', () => {
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(requests('POST /api/desktop/dsh-tauri-ssh/machines/disconnect')).toHaveLength(0)
+    expect(requests('POST /api/tauri/ssh/machines/disconnect')).toHaveLength(0)
     const menu = await openMenu()
     expect(within(menu).getByText('beta').closest('[role="menuitem"]')?.getAttribute('aria-disabled')).not.toBe('true')
     expect(within(menu).queryByText('remote.disconnect_active')).toBeNull()
@@ -263,7 +263,7 @@ describe('remoteSwitcher 交互与降级', () => {
     expect(item?.getAttribute('aria-disabled')).toBe('true')
     fireEvent.click(within(menu).getByText('alpha'))
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
-    expect(requests('POST /api/desktop/dsh-tauri-ssh/machines/connect')).toHaveLength(0)
+    expect(requests('POST /api/tauri/ssh/machines/connect')).toHaveLength(0)
 
     engineUnreachable = false
     fireEvent(window, new Event('focus'))
@@ -308,7 +308,7 @@ describe('remoteSwitcher 交互与降级', () => {
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
     fireEvent.click(within(dialog).getByRole('button', { name: 'remote.connect.cancel' }))
     await waitFor(() => {
-      expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'POST /api/desktop/dsh-tauri-ssh/machines/disconnect', payload: { machineId: 'm1' } })
+      expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'POST /api/tauri/ssh/machines/disconnect', payload: { machineId: 'm1' } })
       expect(screen.queryByRole('dialog')).toBeNull()
     })
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
@@ -326,23 +326,23 @@ describe('remoteSwitcher 交互与降级', () => {
     expect(screen.queryByRole('button', { name: 'remote.switcher' })).toBeNull()
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#123456')
-    expect(requests('GET /api/desktop/dsh-tauri-ssh/machines')).toHaveLength(1)
+    expect(requests('GET /api/tauri/ssh/machines')).toHaveLength(1)
 
     engineMachines = [machineOf({ name: 'alpha', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4002', color: '#654321', tintBorder: true })]
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000)
     })
-    expect(requests('GET /api/desktop/dsh-tauri-ssh/machines')).toHaveLength(2)
+    expect(requests('GET /api/tauri/ssh/machines')).toHaveLength(2)
     expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4002', '#654321')
     rerender(switcherElement())
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('alpha')
     expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4002', '#654321')
-    expect(requests('POST /api/desktop/dsh-tauri-ssh/machines/connect')).toHaveLength(0)
+    expect(requests('POST /api/tauri/ssh/machines/connect')).toHaveLength(0)
     unmount()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4000)
     })
-    expect(requests('GET /api/desktop/dsh-tauri-ssh/machines')).toHaveLength(2)
+    expect(requests('GET /api/tauri/ssh/machines')).toHaveLength(2)
   })
 })
 
@@ -358,7 +358,7 @@ describe('remoteSwitcher 增强（4.4）', () => {
 
     fireEvent.click(within(menu).getByText('remote.disconnect_active'))
     await waitFor(() => {
-      expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'POST /api/desktop/dsh-tauri-ssh/machines/disconnect', payload: { machineId: 'm1' } })
+      expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'POST /api/tauri/ssh/machines/disconnect', payload: { machineId: 'm1' } })
       expect(changeSpy).toHaveBeenLastCalledWith('', null)
     })
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
@@ -404,7 +404,7 @@ describe('remoteSwitcher 行内双动作（当前窗口 vs 新窗口）', () => 
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(requests('POST /api/desktop/dsh-tauri-ssh/machines/connect')).toHaveLength(0)
+    expect(requests('POST /api/tauri/ssh/machines/connect')).toHaveLength(0)
   })
 
   it('未连接机器的新窗口按钮：url 置空（窗口内启动连接流程）', async () => {
@@ -418,7 +418,7 @@ describe('remoteSwitcher 行内双动作（当前窗口 vs 新窗口）', () => 
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(requests('POST /api/desktop/dsh-tauri-ssh/machines/connect')).toHaveLength(0)
+    expect(requests('POST /api/tauri/ssh/machines/connect')).toHaveLength(0)
   })
 
   it('机器行显示 user@host:port 副标题', async () => {

@@ -169,6 +169,22 @@ pub async fn is_dsh_running(port: u16) -> bool {
     check_status.await.unwrap_or(false)
 }
 
+/// 有界等待端口回落为空闲；端口本来就空闲时立即返回。
+///
+/// 结束进程后端口释放有滞后，但实测是毫秒级，固定睡眠只会把这段滞后放大成白等。
+pub fn wait_for_port_release(port: u16, budget: Duration) -> bool {
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if !is_port_in_use(port) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// 检查指定端口是否被占用（通过尝试连接来判断）
 pub fn is_port_in_use(port: u16) -> bool {
     // 以实际绑定结果判断，能够识别“已绑定但尚未 listen”的占用状态。
@@ -485,6 +501,30 @@ mod tests {
         assert!(urls
             .iter()
             .any(|url| url.contains("dsh-client-ui-layout/client.js&rev=f26b875a92b6")));
+    }
+
+    /// 被占用时等到预算耗尽才返回 false；端口回落为空闲后立即返回 true，
+    /// 这正是「结束进程后不再固定睡 800ms」的依据。
+    #[test]
+    fn wait_for_port_release_bounds_the_wait_and_returns_as_soon_as_the_port_frees() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let started = std::time::Instant::now();
+        assert!(!wait_for_port_release(
+            port,
+            Duration::from_millis(200)
+        ));
+        assert!(
+            started.elapsed() >= Duration::from_millis(200),
+            "an occupied port must be waited on until the budget runs out"
+        );
+        drop(listener);
+        let started = std::time::Instant::now();
+        assert!(wait_for_port_release(port, Duration::from_millis(200)));
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "a released port must not be waited on"
+        );
     }
 
     #[test]

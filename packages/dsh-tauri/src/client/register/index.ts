@@ -1,7 +1,7 @@
 /**
  * client/register/index.ts — 客户端注册工具：把一组受控资源收敛成一个 effect。
  *
- * 与 host/routes 的 `defineRoutes` 对称：声明期只登记「做什么」，运行期由工具负责
+ * 声明期只登记「做什么」，运行期由工具负责
  * 创建控制器、执行 setup、并把 `controller.dispose()` 作为 effect 的 disposer 返回，
  * 业务 setup 不再手写 `return () => controller.dispose()`。
  *

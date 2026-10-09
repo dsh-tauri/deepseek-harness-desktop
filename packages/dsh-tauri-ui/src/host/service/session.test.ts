@@ -8,8 +8,15 @@ import { createSystemMessage, createToolResultMessage, createUserMessage, ToolCa
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from '../apply'
-import { setCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import { session } from './session'
+
+const disposers: Array<() => void> = []
+
+function disposeServers(): void {
+  for (const dispose of disposers.splice(0))
+    dispose()
+}
 
 interface SetupOptions {
   status?: string
@@ -92,12 +99,12 @@ function setup(options: SetupOptions = {}) {
     on: eventContext.on.bind(eventContext),
     logger: { warn: () => {} },
   }
-  setCurrentHostInstance(ctx as HostContext)
+  disposers.push(server(Object.assign(ctx, { webServer: { register: () => () => {} } }) as never))
   return { followed, claimed, agent, ctx, mutations, discarded, warnings, eventContext }
 }
 
 afterEach(() => {
-  setCurrentHostInstance(undefined)
+  disposeServers()
   vi.restoreAllMocks()
 })
 
@@ -123,7 +130,12 @@ function setupTurn(kind: 'aborted' | 'interrupted' | 'error' = 'aborted') {
     agents: { get: () => agent },
     loader: { import: async () => ({ createUserMessage: (input: unknown) => input }), unwrapExports: (value: unknown) => value },
     on: (name: string, callback: (payload: unknown, next: () => Promise<unknown>) => unknown) => hooks.set(name, callback),
-    effect: () => {},
+    webServer: { register: () => () => {} },
+    effect: (callback: () => (() => void) | void) => {
+      const dispose = callback()
+      if (dispose)
+        disposers.push(dispose)
+    },
   } as HostContext)
   async function preStep(messages = followed, step = 1, decision: unknown = { kind: 'enter', messages }, signal = new AbortController().signal) {
     const handler = hooks.get('agent/pre-step')
@@ -390,7 +402,7 @@ describe('session.resume', () => {
     const { agent, ctx, followed, mutations } = setup({ events: [turnEnd('aborted')], nextTurn: [queued] })
     if (mode === 'missing') {
       const unsupportedAgent = { ...agent, inbox: { ...agent.inbox, splice: undefined } }
-      setCurrentHostInstance({ ...ctx, agents: { get: () => unsupportedAgent } } as HostContext)
+      disposers.push(server({ ...ctx, agents: { get: () => unsupportedAgent } } as never))
     }
     else if (mode === 'frozen') {
       Object.freeze(agent.inbox)
@@ -568,7 +580,7 @@ describe('session.resume', () => {
 
   it('reports 500 with the DSH_LOADER_MISSING literal when the host exposes no loader', async () => {
     const followed: unknown[] = []
-    setCurrentHostInstance({
+    disposers.push(server({
       agents: {
         get: () => ({
           status: 'idle',
@@ -577,7 +589,8 @@ describe('session.resume', () => {
         }),
       },
       logger: { warn: () => {} },
-    } as HostContext)
+      webServer: { register: () => () => {} },
+    } as never))
     expect(await session.resume('s1')).toEqual({
       ok: false,
       code: 500,

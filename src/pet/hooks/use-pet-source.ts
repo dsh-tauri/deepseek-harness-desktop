@@ -1,7 +1,7 @@
 import type { CodexPetConfig, PetConfig } from 'dsh-pet-component'
-import { useWatch } from '@reause/core'
+import { useUnmount, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { PET_CODEX_ASPECT, PET_DSH_ASPECT } from '../constants'
 import { reportPetIssue } from '../utils/log'
 
@@ -102,7 +102,7 @@ function assetSource(asset: PetAsset): PetSource {
  * - 来源限定 id（`chat:` / `codex:`，用户导入）→ `get_pet_asset`；
  * - 未限定 id → `list_preset_pets` 里的条目（预设宠物直连远端，无安装态）。
  *
- * 切换宠物时旧资源在异步结果回来前保持不变（避免闪烁）。解析失败（导入的宠物已被
+ * 切换宠物时仅接收当前请求的结果。解析失败（导入的宠物已被
  * 删除、清单里没有这个 id、命令报错）不只记日志：把原因交给调用方渲染可见提示 ——
  * 静默留一个空窗口时用户看到的是「宠物加载不出来」，无从判断该去设置页重选。
  */
@@ -113,8 +113,13 @@ export function usePetSource(activePet: string): PetSourceState {
     error: string | null
   } | null>(null)
 
-  // 宠物切换即重新解析来源（`immediate` 覆盖挂载首帧）；异步结果晚到不影响新状态
+  const requestRef = useRef(0)
+  useUnmount(() => {
+    requestRef.current++
+  })
+
   useWatch(activePet, (id) => {
+    const request = ++requestRef.current
     if (id === '')
       return
     const task = id.includes(':')
@@ -124,6 +129,8 @@ export function usePetSource(activePet: string): PetSourceState {
           .then(item => (item === undefined ? null : presetSource(item)))
     void task
       .then((value) => {
+        if (request !== requestRef.current)
+          return
         setResolved({
           id,
           value,
@@ -131,6 +138,8 @@ export function usePetSource(activePet: string): PetSourceState {
         })
       })
       .catch((error) => {
+        if (request !== requestRef.current)
+          return
         reportPetIssue(`resolve ${id}`, error)
         setResolved({ id, value: null, error: String(error) })
       })

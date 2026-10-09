@@ -1,7 +1,19 @@
-import type { InputActions, InputState } from '../service/session-switch.types'
+import type { InputActions, InputState, SessionDraft, SessionInputRuntime } from '../service/session-switch.types'
 import type { WorktreeSessionState } from '../store/modules/worktree.types'
 
 export const NO_DRAFT_ATTACHMENTS: readonly string[] = []
+
+export function restoreSessionDraft(actions: InputActions, draft: SessionDraft, input?: SessionInputRuntime): void {
+  if (draft.references.length > 0) {
+    if (input?.draftSnapshot === undefined)
+      throw new Error('无法迁移消息引用到工作树会话')
+    input.setDraft(draft)
+  }
+  else {
+    actions.setDraft(draft.text)
+  }
+  actions.persistDraft?.()
+}
 
 // 未校准（isGit 未知）与已确认非 git 的会话都必须隐藏控件：前者会凭空白冒出切换框，
 // 后者在工作树创建必然失败的情况下仍能进 pending，把会话锁死。

@@ -51,7 +51,11 @@
       "entitlements": "Entitlements.plist"
     },
     "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      },
       "deb": {
+        "depends": ["gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad"],
         "conflicts": ["deepseek-harness-desktop"],
         "replaces": ["deepseek-harness-desktop"]
       }

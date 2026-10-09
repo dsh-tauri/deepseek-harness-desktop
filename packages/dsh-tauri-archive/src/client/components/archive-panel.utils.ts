@@ -1,4 +1,4 @@
-import type { ArchivedListPayload } from '../apis/index.type'
+import type { GetApiTauriArchiveSessionArchiveResponse as ArchivedListPayload } from '../apis/index.type'
 import type { ArchiveSort } from '../store/modules/archive.types'
 import type { SessionListSnapshot, WorkspaceListSnapshot } from '../types/runtime'
 import type { ArchiveGroupRow, ArchiveRow } from './archive-panel.types'

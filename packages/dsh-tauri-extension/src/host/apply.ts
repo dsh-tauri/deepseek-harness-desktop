@@ -1,11 +1,10 @@
 import type { HostContext } from 'dsh-tauri'
 import type { Config } from './apply.types'
-import type { PanelExtensionHost } from './types'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'pathe'
 import { PLUGIN_ID } from '../shared/constants'
-import { clearHostRuntime, resetProviderRuntime, setCurrentHostInstance } from './config/runtime'
-import { routes } from './routes'
+import { disposeProviderRuntime, resetProviderRuntime } from './config/runtime'
+import { server } from './server'
 import { profile } from './service/profile'
 import { provider } from './service/provider'
 
@@ -25,7 +24,6 @@ export function packagedSkillsDir(): string {
 
 export function apply(ctx: HostContext, config?: Config): void {
   ctx.inject(inject, (hostCtx) => {
-    setCurrentHostInstance(hostCtx as unknown as PanelExtensionHost)
     resetProviderRuntime()
     const remountProvider = (): Promise<void> => provider.start(packagedSkillsDir())
     const hotReload = (): boolean => {
@@ -37,14 +35,14 @@ export function apply(ctx: HostContext, config?: Config): void {
       }
     }
     const profileDirPath = profile.peek(config?.profile ?? profile.resolve() ?? DEFAULT_PROFILE)
-    ctx.effect(() => {
-      void remountProvider()
-      return clearHostRuntime
-    }, 'dsh-tauri-extension: skill provider')
     ctx.effect(
-      () => routes(hostCtx as unknown as HostContext, { profileDirPath, remountProvider, hotReload }),
+      () => server(hostCtx, { profileDirPath, remountProvider, hotReload }),
       'dsh-tauri-extension: routes',
     )
-    return clearHostRuntime
+    ctx.effect(() => {
+      void remountProvider()
+      return disposeProviderRuntime
+    }, 'dsh-tauri-extension: skill provider')
+    return disposeProviderRuntime
   })
 }

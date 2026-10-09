@@ -10,6 +10,10 @@ pub(super) fn current_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+pub(super) fn supports_stable_updates(identifier: &str) -> bool {
+    identifier != "dsh-tauri-nightly"
+}
+
 /// 解析版本号为 semver（容忍 `v` 前缀）；非合法 semver 返回 `None`。
 ///
 /// 用标准 semver 语义而非手写数字段比较：`0.7.14-rc.1` / `0.7.14-beta` 这样的
@@ -184,6 +188,18 @@ pub(super) fn pick_asset(assets: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nightly_does_not_receive_stable_installers() {
+        assert!(!supports_stable_updates("dsh-tauri-nightly"));
+    }
+
+    #[test]
+    fn stable_and_legacy_identifiers_keep_stable_updates() {
+        for identifier in ["dsh-tauri", "io.github.hairyf.deepseek-harness-desktop"] {
+            assert!(supports_stable_updates(identifier));
+        }
+    }
 
     #[test]
     fn parse_version_strips_v_prefix() {

@@ -3,10 +3,10 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.2`
-- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Version: `dsh-v0.2.1-alpha.1`
+- Revision: `5badb15009ae1756c3afe0ae0cef1faafc290ccc`
 - Source: `source/deepseek-harness`
-- Catalog pin: `dsh:` → `0.2.0-rc.2` (`pnpm-workspace.yaml`)
+- Catalog pin: `dsh:` → `0.2.1-alpha.1` (`pnpm-workspace.yaml`)
 - License: MIT — Copyright (c) 2026 DeepSeek
 - Not copied: the native-style context menu is this repo's own feature; where an action exists officially it is delegated to the official implementation first, with the plugin's own path as fallback.
 
@@ -16,6 +16,10 @@ Integration points:
 - Official actions first: rename, archive and fork call the official implementation with the service instance as receiver and fall back only when unavailable (`src/client/service/menu.ts:43,63,102,111`); pinning is offered only when the kernel provides it (0.1.7+), older kernels hide the entry (`menu.ts:77,90`).
 - Official menu/row location: menu items and inline row action buttons are located through their official text and ARIA shape (`src/client/register/official-menu.ts:8`, `src/client/register/locate.ts:40,107`), including the official React-rendered action button that appears after hover.
 - Official service surface: `src/client/types/index.ts:21,29,33` extends the official sessions / workspaces services with the capabilities this menu needs (`open` was removed in kernel 0.1.7 and is restored by the adapter compat bridge; the pinned-session set exists from 0.1.7).
+
+## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The workspace navigation change adds optional draft initialization to `startSession`; session open, archive, fork, pinning, and official primitives menu shapes used here remain compatible.
 
 ## License
 

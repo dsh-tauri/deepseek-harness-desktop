@@ -66,19 +66,19 @@
 - [DSH Tauri Archive](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-archive) — 聊天归档与恢复
 - [DSH Tauri Pet](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-pet) — 桌宠与活动状态设置
 - [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-rightclick) — 会话、工作区与正文右键菜单
-- [DSH Tauri Model](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-model) — 模型选择与参数、自动配置
+- [DSH Tauri Model](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-model) — 模型选择与参数、自动配置模型
 - [DSH Tauri SSH](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-ssh) — SSH 远端 Harness 连接与同步
-- [DSH Tauri Notification](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-notification) — 会话通知与交互操作
+- [DSH Tauri Notification](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-notification) — 原生级会话通知与交互操作
 
 ## 可选预设
 
 启动引导提供以下社区插件，可按需安装；
 
 - [DSH Market](https://github.com/dsh-market/dsh-market) — 社区插件市场
-- [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — 按会话隔离的编辑器侧栏
+- [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — 按会话隔离的右编辑器侧栏
 - [Billion Context](https://github.com/ranxianglei/billion-context) — 上下文压缩与历史恢复
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — 对话回退与工作区备份
-- [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) — 远程访问、隧道与机器人接入
+- [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) — 远程访问、隧道接入
 - [DSH IM](https://github.com/xmanrui/dsh-im) — IM 渠道与机器人管理
 
 新增或更新预设请提交 [Issue](https://github.com/dsh-tauri/deepseek-harness-desktop/issues)；可用版本由清单中的内核兼容规则决定。

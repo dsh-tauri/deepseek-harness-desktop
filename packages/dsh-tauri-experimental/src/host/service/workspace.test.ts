@@ -5,13 +5,15 @@ import { promisify } from 'node:util'
 import { join } from 'pathe'
 import { afterEach, describe, expect, it } from 'vitest'
 import { REASON_GIT_REQUIRED, REASON_UNSAFE_WORKSPACE } from '../config/constants'
-import { clearHostRuntime, setCurrentHostInstance } from '../config/runtime'
+import { disposeRuntime } from '../config/runtime'
+import { server } from '../server'
 import { workspaceKey } from '../utils/workspace'
 import { workspace } from './workspace'
 
 const run = promisify(execFile)
 
 const temporaryDirectories: string[] = []
+const disposers: Array<() => void> = []
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-running-changes-workspace-'))
@@ -26,16 +28,18 @@ async function initRepo(path: string): Promise<void> {
 /** 绑一个假宿主：`workspace.resolve` 的 cwd 只能来自宿主 SessionStore（get 优先，list 兜底）。 */
 function bindSessions(cwds: Record<string, string | undefined>): void {
   const rows = Object.entries(cwds).map(([id, cwd]) => ({ id, header: cwd === undefined ? {} : { cwd } }))
-  setCurrentHostInstance({
+  disposers.push(server({
+    webServer: { register: () => () => {} },
     sessions: {
       get: (id: string) => rows.find(row => row.id === id),
       list: () => rows,
     },
-  })
+  } as never))
 }
 
 afterEach(async () => {
-  clearHostRuntime()
+  disposeRuntime()
+  disposers.splice(0).forEach(dispose => dispose())
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 

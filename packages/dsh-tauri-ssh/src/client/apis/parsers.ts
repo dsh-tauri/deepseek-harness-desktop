@@ -12,7 +12,7 @@ import type {
   SyncPreview,
   SyncSkillItem,
 } from '../types/index'
-import type { SshMachineSaveBody } from './index.type'
+import type { PostApiTauriSshMachinesBody } from './index.type'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { messageOf } from '../../shared/error'
 import { isLifecycleState } from '../types/index'
@@ -190,7 +190,7 @@ export function machineListOf(value: unknown): MachineListSnapshot {
   }
 }
 
-export function savePayloadOf(machine: MachineRow, secrets: SecretValues): SshMachineSaveBody {
+export function savePayloadOf(machine: MachineRow, secrets: SecretValues): PostApiTauriSshMachinesBody {
   const profileName = textOf(machine.profileName)?.trim() ?? ''
   const startCommand = textOf(machine.startCommand)
   const color = textOf(machine.color)

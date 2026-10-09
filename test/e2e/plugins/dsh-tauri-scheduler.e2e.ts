@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { describe, expect, inject, it } from 'vitest'
 
 /** 与 `packages/dsh-tauri-scheduler/src/shared/constants.ts:9` 的 PLUGIN_ID 对齐。 */
-const SCHEDULER_ROOT = '/api/desktop/dsh-tauri-scheduler'
+const SCHEDULER_ROOT = '/api/tauri/scheduler'
 
 const TASKS_PATH = `${SCHEDULER_ROOT}/tasks`
 const TASKS_TOGGLE_PATH = `${SCHEDULER_ROOT}/tasks/toggle`

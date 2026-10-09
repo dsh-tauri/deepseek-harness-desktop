@@ -5,6 +5,7 @@ import type {
   InstallerState,
   InstallProgress,
   InternalPluginsPhasePayload,
+  PatchRepairAction,
   SetupStatus,
   SidebarBusyAction,
   StartupError,
@@ -49,6 +50,13 @@ const STARTUP_STATUS_KEYS: Record<StartupPhase, string> = {
   'plugin-install': 'status.loading_internal',
   'process-boot': 'status.loading_process',
   'client-modules': 'status.loading_client_modules',
+}
+
+/** 补丁层修复动作的失败日志前缀（保留各入口原有的可检索文案） */
+const PATCH_REPAIR_LOG: Record<PatchRepairAction, string> = {
+  'safe-mode': '[Harness] enter safe mode failed:',
+  'quarantine': '[Harness] quarantine broken patch layers failed:',
+  'strip': '[Harness] strip unresolved patch entries failed:',
 }
 
 const initialInstaller: InstallerState = {
@@ -396,17 +404,22 @@ export const harness = defineStore({
       if (token !== bootToken)
         return false
 
-      // poll 通过与 ready 提交之间仍可能退出。进入提交窗口后再复核一次 ownership，
-      // 既能捕获窗口开启前已丢失的退出事件，也让窗口内事件用 token 中止本次提交。
-      const finalProbe = await checkHealthViaProxy()
+      // poll 通过与 ready 提交之间仍可能退出，因此提交窗口开启前复核一次 ownership；
+      // 但不再为此重跑全量探测（实测 93 个 / 18MB / 311ms，纯粹推迟 iframe 挂载）：
+      // ownership 只取决于后端进程槽位与启动守卫，纯内存查询即可判定。上一轮 poll 已
+      // 确认就绪，故只有 ownership 丢失才推翻结果，短暂 IPC 失败不降级。
+      let ownershipFailure: string | null = null
+      try {
+        await invoke('harness_ownership')
+      }
+      catch (err) {
+        ownershipFailure = String(err)
+      }
       if (token !== bootToken)
         return false
-      // 上一轮 poll 已确认就绪；这里只让 ownership 丢失推翻结果，短暂探测失败不降级。
-      if (finalProbe.notOwned) {
+      if (ownershipFailure?.includes('HARNESS_NOT_OWNED')) {
         this.serviceRunning = false
-        const phase = finalProbe.phase ?? this.startupPhase
-        const reason = finalProbe.reason ?? (this.startupReason || i18next.t('errors.no_readiness_reason'))
-        throw startupError(phase, reason, 'exited')
+        throw startupError('process-boot', ownershipFailure, 'exited')
       }
 
       const readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
@@ -717,26 +730,10 @@ export const harness = defineStore({
      * 手写笔误会让安全模式也起不来（issue #525）。结果用 toast 告知备份路径。
      */
     async enterSafeMode() {
-      if (this.busyAction)
-        return
-      try {
+      await this.runPatchRepair('safe-mode', async () => {
         const report = await invoke<PatchQuarantineReport>('enter_safe_mode')
         notifyPatchQuarantine(report)
-      }
-      catch (err) {
-        console.error('[Harness] enter safe mode failed:', err)
-        const error = await attachStartupDiagnostics(err)
-        this.fail(
-          error.message,
-          error.logs,
-          error.pluginConflictHint,
-          error.inotifyLimitHint,
-          undefined,
-          error.patchLayerHint,
-        )
-        return
-      }
-      await this.restart()
+      })
     },
 
     /**
@@ -745,26 +742,10 @@ export const harness = defineStore({
      * 补丁文件只改名保存为 `.broken-<时间戳>` 备份，修好语法后改回原名即可恢复。
      */
     async quarantineBrokenPatchLayers() {
-      if (this.busyAction)
-        return
-      try {
+      await this.runPatchRepair('quarantine', async () => {
         const report = await invoke<PatchQuarantineReport>('quarantine_broken_patch_layers')
         notifyPatchQuarantine(report)
-      }
-      catch (err) {
-        console.error('[Harness] quarantine broken patch layers failed:', err)
-        const error = await attachStartupDiagnostics(err)
-        this.fail(
-          error.message,
-          error.logs,
-          error.pluginConflictHint,
-          error.inotifyLimitHint,
-          undefined,
-          error.patchLayerHint,
-        )
-        return
-      }
-      await this.restart()
+      })
     },
 
     /**
@@ -776,14 +757,28 @@ export const harness = defineStore({
      * 成 `.bak-<时间戳>`，结果用 toast 告知备份路径。
      */
     async stripUnresolvedPatchEntries() {
-      if (this.busyAction)
-        return
-      try {
+      await this.runPatchRepair('strip', async () => {
         const report = await invoke<PatchEntryStripReport>('strip_unresolved_patch_entries')
         notifyPatchEntryStrip(report)
+      })
+    },
+
+    /**
+     * 补丁层修复动作的共用骨架：在第一个 await 之前就占住忙态并推进 bootToken。
+     * 修复本身可能耗到秒级，这期间退出处理器的自动恢复若照常判定，就会把用户刚
+     * 点下的这次修复覆盖掉（它自己随后也要重启）；推进令牌让在飞的启动链与自动
+     * 恢复一次性作废。忙态在交给 restart 之前释放——restart 自己会重新占住它。
+     */
+    async runPatchRepair(action: PatchRepairAction, repair: () => Promise<void>) {
+      if (this.busyAction)
+        return
+      ++bootToken
+      this.busyAction = 'repair'
+      try {
+        await repair()
       }
       catch (err) {
-        console.error('[Harness] strip unresolved patch entries failed:', err)
+        console.error(PATCH_REPAIR_LOG[action], err)
         const error = await attachStartupDiagnostics(err)
         this.fail(
           error.message,
@@ -794,6 +789,9 @@ export const harness = defineStore({
           error.patchLayerHint,
         )
         return
+      }
+      finally {
+        this.busyAction = null
       }
       await this.restart()
     },

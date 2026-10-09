@@ -25,21 +25,26 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.2`
-- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Version: `dsh-v0.2.1-alpha.1`
+- Revision: `5badb15009ae1756c3afe0ae0cef1faafc290ccc`
 - Source: `source/deepseek-harness`
-- Catalog pin: `dsh:` → `0.2.0-rc.2` (`pnpm-workspace.yaml`)
+- Catalog pin: `dsh:` → `0.2.1-alpha.1` (`pnpm-workspace.yaml`)
 - License: MIT — Copyright (c) 2026 DeepSeek
 - Not copied: the manager drives the official Host plugins instead of re-implementing them.
 
 Official contracts used:
 
 - Skills provider: `src/host/service/provider.utils.ts` imports the official `@deepseek-ai/dsh-skill-filesystem` through the platform loader; `src/host/service/provider.ts` re-mounts it with `customSkillDirs` = packaged `skills/` + managed skill roots + agent roots.
-- Skill policy: `src/host/routes/skill/policy/post.ts` calls the official `setPolicy(path, enabled)`.
+- Skill policy: `src/host/server/routes/skill/policy/post.ts` calls the official `setPolicy(path, enabled)`.
 - Skill format and roots: `SKILL.md` directory bundle or flat `<name>.md` with YAML frontmatter, in the official project/custom/user priority order, including the official `user-dsh` root `<DSH_HOME>/skills`.
 - MCP: every `cordis.patch.yml` row is an official `@deepseek-ai/dsh-mcp-client` instance (`MCP_PLUGIN` in `src/host/config/constants.ts`) using the official `serverName` / `transport` / `command` / `args` / `env` / `cwd` or `url` / `headers` shape.
 - MCP config subset: the official `toolCallTimeoutMs`, `failOnStartupError`, `maxInstructionBytes` and `reconnect` keys are not surfaced yet.
 - MCP resources: left to the official `@deepseek-ai/dsh-mcp-resources`; this package adds no resource tooling.
+
+## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The skill-filesystem source and MCP client source remain unchanged; provider configuration, policy calls, and the managed MCP subset require no migration.
+- The removed `./invariant` exports and subpath package metadata lookup have no local consumers. This package uses root plugin entries and does not fork the official plugin-manager runtime-resolution logic.
 
 ## License
 

@@ -24,7 +24,7 @@ import {
 } from '../support/browser'
 
 /** 与 `packages/dsh-tauri-pet/src/shared/constants.ts` 的 SESSION_STREAM_PATH 对齐。 */
-const SESSION_STREAM_PATH = '/api/desktop/dsh-tauri-pet/session/stream'
+const SESSION_STREAM_PATH = '/api/tauri/pet/session/stream'
 
 /** `/api/**` 要求浏览器会话；Cookie 由编排在根路径用一次性 token 换得。 */
 function apiHeaders(extra: Record<string, string> = {}): Record<string, string> {

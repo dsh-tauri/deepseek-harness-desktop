@@ -59,7 +59,7 @@ jobs:
           done
           [ "$apt_ok" = "1" ] || { echo "apt-get update 连续 3 次失败，中止"; exit 1; }
           # squashfs-tools 提供 mksquashfs，供 AppImage 宿主库剔除后重打包使用。
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf squashfs-tools
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad squashfs-tools
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

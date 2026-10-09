@@ -1,89 +1,32 @@
-export type WorktreeBindings = {
-  bindings: WorktreeBindingSummary[];
-  jobs: WorktreeDiscardJobSummary[];
-};
-export type WorktreeBindingSummary = {
-  sessionId: string;
-  sourceSessionId: string;
-  hash: string;
-  dirname: string;
-  worktreeKey: string;
-  worktreePath: string;
-  projectPath: string;
-  log: string[];
-};
-export type WorktreeDiscardJobSummary = {
-  sessionId: string;
-  jobId: string;
-  state: string;
-  error?: string;
-  worktreeKey: string;
-  worktreePath?: string;
-};
-export type WorktreeAttach = {
-  ok?: boolean;
-  workspaceId?: string;
-  error?: string;
-};
-export type WorktreeCheckout = {
-  ok?: boolean;
-  branch?: string;
-  projectPath?: string;
-  targetSessionId?: string;
-  error?: string;
-};
-export type WorktreeDiscard = {
-  ok?: boolean;
-  jobId?: string;
-  error?: string;
-};
-export type WorktreeCreate = {
-  ok?: boolean;
-  error?: string;
-  hash?: string;
-  dirname?: string;
-  worktreeKey?: string;
-  worktreePath?: string;
-  projectPath?: string;
-  sourceSessionId?: string;
-  log?: string[];
-  existed?: boolean;
-  inherited?: boolean;
-};
-export type WorktreeStatus = {
-  mode?: string;
-  jobId?: string;
-  error?: string;
-  hash?: string;
-  dirname?: string;
-  worktreeKey?: string;
-  worktreePath?: string;
-  projectPath?: string;
-  sourceSessionId?: string;
-  log?: string[];
-  isGit?: boolean | null;
-};
+export type PostApiTauriWorktreeResponse = { ok?: undefined | false | true; error?: undefined | string; hash?: undefined | string; dirname?: undefined | string; worktreeKey?: undefined | string; worktreePath?: undefined | string; projectPath?: undefined | string; sourceSessionId?: undefined | string; log?: undefined | string[]; existed?: undefined | false | true; inherited?: undefined | false | true };
+export type DeleteApiTauriWorktreeResponse = { ok?: undefined | false | true; jobId?: undefined | string; error?: undefined | string };
+export type GetApiTauriWorktreeBindingsResponse = { bindings: { sessionId: string; sourceSessionId: string; hash: string; dirname: string; worktreeKey: string; worktreePath: string; projectPath: string; log: string[] }[]; jobs: { sessionId: string; jobId: string; state: string; error?: undefined | string; worktreeKey: string; worktreePath?: undefined | string }[] };
+export type GetApiTauriWorktreeStatusResponse = { mode?: undefined | string; jobId?: undefined | string; error?: undefined | string; hash?: undefined | string; dirname?: undefined | string; worktreeKey?: undefined | string; worktreePath?: undefined | string; projectPath?: undefined | string; sourceSessionId?: undefined | string; log?: undefined | string[]; isGit?: undefined | null | false | true };
+export type GetApiTauriWorktreeStatusQuerySessionId = undefined | string;
+export type GetApiTauriWorktreeStatusQueryJobId = undefined | string;
+export type PostApiTauriWorktreeBindingsResponse = { ok?: undefined | false | true; workspaceId?: undefined | string; error?: undefined | string };
+export type PostApiTauriWorktreeCheckoutsResponse = { ok?: undefined | false | true; branch?: undefined | string; projectPath?: undefined | string; targetSessionId?: undefined | string; error?: undefined | string };
 
-export interface AttachBody {
-  sessionId?: string;
+export interface PostApiTauriWorktreeBody {
+  sessionId?: undefined | string;
+  sourceSessionId?: undefined | string;
+  carryStaged?: undefined | false | true;
+  inherit?: undefined | false | true;
 }
-export interface CheckoutBody {
-  sessionId?: string;
-  worktreeHashDirname?: string;
-  branchName?: string;
-  carryStaged?: boolean;
+export interface DeleteApiTauriWorktreeBody {
+  sessionId?: undefined | string;
+  worktreeHashDirname?: undefined | string;
 }
-export interface DiscardBody {
-  sessionId?: string;
-  worktreeHashDirname?: string;
+export interface PostApiTauriWorktreeBindingsBody {
+  sessionId?: undefined | string;
 }
-export interface CreateBody {
-  sessionId?: string;
-  sourceSessionId?: string;
-  carryStaged?: boolean;
-  inherit?: boolean;
+export interface PostApiTauriWorktreeCheckoutsBody {
+  sessionId?: undefined | string;
+  worktreeHashDirname?: undefined | string;
+  branchName?: undefined | string;
+  carryStaged?: undefined | false | true;
 }
-export interface GetStatusQuery {
-  sessionId?: string;
-  jobId?: string;
+export interface GetApiTauriWorktreeStatusQuery {
+  sessionId?: GetApiTauriWorktreeStatusQuerySessionId;
+  jobId?: GetApiTauriWorktreeStatusQueryJobId;
 }

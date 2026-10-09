@@ -10,7 +10,7 @@
 
 ## 一、 唯一定义宏：`defineService`
 
-所有服务统一使用 `dsh-tauri` 导出的 **`defineService`** 声明[cite: 1]：
+所有领域服务统一使用 `dsh-tauri` 导出的 **`defineService`** 声明（共享请求中间件除外）[cite: 1]：
 
 ```typescript
 import { defineService } from 'dsh-tauri'
@@ -18,7 +18,7 @@ import { defineService } from 'dsh-tauri'
 ```
 
 * **特性与约束**：运行时零开销，仅在编译期约束服务对象成员**必须全为函数**[cite: 1]。散装状态必须留在模块作用域[cite: 1]。
-* **铁律**：严禁自定义/封装其它服务宏，严禁手写裸对象（如 `export const x = {...}`）[cite: 1]。
+* **铁律**：领域服务严禁自定义/封装其它服务宏，严禁手写裸对象（如 `export const x = {...}`）[cite: 1]。
 
 ---
 
@@ -44,8 +44,9 @@ import { defineService } from 'dsh-tauri'
 ### 3. 签名与宿主隔离 (Signatures & Host Isolation)
 
 * **参数扁平**：按业务需求直接传参，不做无意义的单对象包装[cite: 1]。
-* **无 `ctx`/`host` 参**：服务方法不得接收 `ctx` 或 `host` 参数[cite: 1]。宿主能力由 `apply.ts` 调用 `setCurrentHostInstance(ctx)` 绑定后，通过 `getCurrentHostInstance()` 按需获取[cite: 1]。
-* **隔离访问**：**只有 `service/` 允许调用 `getCurrentHostInstance()**`；`routes/`、`tools/` 等必须经由服务层间接访问宿主能力[cite: 1]。
+* **无 `ctx`/`host` 参**：领域服务方法不得透传宿主对象。`apply.ts` 先通过 `ctx.effect(() => server(ctx, options), label)` 激活服务，服务内部从 `dsh-h3/utils` 导入原生 `getServerContext`，使用 `getServerContext<HostContext>(server)` 按需读取宿主能力；不在 `dsh-tauri` 重导出，不建立泛型兼容层或独立的宿主绑定与清除函数。
+* **隔离访问**：只有 `service/` 读取业务宿主能力；`server/routes/`、`tools/` 等通过领域服务调用。路由可以通过 `dsh-h3/utils` 的 `getServerOptions<Options>(event)` 读取当前请求所属实例的配置，不得用模块变量代替。
+* **基础设施例外**：`dsh-tauri` 的请求安全中间件可以从 event 读取 Context，载体鉴权适配 `gate.attach(ctx)` 可以显式接收 Context；两者不属于业务宿主透传。共享请求中间件不适用领域服务的 `defineService` 宏。
 
 ---
 
@@ -133,11 +134,15 @@ export const workspace = defineService({
 
 ```typescript
 // service/session-context.ts
-import { defineService, getCurrentHostInstance } from 'dsh-tauri'
+import type { HostContext } from '../types'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
+import { server } from '../server'
 
 export const sessionContext = defineService({
   resolve(sessionId: string): string | null {
-    // 安全推导路径；绝对不回退 process.cwd() 猜测
+    const session = getServerContext<HostContext>(server).sessions.get(sessionId)
+    return session?.header.cwd ?? null
   },
   peek(sessionId: string) { /* 只读查看，无副作用 */ },
 })
@@ -155,7 +160,7 @@ export const sessionContext = defineService({
 * ❌ **类型错位**：在 `config/` 下建 `*.types.ts`；跨模块共享的宿主面类型散落在 `config/`[cite: 1]。
 * ❌ **非函数成员**：在服务对象上挂载变量、常量或类型[cite: 1]。
 * ❌ **杂物导出**：在 `service/` 文件中导出 `type`、`const` 或内部辅助函数[cite: 1]。
-* ❌ **透传宿主**：方法接收 `ctx` 或 `host` 参数[cite: 1]。
+* ❌ **透传宿主**：领域服务方法接收 `ctx` 或 `host` 参数；载体适配 `gate.attach(ctx)` 仅按第二章的基础设施例外处理。
 
 ---
 
@@ -165,7 +170,7 @@ export const sessionContext = defineService({
 * [ ] 文件是否有且仅有一个导出，且导出名等于文件名的驼峰形式[cite: 1]？
 * [ ] 服务对象是否全部由函数组成（无散装状态/常量）[cite: 1]？
 * [ ] 所有方法名是否为该领域的动作动词、且全仓无同义词混用[cite: 1]？
-* [ ] 方法参数是否扁平，且未包含 `ctx`/`host` 形参[cite: 1]？
-* [ ] 是否仅在 `service/` 内部使用 `getCurrentHostInstance()`，其它层绝不接触宿主对象[cite: 1]？
+* [ ] 领域服务参数是否扁平，且未包含 `ctx`/`host` 形参；`gate.attach(ctx)` 是否仅用于载体适配？
+* [ ] 是否仅在领域服务内部使用 `getServerContext<HostContext>(server)`，其它业务层通过服务间接调用，基础设施例外是否保持窄边界[cite: 1]？
 * [ ] 私有函数是否收纳于 `// --- internal ---` 且未导出；单一消费方的常量是否直接定义在消费方文件的 import 之后[cite: 1]？
 * [ ] 类型是否落在模块同名 `.types.ts` 或共享的 `host/types/`；`config/` 下是否已无 `*.types.ts`；`config/constants.ts` 是否只剩多消费方常量[cite: 1]？

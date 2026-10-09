@@ -22,7 +22,7 @@
  */
 
 import type { Connection, Server as SshServer } from 'ssh2'
-import type { MachineProfile, SshHostContext, SshSession } from '../../../packages/dsh-tauri-ssh/src/host/types/index'
+import type { MachineProfile, SshSession } from '../../../packages/dsh-tauri-ssh/src/host/types/index'
 import { execSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -32,7 +32,7 @@ import process from 'node:process'
 import { join } from 'pathe'
 import { Server } from 'ssh2'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { clearHostRuntime, machineProfiles, setCurrentHostInstance, setHostConfig, setMachineDeps } from '../../../packages/dsh-tauri-ssh/src/host/config/runtime'
+import { machineProfiles, resetRuntime, setHostConfig, setMachineDeps } from '../../../packages/dsh-tauri-ssh/src/host/config/runtime'
 import { events } from '../../../packages/dsh-tauri-ssh/src/host/service/events'
 import { machine } from '../../../packages/dsh-tauri-ssh/src/host/service/machine'
 import { transport } from '../../../packages/dsh-tauri-ssh/src/host/service/transport'
@@ -65,21 +65,9 @@ function freshRsaPem(): string {
   return String(privateKey.export({ format: 'pem', type: 'pkcs1' }))
 }
 
-/**
- * The minimal host context the runtime needs: the E2E suite drives the
- * services directly, so nothing is ever registered on the web server and no
- * effect is ever mounted.
- */
-function hostContextStub(): SshHostContext {
-  return {
-    webServer: { register: () => () => {} },
-    effect: () => undefined,
-  }
-}
-
 /** Every `it` leaves no runtime behind (assembly is process-global state). */
 afterEach(() => {
-  clearHostRuntime()
+  resetRuntime()
 })
 
 /**
@@ -88,7 +76,7 @@ afterEach(() => {
  * with a timestamp.
  *
  * Assembly order is the production one (`apply.ts` is the only other caller):
- * clear the runtime → bind the host instance → `setHostConfig` → `setMachineDeps`.
+ * reset the runtime → `setHostConfig` → `setMachineDeps`.
  */
 function bootHarness(options: {
   connectTimeoutMs?: number
@@ -138,8 +126,7 @@ function bootHarness(options: {
     console.log(`[+${(line.at - t0).toString().padStart(6)}ms] ${text}`)
   }
 
-  clearHostRuntime()
-  setCurrentHostInstance(hostContextStub())
+  resetRuntime()
   setHostConfig({
     connectTimeoutMs: options.connectTimeoutMs ?? 15_000,
     healthCheckTimeoutMs: 3_000,
@@ -182,7 +169,7 @@ function bootHarness(options: {
       clearInterval(poller)
       drain()
       await machine.dispose()
-      clearHostRuntime()
+      resetRuntime()
       rmSync(root, { recursive: true, force: true })
     },
   }

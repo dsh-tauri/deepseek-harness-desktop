@@ -380,6 +380,9 @@ async fn first_matching_release(
 /// 返回 `Ok(Some(LatestRelease))` 表示有更新且匹配到当前平台安装包；
 /// `Ok(None)` 表示无更新（或未匹配到资产）。网络失败返回 Err。
 pub(super) async fn fetch_latest_release(app_handle: &tauri::AppHandle) -> Result<Option<LatestRelease>, String> {
+    if !super::version::supports_stable_updates(&app_handle.config().identifier) {
+        return Ok(None);
+    }
     let current = current_version();
     let (candidates, saw_stable) = stable_candidates(&fetch_releases_meta(app_handle).await?, &current);
 

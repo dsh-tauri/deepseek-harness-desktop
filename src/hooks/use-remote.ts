@@ -1,10 +1,15 @@
-import type { SshConnectionState, SshMachineListItem, SshProgress, SshProgressPhase } from '@/apis/remote.types'
+import type { GetApiTauriSshMachinesResponse } from '@/apis/remote.types'
 import { useEventListener, useUnmount, useWatch } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useRef, useState } from 'react'
 import { getMachines, getMachinesEvents, postMachinesConnect, postMachinesDisconnect } from '@/apis/remote'
 import { queryKeys } from '@/config/query-keys'
+
+type SshMachineListItem = NonNullable<GetApiTauriSshMachinesResponse['items']>[number]
+type SshConnectionState = NonNullable<SshMachineListItem['state']>
+type SshProgress = NonNullable<SshMachineListItem['progress']>
+type SshProgressPhase = SshProgress['phase']
 
 export type SshMachineRow = { id: string, name: string, state: SshConnectionState } & Pick<SshMachineListItem, 'color' | 'tintBorder' | 'host' | 'port' | 'user' | 'tunnelBaseUrl' | 'lastError' | 'nextRetryAt' | 'authMethod'> & { progress?: Pick<SshProgress, 'phase'> }
 

@@ -1,7 +1,8 @@
-import type { OperationResult, SchedulerTask } from '../types'
+import type { HostContext, OperationResult, SchedulerTask } from '../types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { filter, isEmpty, isNil, take } from 'lodash-es'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import { nextOccurrence } from '../utils/schedule'
 import { isTaskDue, selectWaitingTaskIds } from '../utils/waiting'
 import { executor } from './executor'
@@ -72,7 +73,7 @@ async function fire(target: SchedulerTask, trigger: 'schedule' | 'manual'): Prom
 
 function warn(message: string, error: unknown): void {
   try {
-    getCurrentHostInstance().logger?.warn?.(`dsh-tauri-scheduler: ${message}`, error)
+    getServerContext<HostContext>(server).logger?.warn?.(`dsh-tauri-scheduler: ${message}`, error)
   }
   catch {
   }

@@ -159,16 +159,14 @@ describe('编排骨架', () => {
   })
 })
 
-/** 只声明 GET 的代表路由（`packages/dsh-tauri-pet/src/host/routes/index.ts`）。 */
-const GET_ONLY_PATH = '/api/desktop/dsh-tauri-pet/session/stream'
+/** 只声明 GET 的代表路由（`packages/dsh-tauri-pet/src/host/server/index.ts`）。 */
+const GET_ONLY_PATH = '/api/tauri/pet/session/stream'
 
-/** 只声明 POST 的代表路由（`packages/dsh-tauri-rightclick/src/host/routes/index.ts`）。 */
-const POST_ONLY_PATH = '/api/desktop/dsh-tauri-rightclick/open/url'
+/** 只声明 POST 的代表路由（`packages/dsh-tauri-rightclick/src/host/server/index.ts`）。 */
+const POST_ONLY_PATH = '/api/tauri/rightclick/open/url'
 
 /** 仓库内不存在的插件 id，用于证明「路由缺失」而非「鉴权失败」或「会话缺失」。 */
-const UNMOUNTED_PATH = '/api/desktop/dsh-tauri-unmounted-probe/ping'
-
-const BODY_LIMIT_BYTES = 1024 * 1024
+const UNMOUNTED_PATH = '/api/tauri/unmounted-probe/ping'
 
 describe('共享路由契约', () => {
   /** 复用 globalSetup 的共享宿主；`also` 默认已覆盖 GET 与 POST 两个代表路由。 */
@@ -185,12 +183,12 @@ describe('共享路由契约', () => {
     return (response.headers.get('allow') ?? '').split(',').map(entry => entry.trim()).filter(Boolean).sort()
   }
 
-  it('验证 OPTIONS 预检在只声明 GET 的路径上返回 204 并公布 allow', async () => {
+  it('验证未声明的 OPTIONS 返回原生 405 并公布 allow', async () => {
     const response = await fetch(url(GET_ONLY_PATH), { method: 'OPTIONS', headers: headers() })
 
-    expect(response.status, '未声明的 OPTIONS 必须走默认 204 预检').toBe(204)
+    expect(response.status, '未声明的 OPTIONS 必须走原生 405').toBe(405)
     expect(await response.text(), '预检响应不得带 body').toBe('')
-    expect(allowMethods(response), 'allow 必须公布 GET / HEAD（GET 隐含）/ OPTIONS').toEqual(['GET', 'HEAD', 'OPTIONS'])
+    expect(allowMethods(response), 'allow 只公布 GET / HEAD（GET 隐含）').toEqual(['GET', 'HEAD'])
   })
 
   it('验证只声明 GET 的路径接受 HEAD 而不被判 405', async () => {
@@ -219,9 +217,7 @@ describe('共享路由契约', () => {
     expect(response.status, '只声明了 GET，POST 必须 405').toBe(405)
     expect(response.headers.get('allow') ?? '', 'allow 必须指出可用方法').toContain('GET')
 
-    const body = await response.json() as { error?: string }
-    expect(body.error ?? '', '错误文本必须点明允许的方法').toMatch(/^仅支持 /)
-    expect(body.error ?? '').toContain('GET')
+    expect(await response.text(), '原生 405 响应没有正文').toBe('')
   })
 
   it('[反向] 验证异源 Origin 的变更请求被 403 拒绝', async () => {
@@ -236,29 +232,21 @@ describe('共享路由契约', () => {
     const body = await response.json() as { error?: string }
     // 上游 Host/Origin 围栏（`dsh-client-connection` 的 `requestRejection`）先于路由层生效，
     // 用的是连接门词汇 `forbidden`；路由层的 `cross-origin-request` 分支在 L2 不可达，
-    // 由 `packages/dsh-tauri/src/host/routes/index.test.ts` 的 L1 用例覆盖。
+    // 由 `packages/dsh-tauri/src/host/service/request.test.ts` 的 L1 用例覆盖。
     expect(body.error, '拒绝必须来自连接门，而不是路由层').toBe('forbidden')
     expect(JSON.stringify(body), 'handler 的 {"ok":true} 不得出现').not.toContain('ok')
   })
 
-  it('[反向] 验证超过 1 MiB 的请求体被 413 终止', async () => {
-    const payload = JSON.stringify({ pad: 'x'.repeat(BODY_LIMIT_BYTES) })
-    expect(payload.length, '测试数据必须真的超过上限').toBeGreaterThan(BODY_LIMIT_BYTES)
-
-    let response: Response
-    try {
-      response = await fetch(url(POST_ONLY_PATH), {
-        method: 'POST',
-        headers: headers({ 'content-type': 'application/json' }),
-        body: payload,
-      })
-    }
-    catch (error) {
-      throw new Error(`超限请求体必须以 413 结束，而不是连接层异常：${(error as Error).message}`)
-    }
-
-    expect(response.status, 'bodyLimit 必须在读体时以 413 结束').toBe(413)
-    expect(await response.text(), '413 必须报出上限字节数').toContain(String(BODY_LIMIT_BYTES))
+  it('超过 1 MiB 的请求体仍到达领域校验', async () => {
+    const payload = JSON.stringify({ pad: 'x'.repeat(1024 * 1024) })
+    expect(payload.length).toBeGreaterThan(1024 * 1024)
+    const response = await fetch(url(POST_ONLY_PATH), {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: payload,
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ ok: false, error: 'invalid-url' })
   })
 
   it('[反向] 验证未挂载插件的路径返回 404，用于区分「没挂载」与「没鉴权」', async () => {

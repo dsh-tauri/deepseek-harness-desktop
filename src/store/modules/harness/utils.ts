@@ -8,8 +8,8 @@ import i18next from 'i18next'
 import { containsHeapOomError, containsInotifyLimitError, heapPeakFromLogs, pickErrorLines } from '@/components/logs.utils'
 import { toast } from '@/utils/toast'
 import {
-  HEALTH_PROBE_INITIAL_INTERVAL,
-  HEALTH_PROBE_MAX_INTERVAL,
+  HEALTH_PROBE_FAST_RETRY_INTERVAL,
+  HEALTH_PROBE_INTERVAL,
   LOG_TAIL_MAX_BYTES,
   STARTUP_INACTIVITY_TIMEOUT,
 } from './constants'
@@ -85,8 +85,8 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
 
     const lower = result.toLowerCase()
     if (lower.startsWith('healthy')) {
-      // 正常路径不写日志：探测每次启动至少跑两遍（就绪轮询 + completeReadiness 复核），
-      // 成功噪音只会盖住真正有用的失败重试行。
+      // 正常路径不写日志：就绪轮询每 1s 成功一次，成功噪音只会盖住真正有用的
+      // 失败重试行。
       return {
         healthy: true,
         notOwned: false,
@@ -107,10 +107,35 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
     if (message.includes('HARNESS_NOT_OWNED')) {
       // dsh 进程已退出（典型如插件冲突导致启动即崩溃），继续等只会白白耗完
       // 当前阶段 deadline，让调用方立刻结束并展示日志里的真实错误。
-      console.warn('[Harness] dsh process exited during startup, failing fast')
+      // 运行期崩溃走的是另一条路径（handleProcessExit），这里能到就说明还在启动轮询里。
+      console.warn('[Harness] dsh process exited before readiness, failing fast')
       return {
         healthy: false,
         notOwned: true,
+        phase: 'process-boot',
+        reason: message,
+      }
+    }
+    if (message.includes('not listening yet')) {
+      // 端口还没被监听：Rust 门禁直接判定，属启动早期正常态。静默返回并让轮询改用
+      // 快扫间隔；若在这里记 warn，250ms 的节奏会刷满控制台。
+      return {
+        healthy: false,
+        notOwned: false,
+        notListening: true,
+        phase: 'process-boot',
+        reason: message,
+      }
+    }
+    if (message.includes('boot page returned') || message.includes('HARNESS_BOOT_MANIFEST_REQUEST_FAILED')) {
+      // 端口已在监听、启动页尚未登记：本轮只发了一次请求、没取任何 bundle，下一刻
+      // 就可能就绪，快扫能把这 1s 空等压到 ~0.25s（实测启动尾段正是白等满一个常规
+      // 间隔）。仍记一行 warn：这个窗口通常是插件 boot 登记的尾巴，是启动慢的实证。
+      console.warn('[Harness] health check failed, retrying:', err)
+      return {
+        healthy: false,
+        notOwned: false,
+        bootPending: true,
         phase: 'process-boot',
         reason: message,
       }
@@ -119,7 +144,7 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
       console.warn('[Harness] transient 502 during health check, retrying')
     }
     else {
-      // 单次探测失败是启动期的常态：服务尚未就绪、boot page 还是 404 等都会走到
+      // 单次探测失败是启动期的常态：服务尚未就绪、部分 bundle 还没登记等都会走到
       // 这里，而轮询会一直重试到该阶段 deadline；真正的失败由 startupError 以
       // errors.startup_* 报出。逐次记 ERROR 只会造成「满屏错误但其实启动正常」。
       console.warn('[Harness] health check failed, retrying:', err)
@@ -157,7 +182,7 @@ export function startupError(
   return error
 }
 
-/** 带退避的服务就绪轮询（探测实现固定为 Rust 代理健康检查） */
+/** 服务就绪轮询（探测实现固定为 Rust 代理健康检查） */
 export function pollHarnessReadiness(
   absoluteTimeoutMs: number,
   shouldContinue: () => boolean,
@@ -165,9 +190,8 @@ export function pollHarnessReadiness(
 ): Promise<ReadinessPollResult> {
   return pollReadiness({
     probe: checkHealthViaProxy,
-    intervalMs: HEALTH_PROBE_INITIAL_INTERVAL,
-    maxIntervalMs: HEALTH_PROBE_MAX_INTERVAL,
-    backoffFactor: 1.5,
+    intervalMs: HEALTH_PROBE_INTERVAL,
+    fastRetryIntervalMs: HEALTH_PROBE_FAST_RETRY_INTERVAL,
     inactivityTimeoutMs: STARTUP_INACTIVITY_TIMEOUT,
     absoluteTimeoutMs,
     shouldContinue,

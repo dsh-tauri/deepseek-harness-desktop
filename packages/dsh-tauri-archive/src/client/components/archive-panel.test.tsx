@@ -108,9 +108,9 @@ beforeEach(() => {
     archivedSessionIds: ['a', 'b', 'c'],
     meta: { a: { title: 'Alpha', cwd: '/project' }, b: { title: 'Beta', cwd: '/project' }, c: { title: 'Other', cwd: '/other' } },
   })
-  vi.mocked(api.deleteSessionArchive).mockResolvedValue(undefined)
-  vi.mocked(api.deleteSessionWorkspaceArchive).mockResolvedValue(undefined)
-  vi.mocked(api.postSessionArchiveClear).mockResolvedValue(undefined)
+  vi.mocked(api.deleteSessionArchive).mockResolvedValue({ ok: true })
+  vi.mocked(api.deleteSessionWorkspaceArchive).mockResolvedValue({ ok: true })
+  vi.mocked(api.postSessionArchiveClear).mockResolvedValue({ ok: true })
 })
 
 afterEach(() => {
@@ -190,7 +190,7 @@ describe('archive deletion confirmation', () => {
   it('pending disables confirmation without changing an already opened dialog', async () => {
     let resolveClear!: () => void
     vi.mocked(api.postSessionArchiveClear).mockImplementation(() => new Promise((resolve) => {
-      resolveClear = resolve
+      resolveClear = () => resolve({ ok: true })
     }))
     mount()
     await screen.findByRole('button', { name: 'Open directory: Alpha' })

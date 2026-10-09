@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import type { McpSaveBody } from '../apis/index.type'
+import type { PostApiTauriExtensionMcpBody as McpSaveBody } from '../apis/index.type'
 import type { McpRow } from '../types'
 import type { McpEditorMode, McpEditorState, McpImportItem, McpTabProps } from './mcp-tab.types'
 import { Action, ArrowRotateRight, Button, Card, Icon, Modal, PlugConnection, Select, Tag, Text, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
@@ -40,6 +40,11 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     void getMcp().then(
       (body) => {
         if (current) {
+          if ('error' in body) {
+            setServers([])
+            setToast({ text: failText(t, new Error(body.error)), ok: false, seq: Date.now() })
+            return
+          }
           setServers(body.servers)
           setGlobalError(body.globalError ?? '')
         }
@@ -61,6 +66,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setImportItems(null)
     try {
       const body = await getImportScan()
+      if ('error' in body)
+        throw new Error(body.error)
       const existing = new Set(body.existing)
       setImportItems(body.servers.map(server => ({
         server,
@@ -81,6 +88,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setBusy(true)
     try {
       const body = await postImportApply({ items })
+      if ('error' in body)
+        throw new Error(body.error)
       const failed = body.results.filter(item => !item.ok)
       if (failed.length === 0) {
         setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
@@ -105,6 +114,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setChecking(row.id)
     try {
       const result = await postMcpCheck({ id: row.id })
+      if ('error' in result)
+        throw new Error(result.error)
       setToast({
         text: result.ok ? `${t('connectivityOk')}${result.detail ? ` (${result.detail})` : ''}` : `${t('connectivityFailed')}: ${result.detail ?? ''}`,
         ok: result.ok,
@@ -216,6 +227,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setPasteError(null)
     try {
       const body = await postMcp(input)
+      if ('error' in body)
+        throw new Error(body.error)
       setEditor(null)
       setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
       setReload(value => value + 1)
@@ -232,6 +245,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setBusy(true)
     try {
       const body = await postMcpToggle({ id: row.id, disabled: !row.disabled })
+      if ('error' in body)
+        throw new Error(body.error)
       setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
       setReload(value => value + 1)
     }
@@ -249,6 +264,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setBusy(true)
     try {
       const body = await deleteMcp({ id: confirmId })
+      if ('error' in body)
+        throw new Error(body.error)
       setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
       setReload(value => value + 1)
     }

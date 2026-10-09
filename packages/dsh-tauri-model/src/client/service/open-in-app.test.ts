@@ -58,7 +58,7 @@ describe('官方 open-in-app 接入', () => {
       { id: 'vscode', name: 'Visual Studio Code', default: false, icon: '/open-in-app/icon/vscode' },
       { id: 'cursor', name: 'Cursor', default: false, icon: '/open-in-app/icon/cursor' },
     ])
-    expect(postConfigOpenMock).toHaveBeenCalledWith(expect.objectContaining({ params: { dry: '1' } }))
+    expect(postConfigOpenMock).toHaveBeenCalledWith({ dry: '1' }, { ignoreResponseError: true })
   })
 
   it('目录响应异常或没有应用时不列表', async () => {

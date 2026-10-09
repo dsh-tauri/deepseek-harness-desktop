@@ -1,10 +1,13 @@
+import type { Context } from '@deepseek-ai/cordis'
 import type { ArchiveRegistrySurface, SessionHost, SessionLike, WorkspaceEntryLike } from '../types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearHostRuntime, setCurrentHostInstance } from '../config/runtime'
 import { archiveHooks } from '../events'
+import { server } from '../server'
 import { archive } from './archive'
 import { ledger } from './ledger'
 import { session } from './session'
+
+const disposers: Array<() => void> = []
 
 function harness(ids = ['a', 'b', 'orphan']) {
   const operations: string[] = []
@@ -56,7 +59,7 @@ function harness(ids = ['a', 'b', 'orphan']) {
     workspaceRegistry: registry,
     logger: { warn: vi.fn(), info: vi.fn() },
   }
-  setCurrentHostInstance(host)
+  disposers.push(server({ ...host, webServer: { register: () => () => {} } } as unknown as Context))
   const removeDir = vi.spyOn(session, 'removeDir').mockImplementation((id) => {
     operations.push(`disk:${id}`)
     return id !== 'orphan'
@@ -70,7 +73,7 @@ beforeEach(() => {
 
 afterEach(() => {
   archiveHooks.removeAllHooks()
-  clearHostRuntime()
+  disposers.splice(0).forEach(dispose => dispose())
   vi.restoreAllMocks()
 })
 

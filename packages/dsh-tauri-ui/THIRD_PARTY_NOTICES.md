@@ -3,10 +3,10 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.2`
-- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Version: `dsh-v0.2.1-alpha.1`
+- Revision: `5badb15009ae1756c3afe0ae0cef1faafc290ccc`
 - Source: `source/deepseek-harness`
-- Catalog pin: `dsh:` → `0.2.0-rc.2` (`pnpm-workspace.yaml`)
+- Catalog pin: `dsh:` → `0.2.1-alpha.1` (`pnpm-workspace.yaml`)
 - License: MIT — Copyright (c) 2026 DeepSeek
 - Not copied: a Tauri-flavoured refork of the official client UI — official components are re-exported as-is where both kernel generations agree, reforked locally where only the newer kernel implements or exports them; no official source file is vendored.
 
@@ -27,6 +27,11 @@ Derived (upstream → this package):
 - Version: `1.0.0`
 - License: MIT — Copyright (c) 2026 dsh-chat-content-visibility-auto contributors
 - Not vendored, not installed: the external client plugin stays out of this repo's manifests. Its converged windowing rule — `content-visibility: auto` + `contain-intrinsic-size: auto 320px` on `[data-chat-flow] > [data-chat-anchor-key]` — is reimplemented on this repo's own `css-render` stack in `src/client/styles/global.cssr.ts`, keyed off the official chat DOM contract (`ChatView` column `[data-chat-flow]` → node rows `[data-chat-anchor-key]`).
+
+## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The official primitives re-exports receive the StateDot restart fix without a local fork. InlineEditor is additive; no existing primitive export used here is removed.
+- The target adds the optional `shell.bottom` seat without changing the settings launcher, hero workspace, or panel seats used here. The composer `stats` split has no local replacement registration.
 
 ## License
 

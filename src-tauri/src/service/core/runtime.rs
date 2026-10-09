@@ -13,6 +13,7 @@
 //! 阶段退出、前端只看到 `HARNESS_NOT_OWNED`（issue #441）。这里在 spawn 之前探测，
 //! 先尝试与核心对齐的捆绑运行时，再尝试重建，最后给出可读的 ABI 诊断。
 
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::Read;
@@ -56,9 +57,12 @@ const NATIVE_PROBE_MARKER: &str = "__DSH_NATIVE_PROBE__";
 /// 修改时间）、核心目录与核心版本、`node_modules` 前两层的条目（名字 + 修改时间）：
 /// 核心更新、node 升级/替换、平台包增删、`node_modules` 被重建都会失配，从而必然
 /// 重新探测。清空依赖目录或删掉这个文件即可强制回到「每次探测」。
+///
+/// 指纹全部条目参与计算后压成 SHA-256 摘要再落盘：真实安装（pnpm 虚拟 store）
+/// 的条目数已远超早先的固定上限，而摘要与条目数无关，比对精度不受规模影响。
 const NATIVE_PROBE_STAMP_FILE: &str = "core-native-probe.stamp.json";
-/// 指纹采集的条目上限：`node_modules` 异常膨胀时不至于把启动拖慢
-const NATIVE_PROBE_STAMP_MAX_ENTRIES: usize = 512;
+/// 指纹采集的条目上限：只在 `node_modules` 异常膨胀时兜底，正常安装远低于它
+const NATIVE_PROBE_STAMP_MAX_ENTRIES: usize = 8192;
 /// 原生模块探测脚本：列出无法被当前运行时加载的原生模块。
 ///
 /// 1. `sharp` / `koffi`：NAPI 可选依赖，缺目标平台包时动态 import 失败（原有修复路径）；
@@ -995,11 +999,11 @@ fn native_probe_stamp_path(app_handle: &AppHandle) -> PathBuf {
 /// （含原生包自带的产物目录）。
 ///
 /// 全部是廉价的元数据读取（不启动子进程、不递归进包内部）。取「前两层」而不是只取
-/// 顶层，是为了让 scope 包（`@scope/name`）的增删也能被感知；额外记录产物目录的修改
-/// 时间，是因为原地重写 `.node` 只改 `build/Release` 这类目录、不改包目录本身。
+/// 顶层，是为了让 scope 包（`@scope/name`）的增删也能被感知；额外记录产物目录**与其
+/// 内部文件**，是因为原地重写 `.node` 既不改包目录、也不改产物目录本身的时间。
 ///
-/// 任何让指纹**不完整**的情况（目录读不到、条目数超出上限而只能截断）都返回 `None`：
-/// 截断过的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
+/// 任何让指纹**不完整**的情况（目录读不到、条目数超过兜底上限）都返回 `None`：
+/// 不完整的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
 fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path) -> Option<String> {
     use std::fmt::Write as _;
 
@@ -1016,17 +1020,26 @@ fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path)
         crate::service::core::active_version(app_handle).unwrap_or_default()
     );
 
+    let modules = probe_stamp_modules_digest(&core_root.join("node_modules"))?;
+    let _ = write!(key, "\nmodules={modules}");
+    Some(probe_stamp_digest(&key))
+}
+
+/// `node_modules` 指纹摘要：条目只受兜底上限约束（真实安装的规模远小于它），
+/// 摘要长度与条目数无关，因此既不截断、也不因规模放弃缓存。
+///
+/// 上限在采集途中即时判定：越过上限的指纹注定作废，继续把整棵树读完只是白等 ——
+/// 能触发这个上限的树动辄几十万条，而这段耗时正好压在启动关键路径上。
+fn probe_stamp_modules_digest(modules: &Path) -> Option<String> {
     let mut entries: Vec<String> = Vec::new();
-    collect_probe_stamp_entries(&core_root.join("node_modules"), &mut entries)?;
-    if entries.len() > NATIVE_PROBE_STAMP_MAX_ENTRIES {
-        return None;
-    }
+    collect_probe_stamp_entries(modules, &mut entries, NATIVE_PROBE_STAMP_MAX_ENTRIES)?;
     entries.sort_unstable();
-    for entry in entries {
-        key.push('\n');
-        key.push_str(&entry);
-    }
-    Some(key)
+    Some(probe_stamp_digest(&entries.join("\n")))
+}
+
+/// 指纹摘要：长度固定，与参与计算的条目数无关
+fn probe_stamp_digest(key: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(key.as_bytes()))
 }
 
 /// 原生包自带的产物目录，与 `NATIVE_PROBE_SCRIPT` 的候选判定同源
@@ -1035,7 +1048,10 @@ const NATIVE_ARTIFACT_DIRS: [&str; 4] = ["build/Release", "build/Debug", "prebui
 /// 采集指纹条目：`node_modules` 顶层（`.bin` 跳过，`.pnpm` 只记自身）与 scope 目录的
 /// 下一层，每项再带上其原生包产物目录。任一目录读不到即返回 `None` —— 不完整的指纹
 /// 不能用来断言「和上次一样」，少记一项就可能漏掉一次真实变化。
-fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> {
+///
+/// 条目数一旦越过 `cap` 立刻返回 `None`，不再继续遍历：这份指纹无论如何都会作废，
+/// 把剩下几十万条读完只是把启动关键路径拉长。
+fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>, cap: usize) -> Option<()> {
     let reader = std::fs::read_dir(dir).ok()?;
     for entry in reader {
         let entry = entry.ok()?;
@@ -1046,7 +1062,7 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> 
         if name == ".bin" {
             continue;
         }
-        push_probe_stamp_entry(&entry.path(), name, out);
+        push_probe_stamp_entry(&entry.path(), name, out, cap)?;
         if !name.starts_with('@') {
             continue;
         }
@@ -1057,25 +1073,94 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> 
             let Some(inner_name) = inner_name.to_str() else {
                 continue;
             };
-            push_probe_stamp_entry(&inner.path(), &format!("{name}/{inner_name}"), out);
+            push_probe_stamp_entry(&inner.path(), &format!("{name}/{inner_name}"), out, cap)?;
         }
     }
     Some(())
 }
 
-/// 记录一个包的目录时间与其产物目录时间。产物目录不存在时只留包目录一项，
-/// 避免为绝大多数非原生包平白拉长指纹。
-fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) {
-    out.push(format!("{label}={}", path_modified_nanos(dir)));
+/// 记录一个包的目录时间与其产物目录、目录内文件的时间。产物目录不存在时只留包目录
+/// 一项，避免为绝大多数非原生包平白拉长指纹。
+fn push_probe_stamp_entry(
+    dir: &Path,
+    label: &str,
+    out: &mut Vec<String>,
+    cap: usize,
+) -> Option<()> {
+    push_probe_stamp_item(out, format!("{label}={}", path_modified_nanos(dir)), cap)?;
     for relative in NATIVE_ARTIFACT_DIRS {
         let artifact = dir.join(relative);
-        if artifact.is_dir() {
-            out.push(format!(
-                "{label}/{relative}={}",
-                path_modified_nanos(&artifact)
-            ));
+        if !artifact.is_dir() {
+            continue;
+        }
+        push_probe_stamp_item(
+            out,
+            format!("{label}/{relative}={}", path_modified_nanos(&artifact)),
+            cap,
+        )?;
+        push_probe_stamp_artifacts(&artifact, &format!("{label}/{relative}"), out, cap)?;
+    }
+    Some(())
+}
+
+/// 记入一项指纹条目；越过 `cap` 即放弃整份指纹。
+///
+/// 只有第一处越界会写日志（调用链随即逐层返回 `None`），因此一次采集最多一条。
+fn push_probe_stamp_item(out: &mut Vec<String>, item: String, cap: usize) -> Option<()> {
+    out.push(item);
+    if out.len() > cap {
+        log::warn!("core native probe stamp skipped: more than {cap} entries");
+        return None;
+    }
+    Some(())
+}
+
+/// 记录产物目录内每一项的名字、大小与修改时间，并递归下钻嵌套产物目录：原地覆盖一个
+/// 已存在的 `.node` 只改文件自身的时间，目录的修改时间不变，只记目录就会漏掉这次替换，
+/// 进而跳过一次本该做的探测；`prebuilds/<platform>/addon.node` 这类文件连第一层都不在，
+/// 只记一层同样会漏。元数据读不到即返回 `None`：读不到就不能断言「和上次一样」，宁可
+/// 重跑探测。指向目录的链接同样返回 `None`：`artifact_stamp` 跟随链接、只记下目标的目录
+/// 元数据，而链接本身不被下钻（防成环），目标里的 `.node` 被等长原地覆盖时目录元数据
+/// 可以不变，这份指纹就不再完整。
+fn push_probe_stamp_artifacts(
+    dir: &Path,
+    label: &str,
+    out: &mut Vec<String>,
+    cap: usize,
+) -> Option<()> {
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let path = entry.path();
+        let label = format!("{label}/{name}");
+        // 链接判定必须和本文件其余四处一致：Windows 上 junction 是 mount point 重解析点，
+        // 标准库的 `is_symlink()` 对它返回 false（实测本机 junction 会被当成普通目录），
+        // 只有 `is_symlink_dir()` 认得。用 `DirEntry::file_type()` 同样漏 junction。
+        let file_type = std::fs::symlink_metadata(&path).ok()?.file_type();
+        #[cfg(windows)]
+        let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
+        #[cfg(not(windows))]
+        let is_link = file_type.is_symlink();
+        if is_link && path.is_dir() {
+            return None;
+        }
+        push_probe_stamp_item(out, format!("{label}={}", artifact_stamp(&path)?), cap)?;
+        // 链接（pnpm 的包目录、junction）不下钻：跟随链接会把同一份内容记两次，
+        // 自指的链接还会绕成死循环。链接自身的目标大小与时间已经记在上面一项里。
+        if !is_link && file_type.is_dir() {
+            push_probe_stamp_artifacts(&path, &label, out, cap)?;
         }
     }
+    Some(())
+}
+
+/// 单个产物文件的指纹项：大小与修改时间缺一不可，读不到就没有可比的指纹。
+fn artifact_stamp(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(format!("{}:{}", meta.len(), file_modified_nanos(&meta)))
 }
 
 fn path_modified_nanos(path: &Path) -> String {
@@ -1599,6 +1684,233 @@ fn command_output_tail(output: &std::process::Output) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 指纹摘要必须与条目规模无关：真实安装的条目数已超过早先的固定上限，
+    /// 若还按条目数放弃缓存，结论戳永远写不下来（每次启动都重跑两个 node 子进程）。
+    #[test]
+    fn probe_stamp_digest_is_stable_and_size_independent() {
+        let modules = std::env::temp_dir().join(format!("dsh-probe-stamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&modules);
+        std::fs::create_dir_all(modules.join(".bin")).unwrap();
+        std::fs::create_dir_all(modules.join("@deepseek-ai/dsh-plugin")).unwrap();
+        std::fs::create_dir_all(modules.join("sharp/build/Release")).unwrap();
+        std::fs::write(modules.join(".bin/dsh"), "shim").unwrap();
+
+        let entries = probe_stamp_entries(&modules);
+        assert!(entries.iter().any(|entry| entry.starts_with("sharp=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/build/Release=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("@deepseek-ai/dsh-plugin=")));
+        assert!(!entries.iter().any(|entry| entry.starts_with(".bin")));
+
+        let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
+        assert!(digest.starts_with("sha256:"));
+        assert_eq!(digest.len(), "sha256:".len() + 64);
+        assert_eq!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::write(modules.join(".bin/dsh"), "another shim").unwrap();
+        assert_eq!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::create_dir_all(modules.join("plain")).unwrap();
+        let with_plain = probe_stamp_modules_digest(&modules).unwrap();
+        assert_ne!(digest, with_plain);
+
+        std::fs::write(modules.join("sharp/build/Release/sharp.node"), "native").unwrap();
+        assert_ne!(with_plain, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::remove_dir_all(&modules).unwrap();
+        assert!(probe_stamp_modules_digest(&modules).is_none());
+    }
+
+    /// 原地覆盖产物目录里已存在的 `.node` 必须改变指纹：目录的修改时间不变，只有文件
+    /// 自身的时间会变（fixture 用等长的两份内容，只有时间戳能让摘要不同）。条目数超过
+    /// 早先的 512 上限时同样如此 —— 那段规模正是这次改动才开始能缓存的。
+    #[test]
+    fn probe_stamp_detects_in_place_addon_overwrite_beyond_legacy_cap() {
+        let modules = std::env::temp_dir().join(format!(
+            "dsh-probe-stamp-overwrite-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&modules);
+        let release = modules.join("sharp/build/Release");
+        std::fs::create_dir_all(&release).unwrap();
+        let addon = release.join("sharp.node");
+        std::fs::write(&addon, "native-a").unwrap();
+        for index in 0..520 {
+            std::fs::create_dir_all(modules.join(format!("plain-{index}"))).unwrap();
+        }
+
+        let entries = probe_stamp_entries(&modules);
+        assert!(
+            entries.len() > 512,
+            "fixture must exceed the legacy entry cap"
+        );
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/build/Release/sharp.node=8:")));
+
+        let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&addon, "native-b").unwrap();
+        assert_ne!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::remove_dir_all(&modules).unwrap();
+    }
+
+    /// 产物文件元数据读不到时必须让整份指纹作废（返回 `None`）：写占位符会让「这次
+    /// 读不到」与「上次也没读到」得到同一个摘要，从而跳过一次本该做的探测。
+    #[test]
+    fn probe_stamp_requires_readable_artifact_metadata() {
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-probe-stamp-artifact-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let addon = dir.join("sharp.node");
+
+        assert!(artifact_stamp(&addon).is_none());
+        std::fs::write(&addon, "native").unwrap();
+        assert!(artifact_stamp(&addon).is_some());
+        assert!(push_probe_stamp_artifacts(
+            &dir,
+            "sharp/build/Release",
+            &mut Vec::new(),
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_some());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(artifact_stamp(&addon).is_none());
+        assert!(push_probe_stamp_artifacts(
+            &dir,
+            "sharp/build/Release",
+            &mut Vec::new(),
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_none());
+    }
+
+    /// 嵌套产物目录（`prebuilds/<platform>/addon.node`）里的原地覆盖同样必须改变指纹：
+    /// 这个文件既不在产物目录的第一层、也不会改到任何已记录目录的时间，只记一层的实现
+    /// 会漏掉它并跳过探测。
+    #[test]
+    fn probe_stamp_detects_in_place_overwrite_below_nested_artifact_directory() {
+        let modules = std::env::temp_dir().join(format!(
+            "dsh-probe-stamp-nested-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&modules);
+        let nested = modules.join("sharp/prebuilds/win32-x64");
+        std::fs::create_dir_all(&nested).unwrap();
+        let addon = nested.join("addon.node");
+        std::fs::write(&addon, "native-a").unwrap();
+
+        let entries = probe_stamp_entries(&modules);
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64/addon.node=8:")));
+
+        let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&addon, "native-b").unwrap();
+        assert_ne!(digest, probe_stamp_modules_digest(&modules).unwrap());
+
+        std::fs::remove_dir_all(&modules).unwrap();
+    }
+
+    /// 越过条目上限时必须就地放弃，而不是把整棵树读完再作废：能触发上限的树动辄几十万
+    /// 条，读完这一段只是白等（这份指纹注定作废）。断言采集恰好在越界处停手。
+    #[test]
+    fn probe_stamp_cap_aborts_traversal_immediately() {
+        let dir = std::env::temp_dir().join(format!("dsh-probe-stamp-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for index in 0..100 {
+            std::fs::create_dir_all(dir.join(format!("pkg-{index}"))).unwrap();
+        }
+
+        let mut capped = Vec::new();
+        assert!(collect_probe_stamp_entries(&dir, &mut capped, 4).is_none());
+        assert_eq!(
+            capped.len(),
+            5,
+            "traversal must stop right after crossing the cap"
+        );
+
+        let mut full = Vec::new();
+        assert!(collect_probe_stamp_entries(&dir, &mut full, NATIVE_PROBE_STAMP_MAX_ENTRIES).is_some());
+        assert_eq!(full.len(), 100);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 指向目录的链接必须让整份指纹作废：链接不被下钻（防成环），而 `artifact_stamp`
+    /// 跟随链接只记目标目录元数据，目标里的 `.node` 被等长原地覆盖时这份指纹会漏掉变化。
+    ///
+    /// 用仓库自带的 junction 构造器建链接：Windows 上 `symlink_dir` 需要开发者模式
+    /// （实测本机被拒），junction 不需要特权，且同样以 reparse point 形态出现
+    /// （`FileType::is_symlink()` 为真），正是这里要覆盖的形态。
+    #[test]
+    fn probe_stamp_rejects_a_directory_symlink_it_cannot_descend() {
+        let root = std::env::temp_dir().join(format!("dsh-probe-stamp-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("pkg/prebuilds/real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("addon.node"), "native").unwrap();
+        let linked = root.join("pkg/prebuilds/win32-x64");
+        let canonical_real = real.canonicalize().unwrap();
+        create_directory_link(&canonical_real, &linked)
+            .unwrap_or_else(|e| panic!("link must be created without privileges: {e}"));
+        assert!(
+            std::fs::symlink_metadata(&linked)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link must be treated as a link"
+        );
+        let mut out = Vec::new();
+        let rejected = push_probe_stamp_artifacts(
+            &root.join("pkg/prebuilds"),
+            "pkg/prebuilds",
+            &mut out,
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_none();
+        // 先断开链接再删树：`remove_dir_all` 会跟随 junction 去删目标（这里恰好是同一棵树，
+        // 于是删除中途树已被抽空而报错，并把 junction 留在原地污染下一次运行）。
+        let _ = std::fs::remove_dir(&linked);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(rejected);
+    }
+
+
+    fn probe_stamp_entries(dir: &Path) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_probe_stamp_entries(dir, &mut out, NATIVE_PROBE_STAMP_MAX_ENTRIES).unwrap();
+        out.sort_unstable();
+        out
+    }
+
+    /// 指纹长度不随条目数增长：条目多寡只影响摘要输入，不影响落盘体积。
+    #[test]
+    fn probe_stamp_digest_length_does_not_grow_with_entries() {
+        let wide = (0..4000)
+            .map(|index| format!("pkg-{index}=1"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(probe_stamp_digest(&wide).len(), "sha256:".len() + 64);
+        assert_ne!(probe_stamp_digest(&wide), probe_stamp_digest("pkg-0=1"));
+    }
 
     #[test]
     fn package_names_allow_plain_and_scoped_names_only() {

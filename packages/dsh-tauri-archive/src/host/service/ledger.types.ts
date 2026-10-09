@@ -1,4 +1,4 @@
-/** `GET /api/desktop/dsh-tauri-archive/session/archive` 的线上载荷。 */
+/** `GET /api/tauri/archive/session/archive` 的线上载荷。 */
 export interface ArchivedListPayload {
   archivedSessionIds: string[]
   meta: Record<string, { createdAt?: number, cwd?: string, title?: string }>

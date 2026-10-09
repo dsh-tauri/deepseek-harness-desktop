@@ -1,11 +1,12 @@
 import type { HostContext, ModelCatalogFailure, ModelOption, PermissionOption, SchedulerOptions } from '../types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { filter, find, head, isArray, isEmpty, isString, map, uniqBy } from 'lodash-es'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 
 export const options = defineService({
   async resolve(): Promise<SchedulerOptions> {
-    const ctx = getCurrentHostInstance()
+    const ctx = getServerContext<HostContext>(server)
     const [workspaces, permission, catalog] = await Promise.all([
       collectWorkspaces(ctx),
       Promise.resolve(collectPermissions(ctx)),

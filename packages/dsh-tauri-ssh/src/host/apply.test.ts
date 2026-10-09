@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apply, inject, name } from './apply'
-import { clearHostRuntime, knownHostsFilePath, machineProfiles } from './config/runtime'
+import { knownHostsFilePath, machineProfiles, resetRuntime } from './config/runtime'
 import { machine } from './service/machine'
 import { MachineId } from './types/index'
 
@@ -21,16 +21,16 @@ function scriptedHttpServer() {
 }
 
 const REST_ENDPOINTS = [
-  '/api/desktop/dsh-tauri-ssh/settings',
-  '/api/desktop/dsh-tauri-ssh/session/role',
-  '/api/desktop/dsh-tauri-ssh/machines',
-  '/api/desktop/dsh-tauri-ssh/machines/test',
-  '/api/desktop/dsh-tauri-ssh/machines/connect',
-  '/api/desktop/dsh-tauri-ssh/machines/disconnect',
-  '/api/desktop/dsh-tauri-ssh/machines/install',
-  '/api/desktop/dsh-tauri-ssh/machines/events',
-  '/api/desktop/dsh-tauri-ssh/sync/preview',
-  '/api/desktop/dsh-tauri-ssh/sync/apply',
+  '/api/tauri/ssh/settings',
+  '/api/tauri/ssh/session/role',
+  '/api/tauri/ssh/machines',
+  '/api/tauri/ssh/machines/test',
+  '/api/tauri/ssh/machines/connect',
+  '/api/tauri/ssh/machines/disconnect',
+  '/api/tauri/ssh/machines/install',
+  '/api/tauri/ssh/machines/events',
+  '/api/tauri/ssh/sync/preview',
+  '/api/tauri/ssh/sync/apply',
 ]
 
 /** Plugin config without the optional overrides; defaults are exercised separately. */
@@ -53,7 +53,7 @@ let sshDir: string
 let statePath: string
 
 beforeEach(() => {
-  clearHostRuntime()
+  resetRuntime()
   sshDir = mkdtempSync(join(tmpdir(), 'ssh-index-'))
   statePath = join(sshDir, 'machines.json')
 })
@@ -61,7 +61,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   rmSync(sshDir, { recursive: true, force: true })
-  clearHostRuntime()
+  resetRuntime()
 })
 
 /** One scripted context: cordis-shaped surface without real cordis types. */

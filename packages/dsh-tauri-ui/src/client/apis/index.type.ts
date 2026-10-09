@@ -1,12 +1,6 @@
-export type SessionResumeResponse = {
-  ok?: boolean;
-  error?: string;
-};
-export type UngroupedResponse = {
-  cwd?: string;
-  error?: string;
-};
+export type PostApiTauriUiSessionResumeResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type GetApiTauriUiUngroupedResponse = { cwd?: undefined | string; error?: undefined | string };
 
-export interface PostSessionResumeBody {
-  sessionId?: string;
+export interface PostApiTauriUiSessionResumeBody {
+  sessionId?: undefined | string;
 }

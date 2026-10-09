@@ -192,7 +192,7 @@ struct MouseButtonState {
 }
 
 /// 监听线程与节流线程之间的共享槽：两个字段都只保留**最新值**（覆盖不积压，
-/// 回调不阻塞钩子），`None` 表示自上次读取以来没有新值。
+/// 回调不阻塞钩子），`None` 表示尚未收到该项状态。读取保留最新值供窗口重建时补发。
 ///
 /// 坐标与按键分开存放：各平台能观测到的东西不同（macOS 按事件类型分别给坐标或
 /// 按键），分开后每个平台只写自己知道的那一项，不必先把另一项读出来再回写。
@@ -211,18 +211,12 @@ impl MouseStateStore {
         *self.pressed.lock().expect("pet mouse store poisoned") = Some(pressed);
     }
 
-    fn take_position(&self) -> Option<MouseCursorPos> {
-        self.position
-            .lock()
-            .expect("pet mouse store poisoned")
-            .take()
+    fn read_position(&self) -> Option<MouseCursorPos> {
+        *self.position.lock().expect("pet mouse store poisoned")
     }
 
-    fn take_pressed(&self) -> Option<bool> {
-        self.pressed
-            .lock()
-            .expect("pet mouse store poisoned")
-            .take()
+    fn read_pressed(&self) -> Option<bool> {
+        *self.pressed.lock().expect("pet mouse store poisoned")
     }
 }
 
@@ -282,10 +276,10 @@ pub fn start_pet_mouse_stream(window: WebviewWindow, state: State<'_, PetMouseSt
             let rebound = current_revision != bound_revision;
             bound_revision = current_revision;
             let position = shared
-                .take_position()
+                .read_position()
                 .filter(|pos| should_emit(last_sent.as_ref(), pos, rebound));
             let button = shared
-                .take_pressed()
+                .read_pressed()
                 .filter(|pressed| should_emit(last_button.as_ref(), pressed, rebound));
             if let Some(pos) = position {
                 last_sent = Some(pos);
@@ -688,6 +682,52 @@ mod scale_tests {
 mod button_tests {
     use super::*;
 
+    #[test]
+    fn stationary_cursor_is_replayed_after_window_rebind() {
+        let store = MouseStateStore::default();
+        let position = MouseCursorPos {
+            x: -320.0,
+            y: 240.0,
+        };
+        store.write_position(position);
+        let sent = store.read_position();
+        assert_eq!(sent, Some(position));
+        assert_eq!(
+            store
+                .read_position()
+                .filter(|pos| should_emit(sent.as_ref(), pos, false)),
+            None
+        );
+        assert_eq!(
+            store
+                .read_position()
+                .filter(|pos| should_emit(sent.as_ref(), pos, true)),
+            Some(position)
+        );
+    }
+
+    #[test]
+    fn unchanged_button_is_replayed_after_window_rebind() {
+        for pressed in [false, true] {
+            let store = MouseStateStore::default();
+            store.write_pressed(pressed);
+            let sent = store.read_pressed();
+            assert_eq!(sent, Some(pressed));
+            assert_eq!(
+                store
+                    .read_pressed()
+                    .filter(|value| should_emit(sent.as_ref(), value, false)),
+                None
+            );
+            assert_eq!(
+                store
+                    .read_pressed()
+                    .filter(|value| should_emit(sent.as_ref(), value, true)),
+                Some(pressed)
+            );
+        }
+    }
+
     /// 值没变就不重发（节流线程 16ms 轮询的基础，鼠标静止时零事件）；接收窗口
     /// 换代（`rebound`）时必须强制补发一次，否则重建后的桌宠不知道按键当前状态。
     #[test]
@@ -710,25 +750,27 @@ mod button_tests {
     }
 
     /// 坐标与按键分开存放：各平台能观测到的项不同，只写其中一项不能抹掉另一项，
-    /// 且读取即取走（`None` 表示自上次读取以来没有新值）。
+    /// 读取必须保留最新状态供窗口重建后补发。
     #[test]
     fn store_keeps_position_and_button_independent() {
         let store = MouseStateStore::default();
         let pos = MouseCursorPos { x: 3.0, y: 4.0 };
+        assert_eq!(store.read_position(), None);
+        assert_eq!(store.read_pressed(), None);
 
         store.write_position(pos);
-        assert_eq!(store.take_pressed(), None);
-        assert_eq!(store.take_position(), Some(pos));
-        assert_eq!(store.take_position(), None);
+        assert_eq!(store.read_pressed(), None);
+        assert_eq!(store.read_position(), Some(pos));
+        assert_eq!(store.read_position(), Some(pos));
 
         store.write_pressed(false);
-        assert_eq!(store.take_position(), None);
-        assert_eq!(store.take_pressed(), Some(false));
-        assert_eq!(store.take_pressed(), None);
+        assert_eq!(store.read_position(), Some(pos));
+        assert_eq!(store.read_pressed(), Some(false));
+        assert_eq!(store.read_pressed(), Some(false));
 
         store.write_pressed(true);
         store.write_position(pos);
-        assert_eq!(store.take_position(), Some(pos));
-        assert_eq!(store.take_pressed(), Some(true));
+        assert_eq!(store.read_position(), Some(pos));
+        assert_eq!(store.read_pressed(), Some(true));
     }
 }

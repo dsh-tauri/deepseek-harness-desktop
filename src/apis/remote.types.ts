@@ -1,154 +1,53 @@
-export type SshConnectResponse = {
-  tunnelBaseUrl?: string;
+export type GetApiTauriSshSettingsResponse = { enabled?: false | true; error?: string };
+export type PostApiTauriSshSettingsResponse = { enabled?: false | true; error?: string };
+export type GetApiTauriSshSessionRoleResponse = { role?: string; remote?: false | true; origin?: string; error?: string };
+export type GetApiTauriSshMachinesResponse = {
+  enabled?: false | true;
+  items?: { id?: string; name?: string; host?: string; port?: number; user?: string; hasPassword?: false | true; hasPassphrase?: false | true; remotePort?: number; profileName?: string; startCommand?: string; color?: string; tintBorder?: false | true; state?: "disconnected" | "testing" | "connecting" | "connected" | "reconnecting" | "given-up"; tunnelBaseUrl?: string; lastError?: string; dshMissing?: false | true; progress?: { phase: "handshake" | "starting" | "probing" | "installing" | "syncing"; attempt?: number; total?: number; item?: string; log?: string }; nextRetryAt?: number; authMethod?: "agent" | "key" | "password" }[];
+  discovered?: { id?: string; name?: string; host?: string; port?: number; user?: string; hasPassword?: false | true; hasPassphrase?: false | true; remotePort?: number; profileName?: string; startCommand?: string; color?: string; tintBorder?: false | true; state?: "disconnected" | "testing" | "connecting" | "connected" | "reconnecting" | "given-up"; tunnelBaseUrl?: string; lastError?: string; dshMissing?: false | true; progress?: { phase: "handshake" | "starting" | "probing" | "installing" | "syncing"; attempt?: number; total?: number; item?: string; log?: string }; nextRetryAt?: number; authMethod?: "agent" | "key" | "password" }[];
   error?: string;
 };
-export type SshActionResponse = {
-  error?: string;
-};
-export type SshMachineEventsResponse = {
-  items?: SshMachineEventItem[];
-  nextSeq?: number;
-  error?: string;
-};
-export type SshMachineEventItem = {
-  seq?: number;
-  ts?: string;
-  machineId?: string;
-  stage?: string;
-  line?: string;
-  terminal?: string;
-  reason?: string;
-};
-export type SshMachinesResponse = {
-  enabled?: boolean;
-  items?: SshMachineListItem[];
-  discovered?: SshMachineListItem[];
-  error?: string;
-};
-export type SshMachineListItem = {
-  id?: string;
-  name?: string;
-  host?: string;
-  port?: number;
-  user?: string;
-  hasPassword?: boolean;
-  hasPassphrase?: boolean;
-  remotePort?: number;
-  profileName?: string;
-  startCommand?: string;
-  color?: string;
-  tintBorder?: boolean;
-  state?: SshConnectionState;
-  tunnelBaseUrl?: string;
-  lastError?: string;
-  dshMissing?: boolean;
-  progress?: SshProgress;
-  nextRetryAt?: number;
-  authMethod?: SshAuthMethod;
-};
-export type SshConnectionState = "disconnected" | "testing" | "connecting" | "connected" | "reconnecting" | "given-up";
-export type SshProgress = {
-  phase: SshProgressPhase;
-  attempt?: number;
-  total?: number;
-  item?: string;
-  log?: string;
-};
-export type SshProgressPhase = "handshake" | "starting" | "probing" | "installing" | "syncing";
-export type SshAuthMethod = "agent" | "key" | "password";
-export type SshInstallResponse = {
-  installed?: string[];
-  dshRef?: string;
-  dshVersion?: string;
-  dshPath?: string;
-  credentialsCopied?: boolean;
-  credentialsError?: string;
-  error?: string;
-};
-export type SshMachineRowBody = {
-  name?: string;
-  host?: string;
-  port?: number;
-  user?: string;
-  remotePort?: number;
-  profileName?: string;
-  startCommand?: string;
-  color?: string;
-  tintBorder?: boolean;
-};
-export type SshMachineSecretsBody = {
-  password?: string;
-  passphrase?: string;
-};
-export type SshTestResponse = {
-  ok?: boolean;
-  banner?: string;
-  message?: string;
-  error?: string;
-};
-export type SshSessionRoleResponse = {
-  role?: string;
-  remote?: boolean;
-  origin?: string;
-  error?: string;
-};
-export type SshSettingsResponse = {
-  enabled?: boolean;
-  error?: string;
-};
-export type SyncPluginRefBody = {
-  name?: string;
-  spec?: string;
-};
-export type SyncSkillRefBody = {
-  name?: string;
-  root?: string;
-};
-export type SyncApplyResponse = {
-  items?: SyncApplyItemResult[];
-  error?: string;
-};
-export type SyncApplyItemResult = {
-  kind?: string;
-  name?: string;
-  root?: string;
-  ok?: boolean;
-  error?: string;
-  log?: string;
-};
-export type SyncPreviewResponse = {
-  plugins?: SyncPreviewPluginItem[];
-  skills?: SyncPreviewSkillItem[];
-  error?: string;
-};
-export type SyncPreviewPluginItem = {
-  name?: string;
-  spec?: string;
-  syncable?: boolean;
-  reason?: string;
-};
-export type SyncPreviewSkillItem = {
-  name?: string;
-  root?: string;
-};
+export type PostApiTauriSshMachinesResponse = { error?: string };
+export type DeleteApiTauriSshMachinesResponse = { error?: string };
+export type PostApiTauriSshMachinesTestResponse = { ok?: false | true; banner?: string; message?: string; error?: string };
+export type PostApiTauriSshMachinesConnectResponse = { tunnelBaseUrl?: string; error?: string };
+export type PostApiTauriSshMachinesDisconnectResponse = { error?: string };
+export type PostApiTauriSshMachinesInstallResponse = { installed?: string[]; dshRef?: string; dshVersion?: string; dshPath?: string; credentialsCopied?: false | true; credentialsError?: string; error?: string };
+export type GetApiTauriSshMachinesEventsResponse = { items?: { seq?: number; ts?: string; machineId?: string; stage?: string; line?: string; terminal?: string; reason?: string }[]; nextSeq?: number; error?: string };
+export type GetApiTauriSshMachinesEventsQueryMachineId = string;
+export type GetApiTauriSshMachinesEventsQuerySinceSeq = number;
+export type GetApiTauriSshSyncPreviewResponse = { plugins?: { name?: string; spec?: string; syncable?: false | true; reason?: string }[]; skills?: { name?: string; root?: string }[]; error?: string };
+export type PostApiTauriSshSyncApplyResponse = { items?: { kind?: string; name?: string; root?: string; ok?: false | true; error?: string; log?: string }[]; error?: string };
 
-export interface SshMachineIdBody {
+export interface PostApiTauriSshSettingsBody {
+  enabled?: false | true;
+}
+export interface PostApiTauriSshMachinesBody {
+  machineId?: string;
+  row?: { name?: string; host?: string; port?: number; user?: string; remotePort?: number; profileName?: string; startCommand?: string; color?: string; tintBorder?: false | true };
+  secrets?: { password?: string; passphrase?: string };
+}
+export interface DeleteApiTauriSshMachinesBody {
   machineId?: string;
 }
-export interface SshMachineSaveBody {
+export interface PostApiTauriSshMachinesTestBody {
   machineId?: string;
-  row?: SshMachineRowBody;
-  secrets?: SshMachineSecretsBody;
 }
-export interface SshSettingsBody {
-  enabled?: boolean;
-}
-export interface SyncApplyBody {
+export interface PostApiTauriSshMachinesConnectBody {
   machineId?: string;
-  plugins?: SyncPluginRefBody[];
-  skills?: SyncSkillRefBody[];
 }
-export interface GetMachinesEventsQuery {
+export interface PostApiTauriSshMachinesDisconnectBody {
   machineId?: string;
-  sinceSeq?: number;
+}
+export interface PostApiTauriSshMachinesInstallBody {
+  machineId?: string;
+}
+export interface PostApiTauriSshSyncApplyBody {
+  machineId?: string;
+  plugins?: { name?: string; spec?: string }[];
+  skills?: { name?: string; root?: string }[];
+}
+export interface GetApiTauriSshMachinesEventsQuery {
+  machineId?: GetApiTauriSshMachinesEventsQueryMachineId;
+  sinceSeq?: GetApiTauriSshMachinesEventsQuerySinceSeq;
 }

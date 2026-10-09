@@ -11,8 +11,8 @@
 
 import { describe, expect, inject, it } from 'vitest'
 
-/** 与 `packages/dsh-tauri-worktree/src/host/routes/index.ts:10-15` 的注册行对齐。 */
-const ROOT_PATH = '/api/desktop/dsh-tauri-worktree'
+/** 与 `packages/dsh-tauri-worktree/src/host/server/index.ts:12-17` 的注册行对齐。 */
+const ROOT_PATH = '/api/tauri/worktree'
 const BINDINGS_PATH = `${ROOT_PATH}/bindings`
 const STATUS_PATH = `${ROOT_PATH}/status`
 const CHECKOUTS_PATH = `${ROOT_PATH}/checkouts`

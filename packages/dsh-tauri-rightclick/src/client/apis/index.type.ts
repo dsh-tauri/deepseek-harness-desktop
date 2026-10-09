@@ -1,11 +1,9 @@
-export type OperationResult = {
-  ok: boolean;
-  error?: string;
-};
+export type PostApiTauriRightclickOpenUrlResponse = { ok: false | true; error?: undefined | string };
+export type PostApiTauriRightclickOpenPathResponse = { ok: false | true; error?: undefined | string };
 
-export interface PostOpenPathBody {
-  path?: string;
+export interface PostApiTauriRightclickOpenUrlBody {
+  url?: undefined | string;
 }
-export interface PostOpenUrlBody {
-  url?: string;
+export interface PostApiTauriRightclickOpenPathBody {
+  path?: undefined | string;
 }

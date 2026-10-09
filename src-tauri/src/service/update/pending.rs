@@ -71,6 +71,10 @@ pub(super) fn set(app_handle: &AppHandle, pending: Option<(&Path, &str)>) {
 /// 同步、不触网：退出路径不能引入等待或网络请求，把安装包交给系统默认处理器
 /// 启动即可（Windows 会触发 UAC，macOS/Linux 交给各自的系统安装流程）。
 pub fn launch_pending_installer(app_handle: &AppHandle) {
+    if !super::version::supports_stable_updates(&app_handle.config().identifier) {
+        set(app_handle, None);
+        return;
+    }
     let Some(pending) = get(app_handle) else {
         return;
     };

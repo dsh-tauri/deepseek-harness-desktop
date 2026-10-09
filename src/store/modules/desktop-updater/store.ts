@@ -9,11 +9,9 @@ import i18next from 'i18next'
 import { defineStore } from 'valtio-define'
 import { toast } from '@/utils/toast'
 
-/**
- * 在途的静默下载任务：同一时刻只允许一个下载，用户点击「立即更新」时复用它
- * 而不是重复发起（后端 `download` 幂等，但重复的进度事件会让进度条来回跳）。
- */
+let checkTask: Promise<DesktopUpdateInfo | null> | null = null
 let downloadTask: Promise<void> | null = null
+let downloadAndOpenTask: Promise<boolean> | null = null
 
 /**
  * 桌面端自更新模块：检查新版本 → 静默下载安装包 → 打开安装器完成升级。
@@ -44,32 +42,36 @@ export const desktopUpdater = defineStore({
   actions: {
     /**
      * 检查是否有新版本；发现更新时顺带发起静默下载。
-     * 轮询与「检查更新」共用；仅在 tag 变化时更新 updateInfo，
-     * 让菜单/chip 的新版本指示实时反映。
+     * 轮询与「检查更新」共用；每次用原生结果同步完整 updateInfo，
+     * 让安装包被移动/删除后的 downloaded/path 状态也能实时反映。
      * 网络失败/限流时抛出错误（不吞掉），由调用方决定如何提示——
      * 绝不能把「检查失败」误报成「已是最新」。
      */
-    async check(): Promise<DesktopUpdateInfo | null> {
-      if (this.checking)
-        return this.updateInfo
+    check(): Promise<DesktopUpdateInfo | null> {
+      if (checkTask)
+        return checkTask
       this.checking = true
-      try {
-        const info = await invoke<DesktopUpdateInfo | null>('check_desktop_update')
-        if (info) {
-          if (this.updateInfo?.tag !== info.tag)
+      const task = (async () => {
+        try {
+          const info = await invoke<DesktopUpdateInfo | null>('check_desktop_update')
+          if (info) {
             this.updateInfo = info
-          // 检测到更新即静默下载（不弹 toast、不打开安装器）；失败静默，
-          // 用户点击「立即更新」时会重试并给出可见的错误提示
-          void this.download()
+            // 检测到更新即静默下载（不弹 toast、不打开安装器）；失败静默，
+            // 用户点击「立即更新」时会重试并给出可见的错误提示
+            void this.download()
+          }
+          else {
+            this.updateInfo = null
+          }
+          return info
         }
-        else {
-          this.updateInfo = null
+        finally {
+          checkTask = null
+          this.checking = false
         }
-        return info
-      }
-      finally {
-        this.checking = false
-      }
+      })()
+      checkTask = task
+      return task
     },
 
     /**
@@ -119,47 +121,49 @@ export const desktopUpdater = defineStore({
      * 「立即更新」：等待在途的静默下载（没有则发起），完成后打开安装器。
      * 已下载则直接打开；下载失败时给出可见提示（对话框保持打开）。
      */
-    async downloadAndOpen() {
-      const info = this.updateInfo
-      if (!info)
-        return
+    downloadAndOpen(): Promise<boolean> {
+      if (downloadAndOpenTask)
+        return downloadAndOpenTask
+      const task = (async () => {
+        const info = this.updateInfo
+        if (!info)
+          return false
 
-      // 已下载 → 直接打开安装包
-      if (info.downloaded) {
-        await this.openInstaller(info.path)
-        return
-      }
+        let path = info.path
+        if (!info.downloaded) {
+          await this.download()
+          const updated = this.updateInfo
+          if (!updated?.downloaded) {
+            toast(i18next.t('update.desktop_download_failed'), {
+              variant: 'danger',
+              placement: 'bottom end',
+            })
+            return false
+          }
+          path = updated.path
+        }
 
-      await this.download()
-      const updated = this.updateInfo
-      if (updated?.downloaded) {
-        await this.openInstaller(updated.path)
-      }
-      else if (!this.downloading) {
-        // 下载确实失败（download 内部已 console 记录）→ 给出可见提示
-        toast(i18next.t('update.desktop_download_failed'), {
-          variant: 'danger',
-          placement: 'bottom end',
-        })
-      }
-    },
-
-    /** 打开安装包并提示（对话框由调用方 / overlastic 自行关闭） */
-    async openInstaller(path: string) {
-      try {
-        await invoke('open_desktop_installer', { path })
-        toast(i18next.t('update.desktop_opened'), {
-          variant: 'default',
-          placement: 'bottom end',
-        })
-      }
-      catch (err) {
-        console.error('[DesktopUpdater] failed to open installer:', err)
-        toast(i18next.t('update.desktop_open_failed'), {
-          variant: 'danger',
-          placement: 'bottom end',
-        })
-      }
+        try {
+          await invoke('open_desktop_installer', { path })
+          toast(i18next.t('update.desktop_opened'), {
+            variant: 'default',
+            placement: 'bottom end',
+          })
+          return true
+        }
+        catch (err) {
+          console.error('[DesktopUpdater] failed to open installer:', err)
+          toast(i18next.t('update.desktop_open_failed'), {
+            variant: 'danger',
+            placement: 'bottom end',
+          })
+          return false
+        }
+      })().finally(() => {
+        downloadAndOpenTask = null
+      })
+      downloadAndOpenTask = task
+      return task
     },
   },
 })

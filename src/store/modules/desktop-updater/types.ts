@@ -24,8 +24,8 @@ export interface DesktopDownloadProgress {
 /** Rust 侧 get_desktop_about 返回的关于信息 */
 export interface DesktopAboutInfo {
   version: string
-  published_at: string
+  publishedAt: string
   copyright: string
   repo: string
-  powered_by: string
+  poweredBy: string
 }

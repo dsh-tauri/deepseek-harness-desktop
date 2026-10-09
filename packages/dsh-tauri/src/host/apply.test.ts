@@ -2,11 +2,9 @@ import type { HostContext, IndexInjectRow } from './types'
 import { createContext, runInContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from './apply'
-import { clearHostRuntime } from './config/runtime'
 
 afterEach(() => {
   vi.unstubAllEnvs()
-  clearHostRuntime()
 })
 
 function activate() {

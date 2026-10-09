@@ -1,11 +1,11 @@
-import type { WorktreeBindings } from '../apis/index.type'
+import type { GetApiTauriWorktreeBindingsResponse as WorktreeBindings } from '../apis/index.type'
 import { createLifecycleController } from 'dsh-tauri/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DISCARD_POLL_DELAY_MS, HYDRATION_RETRY_BUDGET_PER_SECOND, HYDRATION_RETRY_WINDOW_MS, SESSION_RECONCILE_MIN_INTERVAL_MS } from '../constants'
 import { store } from '../store'
 import { registerWorktreeHydration } from './hydration'
 
-const BASE_URL = '/api/desktop/dsh-tauri-worktree'
+const BASE_URL = '/api/tauri/worktree'
 
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn<(url: string, options?: { method?: string, body?: unknown, baseURL?: string, params?: Record<string, string> }) => Promise<unknown>>(),
@@ -243,7 +243,7 @@ function harness(
 
   const urls = (): string[] => mocks.fetch.mock.calls.map(call => String(call[0]))
   const deleteCalls = (): number => mocks.fetch.mock.calls
-    .filter(call => call[1]?.baseURL === BASE_URL && call[1]?.method?.toUpperCase() === 'DELETE')
+    .filter(call => call[0] === BASE_URL && call[1]?.method?.toUpperCase() === 'DELETE')
     .length
   const controller = createLifecycleController()
   registerWorktreeHydration(controller as never, ctx.sessions as never, ctx.workspaces as never)

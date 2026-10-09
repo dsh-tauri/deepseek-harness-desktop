@@ -12,19 +12,20 @@
 
 import type { LiveSnapshot, SnapshotStore, TurnFileChange, TurnRecord } from '../types'
 import type { ActiveTurn, BeginningTurn, CaptureLogger } from './capture.types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { RUNNING_CHANGES_REASON_WORKSPACE_CHANGED as REASON_WORKSPACE_CHANGED } from '../../shared/constants'
 import { LOCK_BARRIER_TIMEOUT_MS, REASON_SNAPSHOT_FAILED, REASON_UNSAFE_WORKSPACE } from '../config/constants'
 import {
   activeTurns,
   beginningTurns,
-  getCurrentHostInstance,
   isCaptureDisposed,
   setCaptureDisposed,
   settlingTurns,
   workspaceQueue,
 } from '../config/runtime'
 import { runningChangesHooks } from '../events'
+import { server } from '../server'
 import { pruneLooseObjects } from '../utils/git'
 import { WorkspaceLockTimeoutError } from '../utils/lock'
 import { retention } from './retention'
@@ -235,7 +236,7 @@ export const capture = defineService({
     return { active: true, ...newest.live }
   },
 
-  /** 卸载：清定时器并丢弃内存态（宿主解绑由 apply 的 clearHostRuntime 负责）。 */
+  /** 卸载：清定时器并丢弃内存态（服务卸载由 apply 负责）。 */
   dispose(): void {
     setCaptureDisposed(true)
     // 必须清掉每个 active turn 的轮询定时器，否则插件停用后仍会持续拉起 git 子进程。
@@ -256,7 +257,7 @@ function activeKey(sessionId: string, turn: number): string {
 /** 日志面（宿主 logger 的最小契约；未绑定宿主或没有 logger 时静默）。 */
 function warn(message: string): void {
   try {
-    const logger = getCurrentHostInstance()?.logger as CaptureLogger | undefined
+    const logger = getServerContext(server)?.logger as CaptureLogger | undefined
     logger?.warn?.(message)
   }
   catch {

@@ -8,5 +8,5 @@ export { apply, loadFilesystemSkillPlugin, packagedSkillsDir } from './host/appl
 export type { Config } from './host/apply'
 export { providerHooks } from './host/events'
 export type { ProviderLifecycleHooks } from './host/events'
-export { routes } from './host/routes'
-export type { ExtensionRouteDeps } from './host/routes/index.types'
+export { server } from './host/server'
+export type { ExtensionRouteDeps } from './host/server/routes/index.types'

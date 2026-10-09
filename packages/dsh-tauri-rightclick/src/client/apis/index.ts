@@ -1,21 +1,19 @@
 /*
- * @title dsh-tauri-rightclick
+ * @title index
  * @swagger 2.0
  * @version 0.0.0
  */
 
-import type { FetchOptions } from "dsh-tauri/client";
-import { ofetch } from "dsh-tauri/client";
 import type * as Types from "./index.type";
-
-export const baseURL = "/api/desktop/dsh-tauri-rightclick";
+import { ofetch } from "dsh-tauri/client";
+import type { FetchOptions } from "dsh-tauri/client";
 
 /** @method post */
-export function postOpenPath(body: Types.PostOpenPathBody, options?: FetchOptions) {
-  return ofetch<Types.OperationResult>("/open/path", { baseURL, method: "post", body, ...options });
+export function postOpenUrl(body: Types.PostApiTauriRightclickOpenUrlBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRightclickOpenUrlResponse>("/api/tauri/rightclick/open/url", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postOpenUrl(body: Types.PostOpenUrlBody, options?: FetchOptions) {
-  return ofetch<Types.OperationResult>("/open/url", { baseURL, method: "post", body, ...options });
+export function postOpenPath(body: Types.PostApiTauriRightclickOpenPathBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRightclickOpenPathResponse>("/api/tauri/rightclick/open/path", { method: "post", body, ...options });
 }

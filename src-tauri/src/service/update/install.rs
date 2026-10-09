@@ -694,6 +694,9 @@ pub(super) fn open_installer_now(app_handle: &AppHandle, path: &str) -> Result<(
 
 /// 打开安装包：交给系统默认处理器（Windows 会触发 UAC 执行安装器）。
 pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), String> {
+    if !super::version::supports_stable_updates(&app_handle.config().identifier) {
+        return Err("UPDATE_CHANNEL_UNSUPPORTED: nightly builds do not install stable updates".into());
+    }
     // 更新前先停下本应用持有的 Harness 服务：安装器在安装时会强杀桌面端进程
     // （CheckIfAppIsRunning → taskkill），跳过正常退出路径的 stop_on_exit，导致
     // Harness 子进程变成孤儿继续占用配置端口。若此刻不提前停掉，更新后新实例

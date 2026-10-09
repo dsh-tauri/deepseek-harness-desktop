@@ -1,6 +1,7 @@
-import type { EndpointModelCard } from '../routes/index.types'
+import type { EndpointModelCard } from '../server/routes/index.types'
+import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import {
   apiKeyRefOf,
   endpointOf,
@@ -41,7 +42,7 @@ async function resolveApiKey(ref: string | undefined, typed: string | undefined)
   if (ref === undefined)
     return undefined
   try {
-    const credentials = getCurrentHostInstance().get('credentials') as CredentialsService | undefined
+    const credentials = getServerContext(server).get('credentials') as CredentialsService | undefined
     if (credentials === undefined)
       return undefined
     const hit = await credentials.resolve(ref)
@@ -58,7 +59,7 @@ async function resolveApiKey(ref: string | undefined, typed: string | undefined)
  */
 function readSection(ns: string): unknown {
   try {
-    const settings = getCurrentHostInstance().get('settings') as SettingsService | undefined
+    const settings = getServerContext(server).get('settings') as SettingsService | undefined
     return settings?.get(ns)
   }
   catch {
