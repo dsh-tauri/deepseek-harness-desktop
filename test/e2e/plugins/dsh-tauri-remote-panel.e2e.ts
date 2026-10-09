@@ -20,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { launchDshBrowser, newDshPage, openSettings, selectSettingsSection } from '../support/browser'
 
 const ARTIFACTS = join(import.meta.dirname, '..', '.artifacts')
-const ACCESS_API = '/api/desktop/dsh-tauri-remote/access'
+const ACCESS_API = '/api/tauri/remote/access'
 const PANEL = '[data-testid="access-section"]'
 const TOGGLE = '[data-testid="access-toggle"]'
 const TUNNEL_START = '[data-testid="access-tunnel-start"]'

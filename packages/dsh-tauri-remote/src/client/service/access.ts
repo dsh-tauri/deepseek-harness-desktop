@@ -3,7 +3,7 @@ import { ofetch as request } from 'dsh-tauri/client'
 import { messageOf } from '../../shared/error'
 import { store } from '../store/index'
 
-const BASE = '/api/desktop/dsh-tauri-remote/access'
+const BASE = '/api/tauri/remote/access'
 
 const SCOPES: readonly AccessScope[] = ['public_only', 'all']
 const ACCESS_STATES: readonly AccessState[] = ['stopped', 'listening', 'error']

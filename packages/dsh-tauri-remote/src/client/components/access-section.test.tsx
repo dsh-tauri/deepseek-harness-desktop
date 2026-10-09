@@ -14,7 +14,7 @@ vi.mock('dsh-tauri/client', async () => (await import('../test-utils/client-mock
 
 const t = ((key: string) => (en as Record<string, string>)[key] ?? key) as (key: RemoteKey) => string
 
-const BASE = '/api/desktop/dsh-tauri-remote/access'
+const BASE = '/api/tauri/remote/access'
 
 function tunnelPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return { enabled: false, mode: 'quick', hostname: null, state: 'stopped', events: [], ...overrides }

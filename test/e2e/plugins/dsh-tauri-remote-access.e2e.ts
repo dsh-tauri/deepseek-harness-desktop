@@ -17,7 +17,7 @@ import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, describe, expect, inject, it } from 'vitest'
 
-const BASE = '/api/desktop/dsh-tauri-remote'
+const BASE = '/api/tauri/remote'
 const ACCESS = `${BASE}/access`
 const TOKEN = `${ACCESS}/token`
 const TUNNEL = `${ACCESS}/tunnel`

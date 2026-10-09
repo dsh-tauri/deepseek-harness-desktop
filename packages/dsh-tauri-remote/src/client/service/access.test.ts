@@ -6,7 +6,7 @@ import * as service from './access'
 
 vi.mock('dsh-tauri/client', async () => (await import('../test-utils/client-mock')).clientMock)
 
-const BASE = '/api/desktop/dsh-tauri-remote/access'
+const BASE = '/api/tauri/remote/access'
 
 let queued: WireReply[] = []
 let route: (call: WireCall) => WireReply = () => replies.ok({})
