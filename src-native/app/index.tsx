@@ -191,7 +191,7 @@ export default function HomeScreen() {
       drawerStyle={{ width: Math.min(width * 0.88, 384), backgroundColor: background }}
       overlayStyle={{ backgroundColor: backdrop }}
       overlayAccessibilityLabel={t('connection.closeDrawer')}
-      swipeEdgeWidth={32}
+      swipeEdgeWidth={96}
       swipeEnabled={state.hydrated}
       renderDrawerContent={() => <ConnectionDrawer />}
       style={{ flex: 1 }}

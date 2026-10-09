@@ -412,19 +412,19 @@ describe('rendered Home scanning and idle actions', () => {
 })
 
 describe('rendered Home connection drawer', () => {
-  it('opens the right slide drawer only from its screen edge and presents five recent hosts with accessible status', async () => {
+  it('opens the right slide drawer from a wider inner-edge region and presents five recent hosts with accessible status', async () => {
     hydrate(history)
     connection.cancelScan()
     connection.setHealth('http://one.local:3080', 'available')
     connection.setHealth('http://two.local:3080', 'unavailable')
     holdNetwork()
     await mount()
-    expect(drawer().props).toMatchObject({ drawerPosition: 'right', drawerType: 'slide', direction: 'ltr', swipeEdgeWidth: 32, swipeEnabled: true, drawerStyle: { width: 384 } })
+    expect(drawer().props).toMatchObject({ drawerPosition: 'right', drawerType: 'slide', direction: 'ltr', swipeEdgeWidth: 96, swipeEnabled: true, drawerStyle: { width: 384 } })
     native.dimensions = { width: 320, height: 640 }
     await act(async () => {
       screen!.update(createElement(HomeScreen))
     })
-    expect(drawer().props.swipeEdgeWidth).toBe(32)
+    expect(drawer().props.swipeEdgeWidth).toBe(96)
     expect(drawer().props.drawerStyle.width).toBeCloseTo(281.6)
 
     await press('最近连接')
