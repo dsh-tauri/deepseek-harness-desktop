@@ -120,6 +120,14 @@ node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-ta
 * **鉴权通道**：严格依赖根路径 `GET /?token=<...>` 响应 303 并提取 `Set-Cookie`（`Path=/; HttpOnly; SameSite=Strict`）。后续所有 `/api/**` 及插件路由必须带回该 Cookie。L2 严禁复用桌面端嵌入的绕过鉴权通道（`DSH_TAURI_EMBEDDED=1`）。
 * **生命周期回收**：Teardown 时终止 dsh 进程树并清理临时目录（设置 `DSH_E2E_KEEP_HOME=1` 可保留现场）。
 
+### dsh-h3 服务契约
+
+* L1 服务注册测试从 `host/server/index.ts` 激活真实 `defineWebServer`，通过 HTTP 验证方法集合、query/body、返回值、实例配置隔离及卸载；业务依赖可以替身，不能替换被测路由。
+* 使用原生 H3/dsh-h3 方法语义：GET 同时允许 HEAD；未注册 OPTIONS 时返回 405，`Allow` 按实际方法集合断言，不要求顺序。不得继续期待旧路由的 OPTIONS 204 或自定义 405 JSON 错误体。
+* 不再存在共享 1 MiB 请求体限制。大请求用实际发送的有效 JSON 验证业务响应，不使用虚假的 Content-Length，也不期待已删除的 413。
+* API 生成测试运行 `genapi.config.ts` 的完整 pipeline 并读取输出文件，验证完整 URL、query/body 参数、响应类型及既有传输导入；仅验证进程退出码或扫描函数名不足以证明生成成功。
+* L2 保持正常 Cookie 鉴权。独立的载体边界测试必须验证 `gate` 只放行 401、保留 403，插件精确路由的请求安全检查不能因 index 已授权而被绕过。
+
 ### 关键环境变量
 
 | 环境变量 | 作用 | 默认值 / 回退策略 |
