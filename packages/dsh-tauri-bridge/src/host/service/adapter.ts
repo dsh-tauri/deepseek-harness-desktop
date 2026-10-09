@@ -10,6 +10,7 @@ import { runtime } from '../config/runtime'
 import { server } from '../server'
 import { loadRuntimeModules } from '../utils/runtime-modules'
 import { identity } from './identity'
+import { model } from './model'
 import { session } from './session'
 import { sink } from './sink'
 
@@ -78,7 +79,8 @@ export const adapter = defineService({
     if (decision.kind !== 'enter' || payload.signal.aborted)
       return decision
     const ctx = getServerContext<HostContext>(server)
-    const binding = ctx.sessionProjections.stateOf(payload.agent.session, 'bridgeKernel')
+    await session.repairInherited(payload.agent, payload.signal)
+    const binding = ctx.sessionProjections.stateOf(payload.agent.session, 'bridgeKernel')?.binding
     if (binding === null || binding === undefined) {
       if (payload.agent.session.requestHeader()?.config.provider === BRIDGE_PROVIDER)
         throw new Error('BRIDGE_BINDING_MISSING: 原生内核的官方身份记录缺失。')
@@ -94,7 +96,7 @@ export const adapter = defineService({
   async request(payload: { agent: Agent, signal: AbortSignal }, next: () => Promise<LlmCallConfig>): Promise<LlmCallConfig> {
     const config = await next()
     const ctx = getServerContext<HostContext>(server)
-    const projected = ctx.sessionProjections.stateOf(payload.agent.session, 'bridgeKernel')
+    const projected = ctx.sessionProjections.stateOf(payload.agent.session, 'bridgeKernel')?.binding
     if (projected === null || projected === undefined) {
       if (config.provider === BRIDGE_PROVIDER || payload.agent.session.requestHeader()?.config.provider === BRIDGE_PROVIDER)
         throw new Error('BRIDGE_BINDING_MISSING: 原生内核的官方身份记录缺失。')
@@ -142,7 +144,8 @@ export const adapter = defineService({
       throw new Error('BRIDGE_BINDING_MISMATCH: 请求与已提交的原生内核不一致。')
     assertLive(admitted.agent, admitted.signal)
     admitted.dispatched = true
-    const official = await session.execute({ ...admitted, binding })
+    const optionsForTurn = runtime.exchanges.get(admitted.agent.id)?.state.input.options ?? await model.forTurn(admitted.agent, admitted.signal)
+    const official = await session.execute({ ...admitted, binding, options: optionsForTurn })
     const state = official.state
     let yieldedBoundary = false
     try {

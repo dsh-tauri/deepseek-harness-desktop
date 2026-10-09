@@ -11,7 +11,7 @@ import { kernelStore } from '../store/modules/kernel-store'
 import { kernel } from './kernel'
 
 vi.hoisted(() => vi.stubGlobal('localStorage', undefined))
-vi.mock('../apis', () => ({ getBackends: vi.fn(), postSessions: vi.fn() }))
+vi.mock('../apis', () => ({ getBackends: vi.fn(), postSessions: vi.fn(), getModels: vi.fn(), postModels: vi.fn() }))
 vi.mock('dsh-tauri-ui/client', async () => ({ ...await import('../../../../dsh-tauri-ui/src/client/register/slot-decoration') }))
 vi.mock('../components/hero-kernel', () => ({ HeroKernel: () => null }))
 vi.mock('../components/model-kernel', () => ({ ModelKernel: () => null }))

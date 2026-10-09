@@ -1,4 +1,11 @@
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { NativeModelCatalog, NativeTurnOptions } from '../../shared/native-model'
+
+export type { NativeModelCatalog, NativeModelInfo, NativeTurnOptions } from '../../shared/native-model'
+
+export interface NativeSessionOpenOptions {
+  forkFrom?: string
+}
 
 export interface NativeCommand {
   file: string
@@ -34,6 +41,7 @@ export interface NativeSink {
 
 export interface NativeSession {
   readonly id: string
-  submit: (messages: readonly UserMessage[], signal: AbortSignal) => Promise<void>
+  models?: (signal: AbortSignal) => Promise<NativeModelCatalog>
+  submit: (messages: readonly UserMessage[], signal: AbortSignal, options?: NativeTurnOptions) => Promise<void>
   dispose: () => Promise<void>
 }

@@ -1,7 +1,8 @@
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { BackendDetection } from '../../shared/types'
 import type { NativeSink } from '../backends/types'
 import type { OfficialSink } from '../service/sink.types'
-import type { AdmittedStep, NativeEntry, NativePending } from '../types'
+import type { AdmittedStep, BridgeRecordType, NativeEntry, NativePending, RecordWatermark } from '../types'
 
 export const runtime = {
   detections: new Map<string, BackendDetection>(),
@@ -14,6 +15,9 @@ export const runtime = {
   sinks: new Map<string, NativeSink>(),
   exchanges: new Map<string, OfficialSink>(),
   steps: new Map<string, AdmittedStep>(),
+  modelWrites: new Map<Agent, Promise<void>>(),
+  checkpoints: new Map<Agent, Promise<void>>(),
+  verified: new Map<Agent, Map<BridgeRecordType, RecordWatermark>>(),
   ready: false,
   lifetime: new AbortController(),
 }
@@ -30,6 +34,8 @@ export async function resetRuntime(): Promise<void> {
     ...[...runtime.pending.values()].map(pending => pending.task),
     ...runtime.removals.values(),
     ...runtime.closings.values(),
+    ...runtime.modelWrites.values(),
+    ...runtime.checkpoints.values(),
     ...exchanges.map(exchange => exchange.state.task),
   ])
   const disposed = await Promise.allSettled(exchanges.map(exchange => exchange.dispose()))
@@ -43,6 +49,9 @@ export async function resetRuntime(): Promise<void> {
   runtime.sinks.clear()
   runtime.exchanges.clear()
   runtime.steps.clear()
+  runtime.modelWrites.clear()
+  runtime.checkpoints.clear()
+  runtime.verified.clear()
   runtime.detections.clear()
   const outcomes = await Promise.allSettled(entries.map(entry => entry.session.dispose()))
   const failures = [...disposed, ...outcomes].filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')

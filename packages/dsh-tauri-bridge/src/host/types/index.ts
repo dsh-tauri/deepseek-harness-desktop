@@ -1,15 +1,19 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type { GenerateOptions, UserMessage } from '@deepseek-ai/dsh-llm'
 import type * as LlmRuntime from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type { HostContext as DesktopHostContext } from 'dsh-tauri'
+import type { NativeTurnOptions } from '../../shared/native-model'
 import type { KernelBinding } from '../../shared/types'
 import type { NativeSession } from '../backends/types'
+import type { KERNEL_RECORD_TYPE, MODEL_RECORD_TYPE } from '../config/constants'
 
 export interface PlatformLoader {
   import: (id: string) => Promise<unknown>
@@ -21,7 +25,7 @@ export interface RuntimeModules {
   HarnessError: typeof LlmRuntime.HarnessError
   LlmAdapter: typeof LlmRuntime.LlmAdapter
   isAgentLoopRequest: typeof LlmRuntime.isAgentLoopRequest
-  appendPluginRecord?: (session: Session, type: 'plugin:dsh-tauri-bridge/kernel', data: KernelBinding) => number
+  appendPluginRecord?: (session: Session, type: 'plugin:dsh-tauri-bridge/kernel' | 'plugin:dsh-tauri-bridge/model', data: KernelBinding | NativeTurnOptions) => number
   pluginRecordOf?: (event: SessionEvent) => { type: string, data: unknown } | undefined
 }
 
@@ -37,10 +41,32 @@ export interface AdmittedStep {
 
 export interface NativeExecution extends AdmittedStep {
   binding: KernelBinding
+  options?: NativeTurnOptions
 }
 
 export type HostContext = DesktopHostContext & {
   loader: DesktopHostContext['loader'] & PlatformLoader
+}
+
+export type BridgeRecordType = typeof KERNEL_RECORD_TYPE | typeof MODEL_RECORD_TYPE
+
+export interface RecordWatermark {
+  readonly type: BridgeRecordType
+  readonly seq: number
+  readonly encodedData: string
+}
+
+export interface BridgeCheckpointState {
+  readonly ownerSessionId: string
+  readonly inheritedEventCount: number
+  readonly binding: RecordWatermark | null
+  readonly model: RecordWatermark | null
+}
+
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionStateMap {
+    bridgeCheckpoint: BridgeCheckpointState
+  }
 }
 
 export interface NativePending {
@@ -54,6 +80,10 @@ export interface NativeEntry {
   binding: KernelBinding
   session: NativeSession
   controller: AbortController
+}
+
+export interface ModelBody extends NativeTurnOptions {
+  sessionId: string
 }
 
 export interface CreateBody {

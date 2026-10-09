@@ -1,6 +1,7 @@
 import type { Agent, AgentHandle, AgentSetup, AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { NativeSession } from '../backends/types'
 import type { HostContext, PlatformLoader, RuntimeModules } from '../types'
@@ -12,6 +13,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { AgentLoop } from '@deepseek-ai/dsh-agent-loop'
 import * as llmModule from '@deepseek-ai/dsh-llm'
+import { assertContiguous, materializeAppendBatch, materializeCreateHeader, SessionPersistence, SessionPersistenceRevision, validateStoredEvents } from '@deepseek-ai/dsh-session-persistence'
 import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -23,7 +25,6 @@ import { resetRuntime, runtime } from '../config/runtime'
 import { detectBackend } from '../utils/detection'
 import { identity } from './identity'
 import { session } from './session'
-import { sink } from './sink'
 
 vi.mock('../utils/detection', () => ({ detectBackend: vi.fn() }))
 vi.mock('../backends/codex', () => ({ createCodexSession: vi.fn() }))
@@ -35,6 +36,95 @@ const require = createRequire(import.meta.url)
 const coreRequire = createRequire(require.resolve('@deepseek-ai/dsh-agent-loop'))
 const promptModule: { SystemPrompt: new (ctx: Context, config: { includeHarnessIdentity: boolean, includeRuntimeContext: boolean }) => Context['systemPrompt'] } = await import(pathToFileURL(coreRequire.resolve('@deepseek-ai/dsh-system-prompt')).href)
 const cwd = process.cwd()
+const now = 1_791_576_000_000
+
+class MemoryPersistence extends SessionPersistence {
+  readonly stored = new Map<Session['id'], { header: Session['header'], inheritedEventCount: Session['inheritedEventCount'], events: readonly SessionEvent[], durable: readonly SessionEvent[], owner?: symbol }>()
+  readonly writers = new Map<Session['id'], SessionHandle>()
+  barrier: () => Promise<void> = async () => {}
+
+  async create(header: Session['header'], options?: { inheritedEventCount?: Session['inheritedEventCount'], signal?: AbortSignal }): Promise<SessionHandle> {
+    options?.signal?.throwIfAborted()
+    if (this.stored.has(header.id))
+      throw new Error('worktree memory session already exists')
+    this.stored.set(header.id, { header: materializeCreateHeader(header), inheritedEventCount: options?.inheritedEventCount ?? sessionModule.SessionLogOffset(0), events: [], durable: [] })
+    return this.open(header.id, 'write', options)
+  }
+
+  async open(id: Session['id'], access: SessionHandle['access'], options?: { signal?: AbortSignal }): Promise<SessionHandle> {
+    options?.signal?.throwIfAborted()
+    const stored = this.stored.get(id)
+    if (!stored || (access === 'write' && stored.owner !== undefined))
+      throw new Error('worktree memory session unavailable')
+    const owner = Symbol(id)
+    if (access === 'write')
+      stored.owner = owner
+    let closed = false
+    const active = () => {
+      if (closed || (access === 'write' && stored.owner !== owner))
+        throw new Error('worktree memory session owner closed')
+    }
+    const flush = async () => {
+      active()
+      if (access !== 'write')
+        throw new Error('worktree memory session is read-only')
+      await this.barrier()
+      stored.durable = validateStoredEvents(stored.header, structuredClone([...stored.events]))
+    }
+    const close = async () => {
+      if (closed)
+        return
+      if (access === 'write') {
+        await flush()
+        delete stored.owner
+        this.writers.delete(id)
+      }
+      closed = true
+    }
+    const handle: SessionHandle = {
+      id,
+      header: stored.header,
+      inheritedEventCount: stored.inheritedEventCount,
+      access,
+      async read(offset = 0, length, readOptions) {
+        active()
+        readOptions?.signal?.throwIfAborted()
+        return { events: validateStoredEvents(stored.header, structuredClone(stored.events.slice(offset, length === undefined ? undefined : offset + length))), eventState: 'shared-frozen' }
+      },
+      async append(events, appendOptions) {
+        active()
+        appendOptions?.signal?.throwIfAborted()
+        if (access !== 'write')
+          throw new Error('worktree memory session is read-only')
+        const batch = materializeAppendBatch(events)
+        assertContiguous(id, batch, stored.events.length)
+        stored.events = [...stored.events, ...batch]
+      },
+      async flush(flushOptions) {
+        flushOptions?.signal?.throwIfAborted()
+        await flush()
+      },
+      close,
+      [Symbol.asyncDispose]: close,
+    }
+    if (access === 'write')
+      this.writers.set(id, handle)
+    return handle
+  }
+
+  async flush(): Promise<void> {
+    await Promise.all([...this.writers.values()].map(handle => handle.flush()))
+  }
+
+  async stat(id: Session['id']) {
+    const stored = this.stored.get(id)
+    return stored === undefined ? undefined : { header: stored.header, eventCount: stored.events.length, revision: SessionPersistenceRevision(`${id}:${stored.events.length}`) }
+  }
+
+  async list() {
+    return Promise.all([...this.stored.keys()].map(async id => (await this.stat(id))!))
+  }
+}
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -62,6 +152,7 @@ let attachSession: ReturnType<typeof vi.fn>
 let officialHandle: AgentHandle | undefined
 let disposeLoop: () => Promise<void>
 let createAgent: AgentRegistry['create']
+let persistence: MemoryPersistence | undefined
 
 beforeEach(async () => {
   await resetRuntime()
@@ -84,6 +175,7 @@ beforeEach(async () => {
   announced = []
   errors = []
   officialHandle = undefined
+  persistence = undefined
   const prepare = sessions.prepare.bind(sessions)
   vi.spyOn(sessions, 'prepare').mockImplementation((...args) => {
     const official = prepare(...args)
@@ -146,10 +238,13 @@ afterEach(async () => {
   for (const release of releases)
     release()
   await Promise.allSettled(background)
+  if (persistence)
+    persistence.barrier = async () => {}
   await session.dispose()
   await context.fiber.dispose()
   await resetRuntime()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 function creating(id: 'codex' | 'claude' = 'codex', workspace?: string) {
@@ -173,6 +268,47 @@ function records(official: Session) {
   })
 }
 
+async function conversation(id: 'codex' | 'claude' = 'codex') {
+  const connection = native(`worktree-parent-${id}`)
+  vi.mocked(id === 'codex' ? createCodexSession : createClaudeSession).mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
+    connection.submit.mockImplementation(async () => output.assistant('worktree-source-answer', [{ type: 'text', text: 'source conversation already settled' }]))
+    return connection
+  })
+  await creating(id)
+  const handle = officialHandle!
+  await followup(handle.agent, 'create the worktree from this real human conversation')
+  expect(handle.agent.session.deriveMessages().map(message => ({ role: message.role, content: message.content }))).toEqual([
+    { role: 'user', content: [{ type: 'text', text: 'create the worktree from this real human conversation' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'source conversation already settled' }] },
+  ])
+  expect(connection.submit).toHaveBeenCalledOnce()
+  return { handle, connection }
+}
+
+function fork(source: Agent, target: string, signal = new AbortController().signal, setup?: AgentSetup) {
+  const task = context.nativeSessionBridge.create(source.session, (sourceSignal) => {
+    const scoped = sourceSignal === undefined ? signal : AbortSignal.any([signal, sourceSignal])
+    const seed = source.session.snapshotEvents()
+    return agents.create({
+      sessionId: sessionModule.SessionId(target),
+      seed,
+      inheritedEventCount: sessionModule.SessionLogOffset(seed.length),
+      meta: { cwd, parentSession: source.id, isSeeded: true },
+      agentOptions: source.options,
+      signal: scoped,
+      async setup(agentCtx, child) {
+        const startup = new AbortController()
+        agentCtx.effect(() => () => startup.abort(new Error('worktree test setup disposed')))
+        const commit = await context.nativeSessionBridge.prepare(source.session, child, AbortSignal.any([scoped, startup.signal]))
+        await setup?.(agentCtx, child)
+        return commit
+      },
+    })
+  })
+  background.push(task.then(value => ({ value }), error => ({ error })))
+  return task
+}
+
 function observe(agent: Agent) {
   const events: SessionEvent[] = []
   const frames: AssistantStreamFrame[] = []
@@ -190,6 +326,465 @@ function observe(agent: Agent) {
   })
   return { events, frames, endEvents }
 }
+
+describe('independent native worktree session setup', () => {
+  beforeEach(() => {
+    vi.setSystemTime(now)
+    persistence = new MemoryPersistence(context)
+    context.on('session/flush', async (official) => {
+      const stored = persistence!.stored.get(official.id)!
+      const writer = persistence!.writers.get(official.id)!
+      const suffix = official.snapshotEvents().slice(stored.events.length)
+      if (suffix.length > 0)
+        await writer.append(suffix)
+      await writer.flush()
+    })
+  })
+
+  it.each(['codex', 'claude'] as const)('publishes a %s child only after a distinct native fork ACK and its own official identity commit', async (id) => {
+    const { handle: parent, connection: original } = await conversation(id)
+    const source = parent.agent.session
+    const prefix = source.snapshotEvents()
+    const cut = source.seq
+    const ack = deferred<NativeSession>()
+    const started = deferred<void>()
+    const childConnection = native(`worktree-child-${id}`)
+    releases.push(() => ack.resolve(childConnection))
+    const factory = vi.mocked(id === 'codex' ? createCodexSession : createClaudeSession)
+    factory.mockImplementationOnce(async () => {
+      started.resolve()
+      return ack.promise
+    })
+    const task = fork(parent.agent, `worktree-official-${id}`)
+    await started.promise
+    const child = prepared[1]!
+    expect(child.id).toBe(`worktree-official-${id}`)
+    expect(child.header).toMatchObject({ parentSession: source.id, isSeeded: true, cwd })
+    expect(child.inheritedEventCount).toBe(cut)
+    expect(child.snapshotEvents()).toEqual([...prefix, { seq: cut, time: now, type: 'session/end-seed', data: { inherited: true } }])
+    expect(projections.stateOf(child, 'bridgeKernel')).toEqual({
+      ownerSessionId: `worktree-official-${id}`,
+      inheritedEventCount: cut,
+      inheritedBinding: { backend: id, nativeSessionId: `worktree-parent-${id}`, sessionId: source.id },
+      binding: null,
+    })
+    expect(agents.get(child.id)).toBeUndefined()
+    expect(sessions.get(child.id)).toBeUndefined()
+    expect(announced).toEqual([parent.agent])
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(factory.mock.calls[1]![2]).toBeNull()
+    expect(factory.mock.calls[1]![5]).toEqual({ forkFrom: `worktree-parent-${id}` })
+    expect(childConnection.submit).not.toHaveBeenCalled()
+    ack.resolve(childConnection)
+    const owned = await task
+    expect(owned.agent.session).toBe(child)
+    expect(agents.get(child.id)).toBe(owned.agent)
+    expect(sessions.get(child.id)).toBe(child)
+    expect(announced).toEqual([parent.agent, owned.agent])
+    expect(child.snapshotEvents().slice(cut)).toEqual([
+      { seq: cut, time: now, type: 'session/end-seed', data: { inherited: true } },
+      { seq: cut + 1, time: now, type: 'plugin:dsh-tauri-bridge/kernel', ignorable: true, data: { backend: id, nativeSessionId: `worktree-child-${id}`, sessionId: `worktree-official-${id}` } },
+      { seq: cut + 2, time: now, type: 'request/header', data: { header: { config: { provider: 'dsh-tauri-bridge', model: id } }, reason: 'change' } },
+    ])
+    expect(identity.resolve(owned.agent)).toEqual({ backend: id, nativeSessionId: `worktree-child-${id}`, sessionId: `worktree-official-${id}` })
+    expect(identity.resolve(parent.agent)).toEqual({ backend: id, nativeSessionId: `worktree-parent-${id}`, sessionId: source.id })
+    expect(source.snapshotEvents()).toEqual(prefix)
+    expect(source.seq).toBe(cut)
+    expect(runtime.claims.get(`${id}:worktree-parent-${id}`)).toBe(source.id)
+    expect(runtime.claims.get(`${id}:worktree-child-${id}`)).toBe(`worktree-official-${id}`)
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(childConnection.submit).not.toHaveBeenCalled()
+    expect(errors).toEqual([])
+  }, 10_000)
+
+  it('submits the first published worktree prompt exactly once to the new identity through three official native steps', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const connection = native('worktree-three-step-child')
+    const next = deferred<void>()
+    const tail = deferred<void>()
+    const stepTwo = deferred<void>()
+    const stepThree = deferred<void>()
+    releases.push(() => next.resolve(), () => tail.resolve())
+    vi.mocked(createCodexSession).mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
+      connection.submit.mockImplementation(async () => {
+        output.assistant('child-first', [{ type: 'tool-call', id: 'child-call-one', name: 'native_one', arguments: '{}' }])
+        output.toolStart('child-call-one', 'native_one', '{}')
+        output.toolEnd('child-call-one', 'first child result')
+        await next.promise
+        output.assistant('child-second', [{ type: 'tool-call', id: 'child-call-two', name: 'native_two', arguments: '{}' }])
+        output.toolStart('child-call-two', 'native_two', '{}')
+        output.toolEnd('child-call-two', 'second child result')
+        await tail.promise
+        output.assistant('child-final', [{ type: 'text', text: 'the independent worktree finished' }])
+      })
+      return connection
+    })
+    const child = await fork(parent.agent, 'worktree-three-step-official')
+    const { events } = observe(child.agent)
+    child.agent.ctx.on('session/event', (official, event) => {
+      if (official !== child.agent.session)
+        return
+      if (event.type === 'step/start' && event.data.step === 2)
+        stepTwo.resolve()
+      if (event.type === 'step/start' && event.data.step === 3)
+        stepThree.resolve()
+    })
+    const turn = followup(child.agent, 'first worktree prompt after setup publication')
+    await stepTwo.promise
+    expect(connection.submit).toHaveBeenCalledOnce()
+    next.resolve()
+    await stepThree.promise
+    expect(connection.submit).toHaveBeenCalledOnce()
+    tail.resolve()
+    await turn
+    expect(connection.submit).toHaveBeenCalledOnce()
+    expect(connection.submit.mock.calls[0]![0]).toMatchObject([{ source: { kind: 'user' }, content: [{ type: 'text', text: 'first worktree prompt after setup publication' }] }])
+    expect(connection.submit.mock.calls[0]![2]).toEqual({ model: null, reasoningEffort: null })
+    expect(events.filter(event => event.type === 'step/start').map(event => event.data)).toEqual([{ turn: 2, step: 1 }, { turn: 2, step: 2 }, { turn: 2, step: 3 }])
+    expect(events.filter(event => event.type === 'tool/call').map(event => event.data.callId)).toEqual(['child-call-one', 'child-call-two'])
+    expect(events.filter(event => event.type === 'tool/result').map(event => event.data.message.toolCallId)).toEqual(['child-call-one', 'child-call-two'])
+    expect(events.filter(event => event.type === 'turn/end').map(event => event.data)).toEqual([{ turn: 2, reason: { kind: 'completed' } }])
+    expect(identity.resolve(child.agent)).toEqual({ backend: 'codex', nativeSessionId: 'worktree-three-step-child', sessionId: 'worktree-three-step-official' })
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(createClaudeSession).not.toHaveBeenCalled()
+    expect(errors).toEqual([])
+    expect(runtime.exchanges.size).toBe(0)
+  }, 10_000)
+
+  it('cold-restores only a child-owned native id without restoring or forking its parent again', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const childConnection = native('worktree-cold-child-native')
+    vi.mocked(createCodexSession).mockResolvedValueOnce(childConnection)
+    const child = await fork(parent.agent, 'worktree-cold-child-official')
+    const before = records(child.agent.session)
+    await child.dispose()
+    await session.remove(child.agent.id)
+    const open = vi.spyOn(persistence!, 'open')
+    const createStored = vi.spyOn(persistence!, 'create')
+    const restored = await agents.resume({ resumeSessionId: child.agent.id, agentOptions: { provider: 'dsh-tauri-bridge', model: 'codex' } })
+    const close = vi.spyOn(persistence!.writers.get(child.agent.id)!, 'close')
+    expect(open).toHaveBeenCalledExactlyOnceWith(child.agent.id, 'write', { signal: expect.any(AbortSignal) })
+    const resumed = native('worktree-cold-child-native')
+    vi.mocked(createCodexSession).mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
+      resumed.submit.mockImplementation(async () => output.assistant('child-cold-answer', [{ type: 'text', text: 'only child history restored' }]))
+      return resumed
+    })
+    await followup(restored.agent, 'continue only the independent child history')
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(open.mock.calls[1]).toEqual([child.agent.id, 'read', { signal: expect.any(AbortSignal) }])
+    expect(createStored).not.toHaveBeenCalled()
+    expect(createCodexSession).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(createCodexSession).mock.calls[2]![2]).toBe('worktree-cold-child-native')
+    expect(vi.mocked(createCodexSession).mock.calls[2]![5]).toBeUndefined()
+    expect(resumed.submit).toHaveBeenCalledOnce()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(identity.resolve(restored.agent)).toEqual({ backend: 'codex', nativeSessionId: 'worktree-cold-child-native', sessionId: 'worktree-cold-child-official' })
+    expect(records(restored.agent.session)).toEqual(before)
+    expect(projections.stateOf(restored.agent.session, 'bridgeKernel')?.inheritedBinding).toEqual({ backend: 'codex', nativeSessionId: 'worktree-parent-codex', sessionId: parent.agent.id })
+    expect(errors).toEqual([])
+    await restored.dispose()
+    await session.remove(restored.agent.id)
+    expect(close).toHaveBeenCalledOnce()
+    expect(resumed.dispose).toHaveBeenCalledOnce()
+  }, 10_000)
+
+  it.each([false, true])('rejects parent-id ACK without a fallback when parent native ownership was closed=%s', async (closed) => {
+    const { handle: parent, connection: original } = await conversation()
+    const prefix = parent.agent.session.snapshotEvents()
+    if (closed)
+      await session.remove(parent.agent.id)
+    const duplicate = native('worktree-parent-codex')
+    vi.mocked(createCodexSession).mockResolvedValueOnce(duplicate)
+    await expect(fork(parent.agent, 'worktree-invalid-same-id')).rejects.toThrow(closed ? 'BRIDGE_FORK_MISMATCH' : 'BRIDGE_NATIVE_OWNER_CONFLICT')
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createCodexSession).mock.calls[1]![2]).toBeNull()
+    expect(vi.mocked(createCodexSession).mock.calls[1]![5]).toEqual({ forkFrom: 'worktree-parent-codex' })
+    expect(createClaudeSession).not.toHaveBeenCalled()
+    expect(duplicate.dispose).toHaveBeenCalledOnce()
+    expect(duplicate.submit).not.toHaveBeenCalled()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(agents.get(sessionModule.SessionId('worktree-invalid-same-id'))).toBeUndefined()
+    expect(sessions.get(sessionModule.SessionId('worktree-invalid-same-id'))).toBeUndefined()
+    expect(prepared[1]!.snapshotEvents()).toEqual([...prefix, { seq: prefix.length, time: now, type: 'session/end-seed', data: { inherited: true } }])
+    expect(announced).toEqual([parent.agent])
+    expect(identity.resolve(parent.agent)).toEqual({ backend: 'codex', nativeSessionId: 'worktree-parent-codex', sessionId: parent.agent.id })
+  }, 10_000)
+
+  it('rolls back a rejected native fork without reusing or restoring the parent native session', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const prefix = parent.agent.session.snapshotEvents()
+    const failure = new Error('native fork refused the source conversation')
+    vi.mocked(createCodexSession).mockRejectedValueOnce(failure)
+    await expect(fork(parent.agent, 'worktree-refused')).rejects.toBe(failure)
+    expect(prepared[1]!.snapshotEvents()).toEqual([...prefix, { seq: prefix.length, time: now, type: 'session/end-seed', data: { inherited: true } }])
+    expect(agents.get(sessionModule.SessionId('worktree-refused'))).toBeUndefined()
+    expect(sessions.get(sessionModule.SessionId('worktree-refused'))).toBeUndefined()
+    expect(announced).toEqual([parent.agent])
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createCodexSession).mock.calls[1]![2]).toBeNull()
+    expect(vi.mocked(createCodexSession).mock.calls[1]![5]).toEqual({ forkFrom: 'worktree-parent-codex' })
+    expect(createClaudeSession).not.toHaveBeenCalled()
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(runtime.sessions.size).toBe(1)
+    expect(runtime.claims.size).toBe(1)
+  }, 10_000)
+
+  it('awaits native disposal when a later unpublished setup hook rejects after the independent ACK', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const connection = native('worktree-post-ack-failure')
+    const failure = new Error('later unpublished worktree setup refused')
+    vi.mocked(createCodexSession).mockResolvedValueOnce(connection)
+    await expect(fork(parent.agent, 'worktree-unpublished-failure', new AbortController().signal, async () => {
+      throw failure
+    })).rejects.toBe(failure)
+    expect(connection.dispose).toHaveBeenCalledOnce()
+    expect(connection.submit).not.toHaveBeenCalled()
+    expect(agents.get(sessionModule.SessionId('worktree-unpublished-failure'))).toBeUndefined()
+    expect(sessions.get(sessionModule.SessionId('worktree-unpublished-failure'))).toBeUndefined()
+    expect(runtime.claims.has('codex:worktree-post-ack-failure')).toBe(false)
+    expect(runtime.sessions.has('worktree-unpublished-failure')).toBe(false)
+    expect(announced).toEqual([parent.agent])
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(original.submit).toHaveBeenCalledOnce()
+  }, 10_000)
+
+  it('does not publish a distinct native ACK when official storage rejects the child seed and setup suffix', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const connection = native('worktree-storage-failure')
+    const failure = new Error('official worktree append refused')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const append = vi.fn().mockRejectedValue(failure)
+    const createStored = persistence!.create.bind(persistence!)
+    vi.spyOn(persistence!, 'create').mockImplementationOnce(async (...args) => {
+      const handle = await createStored(...args)
+      handle.append = append
+      vi.spyOn(handle, 'close').mockImplementation(async () => {
+        await close()
+        await handle[Symbol.asyncDispose]()
+      })
+      return handle
+    })
+    vi.mocked(createCodexSession).mockResolvedValueOnce(connection)
+    await expect(fork(parent.agent, 'worktree-storage-official')).rejects.toBe(failure)
+    expect(append).toHaveBeenCalledOnce()
+    expect(append.mock.calls[0]![0]).toEqual(prepared[1]!.snapshotEvents())
+    expect(close).toHaveBeenCalledOnce()
+    expect(connection.dispose).toHaveBeenCalledOnce()
+    expect(connection.submit).not.toHaveBeenCalled()
+    expect(agents.get(sessionModule.SessionId('worktree-storage-official'))).toBeUndefined()
+    expect(sessions.get(sessionModule.SessionId('worktree-storage-official'))).toBeUndefined()
+    expect(announced).toEqual([parent.agent])
+    expect(runtime.claims.has('codex:worktree-storage-failure')).toBe(false)
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+  }, 10_000)
+
+  it('blocks the first published child prompt after its own binding checkpoint fails and retries without re-forking', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const connection = native('worktree-binding-checkpoint-native')
+    vi.mocked(createCodexSession).mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
+      connection.submit.mockImplementation(async () => output.assistant('child-durable-answer', [{ type: 'text', text: 'the child-owned binding was saved' }]))
+      return connection
+    })
+    const child = await fork(parent.agent, 'worktree-binding-checkpoint-official')
+    const cut = child.agent.session.inheritedEventCount
+    const binding = { backend: 'codex', nativeSessionId: 'worktree-binding-checkpoint-native', sessionId: 'worktree-binding-checkpoint-official' }
+    const before = records(child.agent.session)
+    const failure = new Error('worktree own binding durability refused')
+    persistence!.barrier = async () => {
+      throw failure
+    }
+    await followup(child.agent, 'must not run without the saved child identity')
+    expect(connection.submit).not.toHaveBeenCalled()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatchObject({ name: 'LlmError', code: 'UNKNOWN', message: 'worktree own binding durability refused', failure: { code: 'UNKNOWN', message: 'worktree own binding durability refused' } })
+    expect(persistence!.stored.get(child.agent.id)?.durable.some(event => event.seq === cut + 1)).toBe(false)
+    expect(identity.resolve(child.agent)).toEqual(binding)
+    expect(records(child.agent.session)).toEqual(before)
+    expect(runtime.exchanges.size).toBe(0)
+    persistence!.barrier = async () => {}
+    await followup(child.agent, 'run the same child once its identity is durable')
+    expect(connection.submit).toHaveBeenCalledOnce()
+    expect(connection.submit.mock.calls[0]![2]).toEqual({ model: null, reasoningEffort: null })
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createCodexSession).mock.calls[1]![2]).toBeNull()
+    expect(vi.mocked(createCodexSession).mock.calls[1]![5]).toEqual({ forkFrom: 'worktree-parent-codex' })
+    expect(persistence!.stored.get(child.agent.id)?.durable.find(event => event.seq === cut + 1)).toEqual({ seq: cut + 1, time: now, type: 'plugin:dsh-tauri-bridge/kernel', ignorable: true, data: binding })
+    expect(records(child.agent.session)).toEqual(before)
+    expect(errors).toHaveLength(1)
+    expect(identity.resolve(parent.agent)).toEqual({ backend: 'codex', nativeSessionId: 'worktree-parent-codex', sessionId: parent.agent.id })
+  }, 10_000)
+
+  it('aborts the whole unpublished factory after native ACK when bridge scope ends during a later setup hook', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const connection = native('worktree-whole-factory-aborted')
+    const setupStarted = deferred<void>()
+    const setupGate = deferred<void>()
+    const setupFinished = deferred<void>()
+    const drainStarted = deferred<void>()
+    const drain = deferred<void>()
+    releases.push(() => setupGate.resolve(), () => drain.resolve())
+    connection.dispose.mockImplementation(async () => {
+      drainStarted.resolve()
+      await drain.promise
+    })
+    vi.mocked(createCodexSession).mockResolvedValueOnce(connection)
+    const task = fork(parent.agent, 'worktree-whole-factory-official', new AbortController().signal, async () => {
+      setupStarted.resolve()
+      await setupGate.promise
+      setupFinished.resolve()
+    })
+    const rejected = expect(task).rejects.toThrow('BRIDGE_DISPOSED')
+    background.push(rejected)
+    let settled = false
+    const observed = task.then(() => {
+      settled = true
+    }, () => {
+      settled = true
+    })
+    background.push(observed)
+    await setupStarted.promise
+    const child = prepared[1]!
+    const before = child.snapshotEvents()
+    expect(agents.get(child.id)).toBeUndefined()
+    expect(sessions.get(child.id)).toBeUndefined()
+    expect(announced).toEqual([parent.agent])
+    const closing = session.dispose()
+    background.push(closing)
+    await drainStarted.promise
+    expect(settled).toBe(false)
+    expect(vi.mocked(createCodexSession).mock.calls[1]![4].aborted).toBe(true)
+    expect(connection.submit).not.toHaveBeenCalled()
+    setupGate.resolve()
+    await setupFinished.promise
+    expect(agents.get(child.id)).toBeUndefined()
+    expect(sessions.get(child.id)).toBeUndefined()
+    expect(child.snapshotEvents()).toEqual(before)
+    drain.resolve()
+    await Promise.all([rejected, observed, closing])
+    expect(connection.dispose).toHaveBeenCalledOnce()
+    expect(connection.submit).not.toHaveBeenCalled()
+    expect(announced).toEqual([parent.agent])
+    expect(runtime.sessions.has(child.id)).toBe(false)
+    expect(runtime.claims.has('codex:worktree-whole-factory-aborted')).toBe(false)
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(errors).toEqual([])
+  }, 10_000)
+
+  it('refuses a stale inherited cut before contacting the native fork boundary', async () => {
+    const { handle: parent } = await conversation()
+    const stale = parent.agent.session.snapshotEvents()
+    parent.agent.session.append('request/header', { header: { config: { provider: 'dsh-tauri-bridge', model: 'codex' } }, reason: 'change' })
+    const task = context.nativeSessionBridge.create(parent.agent.session, () => agents.create({
+      sessionId: sessionModule.SessionId('worktree-stale-cut'),
+      seed: stale,
+      inheritedEventCount: sessionModule.SessionLogOffset(stale.length),
+      meta: { cwd, parentSession: parent.agent.id, isSeeded: true },
+      agentOptions: parent.agent.options,
+      setup: (_ctx, agent) => context.nativeSessionBridge.prepare(parent.agent.session, agent, new AbortController().signal),
+    }))
+    await expect(task).rejects.toThrow('BRIDGE_FORK_SOURCE_CHANGED')
+    expect(createCodexSession).toHaveBeenCalledOnce()
+    expect(createClaudeSession).not.toHaveBeenCalled()
+    expect(agents.get(sessionModule.SessionId('worktree-stale-cut'))).toBeUndefined()
+    expect(sessions.get(sessionModule.SessionId('worktree-stale-cut'))).toBeUndefined()
+    expect(announced).toEqual([parent.agent])
+  }, 10_000)
+
+  it('refuses a parent changed during native fork instead of silently inheriting a newer history', async () => {
+    const { handle: parent, connection: original } = await conversation()
+    const ack = deferred<NativeSession>()
+    const started = deferred<void>()
+    const connection = native('worktree-raced-source')
+    releases.push(() => ack.resolve(connection))
+    vi.mocked(createCodexSession).mockImplementationOnce(async () => {
+      started.resolve()
+      return ack.promise
+    })
+    const task = fork(parent.agent, 'worktree-raced-official')
+    const rejected = expect(task).rejects.toThrow('BRIDGE_FORK_SOURCE_CHANGED')
+    background.push(rejected)
+    await started.promise
+    parent.agent.session.append('request/header', { header: { config: { provider: 'dsh-tauri-bridge', model: 'codex' } }, reason: 'change' })
+    ack.resolve(connection)
+    await rejected
+    expect(connection.dispose).toHaveBeenCalledOnce()
+    expect(connection.submit).not.toHaveBeenCalled()
+    expect(prepared[1]!.snapshotEvents().slice(prepared[1]!.inheritedEventCount)).toEqual([{ seq: prepared[1]!.inheritedEventCount, time: now, type: 'session/end-seed', data: { inherited: true } }])
+    expect(agents.get(sessionModule.SessionId('worktree-raced-official'))).toBeUndefined()
+    expect(sessions.get(sessionModule.SessionId('worktree-raced-official'))).toBeUndefined()
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+  }, 10_000)
+
+  it.each(['cancel', 'unload'] as const)('aborts an unpublished worktree fork on %s and awaits disposal of a late distinct ACK', async (reason) => {
+    const { handle: parent, connection: original } = await conversation()
+    const ack = deferred<NativeSession>()
+    const started = deferred<void>()
+    const drain = deferred<void>()
+    const drainStarted = deferred<void>()
+    const connection = native(`worktree-late-${reason}`)
+    const controller = new AbortController()
+    releases.push(() => ack.resolve(connection), () => drain.resolve())
+    vi.mocked(createCodexSession).mockImplementationOnce(async () => {
+      started.resolve()
+      return ack.promise
+    })
+    connection.dispose.mockImplementation(async () => {
+      drainStarted.resolve()
+      await drain.promise
+    })
+    const task = fork(parent.agent, `worktree-late-official-${reason}`, controller.signal)
+    const rejected = expect(task).rejects.toThrow(reason === 'cancel' ? 'worktree creation cancelled' : 'BRIDGE_DISPOSED')
+    background.push(rejected)
+    await started.promise
+    const child = prepared[1]!
+    let settled = false
+    const observed = task.then(() => {
+      settled = true
+    }, () => {
+      settled = true
+    })
+    background.push(observed)
+    let closing: Promise<void> | undefined
+    if (reason === 'cancel') {
+      controller.abort(new Error('worktree creation cancelled'))
+    }
+    else {
+      closing = session.dispose()
+      background.push(closing)
+    }
+    expect(vi.mocked(createCodexSession).mock.calls[1]![4].aborted).toBe(true)
+    expect(agents.get(child.id)).toBeUndefined()
+    expect(sessions.get(child.id)).toBeUndefined()
+    ack.resolve(connection)
+    await drainStarted.promise
+    expect(settled).toBe(false)
+    expect(connection.submit).not.toHaveBeenCalled()
+    expect(child.snapshotEvents().slice(child.inheritedEventCount)).toEqual([{ seq: child.inheritedEventCount, time: now, type: 'session/end-seed', data: { inherited: true } }])
+    drain.resolve()
+    await Promise.all([rejected, observed, closing])
+    expect(connection.dispose).toHaveBeenCalledOnce()
+    expect(connection.submit).not.toHaveBeenCalled()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(announced).toEqual([parent.agent])
+    expect(runtime.pending.size).toBe(0)
+    expect(runtime.sessions.has(child.id)).toBe(false)
+    expect(runtime.claims.has(`codex:worktree-late-${reason}`)).toBe(false)
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(createClaudeSession).not.toHaveBeenCalled()
+  }, 10_000)
+})
 
 describe('official native session lifecycle', () => {
   it('connects Codex with unknown login status and leaves provider authentication native-owned', async () => {
@@ -232,7 +827,7 @@ describe('official native session lifecycle', () => {
     expect(prepared).toHaveLength(1)
     const official = prepared[0]!
     expect(records(official)).toEqual([])
-    expect(projections.stateOf(official, 'bridgeKernel')).toBeNull()
+    expect(projections.stateOf(official, 'bridgeKernel')?.binding).toBeNull()
     expect(official.requestHeader()).toBeUndefined()
     expect(agents.get(official.id)).toBeUndefined()
     expect(sessions.get(official.id)).toBeUndefined()
@@ -572,32 +1167,28 @@ describe('official native session lifecycle', () => {
     const oldHandle = officialHandle!
     const seed = oldHandle.agent.session.snapshotEvents()
     const recordsBefore = records(oldHandle.agent.session)
-    const oldClosing = oldHandle.dispose()
+    let closed = false
+    const oldClosing = oldHandle.dispose().then(() => {
+      closed = true
+    })
     background.push(oldClosing)
     await drainStarted.promise
-    await oldClosing
-    expect(agents.get(oldHandle.agent.id)).toBeUndefined()
-    expect(sessions.get(oldHandle.agent.id)).toBeUndefined()
+    expect(closed).toBe(false)
+    expect(agents.get(oldHandle.agent.id)).toBe(oldHandle.agent)
+    expect(sessions.get(oldHandle.agent.id)).toBe(oldHandle.agent.session)
     const nativeClosing = session.remove(oldHandle.agent.id)
     background.push(nativeClosing)
-    const replacement = await agents.create({ sessionId: oldHandle.agent.id, seed, meta: { cwd }, agentOptions: { provider: BRIDGE_PROVIDER, model: 'codex' } })
-    const created = deferred<Awaited<ReturnType<typeof sink.create>>>()
-    const create = sink.create.bind(sink)
-    vi.spyOn(sink, 'create').mockImplementation(async (...args) => {
-      const exchange = await create(...args)
-      created.resolve(exchange)
-      return exchange
-    })
-    const rejectedTurn = followup(replacement.agent, 'do not race the old native owner')
-    const exchange = await created.promise
-    await vi.waitFor(() => expect(exchange.state.done).toBe(true))
+    await expect(agents.create({ sessionId: oldHandle.agent.id, seed, meta: { cwd }, agentOptions: { provider: BRIDGE_PROVIDER, model: 'codex' } })).rejects.toThrow(`session "${oldHandle.agent.id}" already exists`)
     expect(createCodexSession).toHaveBeenCalledOnce()
     expect(original.submit).not.toHaveBeenCalled()
-    expect(identity.resolve(replacement.agent).nativeSessionId).toBe(original.id)
     drain.resolve()
-    await Promise.all([nativeClosing, rejectedTurn])
-    expect(errors).toHaveLength(1)
-    expect(errors[0]).toMatchObject({ message: expect.stringContaining('BRIDGE_SESSION_CLOSING') })
+    await Promise.all([oldClosing, nativeClosing])
+    expect(closed).toBe(true)
+    expect(agents.get(oldHandle.agent.id)).toBeUndefined()
+    expect(sessions.get(oldHandle.agent.id)).toBeUndefined()
+    const replacement = await agents.create({ sessionId: oldHandle.agent.id, seed, meta: { cwd }, agentOptions: { provider: BRIDGE_PROVIDER, model: 'codex' } })
+    expect(identity.resolve(replacement.agent)).toEqual({ backend: 'codex', nativeSessionId: 'recreated-native', sessionId: oldHandle.agent.id })
+    expect(errors).toEqual([])
     const resumed = native(original.id)
     vi.mocked(createCodexSession).mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
       resumed.submit.mockImplementation(async () => output.assistant('resumed-answer', [{ type: 'text', text: 'native owner restored' }]))
@@ -610,7 +1201,7 @@ describe('official native session lifecycle', () => {
     await followup(replacement.agent, 'reuse the restored owner')
     expect(createCodexSession).toHaveBeenCalledTimes(2)
     expect(resumed.submit).toHaveBeenCalledTimes(2)
-    expect(errors).toHaveLength(1)
+    expect(errors).toEqual([])
     expect(records(replacement.agent.session)).toEqual(recordsBefore)
     expect(agents.get(replacement.agent.id)).toBe(replacement.agent)
     expect(resumed.dispose).not.toHaveBeenCalled()

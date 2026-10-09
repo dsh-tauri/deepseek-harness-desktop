@@ -176,7 +176,7 @@ beforeEach(async () => {
   })
   await vi.waitFor(() => expect(runtime.ready).toBe(true))
   expect(getServerContext<HostContext>(server).root).toBe(context.root)
-  expect([...routes.keys()].sort()).toEqual(['/api/tauri/bridge/backends', '/api/tauri/bridge/sessions'])
+  expect([...routes.keys()].sort()).toEqual(['/api/tauri/bridge/backends', '/api/tauri/bridge/models', '/api/tauri/bridge/sessions'])
   handle = await agents.create({
     sessionId: sessionModule.SessionId('sink-contract-session'),
     meta: { cwd: process.cwd() },

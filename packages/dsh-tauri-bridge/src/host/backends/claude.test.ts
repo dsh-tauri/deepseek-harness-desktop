@@ -1,5 +1,5 @@
 import type { Frame } from './process.fixture'
-import type { NativeSession } from './types'
+import type { NativeSession, NativeSessionOpenOptions } from './types'
 import { spawn } from 'node:child_process'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,10 @@ function claudeProcess(options: {
   acknowledge?: boolean
   useSystemInit?: boolean
   mismatch?: boolean
+  forkId?: string
+  model?: string
+  models?: Frame[]
+  account?: Frame
   capabilities?: string[]
   intercept?: (frame: Frame, fixture: ProcessFixture) => boolean
 } = {}) {
@@ -29,14 +33,18 @@ function claudeProcess(options: {
       if (request.subtype === 'initialize') {
         const args = vi.mocked(spawn).mock.calls.at(-1)![1] as string[]
         const nativeId = args.find(arg => arg.startsWith('--session-id=') || arg.startsWith('--resume='))!.split('=')[1]!
-        const acknowledgedId = options.mismatch ? 'different-native-session' : nativeId
+        const acknowledgedId = options.mismatch ? 'different-native-session' : args.includes('--fork-session') ? options.forkId ?? '22222222-2222-4222-8222-222222222222' : nativeId
         if (options.acknowledge !== false) {
           if (options.useSystemInit)
-            fixture.send({ type: 'system', subtype: 'init', session_id: acknowledgedId, capabilities: options.capabilities ?? [] })
+            fixture.send({ type: 'system', subtype: 'init', session_id: acknowledgedId, model: options.model, capabilities: options.capabilities ?? [] })
           else
             response.session_id = acknowledgedId
         }
         response.capabilities = options.capabilities ?? []
+        if (options.models)
+          response.models = options.models
+        if (options.account)
+          response.account = options.account
       }
       fixture.send({ type: 'control_response', response: { subtype: 'success', request_id: frame.request_id, response } })
     }
@@ -45,12 +53,13 @@ function claudeProcess(options: {
   return fixture
 }
 
-async function open(nativeId: string | null = null, sink = createSink()) {
-  const session = await createClaudeSession(command, 'C:/fixture/workspace', nativeId, sink, new AbortController().signal)
+async function open(nativeId: string | null = null, sink = createSink(), options?: NativeSessionOpenOptions) {
+  const session = await createClaudeSession(command, 'C:/fixture/workspace', nativeId, sink, new AbortController().signal, options)
   sessions.push(session)
   return session
 }
 
+const modelInfo = (value: string, levels: string[] = ['low', 'high']) => ({ value, displayName: `Native ${value}`, description: `${value} description`, supportsEffort: true, supportedEffortLevels: levels })
 const user = () => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'inspect the workspace' }] })
 const result = (fixture: ProcessFixture, id: string, extra: Frame = {}) => fixture.send({ type: 'result', subtype: 'success', is_error: false, session_id: id, result: 'final text, not another assistant message', ...extra })
 const stream = (fixture: ProcessFixture, event: Frame, extra: Frame = {}) => fixture.send({ type: 'stream_event', event, parent_tool_use_id: null, ...extra })
@@ -162,6 +171,264 @@ describe('claude native stream-json control contract', () => {
     } })
     await expect(open(storedId)).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_TURN', message: '["No conversation found"]' })
     expect(spawn).toHaveBeenCalledTimes(1)
+    expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('forks by official resume and fork-session flags and binds only a new acknowledgement', async () => {
+    const fixture = claudeProcess({ forkId: 'child-session' })
+    const session = await open(null, createSink(), { forkFrom: storedId })
+    expect(session.id).toBe('child-session')
+    const args = vi.mocked(spawn).mock.calls[0]![1] as string[]
+    expect(args).toContain(`--resume=${storedId}`)
+    expect(args).toContain('--fork-session')
+    expect(args.some(arg => arg.startsWith('--session-id='))).toBe(false)
+    expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
+  })
+
+  it('accepts a real fork SessionStart hook but rejects later identity replacement', async () => {
+    const fixture = claudeProcess({ acknowledge: false })
+    const opening = open(null, createSink(), { forkFrom: storedId })
+    fixture.send({ type: 'control_request', request_id: 'fork-hook', request: { subtype: 'hook_callback', callback_id: 'dsh-native-session-identity', input: { hook_event_name: 'SessionStart', source: 'fork', session_id: 'forked-native', model: 'baseline' } } })
+    const session = await opening
+    expect(session.id).toBe('forked-native')
+    const submitted = session.submit([user()], new AbortController().signal)
+    const rejected = expect(submitted).rejects.toMatchObject({ code: 'BRIDGE_RESUME_MISMATCH' })
+    result(fixture, storedId)
+    await rejected
+    expect(session.id).toBe('forked-native')
+  })
+
+  it('refuses a fork that acknowledges only the source id with no fresh-session fallback', async () => {
+    const fixture = claudeProcess({ forkId: storedId })
+    await expect(open(null, createSink(), { forkFrom: storedId })).rejects.toMatchObject({ code: 'BRIDGE_FORK_MISMATCH' })
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
+  })
+
+  it('rejects combined resume and fork options without spawning', async () => {
+    await expect(open(storedId, createSink(), { forkFrom: 'source' })).rejects.toMatchObject({ code: 'BRIDGE_FORK_INVALID' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('uses initialize supported models and only advertised effort levels without leaking account data', async () => {
+    const fixture = claudeProcess({
+      useSystemInit: true,
+      model: 'baseline',
+      models: [modelInfo('baseline', ['medium', 'xhigh']), { value: 'custom', displayName: 'Custom provider', description: 'custom description', supportsEffort: true }],
+      account: { email: 'private-fixture', apiKey: 'secret-fixture' },
+    })
+    const session = await open()
+    const catalog = await session.models!(new AbortController().signal)
+    expect(catalog).toEqual({ defaultModel: 'baseline', models: [
+      { id: 'baseline', name: 'Native baseline', description: 'baseline description', reasoning: { efforts: [{ id: 'medium', name: 'medium' }, { id: 'xhigh', name: 'xhigh' }] } },
+      { id: 'custom', name: 'Custom provider', description: 'custom description' },
+    ] })
+    expect(JSON.stringify(catalog)).not.toMatch(/private-fixture|secret-fixture/)
+    expect(fixture.frames).toHaveLength(1)
+    expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
+  })
+
+  it('reports absent discovery as unsupported and never guesses effort levels', async () => {
+    const fixture = claudeProcess()
+    const session = await open()
+    await expect(session.models!(new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_MODEL_DISCOVERY_UNAVAILABLE' })
+    expect(fixture.frames).toHaveLength(1)
+  })
+
+  it('awaits set_model and apply_flag_settings acknowledgements before the one snapshotted user frame', async () => {
+    const fixture = claudeProcess({
+      models: [modelInfo('chosen')],
+      intercept: frame => frame.type === 'control_request' && ['set_model', 'apply_flag_settings'].includes(String((frame.request as Frame).subtype)),
+    })
+    const session = await open()
+    const selection = { model: 'chosen', reasoningEffort: 'high' }
+    const setModel = fixture.next(frame => frame.type === 'control_request' && (frame.request as Frame).subtype === 'set_model')
+    const submitted = session.submit([user()], new AbortController().signal, selection)
+    selection.model = 'unadvertised'
+    selection.reasoningEffort = 'unadvertised'
+    const modelRequest = await setModel
+    expect(modelRequest.request).toEqual({ subtype: 'set_model', model: 'chosen' })
+    expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
+    const setEffort = fixture.next(frame => frame.type === 'control_request' && (frame.request as Frame).subtype === 'apply_flag_settings')
+    fixture.send({ type: 'control_response', response: { subtype: 'success', request_id: modelRequest.request_id, response: {} } })
+    const effortRequest = await setEffort
+    expect(effortRequest.request).toEqual({ subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } })
+    expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
+    const input = fixture.next(frame => frame.type === 'user')
+    fixture.send({ type: 'control_response', response: { subtype: 'success', request_id: effortRequest.request_id, response: {} } })
+    expect(await input).toMatchObject({ type: 'user', session_id: session.id })
+    result(fixture, session.id)
+    await submitted
+    expect(fixture.frames.filter(frame => frame.type === 'user')).toHaveLength(1)
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains native defaults on the first null selection and explicitly restores public defaults after overrides', async () => {
+    const fixture = claudeProcess({ models: [modelInfo('chosen')] })
+    const session = await open()
+    const signal = new AbortController().signal
+    const first = session.submit([user()], signal, { model: null, reasoningEffort: null })
+    result(fixture, session.id)
+    await first
+    expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([initialization])
+    const changedInput = fixture.next(frame => frame.type === 'user')
+    const changed = session.submit([user()], signal, { model: 'chosen', reasoningEffort: 'high' })
+    await changedInput
+    result(fixture, session.id)
+    await changed
+    const resetInput = fixture.next(frame => frame.type === 'user')
+    const reset = session.submit([user()], signal, { model: null, reasoningEffort: null })
+    await resetInput
+    result(fixture, session.id)
+    await reset
+    expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([
+      initialization,
+      { subtype: 'set_model', model: 'chosen' },
+      { subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } },
+      { subtype: 'set_model', model: null },
+      { subtype: 'apply_flag_settings', settings: { effortLevel: null } },
+    ])
+  })
+
+  it.each(['resume', 'fork'] as const)('clears inherited model and effort flags before the first null selection after %s', async (mode) => {
+    const fixture = claudeProcess({ useSystemInit: true, model: 'persisted-override' })
+    const session = await open(mode === 'resume' ? storedId : null, createSink(), mode === 'fork' ? { forkFrom: storedId } : undefined)
+    const input = fixture.next(frame => frame.type === 'user')
+    const submitted = session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: null })
+    await input
+    result(fixture, session.id)
+    await submitted
+    expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([
+      initialization,
+      { subtype: 'set_model', model: null },
+      { subtype: 'apply_flag_settings', settings: { effortLevel: null } },
+    ])
+    expect(fixture.frames.filter(frame => frame.type === 'user')).toHaveLength(1)
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores model-default effort when a fresh selection changes only the model', async () => {
+    const fixture = claudeProcess({ models: [modelInfo('chosen')] })
+    const session = await open()
+    const input = fixture.next(frame => frame.type === 'user')
+    const submitted = session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: null })
+    await input
+    result(fixture, session.id)
+    await submitted
+    expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([
+      initialization,
+      { subtype: 'set_model', model: 'chosen' },
+      { subtype: 'apply_flag_settings', settings: { effortLevel: null } },
+    ])
+  })
+
+  it('refuses default-model effort validation against a resumed persisted model', async () => {
+    const fixture = claudeProcess({
+      useSystemInit: true,
+      model: 'persisted-override',
+      models: [modelInfo('persisted-override')],
+      intercept: (frame, child) => {
+        if (frame.type !== 'user')
+          return false
+        result(child, storedId)
+        return true
+      },
+    })
+    const session = await open(storedId)
+    expect((await session.models!(new AbortController().signal)).defaultModel).toBeUndefined()
+    await expect(session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: 'high' })).rejects.toMatchObject({ code: 'BRIDGE_DEFAULT_UNAVAILABLE' })
+    expect(fixture.frames).toHaveLength(1)
+    expect(session.id).toBe(storedId)
+  })
+
+  it('validates default-model effort only from fresh SessionStart model metadata', async () => {
+    const fixture = claudeProcess({ acknowledge: false, models: [modelInfo('baseline', ['high'])] })
+    const opening = open()
+    const args = vi.mocked(spawn).mock.calls[0]![1] as string[]
+    const nativeId = args.find(arg => arg.startsWith('--session-id='))!.split('=')[1]!
+    fixture.send({ type: 'control_request', request_id: 'baseline-hook', request: { subtype: 'hook_callback', callback_id: 'dsh-native-session-identity', input: { hook_event_name: 'SessionStart', source: 'startup', session_id: nativeId, model: 'baseline' } } })
+    const session = await opening
+    const input = fixture.next(frame => frame.type === 'user')
+    const submitted = session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: 'high' })
+    await input
+    result(fixture, session.id)
+    await submitted
+    expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([initialization, { subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } }])
+  })
+
+  it.each(['with-reset', 'after-reset'] as const)('refuses unprovable CLI-default effort %s when startup settings selected another model', async (phase) => {
+    const cliDefault = 'different-cli-default'
+    let nativeModel = 'configured-startup'
+    const usedModels: string[] = []
+    const fixture = claudeProcess({
+      useSystemInit: true,
+      model: 'configured-startup',
+      models: [modelInfo('configured-startup', ['high']), modelInfo('chosen', ['high']), modelInfo(cliDefault, ['low'])],
+      intercept: (frame, child) => {
+        if (frame.type === 'control_request') {
+          const request = frame.request as Frame
+          if (request.subtype === 'set_model')
+            nativeModel = typeof request.model === 'string' ? request.model : cliDefault
+        }
+        if (frame.type !== 'user')
+          return false
+        usedModels.push(nativeModel)
+        result(child, String(frame.session_id))
+        return true
+      },
+    })
+    const session = await open()
+    const signal = new AbortController().signal
+    await session.submit([user()], signal, { model: 'chosen', reasoningEffort: 'high' })
+    if (phase === 'after-reset') {
+      await session.submit([user()], signal, { model: null, reasoningEffort: null })
+      expect(nativeModel).toBe(cliDefault)
+    }
+    const before = fixture.frames.length
+    await expect(session.submit([user()], signal, { model: null, reasoningEffort: 'high' })).rejects.toMatchObject({ code: 'BRIDGE_DEFAULT_UNAVAILABLE' })
+    expect(fixture.frames).toHaveLength(before)
+    if (phase === 'after-reset')
+      expect((await session.models!(signal)).defaultModel).toBeUndefined()
+    expect(usedModels).toEqual(phase === 'after-reset' ? ['chosen', cliDefault] : ['chosen'])
+    await session.submit([user()], signal, { model: cliDefault, reasoningEffort: 'low' })
+    expect(nativeModel).toBe(cliDefault)
+    expect(fixture.frames.at(-1)).toMatchObject({ type: 'user', session_id: session.id })
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects unadvertised effort before either control or user input', async () => {
+    const fixture = claudeProcess({ models: [{ value: 'custom', displayName: 'Custom', supportsEffort: true }] })
+    const session = await open()
+    await expect(session.submit([user()], new AbortController().signal, { model: 'custom', reasoningEffort: 'high' })).rejects.toMatchObject({ code: 'BRIDGE_EFFORT_UNSUPPORTED' })
+    expect(fixture.frames).toHaveLength(1)
+    expect(session.id).toMatch(/^[\da-f-]{36}$/)
+  })
+
+  it('fails closed on a rejected selection control and never sends a prompt', async () => {
+    const fixture = claudeProcess({ models: [modelInfo('chosen')], intercept: (frame, child) => {
+      if (frame.type !== 'control_request' || (frame.request as Frame).subtype !== 'set_model')
+        return false
+      child.send({ type: 'control_response', response: { subtype: 'error', request_id: frame.request_id, error: 'Unsupported set_model capability' } })
+      return true
+    } })
+    const session = await open()
+    await expect(session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: null })).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_REQUEST', message: 'Unsupported set_model capability' })
+    expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
+    expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('guards concurrent submissions and aborts an unacknowledged model control without submitting input', async () => {
+    const fixture = claudeProcess({ models: [modelInfo('chosen')], intercept: frame => frame.type === 'control_request' && (frame.request as Frame).subtype === 'set_model' })
+    const session = await open()
+    const signal = new AbortController()
+    const pending = fixture.next(frame => frame.type === 'control_request' && (frame.request as Frame).subtype === 'set_model')
+    const submitted = session.submit([user()], signal.signal, { model: 'chosen', reasoningEffort: null })
+    const rejected = expect(submitted).rejects.toThrow('cancel selection')
+    await pending
+    await expect(session.submit([user()], new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_BUSY' })
+    signal.abort(new Error('cancel selection'))
+    await rejected
+    expect(fixture.frames.some(frame => frame.type === 'user' || (frame.type === 'control_request' && (frame.request as Frame).subtype === 'interrupt'))).toBe(false)
     expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
   })
 

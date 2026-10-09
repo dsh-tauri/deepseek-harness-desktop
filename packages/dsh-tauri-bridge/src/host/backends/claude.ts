@@ -1,6 +1,6 @@
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Deferred } from './transport'
-import type { NativeCommand, NativeContent, NativeQuestion, NativeSession, NativeSink } from './types'
+import type { NativeCommand, NativeContent, NativeModelCatalog, NativeModelInfo, NativeQuestion, NativeSession, NativeSessionOpenOptions, NativeSink, NativeTurnOptions } from './types'
 import { randomUUID } from 'node:crypto'
 import { nativeEnvironment } from '../utils/detection'
 import { abortError, deferred, errorFrom, INTERRUPT_TIMEOUT_MS, JsonLinesProcess, NativeBridgeError, PendingRequests, record, REQUEST_TIMEOUT_MS, stringField, textMessages } from './transport'
@@ -31,6 +31,7 @@ interface ClaudeRun {
   state?: string
   inputId: string
   error?: Error
+  submitted: boolean
   interruptPending: boolean
   interruptSent: boolean
   interruptTimer?: ReturnType<typeof setTimeout>
@@ -90,9 +91,15 @@ class ClaudeSession implements NativeSession {
   private readonly identity = deferred<void>()
   private identityTimer?: ReturnType<typeof setTimeout>
   private readonly capabilities = new Set<string>()
+  private startupModel?: string
+  private effectiveModel?: string
+  private defaultsPending: boolean
+  private catalog?: NativeModelCatalog
+  private appliedOptions: NativeTurnOptions = { model: null, reasoningEffort: null }
 
-  constructor(command: NativeCommand, cwd: string, storedId: string | null, private readonly sink: NativeSink) {
-    this.nativeId = storedId ?? randomUUID()
+  constructor(command: NativeCommand, cwd: string, storedId: string | null, private readonly sink: NativeSink, private readonly options?: NativeSessionOpenOptions) {
+    this.nativeId = options?.forkFrom ? '' : storedId ?? randomUUID()
+    this.defaultsPending = storedId !== null || options?.forkFrom !== undefined
     this.transport = new JsonLinesProcess({ ...command, env: { ...(command.env ?? nativeEnvironment()), CLAUDE_CODE_SDK_READS_SESSION_STATE: '1' } }, [
       '--print',
       '--verbose',
@@ -103,7 +110,7 @@ class ClaudeSession implements NativeSession {
       '--include-partial-messages',
       '--permission-prompt-tool',
       'stdio',
-      storedId === null ? `--session-id=${this.id}` : `--resume=${this.id}`,
+      ...options?.forkFrom ? [`--resume=${options.forkFrom}`, '--fork-session'] : [storedId === null ? `--session-id=${this.id}` : `--resume=${this.id}`],
     ], cwd)
     this.requests = new PendingRequests(value => this.transport.write(value))
     this.transport.onFailure((error) => {
@@ -131,6 +138,8 @@ class ClaudeSession implements NativeSession {
       const response = record(await this.control({ subtype: 'initialize', hooks: { SessionStart: [{ hookCallbackIds: [SESSION_START_HOOK_ID] }] } }, signal))
       this.checkIdentity(response)
       this.noteCapabilities(response)
+      if (response.models !== undefined)
+        this.catalog = this.modelCatalog(response.models)
       if (this.failure)
         throw this.failure
       await this.identity.promise
@@ -147,7 +156,84 @@ class ClaudeSession implements NativeSession {
     }
   }
 
-  async submit(messages: readonly UserMessage[], signal: AbortSignal): Promise<void> {
+  private modelCatalog(values: unknown): NativeModelCatalog {
+    if (!Array.isArray(values))
+      throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Claude initialization is missing supported models')
+    const models = new Map<string, NativeModelInfo>()
+    for (const value of values) {
+      const model = record(value)
+      const id = stringField(model, 'value')
+      const levels = model.supportedEffortLevels
+      if (levels !== undefined && (!Array.isArray(levels) || levels.some(value => typeof value !== 'string' || value === '')))
+        throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Claude model reasoning capabilities are invalid')
+      const efforts = Array.isArray(levels) && model.supportsEffort !== false ? levels.map(id => ({ id: String(id), name: String(id) })) : []
+      const info = {
+        id,
+        name: stringField(model, 'displayName'),
+        ...typeof model.description === 'string' ? { description: model.description } : {},
+        ...efforts.length > 0 ? { reasoning: { efforts } } : {},
+      }
+      models.set(id, info)
+      if (typeof model.resolvedModel === 'string' && model.resolvedModel !== '' && !models.has(model.resolvedModel))
+        models.set(model.resolvedModel, { ...info, id: model.resolvedModel })
+      if (models.size > 10_000)
+        throw new NativeBridgeError('BRIDGE_PROTOCOL_LIMIT', 'Claude model listing exceeded its limit')
+    }
+    return { models: [...models.values()], ...this.startupModel === undefined ? {} : { defaultModel: this.startupModel } }
+  }
+
+  async models(signal: AbortSignal): Promise<NativeModelCatalog> {
+    signal.throwIfAborted()
+    if (this.disposed || this.failure)
+      throw this.failure ?? new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Claude session was disposed')
+    if (!this.catalog)
+      throw new NativeBridgeError('BRIDGE_MODEL_DISCOVERY_UNAVAILABLE', 'Claude did not expose supported models in its public initialize response')
+    const models = [...this.catalog.models]
+    for (const id of [this.startupModel, this.effectiveModel]) {
+      if (id && !models.some(model => model.id === id))
+        models.push({ id, name: id })
+    }
+    return { models, ...this.startupModel === undefined ? {} : { defaultModel: this.startupModel } }
+  }
+
+  private async applyOptions(options: NativeTurnOptions, signal: AbortSignal): Promise<void> {
+    const modelChanged = this.defaultsPending || options.model !== this.appliedOptions.model
+    const effortChanged = this.defaultsPending || options.reasoningEffort !== this.appliedOptions.reasoningEffort
+    if (!modelChanged && !effortChanged)
+      return
+    if (options.model !== null || options.reasoningEffort !== null) {
+      const catalog = await this.models(signal)
+      const model = options.model ?? (modelChanged ? undefined : this.startupModel)
+      if (!model)
+        throw new NativeBridgeError('BRIDGE_DEFAULT_UNAVAILABLE', 'Claude did not report a provable default model for reasoning validation')
+      const info = catalog.models.find(value => value.id === model)
+      if (options.model !== null && !info)
+        throw new NativeBridgeError('BRIDGE_MODEL_UNAVAILABLE', `Claude did not advertise model: ${options.model}`)
+      if (options.reasoningEffort !== null && !info?.reasoning?.efforts.some(value => value.id === options.reasoningEffort))
+        throw new NativeBridgeError('BRIDGE_EFFORT_UNSUPPORTED', `Claude did not advertise reasoning effort ${options.reasoningEffort} for ${model}`)
+    }
+    try {
+      if (modelChanged) {
+        await this.control({ subtype: 'set_model', model: options.model }, signal)
+        this.effectiveModel = options.model ?? undefined
+        if (options.model === null)
+          this.startupModel = undefined
+      }
+      // Public flag-layer null restores the model default, not a settings-file startup effort.
+      if (effortChanged || modelChanged)
+        await this.control({ subtype: 'apply_flag_settings', settings: { effortLevel: options.reasoningEffort } }, signal)
+      this.appliedOptions = options
+      this.defaultsPending = false
+    }
+    catch (error) {
+      // A rejected/cancelled control may already have changed the native flag layer.
+      // Close rather than reuse a process with an unacknowledged partial selection.
+      this.transport.fail(errorFrom(error))
+      throw error
+    }
+  }
+
+  async submit(messages: readonly UserMessage[], signal: AbortSignal, options?: NativeTurnOptions): Promise<void> {
     signal.throwIfAborted()
     if (this.disposed || this.failure)
       throw this.failure ?? new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Claude session was disposed')
@@ -156,6 +242,7 @@ class ClaudeSession implements NativeSession {
     const texts = textMessages(messages)
     if (texts.length === 0)
       throw new NativeBridgeError('BRIDGE_EMPTY_INPUT', 'Claude native run requires a user message')
+    const selection = options ? { ...options } : undefined
     const run: ClaudeRun = {
       result: deferred<void>(),
       signal,
@@ -169,13 +256,21 @@ class ClaudeSession implements NativeSession {
       stoppedTasks: new Set(),
       resultReceived: false,
       inputId: randomUUID(),
+      submitted: false,
       interruptPending: false,
       interruptSent: false,
     }
     this.active = run
-    const aborted = (): void => this.interrupt(run)
+    const aborted = (): void => {
+      if (run.submitted)
+        this.interrupt(run)
+    }
     signal.addEventListener('abort', aborted, { once: true })
     try {
+      if (selection && (this.defaultsPending || selection.model !== this.appliedOptions.model || selection.reasoningEffort !== this.appliedOptions.reasoningEffort))
+        await this.applyOptions(selection, signal)
+      signal.throwIfAborted()
+      run.submitted = true
       this.transport.write({
         type: 'user',
         session_id: this.id,
@@ -187,7 +282,7 @@ class ClaudeSession implements NativeSession {
       signal.throwIfAborted()
     }
     catch (error) {
-      if (!signal.aborted)
+      if (run.submitted && !signal.aborted)
         this.transport.fail(errorFrom(error))
       throw this.failure ?? (signal.aborted ? abortError(signal) : error)
     }
@@ -223,8 +318,14 @@ class ClaudeSession implements NativeSession {
   private checkIdentity(message: Record<string, unknown>, required = false): void {
     if (required || typeof message.session_id === 'string') {
       const id = stringField(message, 'session_id')
-      if (id !== this.id)
+      if (this.opening && this.options?.forkFrom && this.nativeId === '') {
+        if (id === this.options.forkFrom)
+          throw new NativeBridgeError('BRIDGE_FORK_MISMATCH', 'Claude fork did not acknowledge a new native session')
+        this.nativeId = id
+      }
+      else if (id !== this.id) {
         throw new NativeBridgeError('BRIDGE_RESUME_MISMATCH', 'Claude reported a different native session; refusing to replace the stored binding')
+      }
       this.identity.resolve()
     }
   }
@@ -265,8 +366,14 @@ class ClaudeSession implements NativeSession {
     if (type === 'conversation_reset')
       throw new NativeBridgeError('BRIDGE_NATIVE_RESET', 'Claude reset its conversation; the existing official session binding cannot be silently changed')
     this.checkIdentity(message, type === 'result' || (type === 'system' && message.subtype === 'init'))
-    if (type === 'system' && message.subtype === 'init')
+    if (type === 'system' && message.subtype === 'init') {
       this.noteCapabilities(message)
+      if (this.opening && typeof message.model === 'string' && message.model !== '') {
+        this.effectiveModel ??= message.model
+        if (!this.defaultsPending)
+          this.startupModel ??= message.model
+      }
+    }
     const run = this.active
     if (type === 'result') {
       const aborted = message.terminal_reason === 'aborted_streaming' || message.terminal_reason === 'aborted_tools'
@@ -502,6 +609,11 @@ class ClaudeSession implements NativeSession {
         if (request.callback_id !== SESSION_START_HOOK_ID || input.hook_event_name !== 'SessionStart')
           throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Claude invoked an unregistered native identity hook')
         this.checkIdentity(input, true)
+        if (this.opening && typeof input.model === 'string' && input.model !== '') {
+          this.effectiveModel ??= input.model
+          if (!this.defaultsPending)
+            this.startupModel ??= input.model
+        }
         this.transport.write({ type: 'control_response', response: { subtype: 'success', request_id: id, response: {} } })
         return
       }
@@ -555,8 +667,10 @@ class ClaudeSession implements NativeSession {
   }
 }
 
-export async function createClaudeSession(command: NativeCommand, cwd: string, nativeSessionId: string | null, sink: NativeSink, signal: AbortSignal): Promise<NativeSession> {
-  const session = new ClaudeSession(command, cwd, nativeSessionId, sink)
+export async function createClaudeSession(command: NativeCommand, cwd: string, nativeSessionId: string | null, sink: NativeSink, signal: AbortSignal, options?: NativeSessionOpenOptions): Promise<NativeSession> {
+  if (options?.forkFrom !== undefined && (nativeSessionId !== null || options.forkFrom === ''))
+    throw new NativeBridgeError('BRIDGE_FORK_INVALID', 'Claude fork requires a source session and no existing native binding')
+  const session = new ClaudeSession(command, cwd, nativeSessionId, sink, options)
   await session.open(signal)
   return session
 }

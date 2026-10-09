@@ -13,6 +13,7 @@ import { backendFromIdentity, kernelFromList } from '../service/kernel-identity'
 import { canLockModelEntry } from '../service/kernel-model'
 import { createKernelSession } from '../service/kernel-session'
 import { kernelStore } from '../store/modules/kernel-store'
+import { registerNativeModels } from './kernel-model'
 
 export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) => {
   let detection = 0
@@ -86,6 +87,7 @@ export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) =
     kernelStore.select(backend)
   }
 
+  const nativeModels = registerNativeModels(controller, adapter)
   const slots = adapter.service<SlotRegistry>('slots')
   controller.add(registerSlotDecoration(slots, {
     slot: HERO_AGENT_PRESET_SLOT,
@@ -102,7 +104,7 @@ export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) =
     mode: 'wrap',
     component: ModelKernel,
     accept: canLockModelEntry,
-    inject: () => ({ ensureProjection }),
+    inject: () => ({ ensureProjection, ...nativeModels }),
     warn,
   }))
   if (typeof slots?.inject !== 'function' || typeof slots.register !== 'function' || typeof slots.spec !== 'function') {

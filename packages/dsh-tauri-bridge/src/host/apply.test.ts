@@ -92,8 +92,8 @@ describe('owned bridge application lifecycle', () => {
     const fiber = start()
     await importStarted.promise
     expect(getServerContext(server)).toBe(fiber.ctx)
-    expect([...registered.keys()].sort()).toEqual(['/api/tauri/bridge/backends', '/api/tauri/bridge/sessions'])
-    expect(projections.stateOf(sessionModule.Session.create(sessionModule.SessionId('startup')), 'bridgeKernel')).toBeNull()
+    expect([...registered.keys()].sort()).toEqual(['/api/tauri/bridge/backends', '/api/tauri/bridge/models', '/api/tauri/bridge/sessions'])
+    expect(projections.stateOf(sessionModule.Session.create(sessionModule.SessionId('startup')), 'bridgeKernel')?.binding).toBeNull()
     expect(registerAdapter).not.toHaveBeenCalled()
     expect(runtime.ready).toBe(false)
     imports.resolve()
@@ -146,7 +146,7 @@ describe('owned bridge application lifecycle', () => {
     expect(agent.cancel).toHaveBeenCalledExactlyOnceWith({ kind: 'disposed' })
     expect(disposed).toBe(false)
     expect(getServerContext(server)).toBe(fiber.ctx)
-    expect(registered.size).toBe(2)
+    expect(registered.size).toBe(3)
     expect(nativeDispose).not.toHaveBeenCalled()
     idle.resolve()
     await nativeStarted.promise

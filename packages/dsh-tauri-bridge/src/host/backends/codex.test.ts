@@ -1,5 +1,5 @@
 import type { Frame } from './process.fixture'
-import type { NativeSession } from './types'
+import type { NativeSession, NativeSessionOpenOptions } from './types'
 import { spawn } from 'node:child_process'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +18,10 @@ interface Terminal {
 
 function codexProcess(options: {
   threadId?: string
+  model?: string
+  reasoningEffort?: string | null
+  config?: Frame
+  models?: Frame[]
   terminals?: Terminal[]
   intercept?: (frame: Frame, fixture: ProcessFixture) => boolean
 } = {}) {
@@ -31,7 +35,14 @@ function codexProcess(options: {
         break
       case 'thread/start':
       case 'thread/resume':
-        fixture.send({ id: frame.id, result: { thread: { id: options.threadId ?? 'thread-1' } } })
+      case 'thread/fork':
+        fixture.send({ id: frame.id, result: { thread: { id: options.threadId ?? 'thread-1' }, model: options.model, reasoningEffort: options.reasoningEffort } })
+        break
+      case 'config/read':
+        fixture.send({ id: frame.id, result: { config: options.config ?? {} } })
+        break
+      case 'model/list':
+        fixture.send({ id: frame.id, result: { data: options.models ?? [], nextCursor: null } })
         break
       case 'thread/backgroundTerminals/list':
         fixture.send({ id: frame.id, result: { data: [...terminals], nextCursor: null } })
@@ -55,12 +66,13 @@ function codexProcess(options: {
   return { fixture, terminals }
 }
 
-async function open(storedId: string | null = null, sink = createSink()) {
-  const session = await createCodexSession(command, 'C:/fixture/workspace', storedId, sink, new AbortController().signal)
+async function open(storedId: string | null = null, sink = createSink(), options?: NativeSessionOpenOptions) {
+  const session = await createCodexSession(command, 'C:/fixture/workspace', storedId, sink, new AbortController().signal, options)
   sessions.push(session)
   return session
 }
 
+const modelInfo = (id: string, levels: string[] = ['low', 'high'], defaultEffort = 'low') => ({ id: `catalog:${id}`, model: id, displayName: `Native ${id}`, description: `${id} description`, supportedReasoningEfforts: levels.map(reasoningEffort => ({ reasoningEffort, description: `${reasoningEffort} reasoning` })), defaultReasoningEffort: defaultEffort, isDefault: false })
 const user = () => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'inspect the workspace' }] })
 const completed = (fixture: ProcessFixture, status = 'completed') => fixture.send({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status } } })
 const notify = (fixture: ProcessFixture, method: string, params: Frame) => fixture.send({ method, params: { threadId: 'thread-1', turnId: 'turn-1', ...params } })
@@ -114,6 +126,212 @@ describe('codex native app-server contract', () => {
     await expect(open()).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_REQUEST', message: 'Unknown method' })
     expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
     expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('forks into a newly acknowledged thread with the new cwd and no prompt fallback', async () => {
+    const { fixture } = codexProcess({ threadId: 'child-thread' })
+    const session = await open(null, createSink(), { forkFrom: 'source-thread' })
+    expect(session.id).toBe('child-thread')
+    expect(fixture.frames[2]).toEqual({ id: 2, method: 'thread/fork', params: { threadId: 'source-thread', cwd: 'C:/fixture/workspace' } })
+    expect(fixture.frames.some(frame => frame.method === 'thread/start' || frame.method === 'thread/resume' || frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('rejects a fork returning the source identity without starting a replacement', async () => {
+    const { fixture } = codexProcess({ threadId: 'source-thread' })
+    await expect(open(null, createSink(), { forkFrom: 'source-thread' })).rejects.toMatchObject({ code: 'BRIDGE_FORK_MISMATCH' })
+    expect(fixture.frames.map(frame => frame.method)).toEqual(['initialize', 'initialized', 'thread/fork'])
+    expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('rejects ambiguous resume and fork options before spawning', async () => {
+    await expect(open('stored-thread', createSink(), { forkFrom: 'source-thread' })).rejects.toMatchObject({ code: 'BRIDGE_FORK_INVALID' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('keeps a custom-provider configured model without inventing reasoning capabilities or exposing config', async () => {
+    const { fixture } = codexProcess({
+      model: 'deepseek-flash',
+      config: { model: 'deepseek-flash', model_provider: 'deepseek', model_reasoning_effort: null, auth: { token: 'secret-fixture' }, model_providers: { deepseek: { api_key: 'secret-fixture' } } },
+      models: [modelInfo('gpt-fixture')],
+    })
+    const session = await open()
+    const catalog = await session.models!(new AbortController().signal)
+    expect(catalog.defaultModel).toBe('deepseek-flash')
+    expect(catalog.models.find(model => model.id === 'deepseek-flash')).toEqual({ id: 'deepseek-flash', name: 'deepseek-flash' })
+    expect(JSON.stringify(catalog)).not.toContain('secret-fixture')
+    expect(fixture.frames.filter(frame => frame.method === 'config/read').map(frame => frame.params)).toEqual([{ includeLayers: false, cwd: 'C:/fixture/workspace' }])
+    expect(fixture.frames.filter(frame => frame.method === 'model/list').map(frame => frame.params)).toEqual([{ cursor: null, limit: 100, includeHidden: false }])
+    expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('paginates native models using wire model ids and rejects repeated cursors', async () => {
+    let repeat = false
+    const { fixture } = codexProcess({ intercept: (frame, child) => {
+      if (frame.method !== 'model/list')
+        return false
+      const cursor = (frame.params as Frame).cursor
+      child.send({ id: frame.id, result: { data: [modelInfo(cursor === null ? 'first' : 'second')], nextCursor: cursor === null || repeat ? 'page-2' : null } })
+      return true
+    } })
+    const session = await open()
+    expect((await session.models!(new AbortController().signal)).models.map(model => model.id)).toEqual(['first', 'second'])
+    repeat = true
+    await expect(session.models!(new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_PROTOCOL', message: 'Codex model listing repeated a cursor' })
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('reports unsupported model discovery rather than inventing a catalog', async () => {
+    const { fixture } = codexProcess({ intercept: (frame, child) => {
+      if (frame.method !== 'model/list')
+        return false
+      child.send({ id: frame.id, error: { code: -32601, message: 'Unknown method: model/list' } })
+      return true
+    } })
+    const session = await open()
+    await expect(session.models!(new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_REQUEST', message: 'Unknown method: model/list' })
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('submits snapshotted model and effort once without changing the native binding', async () => {
+    const { fixture } = codexProcess({ model: 'baseline', reasoningEffort: 'low', models: [modelInfo('baseline'), modelInfo('chosen')] })
+    const session = await open()
+    const selection = { model: 'chosen', reasoningEffort: 'high' }
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, selection)
+    selection.model = 'baseline'
+    selection.reasoningEffort = 'low'
+    expect(await started).toMatchObject({ params: { threadId: session.id, model: 'chosen', effort: 'high' } })
+    completed(fixture)
+    await submitted
+    expect(fixture.frames.filter(frame => frame.method === 'turn/start')).toHaveLength(1)
+    expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
+    expect(session.id).toBe('thread-1')
+  })
+
+  it('preserves CLI defaults on the first null selection and restores acknowledged defaults after an override', async () => {
+    const { fixture } = codexProcess({ model: 'baseline', reasoningEffort: 'low', models: [modelInfo('baseline'), modelInfo('chosen')] })
+    const session = await open()
+    const signal = new AbortController().signal
+    const first = fixture.next(frame => frame.method === 'turn/start')
+    const unchanged = session.submit([user()], signal, { model: null, reasoningEffort: null })
+    expect((await first).params).toEqual({ threadId: session.id, input: [{ type: 'text', text: 'inspect the workspace', text_elements: [] }] })
+    completed(fixture)
+    await unchanged
+    expect(fixture.frames.some(frame => frame.method === 'config/read' || frame.method === 'model/list')).toBe(false)
+    const changed = fixture.next(frame => frame.method === 'turn/start')
+    const override = session.submit([user()], signal, { model: 'chosen', reasoningEffort: 'high' })
+    await changed
+    completed(fixture)
+    await override
+    const reset = fixture.next(frame => frame.method === 'turn/start')
+    const restored = session.submit([user()], signal, { model: null, reasoningEffort: null })
+    expect(await reset).toMatchObject({ params: { threadId: session.id, model: 'baseline', effort: 'low' } })
+    completed(fixture)
+    await restored
+  })
+
+  it.each(['resume', 'fork'] as const)('restores thread-agnostic defaults on the first null selection after %s', async (mode) => {
+    const { fixture } = codexProcess({
+      model: 'persisted-override',
+      reasoningEffort: 'high',
+      config: { model: 'cli-default', model_reasoning_effort: 'low' },
+      models: [modelInfo('cli-default'), modelInfo('persisted-override')],
+    })
+    const session = await open(mode === 'resume' ? 'thread-1' : null, createSink(), mode === 'fork' ? { forkFrom: 'source-thread' } : undefined)
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: null })
+    const frame = await started
+    completed(fixture)
+    await submitted
+    expect(frame.params).toMatchObject({ threadId: 'thread-1', model: 'cli-default', effort: 'low' })
+    expect((await session.models!(new AbortController().signal)).defaultModel).toBe('cli-default')
+    expect(fixture.frames.filter(frame => frame.method === 'turn/start')).toHaveLength(1)
+    expect(fixture.frames.some(frame => frame.method === 'thread/start')).toBe(false)
+    expect(session.id).toBe('thread-1')
+  })
+
+  it('refuses an unknown resumed CLI default instead of using the persisted acknowledgement or catalog default', async () => {
+    const { fixture } = codexProcess({
+      model: 'persisted-override',
+      reasoningEffort: 'high',
+      models: [{ ...modelInfo('catalog-default'), isDefault: true }],
+      intercept: (frame, child) => {
+        if (frame.method !== 'turn/start')
+          return false
+        child.send({ id: frame.id, result: { turn: { id: 'turn-1' } } })
+        completed(child)
+        return true
+      },
+    })
+    const session = await open('thread-1')
+    expect((await session.models!(new AbortController().signal)).defaultModel).toBeUndefined()
+    await expect(session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: null })).rejects.toMatchObject({ code: 'BRIDGE_DEFAULT_UNAVAILABLE' })
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('refuses a resumed effort reset when only the persisted override is known', async () => {
+    const { fixture } = codexProcess({
+      model: 'persisted-override',
+      reasoningEffort: 'high',
+      config: { model: 'custom-default', model_reasoning_effort: null },
+      models: [modelInfo('persisted-override')],
+      intercept: (frame, child) => {
+        if (frame.method !== 'turn/start')
+          return false
+        child.send({ id: frame.id, result: { turn: { id: 'turn-1' } } })
+        completed(child)
+        return true
+      },
+    })
+    const session = await open('thread-1')
+    await expect(session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: null })).rejects.toMatchObject({ code: 'BRIDGE_DEFAULT_UNAVAILABLE' })
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+    expect(session.id).toBe('thread-1')
+  })
+
+  it('uses only the selected model advertised default effort when changing models', async () => {
+    const { fixture } = codexProcess({ model: 'baseline', reasoningEffort: 'high', models: [modelInfo('baseline'), modelInfo('chosen', ['medium', 'high'], 'medium')] })
+    const session = await open()
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: null })
+    expect(await started).toMatchObject({ params: { model: 'chosen', effort: 'medium' } })
+    completed(fixture)
+    await submitted
+  })
+
+  it('rejects unsupported effort before native input and keeps the binding intact', async () => {
+    const { fixture } = codexProcess({ model: 'deepseek-flash', config: { model: 'deepseek-flash' }, models: [modelInfo('gpt-fixture')] })
+    const session = await open()
+    await expect(session.submit([user()], new AbortController().signal, { model: 'deepseek-flash', reasoningEffort: 'high' })).rejects.toMatchObject({ code: 'BRIDGE_EFFORT_UNSUPPORTED' })
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+    expect(session.id).toBe('thread-1')
+  })
+
+  it('refuses an unknown effort reset instead of silently retaining a previous explicit effort', async () => {
+    const { fixture } = codexProcess({ model: 'custom', reasoningEffort: null, models: [modelInfo('chosen')] })
+    const session = await open()
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: 'high' })
+    await started
+    completed(fixture)
+    await submitted
+    await expect(session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: null })).rejects.toMatchObject({ code: 'BRIDGE_DEFAULT_UNAVAILABLE' })
+    expect(fixture.frames.filter(frame => frame.method === 'turn/start')).toHaveLength(1)
+  })
+
+  it('guards concurrent submissions while waiting for catalog discovery and cancels before input', async () => {
+    const { fixture } = codexProcess({ intercept: frame => frame.method === 'config/read' })
+    const session = await open()
+    const signal = new AbortController()
+    const pending = fixture.next(frame => frame.method === 'config/read')
+    const submitted = session.submit([user()], signal.signal, { model: 'chosen', reasoningEffort: null })
+    const rejected = expect(submitted).rejects.toThrow('cancel discovery')
+    await pending
+    await expect(session.submit([user()], new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_BUSY' })
+    signal.abort(new Error('cancel discovery'))
+    await rejected
+    expect(fixture.frames.some(frame => frame.method === 'turn/start' || frame.method === 'turn/interrupt')).toBe(false)
   })
 
   it('commits authoritative assistant content once after live text and reasoning deltas', async () => {

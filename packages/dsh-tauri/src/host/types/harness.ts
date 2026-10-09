@@ -10,8 +10,9 @@
  * 【基准】@deepseek-ai/* 0.2.1-alpha.1（版本由 pnpm-workspace.yaml 的 `dsh` catalog 钉住）。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { Agent, AgentHandle, AgentSetupCommit } from '@deepseek-ai/dsh-agent'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
-import type { SessionStore } from '@deepseek-ai/dsh-session'
+import type { Session, SessionStore } from '@deepseek-ai/dsh-session'
 import type { IncomingMessage } from 'node:http'
 
 export type { Context } from '@deepseek-ai/cordis'
@@ -36,6 +37,17 @@ export type {
   ToolRuntime,
 } from '@deepseek-ai/dsh-tools'
 export type { WorkspaceId, WorkspaceRegistry } from '@deepseek-ai/dsh-workspace'
+export interface NativeSessionBridge {
+  create: (source: Session, create: (signal?: AbortSignal) => Promise<AgentHandle>) => Promise<AgentHandle>
+  prepare: (source: Session, agent: Agent, signal: AbortSignal) => Promise<AgentSetupCommit | void>
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    nativeSessionBridge: NativeSessionBridge
+  }
+}
+
 export interface ConnectionGate {
   requestRejection: (request: IncomingMessage) => 401 | 403 | undefined
 }

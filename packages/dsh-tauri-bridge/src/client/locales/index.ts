@@ -17,7 +17,9 @@ export const locale = defineLocale(PLUGIN_ID, {
     'kernel.creating': '正在新建会话',
     'kernel.retry': '重新检测',
     'kernel.selectorScope': '选择会新建会话，仅记住此选择器的下次选择，不更改当前会话或官方新建快捷键',
-    'kernel.immutable': '此会话已绑定原生内核，不能更换模型或内核',
+    'kernel.immutable': '此会话已绑定原生内核，不能更换内核',
+    'kernel.modelNextTurn': '模型与推理深度仅影响下一完整轮次，不能更换此会话内核',
+    'kernel.modelRetry': '重新加载模型',
   },
   en: {
     'kernel.label': 'Kernel',
@@ -34,6 +36,8 @@ export const locale = defineLocale(PLUGIN_ID, {
     'kernel.creating': 'Creating a session',
     'kernel.retry': 'Detect again',
     'kernel.selectorScope': 'Selection creates a new session and is remembered for this picker only; it does not change the current session or official new-session shortcuts',
-    'kernel.immutable': 'This session is bound to a native kernel; its model and kernel cannot be changed',
+    'kernel.immutable': 'This session is bound to a native kernel; its kernel cannot be changed',
+    'kernel.modelNextTurn': 'Model and reasoning changes apply to the next complete turn; this session kernel cannot be changed',
+    'kernel.modelRetry': 'Reload models',
   },
 })

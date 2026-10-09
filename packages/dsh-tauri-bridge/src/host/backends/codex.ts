@@ -1,6 +1,6 @@
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Deferred } from './transport'
-import type { NativeCommand, NativeContent, NativeQuestion, NativeSession, NativeSink } from './types'
+import type { NativeCommand, NativeContent, NativeModelCatalog, NativeModelInfo, NativeQuestion, NativeSession, NativeSessionOpenOptions, NativeSink, NativeTurnOptions } from './types'
 import { abortError, deferred, errorFrom, INTERRUPT_TIMEOUT_MS, JsonLinesProcess, NativeBridgeError, PendingRequests, record, stringField, textMessages } from './transport'
 
 interface ToolState {
@@ -69,8 +69,15 @@ class CodexSession implements NativeSession {
   private readonly interruptedTurns = new Set<string>()
   private backgroundBaseline?: Set<string>
   private readonly commandItems = new Set<string>()
+  private baselineModel?: string
+  private baselineEffort?: string | null
+  private effectiveModel?: string
+  private defaultsPending = false
+  private catalog?: NativeModelCatalog
+  private appliedOptions: NativeTurnOptions = { model: null, reasoningEffort: null }
+  private effortOverridden = false
 
-  constructor(command: NativeCommand, private readonly sink: NativeSink, cwd: string) {
+  constructor(command: NativeCommand, private readonly sink: NativeSink, private readonly cwd: string) {
     this.transport = new JsonLinesProcess(command, ['app-server', '--listen', 'stdio://'], cwd)
     this.requests = new PendingRequests(value => this.transport.write(value))
     this.transport.onFailure((error) => {
@@ -88,7 +95,7 @@ class CodexSession implements NativeSession {
     return this.nativeId
   }
 
-  async open(cwd: string, storedId: string | null, signal: AbortSignal): Promise<void> {
+  async open(cwd: string, storedId: string | null, signal: AbortSignal, options?: NativeSessionOpenOptions): Promise<void> {
     signal.throwIfAborted()
     try {
       await this.request('initialize', {
@@ -96,14 +103,26 @@ class CodexSession implements NativeSession {
         capabilities: { experimentalApi: true },
       }, signal)
       this.transport.write({ method: 'initialized', params: {} })
-      const response = record(await this.request(storedId === null ? 'thread/start' : 'thread/resume', {
-        ...storedId === null ? {} : { threadId: storedId },
+      const forkFrom = options?.forkFrom
+      const response = record(await this.request(forkFrom ? 'thread/fork' : storedId === null ? 'thread/start' : 'thread/resume', {
+        ...forkFrom ? { threadId: forkFrom } : storedId === null ? {} : { threadId: storedId },
         cwd,
       }, signal))
       const id = stringField(record(response.thread), 'id')
       if (storedId !== null && id !== storedId)
         throw new NativeBridgeError('BRIDGE_RESUME_MISMATCH', 'Codex resumed a different native thread; refusing to replace the stored binding')
+      if (forkFrom && id === forkFrom)
+        throw new NativeBridgeError('BRIDGE_FORK_MISMATCH', 'Codex fork did not acknowledge a new native thread')
       this.nativeId = id
+      this.defaultsPending = storedId !== null || forkFrom !== undefined
+      this.effortOverridden = this.defaultsPending
+      if (typeof response.model === 'string' && response.model !== '') {
+        this.effectiveModel = response.model
+        if (!this.defaultsPending)
+          this.baselineModel = response.model
+      }
+      if (!this.defaultsPending && (response.reasoningEffort === null || typeof response.reasoningEffort === 'string'))
+        this.baselineEffort = response.reasoningEffort
       this.backgroundBaseline = new Set((await this.listTerminals(signal)).map(terminal => terminal.processId))
       signal.throwIfAborted()
     }
@@ -113,7 +132,90 @@ class CodexSession implements NativeSession {
     }
   }
 
-  async submit(messages: readonly UserMessage[], signal: AbortSignal): Promise<void> {
+  async models(signal: AbortSignal): Promise<NativeModelCatalog> {
+    signal.throwIfAborted()
+    if (this.disposed || this.failure)
+      throw this.failure ?? new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Codex session was disposed')
+    this.catalog = undefined
+    const config = record(record(await this.request('config/read', { includeLayers: false, cwd: this.cwd }, signal)).config)
+    const configuredModel = typeof config.model === 'string' && config.model !== '' ? config.model : undefined
+    this.baselineModel ??= configuredModel
+    if (this.baselineEffort === undefined && (config.model_reasoning_effort === null || typeof config.model_reasoning_effort === 'string'))
+      this.baselineEffort = config.model_reasoning_effort
+    const models = new Map<string, NativeModelInfo>()
+    const cursors = new Set<string>()
+    const defaultModel = this.baselineModel
+    let cursor: string | null = null
+    do {
+      const response = record(await this.request('model/list', { cursor, limit: 100, includeHidden: false }, signal))
+      if (!Array.isArray(response.data))
+        throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model listing is missing data')
+      for (const value of response.data) {
+        const model = record(value)
+        const id = stringField(model, 'model')
+        if (!Array.isArray(model.supportedReasoningEfforts))
+          throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model is missing reasoning capabilities')
+        const efforts = model.supportedReasoningEfforts.map((value) => {
+          const effort = record(value)
+          const id = stringField(effort, 'reasoningEffort')
+          return { id, name: id, ...typeof effort.description === 'string' ? { description: effort.description } : {} }
+        })
+        const defaultEffort = typeof model.defaultReasoningEffort === 'string' && efforts.some(effort => effort.id === model.defaultReasoningEffort) ? model.defaultReasoningEffort : undefined
+        models.set(id, {
+          id,
+          name: stringField(model, 'displayName'),
+          ...typeof model.description === 'string' ? { description: model.description } : {},
+          ...efforts.length > 0 ? { reasoning: { efforts, ...defaultEffort === undefined ? {} : { defaultEffort } } } : {},
+        })
+        if (models.size > 10_000)
+          throw new NativeBridgeError('BRIDGE_PROTOCOL_LIMIT', 'Codex model listing exceeded its limit')
+      }
+      if (response.nextCursor !== null && response.nextCursor !== undefined && typeof response.nextCursor !== 'string')
+        throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model cursor is invalid')
+      cursor = typeof response.nextCursor === 'string' ? response.nextCursor : null
+      if (cursor !== null) {
+        if (cursors.has(cursor))
+          throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model listing repeated a cursor')
+        cursors.add(cursor)
+      }
+    } while (cursor !== null)
+    // A custom provider's configured/effective model may be absent from Codex's catalog.
+    // Preserve that exact selectable id, but never borrow another model's capabilities.
+    for (const id of [configuredModel, this.baselineModel, this.effectiveModel]) {
+      if (id && !models.has(id))
+        models.set(id, { id, name: id })
+    }
+    signal.throwIfAborted()
+    const catalog = { models: [...models.values()], ...defaultModel === undefined ? {} : { defaultModel } }
+    this.catalog = catalog
+    return catalog
+  }
+
+  private async turnOptions(options: NativeTurnOptions, signal: AbortSignal): Promise<{ model?: string, effort?: string }> {
+    const modelChanged = this.defaultsPending || options.model !== this.appliedOptions.model
+    const effortChanged = this.defaultsPending || options.reasoningEffort !== this.appliedOptions.reasoningEffort
+    if (options.model === null && options.reasoningEffort === null && !modelChanged && !effortChanged)
+      return {}
+    const catalog = this.catalog ?? await this.models(signal)
+    const model = options.model ?? this.baselineModel
+    if (!model)
+      throw new NativeBridgeError('BRIDGE_DEFAULT_UNAVAILABLE', 'Codex did not report its default model')
+    const info = catalog.models.find(value => value.id === model)
+    if (!info)
+      throw new NativeBridgeError('BRIDGE_MODEL_UNAVAILABLE', `Codex did not advertise model: ${model}`)
+    let effort = options.reasoningEffort
+    if (effort !== null && !info.reasoning?.efforts.some(value => value.id === effort))
+      throw new NativeBridgeError('BRIDGE_EFFORT_UNSUPPORTED', `Codex did not advertise reasoning effort ${effort} for ${model}`)
+    if (effort === null && (modelChanged || effortChanged)) {
+      effort = model === this.baselineModel ? this.baselineEffort ?? info.reasoning?.defaultEffort ?? null : info.reasoning?.defaultEffort ?? null
+      // Public null retains a persisted/previous effort; it is not a reset.
+      if (effort === null && (this.effortOverridden || model !== this.effectiveModel))
+        throw new NativeBridgeError('BRIDGE_DEFAULT_UNAVAILABLE', `Codex did not report a restorable default reasoning effort for ${model}`)
+    }
+    return { ...options.model !== null || modelChanged ? { model } : {}, ...effort === null ? {} : { effort } }
+  }
+
+  async submit(messages: readonly UserMessage[], signal: AbortSignal, options?: NativeTurnOptions): Promise<void> {
     signal.throwIfAborted()
     if (this.disposed || this.failure)
       throw this.failure ?? new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Codex session was disposed')
@@ -122,6 +224,7 @@ class CodexSession implements NativeSession {
     const input = textMessages(messages).map(text => ({ type: 'text', text, text_elements: [] }))
     if (input.length === 0)
       throw new NativeBridgeError('BRIDGE_EMPTY_INPUT', 'Codex native turn requires a user message')
+    const selection = options ? { ...options } : undefined
     const turn: CodexTurn = {
       result: deferred<void>(),
       signal,
@@ -142,11 +245,20 @@ class CodexSession implements NativeSession {
     }
     signal.addEventListener('abort', aborted, { once: true })
     try {
+      const overrides = selection ? await this.turnOptions(selection, signal) : {}
       turn.baseline = new Set((await this.listTerminals(signal)).map(terminal => terminal.processId))
       signal.throwIfAborted()
       turn.submitted = true
       // turn/started may precede the response; retain its id even during cancel.
-      const response = record(await this.request('turn/start', { threadId: this.id, input }))
+      const response = record(await this.request('turn/start', { threadId: this.id, input, ...overrides }))
+      if (selection) {
+        this.appliedOptions = selection
+        this.defaultsPending = false
+      }
+      if (overrides.model !== undefined)
+        this.effectiveModel = overrides.model
+      if (overrides.effort !== undefined)
+        this.effortOverridden = true
       const id = stringField(record(response.turn), 'id')
       if (turn.id && id !== turn.id)
         throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex turn/start response disagrees with turn/started')
@@ -166,7 +278,7 @@ class CodexSession implements NativeSession {
       }
     }
     catch (error) {
-      if (!signal.aborted)
+      if (turn.submitted && !signal.aborted)
         this.transport.fail(errorFrom(error))
       throw this.failure ?? (signal.aborted ? abortError(signal) : error)
     }
@@ -480,8 +592,10 @@ class CodexSession implements NativeSession {
   }
 }
 
-export async function createCodexSession(command: NativeCommand, cwd: string, nativeSessionId: string | null, sink: NativeSink, signal: AbortSignal): Promise<NativeSession> {
+export async function createCodexSession(command: NativeCommand, cwd: string, nativeSessionId: string | null, sink: NativeSink, signal: AbortSignal, options?: NativeSessionOpenOptions): Promise<NativeSession> {
+  if (options?.forkFrom !== undefined && (nativeSessionId !== null || options.forkFrom === ''))
+    throw new NativeBridgeError('BRIDGE_FORK_INVALID', 'Codex fork requires a source thread and no existing native binding')
   const session = new CodexSession(command, sink, cwd)
-  await session.open(cwd, nativeSessionId, signal)
+  await session.open(cwd, nativeSessionId, signal, options)
   return session
 }

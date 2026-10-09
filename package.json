@@ -80,6 +80,7 @@
     "@deepseek-ai/dsh-llm": "catalog:dsh",
     "@deepseek-ai/dsh-permission-presets": "catalog:dsh",
     "@deepseek-ai/dsh-session": "catalog:dsh",
+    "@deepseek-ai/dsh-session-persistence": "catalog:dsh",
     "@deepseek-ai/dsh-session-projection": "catalog:dsh",
     "@deepseek-ai/dsh-skill-filesystem": "catalog:dsh",
     "@deepseek-ai/dsh-tools": "catalog:dsh",
