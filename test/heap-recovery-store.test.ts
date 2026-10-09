@@ -5,6 +5,7 @@ import { resources } from '../src/i18n/index.resource'
 
 const eventListeners = new Map<string, (event: Event<unknown>) => void>()
 const invoke = vi.fn()
+const heapRecoveryToast = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@tauri-apps/api/event', () => ({
@@ -13,6 +14,7 @@ vi.mock('@tauri-apps/api/event', () => ({
     return vi.fn()
   }),
 }))
+vi.mock('@/utils/toast', () => ({ toast: heapRecoveryToast }))
 vi.mock('@/config/client', () => ({ queryClient: { invalidateQueries: vi.fn() } }))
 vi.mock('../src/store/modules/harness-updater', () => ({
   harnessUpdater: { checkForUpdate: vi.fn() },
@@ -118,6 +120,7 @@ describe('harness heap OOM recovery', () => {
   beforeEach(() => {
     eventListeners.clear()
     invoke.mockReset()
+    heapRecoveryToast.mockReset()
     Object.assign(harness, {
       status: 'ready',
       errorMsg: '',
@@ -174,6 +177,27 @@ describe('harness heap OOM recovery', () => {
     await exit
 
     expect(callsOf('update_app_config')).toHaveLength(0)
+    expect(callsOf('launch_harness')).toHaveLength(0)
+  })
+
+  it('does not notify or restart when another busy action takes over while the settings write is pending', async () => {
+    const entered = deferred()
+    const gate = deferred()
+    stubRuntime(16384, async () => {
+      entered.resolve()
+      await gate.promise
+    })
+
+    const exit = harness.handleProcessExit({ pid: 42, exitCode: 134 })
+    await entered.promise
+    // 写入期间被别的动作接管：设置已经落盘（上限确实抬了），但重启会被 restart
+    // 自己挡回来。此时若照常发通知，用户看到的就是一条没兑现的「已抬高上限」。
+    harness.busyAction = 'openBrowser'
+    gate.resolve()
+    await exit
+
+    expect(callsOf('update_app_config')).toHaveLength(1)
+    expect(heapRecoveryToast).not.toHaveBeenCalled()
     expect(callsOf('launch_harness')).toHaveLength(0)
   })
 
