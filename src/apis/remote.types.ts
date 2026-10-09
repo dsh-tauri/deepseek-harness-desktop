@@ -18,16 +18,6 @@ export type GetApiDesktopDshTauriSshMachinesEventsQueryMachineId = string;
 export type GetApiDesktopDshTauriSshMachinesEventsQuerySinceSeq = number;
 export type GetApiDesktopDshTauriSshSyncPreviewResponse = { plugins?: { name?: string; spec?: string; syncable?: false | true; reason?: string }[]; skills?: { name?: string; root?: string }[]; error?: string };
 export type PostApiDesktopDshTauriSshSyncApplyResponse = { items?: { kind?: string; name?: string; root?: string; ok?: false | true; error?: string; log?: string }[]; error?: string };
-export type OptionsApiDesktopDshTauriSshSettingsResponse = void;
-export type OptionsApiDesktopDshTauriSshSessionRoleResponse = void;
-export type OptionsApiDesktopDshTauriSshMachinesResponse = void;
-export type OptionsApiDesktopDshTauriSshMachinesTestResponse = void;
-export type OptionsApiDesktopDshTauriSshMachinesConnectResponse = void;
-export type OptionsApiDesktopDshTauriSshMachinesDisconnectResponse = void;
-export type OptionsApiDesktopDshTauriSshMachinesInstallResponse = void;
-export type OptionsApiDesktopDshTauriSshMachinesEventsResponse = void;
-export type OptionsApiDesktopDshTauriSshSyncPreviewResponse = void;
-export type OptionsApiDesktopDshTauriSshSyncApplyResponse = void;
 
 export interface PostApiDesktopDshTauriSshSettingsBody {
   enabled?: false | true;

@@ -1,4 +1,4 @@
-//! 下载地域检测：中国大陆用户自动切换镜像加速源（npmmirror / ghfast.top 中转），
+//! 下载地域检测：中国大陆用户自动切换镜像加速源（npmmirror / GitHub 代理镜像），
 //! 避免直连 GitHub / nodejs.org 大文件下载缓慢。
 
 use std::sync::OnceLock;
@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 /// 下载源地域
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Region {
-    /// 中国大陆：走镜像（npmmirror / ghfast.top 中转）
+    /// 中国大陆：走镜像（npmmirror / GitHub 代理镜像）
     Domestic,
     /// 其他地区：直连官方源（nodejs.org / GitHub）
     Overseas,

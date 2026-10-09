@@ -18,19 +18,6 @@ export type GetApiDesktopDshTauriExtensionRootsResponse = { roots: ({ id: string
 export type PostApiDesktopDshTauriExtensionRootsResponse = { ok: false | true; root: { id: string; kind: "local" | "git"; label: string; url?: undefined | string; ref?: undefined | string; path?: undefined | string; roots: string[]; materialDir?: undefined | string; addedAt: number; live: false | true } } | { error: string };
 export type DeleteApiDesktopDshTauriExtensionRootsResponse = { ok: false | true; error?: undefined | string } | { error: string };
 export type PostApiDesktopDshTauriExtensionHostRestartResponse = { error: string; ok?: undefined; pid?: undefined; replacementPid?: undefined; logOut?: undefined } | { ok: false | true; pid: number; replacementPid: undefined | number; logOut: string; error?: undefined };
-export type OptionsApiDesktopDshTauriExtensionSkillsResponse = void;
-export type OptionsApiDesktopDshTauriExtensionSkillsRefreshResponse = void;
-export type OptionsApiDesktopDshTauriExtensionSkillResponse = void;
-export type OptionsApiDesktopDshTauriExtensionSkillPolicyResponse = void;
-export type OptionsApiDesktopDshTauriExtensionOpenDirResponse = void;
-export type OptionsApiDesktopDshTauriExtensionMcpResponse = void;
-export type OptionsApiDesktopDshTauriExtensionMcpToggleResponse = void;
-export type OptionsApiDesktopDshTauriExtensionMcpCheckResponse = void;
-export type OptionsApiDesktopDshTauriExtensionMcpCopyResponse = void;
-export type OptionsApiDesktopDshTauriExtensionImportScanResponse = void;
-export type OptionsApiDesktopDshTauriExtensionImportApplyResponse = void;
-export type OptionsApiDesktopDshTauriExtensionRootsResponse = void;
-export type OptionsApiDesktopDshTauriExtensionHostRestartResponse = void;
 
 export interface PostApiDesktopDshTauriExtensionSkillBody {
   name: string;

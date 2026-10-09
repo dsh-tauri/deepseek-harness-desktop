@@ -10,7 +10,7 @@
 
 import { describe, expect, inject, it } from 'vitest'
 
-/** 与 `packages/dsh-tauri-archive/src/host/routes/index.ts:11` 的常量对齐。 */
+/** 与 `packages/dsh-tauri-archive/src/host/server/index.ts` 的常量对齐。 */
 const SESSION_ARCHIVE_PATH = '/api/desktop/dsh-tauri-archive/session/archive'
 const SESSION_WORKSPACE_ARCHIVE_PATH = '/api/desktop/dsh-tauri-archive/session/workspace/archive'
 
@@ -151,16 +151,16 @@ describe('L2 宿主路由', () => {
 
   it('验证五条注册行的方法矩阵互不相同', async () => {
     const matrix: Array<[string, string[]]> = [
-      [SESSION_ARCHIVE_PATH, ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'POST']],
-      [ARCHIVE_CLEAR_PATH, ['DELETE', 'OPTIONS', 'POST']],
-      [SESSION_WORKSPACE_ARCHIVE_PATH, ['DELETE', 'OPTIONS', 'POST']],
-      [ARCHIVE_RESTORE_PATH, ['OPTIONS', 'POST']],
-      [OPEN_PATH_PATH, ['OPTIONS', 'POST']],
+      [SESSION_ARCHIVE_PATH, ['DELETE', 'GET', 'HEAD', 'POST']],
+      [ARCHIVE_CLEAR_PATH, ['DELETE', 'POST']],
+      [SESSION_WORKSPACE_ARCHIVE_PATH, ['DELETE', 'POST']],
+      [ARCHIVE_RESTORE_PATH, ['POST']],
+      [OPEN_PATH_PATH, ['POST']],
     ]
 
     for (const [path, expected] of matrix) {
       const response = await fetch(url(path), { method: 'OPTIONS', headers: headers() })
-      expect(response.status, `${path} 的预检必须 204`).toBe(204)
+      expect(response.status, `${path} 未声明 OPTIONS，必须 405`).toBe(405)
       expect(allowMethods(response), `${path} 的 allow 集合必须与注册行一致`).toEqual(expected)
     }
   })

@@ -13,17 +13,7 @@ export function postSessionResume(body: Types.PostApiDesktopDshTauriUiSessionRes
   return ofetch<Types.PostApiDesktopDshTauriUiSessionResumeResponse>("/api/desktop/dsh-tauri-ui/session/resume", { method: "post", body, ...options });
 }
 
-/** @method options */
-export function optionsSessionResume(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriUiSessionResumeResponse>("/api/desktop/dsh-tauri-ui/session/resume", { method: "options", ...options });
-}
-
 /** @method get */
 export function getUngrouped(options?: FetchOptions) {
   return ofetch<Types.GetApiDesktopDshTauriUiUngroupedResponse>("/api/desktop/dsh-tauri-ui/ungrouped", { method: "get", ...options });
-}
-
-/** @method options */
-export function optionsUngrouped(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriUiUngroupedResponse>("/api/desktop/dsh-tauri-ui/ungrouped", { method: "options", ...options });
 }

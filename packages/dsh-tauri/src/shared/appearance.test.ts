@@ -39,7 +39,7 @@ describe('appearance preferences', () => {
 
   it('projects the boot page onto the window behind it without doubling the alpha', () => {
     const css = appearanceBootCss(normalizeAppearance({ palette: 'nord', transparency: true, opacity: 70 }))
-    expect(css).toContain('html,body,#root{background:transparent!important}')
+    expect(css).toContain('html:has(>body>#root>[data-dsh-boot]),body:has(>#root>[data-dsh-boot]),#root:has(>[data-dsh-boot]){background:transparent!important}')
     expect(css).toContain('body[data-ds-dark-theme] > #root > [data-dsh-boot]{background:color-mix(in srgb,#2e3440 70%,transparent)!important}')
     expect(css).toContain('body:not([data-ds-dark-theme]) > #root > [data-dsh-boot]{background:color-mix(in srgb,#eceff4 70%,transparent)!important}')
     expect(css).not.toContain('data-dsh-boot]{background:#2e3440')

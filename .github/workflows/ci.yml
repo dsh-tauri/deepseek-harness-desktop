@@ -65,6 +65,11 @@ jobs:
       - name: Build core packages
         run: pnpm --filter dsh-tauri build && pnpm --filter dsh-tauri-ui build
 
+      # dsh-tauri-ui 的构建会重新生成并压缩已提交的 Tailwind 产物。若源码新增/删除了
+      # utility 却漏提产物，运行时只会静默缺样式；显式检查工作树可在合并前阻断漂移。
+      - name: Verify generated Tailwind CSS is current
+        run: git diff --exit-code -- packages/dsh-tauri-ui/src/client/styles/index.ts
+
       - name: Type check package exports
         run: pnpm exec tsc --noEmit
 
@@ -136,15 +141,20 @@ jobs:
           done
 
       - name: Install current dsh CLI (isolated)
-        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-current" --no-audit --no-fund @deepseek-ai/dsh@0.2.0-rc.2
+        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-current" --no-audit --no-fund @deepseek-ai/dsh@0.2.1-alpha.1
 
-      - name: Official plugins and mobile settings composition (current core)
+      - name: Official plugins, appearance and mobile settings (current core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
         run: |
           for seed in 101 102 103 104 105; do
-            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts test/e2e/plugins/dsh-tauri-mobile-settings.e2e.ts || exit $?
+            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts test/e2e/plugins/dsh-tauri-mobile-settings.e2e.ts test/e2e/plugins/dsh-tauri-appearance.e2e.ts test/e2e/plugins/dsh-tauri-appearance-boot.e2e.ts || exit $?
           done
+
+      - name: Host and migrated plugin contracts (current core)
+        env:
+          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
+        run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-scheduler.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts
 
   # 桌面端 L3 E2E（vitest + WebdriverIO）：
   # 驱动真实 Tauri 窗口，只能在 Windows 上跑（embedded WebDriver + WebView2）。
@@ -291,5 +301,31 @@ jobs:
         run: |
           for iteration in 1 2 3 4 5; do
             cargo test --all-features --locked desktop::startup::tests:: -- --test-threads=1 || exit 1
+          done
+        working-directory: src-tauri
+
+      - name: Check macOS login startup regression
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'git restore -- src/desktop/autostart.rs' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/desktop/autostart.rs')
+          source = path.read_text()
+          assert source.count('set_enabled(app, true)') == 1
+          path.write_text(source.replace('set_enabled(app, true)', 'Ok(true)'))
+          PY
+          test_name=desktop::autostart::tests::macos_init_refreshes_only_enabled_login_items
+          if cargo test --lib --all-features --locked "$test_name" -- --exact --nocapture > "$RUNNER_TEMP/autostart-mutant.log" 2>&1; then
+            cat "$RUNNER_TEMP/autostart-mutant.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/autostart-mutant.log"
+          grep -F 'enabled login item must target the current executable' "$RUNNER_TEMP/autostart-mutant.log"
+          git restore -- src/desktop/autostart.rs
+          for iteration in 1 2 3 4 5; do
+            cargo test --lib --all-features --locked "$test_name" -- --exact --nocapture
           done
         working-directory: src-tauri

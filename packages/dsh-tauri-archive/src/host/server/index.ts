@@ -1,5 +1,5 @@
 import { defineWebServer } from 'dsh-h3'
-import { desktopPreflight, desktopRequestGuard } from 'dsh-tauri'
+import { desktopRequestGuard } from 'dsh-tauri'
 import clearSessionArchive from './routes/session/archive/clear/post'
 import deleteSessionArchive from './routes/session/archive/delete'
 import getSessionArchive from './routes/session/archive/get'
@@ -20,10 +20,4 @@ export const server = defineWebServer((app) => {
   app.delete('/api/desktop/dsh-tauri-archive/session/workspace/archive', deleteSessionWorkspaceArchive)
   app.post('/api/desktop/dsh-tauri-archive/session/archive/restore', postSessionUnarchive)
   app.post('/api/desktop/dsh-tauri-archive/session/open/path', postSessionOpenPath)
-
-  app.options('/api/desktop/dsh-tauri-archive/session/archive', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-archive/session/archive/clear', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-archive/session/workspace/archive', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-archive/session/archive/restore', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-archive/session/open/path', desktopPreflight)
 })

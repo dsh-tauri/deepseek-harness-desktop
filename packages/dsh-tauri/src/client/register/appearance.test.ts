@@ -130,6 +130,16 @@ describe('desktop appearance bridge', () => {
     expect(theme.overrideTokens).not.toHaveBeenCalled()
   })
 
+  it('keeps the pinned composer backing opaque in full-window transparency', () => {
+    const { send, setScheme } = setup()
+    send({ palette: 'nord', transparency: true, opacity: 70, sidebarOnly: false })
+    expect(document.querySelector('style')!.textContent).toContain('body [data-composer-seat]{--dsw-alias-bg-base:#2e3440}')
+    setScheme('light')
+    expect(document.querySelector('style')!.textContent).toContain('body [data-composer-seat]{--dsw-alias-bg-base:#eceff4}')
+    send({})
+    expect(document.querySelector('style')!.textContent).toBe('')
+  })
+
   it('hides the collapsed sidebar while retaining the live right-panel width and restores layout on reset', async () => {
     const { send, frame, ctx } = setup()
     send({ terminal: true })

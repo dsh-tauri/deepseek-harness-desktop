@@ -9,12 +9,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 迁移时不复制的运行时产物。
-///
-/// `.harness.pid` 记录的是「即将被停止的进程」，复制到新目录只会让下一次启动的
-/// 孤儿清扫读到一条指向旧进程的记录；它由启动流程重新写入。
-pub(super) const SKIP_NAMES: [&str; 1] = [".harness.pid"];
-
 /// 每复制多少个文件回报一次进度：约 900MB / 2.6 万文件的一次迁移，
 /// 逐文件发事件会淹没 IPC。
 const PROGRESS_EVERY_FILES: u64 = 256;
@@ -58,7 +52,7 @@ fn is_reparse_point(meta: &fs::Metadata) -> bool {
 
 /// 运行时产物判定（文件名非 UTF-8 时不跳过，宁可多复制一个文件也不漏数据）。
 fn is_skipped(name: &str) -> bool {
-    SKIP_NAMES.contains(&name)
+    crate::config::HARNESS_PID_MARKER_NAMES.contains(&name)
 }
 
 /// 递归统计目录树（跳过运行时产物，不跟随重复解析点）。
@@ -257,7 +251,8 @@ mod tests {
         let root = temp_dir("scan");
         write(&root.join("a.txt"), "12345");
         write(&root.join("nested/b.txt"), "123");
-        write(&root.join(SKIP_NAMES[0]), "99999999");
+        write(&root.join(".harness.pid"), "99999999");
+        write(&root.join(".harness-nightly.pid"), "99999999");
 
         let mut stats = TreeStats::default();
         scan_tree(&root, &mut stats).unwrap();
@@ -275,7 +270,8 @@ mod tests {
         let dst = root.join("dst");
         write(&src.join("a.txt"), "12345");
         write(&src.join("nested/b.txt"), "123");
-        write(&src.join(SKIP_NAMES[0]), "99999999");
+        write(&src.join(".harness.pid"), "99999999");
+        write(&src.join(".harness-nightly.pid"), "99999999");
 
         let tick = |_files: u64, _bytes: u64| {};
         let progress = CopyProgress::new(&tick);
@@ -286,7 +282,8 @@ mod tests {
         assert_eq!(stats.bytes, 8);
         assert_eq!(fs::read_to_string(dst.join("nested/b.txt")).unwrap(), "123");
         // 运行时产物不随迁移走：目标目录里不该出现 PID 标记
-        assert!(!dst.join(SKIP_NAMES[0]).exists());
+        assert!(!dst.join(".harness.pid").exists());
+        assert!(!dst.join(".harness-nightly.pid").exists());
 
         let mut verified = TreeStats::default();
         scan_tree(&dst, &mut verified).unwrap();

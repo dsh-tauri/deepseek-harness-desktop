@@ -19,13 +19,34 @@ const RUN_REGISTRY_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Ru
 const STARTUP_APPROVED_REGISTRY_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 
-/// 返回系统启动项名称；开发版独立命名，避免覆盖正式版的可执行文件路径。
-pub fn app_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        "Deepseek Harness Desktop Dev"
-    } else {
-        "Deepseek Harness Desktop"
+/// 稳定版保留旧启动项名称，避免改名后丢失已启用状态；夜间版和开发态独立注册。
+pub fn app_name(identifier: &str) -> &'static str {
+    match (identifier, cfg!(debug_assertions)) {
+        ("dsh-tauri-nightly", true) => "DSH Tauri Nightly Dev",
+        ("dsh-tauri-nightly", false) => "DSH Tauri Nightly",
+        (_, true) => "Deepseek Harness Desktop Dev",
+        (_, false) => "Deepseek Harness Desktop",
     }
+}
+
+/// macOS 应用改名会移动可执行文件，启动时仅刷新原已启用的登录启动项。
+pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    app.plugin(
+        tauri_plugin_autostart::Builder::new()
+            .app_name(app_name(&app.config().identifier))
+            .build(),
+    )?;
+    #[cfg(target_os = "macos")]
+    if let Err(error) = is_enabled(app).and_then(|enabled| {
+        if enabled {
+            set_enabled(app, true)
+        } else {
+            Ok(false)
+        }
+    }) {
+        log::warn!("[autostart] failed to refresh enabled login item: {error}");
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -70,7 +91,7 @@ fn remove_windows_startup_approval(name: &str) -> Result<(), String> {
 /// 从系统读取当前登录启动状态，允许用户在系统设置中直接修改它。
 pub fn is_enabled<R: Runtime>(app_handle: &AppHandle<R>) -> Result<bool, String> {
     #[cfg(windows)]
-    if !windows_run_entry_exists(app_name())? {
+    if !windows_run_entry_exists(app_name(&app_handle.config().identifier))? {
         return Ok(false);
     }
 
@@ -92,12 +113,12 @@ pub fn set_enabled<R: Runtime>(app_handle: &AppHandle<R>, enabled: bool) -> Resu
     } else {
         #[cfg(windows)]
         {
-            if windows_run_entry_exists(app_name())? {
+            if windows_run_entry_exists(app_name(&app_handle.config().identifier))? {
                 manager
                     .disable()
                     .map_err(|error| format!("AUTOSTART_DISABLE_FAILED: {error}"))?;
             }
-            remove_windows_startup_approval(app_name())?;
+            remove_windows_startup_approval(app_name(&app_handle.config().identifier))?;
         }
         #[cfg(not(windows))]
         manager
@@ -245,6 +266,25 @@ mod tests {
         clear_test_entry(&cleanup.manager).expect("repeated disable should be idempotent");
     }
 
+    #[test]
+    fn stable_autostart_name_preserves_existing_registration() {
+        #[cfg(debug_assertions)]
+        assert_eq!(super::app_name("dsh-tauri"), "Deepseek Harness Desktop Dev");
+        #[cfg(not(debug_assertions))]
+        assert_eq!(super::app_name("dsh-tauri"), "Deepseek Harness Desktop");
+    }
+
+    #[test]
+    fn nightly_autostart_name_has_separate_registration() {
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            super::app_name("dsh-tauri-nightly"),
+            "DSH Tauri Nightly Dev"
+        );
+        #[cfg(not(debug_assertions))]
+        assert_eq!(super::app_name("dsh-tauri-nightly"), "DSH Tauri Nightly");
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_autostart_registration_round_trip() {
@@ -298,6 +338,88 @@ mod tests {
             startup_approved.get_raw_value(TEST_APP_NAME).is_err(),
             "StartupApproved value should be removed after disabling"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_init_refreshes_only_enabled_login_items() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+
+        const CHILD_HOME: &str = "DSH_TEST_AUTOSTART_HOME";
+        let Some(home) = std::env::var_os(CHILD_HOME).map(PathBuf::from) else {
+            let home = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "desktop::autostart::tests::macos_init_refreshes_only_enabled_login_items",
+                    "--nocapture",
+                ])
+                .env(CHILD_HOME, home.path())
+                .env("HOME", home.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated autostart init failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("AUTOSTART_INIT_VERIFIED"));
+            return;
+        };
+        assert_eq!(
+            std::env::var_os("HOME"),
+            Some(home.clone().into_os_string())
+        );
+        std::fs::create_dir_all(home.join("Library")).unwrap();
+        let name = if cfg!(debug_assertions) {
+            "Deepseek Harness Desktop Dev"
+        } else {
+            "Deepseek Harness Desktop"
+        };
+        let plist = home
+            .join("Library/LaunchAgents")
+            .join(format!("{name}.plist"));
+        let old_executable = home.join(
+            "Applications/Deepseek Harness Desktop.app/Contents/MacOS/deepseek-harness-desktop",
+        );
+        std::fs::create_dir_all(old_executable.parent().unwrap()).unwrap();
+        std::fs::write(&old_executable, b"").unwrap();
+        let previous = AutoLaunchBuilder::new()
+            .set_app_name(name)
+            .set_app_path(old_executable.to_string_lossy().as_ref())
+            .set_use_launch_agent(true)
+            .build()
+            .unwrap();
+        let executable = std::env::current_exe().unwrap().canonicalize().unwrap();
+
+        for enabled in [false, true] {
+            if enabled {
+                previous.enable().unwrap();
+                let content = std::fs::read_to_string(&plist).unwrap();
+                assert!(content.contains(&format!("<string>{}</string>", old_executable.display())));
+            }
+            let mut context = mock_context(noop_assets());
+            context.config_mut().identifier = "dsh-tauri".into();
+            context.config_mut().product_name = Some("DSH Tauri".into());
+            let app = mock_builder().build(context).unwrap();
+            super::init(app.handle()).unwrap();
+            assert_eq!(super::is_enabled(app.handle()).unwrap(), enabled);
+            if enabled {
+                let content = std::fs::read_to_string(&plist).unwrap();
+                assert!(
+                    content.contains(&format!("<string>{}</string>", executable.display())),
+                    "enabled login item must target the current executable"
+                );
+                assert!(!content.contains(old_executable.to_string_lossy().as_ref()));
+            } else {
+                assert!(
+                    !plist.exists(),
+                    "init must not enable a disabled login item"
+                );
+            }
+        }
+        println!("AUTOSTART_INIT_VERIFIED");
     }
 
     #[cfg(target_os = "macos")]

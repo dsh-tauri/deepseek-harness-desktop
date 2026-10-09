@@ -73,9 +73,14 @@ ${StrLoc}
 !define WEBVIEW2BOOTSTRAPPERPATH "{{webview2_bootstrapper_path}}"
 !define WEBVIEW2INSTALLERPATH "{{webview2_installer_path}}"
 !define MINIMUMWEBVIEW2VERSION "{{minimum_webview2_version}}"
-!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCTNAME}"
+!if "${BUNDLEID}" == "dsh-tauri"
+  !define REGISTRYPRODUCTNAME "Deepseek Harness Desktop"
+!else
+  !define REGISTRYPRODUCTNAME "${PRODUCTNAME}"
+!endif
+!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${REGISTRYPRODUCTNAME}"
 !define MANUKEY "Software\${MANUFACTURER}"
-!define MANUPRODUCTKEY "${MANUKEY}\${PRODUCTNAME}"
+!define MANUPRODUCTKEY "${MANUKEY}\${REGISTRYPRODUCTNAME}"
 !define UNINSTALLERSIGNCOMMAND "{{uninstaller_sign_cmd}}"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
@@ -214,7 +219,13 @@ Function PageReinstall
     IntOp $0 $0 + 1
     ReadRegStr $R0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "DisplayName"
     ReadRegStr $R1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "Publisher"
-    StrCmp "$R0$R1" "${PRODUCTNAME}${MANUFACTURER}" 0 wix_loop
+    StrCmp "$R0$R1" "${PRODUCTNAME}${MANUFACTURER}" wix_found
+    StrCmp "$R0$R1" "${REGISTRYPRODUCTNAME}${MANUFACTURER}" wix_found
+    !if "${BUNDLEID}" == "dsh-tauri"
+      StrCmp "$R0$R1" "${REGISTRYPRODUCTNAME}github" wix_found
+    !endif
+    Goto wix_loop
+    wix_found:
     ReadRegStr $R0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
     ${StrCase} $R1 $R0 "L"
     ${StrLoc} $R0 $R1 "msiexec" ">"
@@ -374,7 +385,7 @@ Function PageLeaveReinstall
       ReadRegStr $R1 HKLM "$R6" "UninstallString"
       ExecWait '$R1' $0
     ${Else}
-      ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+      Call ReadPreviousInstallLocation
       ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
       ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
       ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
@@ -1012,13 +1023,10 @@ Section Uninstall
     DeleteRegKey HKCU "${UNINSTKEY}"
   !endif
 
-  ; Removes the Autostart entry for ${PRODUCTNAME} from the HKCU Run key if it exists.
-  ; This ensures the program does not launch automatically after uninstallation if it exists.
-  ; If it doesn't exist, it does nothing.
-  ; We do this when not updating (to preserve the registry value on updates)
+  ; 更新保留当前通道的启动项，卸载时移除。
   ${If} $UpdateMode <> 1
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${PRODUCTNAME}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${REGISTRYPRODUCTNAME}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${REGISTRYPRODUCTNAME}"
   ${EndIf}
 
   ; Delete app data if the checkbox is selected
@@ -1050,8 +1058,19 @@ Section Uninstall
   ${EndIf}
 SectionEnd
 
-Function RestorePreviousInstallLocation
+Function ReadPreviousInstallLocation
   ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+  !if "${BUNDLEID}" == "dsh-tauri"
+    ${If} $4 == ""
+      ReadRegStr $4 SHCTX "Software\github\${REGISTRYPRODUCTNAME}" ""
+    ${EndIf}
+  !endif
+  ; 安装记录缺失是正常分支，不能让错误标志把成功卸载误判为失败。
+  ClearErrors
+FunctionEnd
+
+Function RestorePreviousInstallLocation
+  Call ReadPreviousInstallLocation
   StrCmp $4 "" +2 0
     StrCpy $INSTDIR $4
 FunctionEnd
@@ -1068,8 +1087,18 @@ Function un.SkipIfPassive
 FunctionEnd
 
 Function CreateOrUpdateStartMenuShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
+  !if "${REGISTRYPRODUCTNAME}" != "${PRODUCTNAME}"
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${REGISTRYPRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 = 1
+      Rename "$SMPROGRAMS\$AppStartMenuFolder\${REGISTRYPRODUCTNAME}.lnk" "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+    ${EndIf}
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\${REGISTRYPRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 = 1
+      Rename "$SMPROGRAMS\${REGISTRYPRODUCTNAME}.lnk" "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+    ${EndIf}
+  !endif
   StrCpy $R0 0
 
   !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
@@ -1110,8 +1139,13 @@ Function CreateOrUpdateStartMenuShortcut
 FunctionEnd
 
 Function CreateOrUpdateDesktopShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
+  !if "${REGISTRYPRODUCTNAME}" != "${PRODUCTNAME}"
+    !insertmacro IsShortcutTarget "$DESKTOP\${REGISTRYPRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 = 1
+      Rename "$DESKTOP\${REGISTRYPRODUCTNAME}.lnk" "$DESKTOP\${PRODUCTNAME}.lnk"
+    ${EndIf}
+  !endif
   !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
   Pop $0
   ${If} $0 = 1

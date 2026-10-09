@@ -1,4 +1,5 @@
 import type { ComposerIconState, ComposerSessionEventEntry, ComposerSessionSnapshot } from './composer-resume.types'
+import { isContentRiskFailure, lastTurnEndReason } from '../../shared/content-risk'
 
 const PLAY_FILL_PATH = 'M14.642 6.285c1.294.777 1.294 2.653 0 3.43l-9.113 5.468c-1.333.8-3.028-.16-3.029-1.715V2.532C2.5.978 4.196.018 5.53.818z'
 
@@ -17,15 +18,8 @@ export function isComposerEmpty(card: Element): boolean {
 }
 
 export function lastTurnEndKind(entries: readonly ComposerSessionEventEntry[] | undefined): string | undefined {
-  if (entries === undefined)
-    return undefined
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const event = entries[index]?.event
-    if (event?.type !== 'turn/end')
-      continue
-    return event.data?.reason?.kind
-  }
-  return undefined
+  const kind = lastTurnEndReason(entries)?.kind
+  return typeof kind === 'string' ? kind : undefined
 }
 
 export function readIconPath(button: HTMLButtonElement): string | null {
@@ -34,6 +28,16 @@ export function readIconPath(button: HTMLButtonElement): string | null {
 
 export function isResumableTurnEnd(kind: string | undefined): boolean {
   return kind !== undefined && RESUMABLE_TURN_END_KINDS.includes(kind)
+}
+
+/**
+ * 最新一轮是否因内容审核被拒。命中时主按钮必须提供「安全恢复」而不是普通继续——
+ * 普通继续会把被拒上下文原样重放，同一会话将持续 400。
+ */
+export function isContentRiskTurnEnd(entries: readonly ComposerSessionEventEntry[] | undefined): boolean {
+  if (entries === undefined)
+    return false
+  return isContentRiskFailure(lastTurnEndReason(entries)?.error)
 }
 
 export function shouldOfferResume(input: {

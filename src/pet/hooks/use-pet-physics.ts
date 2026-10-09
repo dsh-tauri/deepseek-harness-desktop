@@ -98,6 +98,7 @@ export function usePetPhysics(pet: PetRef, kind: 'dsh' | 'codex' | undefined, th
 
     return () => {
       disposed = true
+      stopFlight()
       unlisten?.()
     }
   }, [])

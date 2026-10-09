@@ -9,11 +9,20 @@ export interface ComposerSessionSnapshot {
   subagent?: unknown
 }
 
+/**
+ * 客户端事件条目：`event` 只在 `type: 'event'` 上出现，且是宿主日志事件的逐字快照
+ * （`seq` / `type` / `data`）。判定审核失败要读 `data.reason.error`，故这里保留原样，
+ * 不把它收窄成只有 `kind` 的形状。
+ */
 export interface ComposerSessionEventEntry {
   type?: string
   event?: {
     type?: string
-    data?: { reason?: { kind?: string } }
+    seq?: number
+    data?: {
+      turn?: number
+      reason?: { kind?: string, error?: unknown }
+    }
   }
 }
 

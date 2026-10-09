@@ -45,10 +45,10 @@ Copyright 2026 MichengAI contributors
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.2`
-- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Version: `dsh-v0.2.1-alpha.1`
+- Revision: `5badb15009ae1756c3afe0ae0cef1faafc290ccc`
 - Source: `source/deepseek-harness`
-- Catalog pin: `dsh:` → `0.2.0-rc.2` (`pnpm-workspace.yaml`)
+- Catalog pin: `dsh:` → `0.2.1-alpha.1` (`pnpm-workspace.yaml`)
 - License: MIT — Copyright (c) 2026 DeepSeek
 - Not derived: the desktop counterpart of the official Schedule plugin, running on the official Host contracts.
 
@@ -68,7 +68,13 @@ Official counterpart (official `@deepseek-ai/dsh-schedule` + `@deepseek-ai/dsh-c
 - Recurrence: official one-shot / fixed-rate / daily / weekly / cron (`createCronScheduleRecord`, `resolveCronOccurrence`, `canonicalizeCronExpression`) → `once` / `hourly` / `daily` / `interval` / `workdays` / `weekly` / `monthly` / `custom` (`SCHEDULE_KINDS` in `src/shared/constants.ts`), evaluated with the `cron-schedule` package or anchored arithmetic; no cron kind.
 - Missed occurrences: official keeps only the latest missed occurrence and restores a cold Session → anchored interval/custom arithmetic plus `runs/recover` reconciliation for interrupted runs.
 - UI: official task list, task detail, delivery history, clock/date pickers and recent time zones → task list, create dialog and run history (`history/{get,delete}`); no delivery history or time-zone data source.
-- Official rows ship `disabled: true` in the `@deepseek-ai/dsh-web-app` bundle (`cordis.patch.yml`: id `schedule`, id `ui-schedule`), so the official Schedule service and this plugin do not share a task store.
+- Official Schedule is enabled by default in the target Web bundle (`cordis.patch.yml`: id `schedule`, id `ui-schedule`); its `schedule` service and `schedule_*` tools use a different task store from this plugin's `scheduler` service and `scheduler_*` tools.
+
+## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The target enables the official `schedule` and `ui-schedule` rows by default in the Web bundle and scopes reminder tools to Standard, Creator, and PTC presets.
+- This plugin keeps its separate `scheduler` service, `scheduler_*` tools, unattended fresh-session runs, and task store. It neither disables the official rows nor imports official tasks into its own store.
+- Agent model selection, approval policy, session append, and user-message construction remain compatible; no removed invariant export is consumed.
 
 ## License
 

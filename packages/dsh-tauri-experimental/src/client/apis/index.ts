@@ -13,17 +13,7 @@ export function getSummary(params?: Types.GetApiDesktopDshTauriExperimentalSumma
   return ofetch<Types.GetApiDesktopDshTauriExperimentalSummaryResponse>("/api/desktop/dsh-tauri-experimental/summary", { method: "get", params, ...options });
 }
 
-/** @method options */
-export function optionsSummary(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriExperimentalSummaryResponse>("/api/desktop/dsh-tauri-experimental/summary", { method: "options", ...options });
-}
-
 /** @method get */
 export function getLive(params?: Types.GetApiDesktopDshTauriExperimentalLiveQuery, options?: FetchOptions) {
   return ofetch<Types.GetApiDesktopDshTauriExperimentalLiveResponse>("/api/desktop/dsh-tauri-experimental/live", { method: "get", params, ...options });
-}
-
-/** @method options */
-export function optionsLive(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriExperimentalLiveResponse>("/api/desktop/dsh-tauri-experimental/live", { method: "options", ...options });
 }

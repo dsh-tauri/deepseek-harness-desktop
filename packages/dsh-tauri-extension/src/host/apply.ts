@@ -26,9 +26,17 @@ export function apply(ctx: HostContext, config?: Config): void {
   ctx.inject(inject, (hostCtx) => {
     resetProviderRuntime()
     const remountProvider = (): Promise<void> => provider.start(packagedSkillsDir())
+    const hotReload = (): boolean => {
+      try {
+        return hostCtx.get('hmr') !== undefined
+      }
+      catch {
+        return false
+      }
+    }
     const profileDirPath = profile.peek(config?.profile ?? profile.resolve() ?? DEFAULT_PROFILE)
     ctx.effect(
-      () => server(hostCtx, { profileDirPath, remountProvider }),
+      () => server(hostCtx, { profileDirPath, remountProvider, hotReload }),
       'dsh-tauri-extension: routes',
     )
     ctx.effect(() => {

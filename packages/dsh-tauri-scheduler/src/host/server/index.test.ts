@@ -26,12 +26,12 @@ const EXPECTED_ROUTES: ReadonlyArray<readonly [string, string]> = [
 const EXPECTED_PATHS: readonly string[] = [...new Set(EXPECTED_ROUTES.map(([, path]) => path))]
 
 const ALLOW_BY_PATH: Readonly<Record<string, string>> = {
-  [`${P}/tasks`]: 'GET, HEAD, POST, PUT, DELETE, OPTIONS',
-  [`${P}/tasks/toggle`]: 'POST, OPTIONS',
-  [`${P}/tasks/run`]: 'POST, OPTIONS',
-  [`${P}/history`]: 'GET, HEAD, DELETE, OPTIONS',
-  [`${P}/options`]: 'GET, HEAD, OPTIONS',
-  [`${P}/runs/recover`]: 'POST, OPTIONS',
+  [`${P}/tasks`]: 'GET, HEAD, POST, PUT, DELETE',
+  [`${P}/tasks/toggle`]: 'POST',
+  [`${P}/tasks/run`]: 'POST',
+  [`${P}/history`]: 'GET, HEAD, DELETE',
+  [`${P}/options`]: 'GET, HEAD',
+  [`${P}/runs/recover`]: 'POST',
 }
 
 const UNDECLARED_METHOD = 'PATCH'
@@ -133,18 +133,18 @@ describe('调度器路由声明', () => {
     dispose()
   })
 
-  it('预检 OPTIONS 返回 204 并带 allow 头', async () => {
+  it('oPTIONS 未声明时返回 405 并带 allow 头', async () => {
     const harness = createHarness()
     const dispose = mount(harness)
     const base = await listen(harness.registered)
 
     const tasks = await fetch(`${base}${P}/tasks`, { method: 'OPTIONS' })
-    expect(tasks.status).toBe(204)
-    expect(tasks.headers.get('allow')).toBe('GET, HEAD, POST, PUT, DELETE, OPTIONS')
+    expect(tasks.status).toBe(405)
+    expect(tasks.headers.get('allow')?.split(', ').sort()).toEqual('GET, HEAD, POST, PUT, DELETE'.split(', ').sort())
 
     const run = await fetch(`${base}${P}/tasks/run`, { method: 'OPTIONS' })
-    expect(run.status).toBe(204)
-    expect(run.headers.get('allow')).toBe('POST, OPTIONS')
+    expect(run.status).toBe(405)
+    expect(run.headers.get('allow')?.split(', ').sort()).toEqual('POST'.split(', ').sort())
 
     dispose()
   })

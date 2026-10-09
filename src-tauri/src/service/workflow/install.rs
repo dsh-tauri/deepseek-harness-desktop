@@ -144,7 +144,7 @@ pub async fn install(
         // 下载 URL 对 dsh 也是完全确定可算的（DSH_CORE_URL + 平台文件名），
         // 无需依赖 GitHub API 元数据；api.github.com 限流/被代理拦截时
         // （mac 首次启动常见）仍能拿到真实下载地址，避免整次安装被瞬时失败卡死。
-        // dsh 核心默认先走 GitHub 官方直连，失败自动切换 ghfast.top 镜像兜底
+        // dsh 核心默认先走 GitHub 官方直连，失败依次切换代理镜像兜底
         // （下载层会在界面上告知用户）；其余任务保持单一官方源。
         let (urls, name) = if kind == download::InstallKind::Dsh {
             // 摘要与资产必须来自同一个 release。若前面已取得 release 元数据，
@@ -156,7 +156,8 @@ pub async fn install(
                 .filter(|url| !url.is_empty())
                 .unwrap_or(config::get_dsh_download_url()?);
             let name = primary.rsplit('/').next().unwrap_or("").to_string();
-            let urls = vec![primary.clone(), config::mirror_download_url(&primary)];
+            let mut urls = vec![primary.clone()];
+            urls.extend(config::mirror_download_urls(&primary));
             (urls, name)
         } else {
             let url = task.get_download_url()?;

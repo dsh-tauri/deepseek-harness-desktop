@@ -23,11 +23,6 @@ export function deleteSessionArchive(body: Types.DeleteApiDesktopDshTauriArchive
   return ofetch<Types.DeleteApiDesktopDshTauriArchiveSessionArchiveResponse>("/api/desktop/dsh-tauri-archive/session/archive", { method: "delete", body, ...options });
 }
 
-/** @method options */
-export function optionsSessionArchive(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriArchiveSessionArchiveResponse>("/api/desktop/dsh-tauri-archive/session/archive", { method: "options", ...options });
-}
-
 /** @method post */
 export function postSessionArchiveClear(options?: FetchOptions) {
   return ofetch<Types.PostApiDesktopDshTauriArchiveSessionArchiveClearResponse>("/api/desktop/dsh-tauri-archive/session/archive/clear", { method: "post", ...options });
@@ -36,11 +31,6 @@ export function postSessionArchiveClear(options?: FetchOptions) {
 /** @method delete */
 export function deleteSessionArchiveClear(options?: FetchOptions) {
   return ofetch<Types.DeleteApiDesktopDshTauriArchiveSessionArchiveClearResponse>("/api/desktop/dsh-tauri-archive/session/archive/clear", { method: "delete", ...options });
-}
-
-/** @method options */
-export function optionsSessionArchiveClear(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriArchiveSessionArchiveClearResponse>("/api/desktop/dsh-tauri-archive/session/archive/clear", { method: "options", ...options });
 }
 
 /** @method post */
@@ -53,27 +43,12 @@ export function deleteSessionWorkspaceArchive(body: Types.DeleteApiDesktopDshTau
   return ofetch<Types.DeleteApiDesktopDshTauriArchiveSessionWorkspaceArchiveResponse>("/api/desktop/dsh-tauri-archive/session/workspace/archive", { method: "delete", body, ...options });
 }
 
-/** @method options */
-export function optionsSessionWorkspaceArchive(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriArchiveSessionWorkspaceArchiveResponse>("/api/desktop/dsh-tauri-archive/session/workspace/archive", { method: "options", ...options });
-}
-
 /** @method post */
 export function postSessionArchiveRestore(body: Types.PostApiDesktopDshTauriArchiveSessionArchiveRestoreBody, options?: FetchOptions) {
   return ofetch<Types.PostApiDesktopDshTauriArchiveSessionArchiveRestoreResponse>("/api/desktop/dsh-tauri-archive/session/archive/restore", { method: "post", body, ...options });
 }
 
-/** @method options */
-export function optionsSessionArchiveRestore(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriArchiveSessionArchiveRestoreResponse>("/api/desktop/dsh-tauri-archive/session/archive/restore", { method: "options", ...options });
-}
-
 /** @method post */
 export function postSessionOpenPath(body: Types.PostApiDesktopDshTauriArchiveSessionOpenPathBody, options?: FetchOptions) {
   return ofetch<Types.PostApiDesktopDshTauriArchiveSessionOpenPathResponse>("/api/desktop/dsh-tauri-archive/session/open/path", { method: "post", body, ...options });
-}
-
-/** @method options */
-export function optionsSessionOpenPath(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriArchiveSessionOpenPathResponse>("/api/desktop/dsh-tauri-archive/session/open/path", { method: "options", ...options });
 }

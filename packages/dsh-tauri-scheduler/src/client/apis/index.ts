@@ -28,29 +28,14 @@ export function deleteTasks(body: Types.DeleteApiDesktopDshTauriSchedulerTasksBo
   return ofetch<Types.DeleteApiDesktopDshTauriSchedulerTasksResponse>("/api/desktop/dsh-tauri-scheduler/tasks", { method: "delete", body, ...options });
 }
 
-/** @method options */
-export function optionsTasks(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriSchedulerTasksResponse>("/api/desktop/dsh-tauri-scheduler/tasks", { method: "options", ...options });
-}
-
 /** @method post */
 export function postTasksToggle(body: Types.PostApiDesktopDshTauriSchedulerTasksToggleBody, options?: FetchOptions) {
   return ofetch<Types.PostApiDesktopDshTauriSchedulerTasksToggleResponse>("/api/desktop/dsh-tauri-scheduler/tasks/toggle", { method: "post", body, ...options });
 }
 
-/** @method options */
-export function optionsTasksToggle(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriSchedulerTasksToggleResponse>("/api/desktop/dsh-tauri-scheduler/tasks/toggle", { method: "options", ...options });
-}
-
 /** @method post */
 export function postTasksRun(body: Types.PostApiDesktopDshTauriSchedulerTasksRunBody, options?: FetchOptions) {
   return ofetch<Types.PostApiDesktopDshTauriSchedulerTasksRunResponse>("/api/desktop/dsh-tauri-scheduler/tasks/run", { method: "post", body, ...options });
-}
-
-/** @method options */
-export function optionsTasksRun(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriSchedulerTasksRunResponse>("/api/desktop/dsh-tauri-scheduler/tasks/run", { method: "options", ...options });
 }
 
 /** @method get */
@@ -63,27 +48,12 @@ export function deleteHistory(body: Types.DeleteApiDesktopDshTauriSchedulerHisto
   return ofetch<Types.DeleteApiDesktopDshTauriSchedulerHistoryResponse>("/api/desktop/dsh-tauri-scheduler/history", { method: "delete", body, ...options });
 }
 
-/** @method options */
-export function optionsHistory(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriSchedulerHistoryResponse>("/api/desktop/dsh-tauri-scheduler/history", { method: "options", ...options });
-}
-
 /** @method get */
 export function getOptions(options?: FetchOptions) {
   return ofetch<Types.GetApiDesktopDshTauriSchedulerOptionsResponse>("/api/desktop/dsh-tauri-scheduler/options", { method: "get", ...options });
 }
 
-/** @method options */
-export function optionsOptions(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriSchedulerOptionsResponse>("/api/desktop/dsh-tauri-scheduler/options", { method: "options", ...options });
-}
-
 /** @method post */
 export function postRunsRecover(options?: FetchOptions) {
   return ofetch<Types.PostApiDesktopDshTauriSchedulerRunsRecoverResponse>("/api/desktop/dsh-tauri-scheduler/runs/recover", { method: "post", ...options });
-}
-
-/** @method options */
-export function optionsRunsRecover(options?: FetchOptions) {
-  return ofetch<Types.OptionsApiDesktopDshTauriSchedulerRunsRecoverResponse>("/api/desktop/dsh-tauri-scheduler/runs/recover", { method: "options", ...options });
 }

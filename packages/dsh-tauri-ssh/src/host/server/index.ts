@@ -1,5 +1,5 @@
 import { defineWebServer } from 'dsh-h3'
-import { desktopPreflight, desktopRequestGuard } from 'dsh-tauri'
+import { desktopRequestGuard } from 'dsh-tauri'
 import machinesConnect from './routes/machines/connect/post'
 import machinesDelete from './routes/machines/delete'
 import machinesDisconnect from './routes/machines/disconnect/post'
@@ -29,14 +29,4 @@ export const server = defineWebServer((app) => {
   app.get('/api/desktop/dsh-tauri-ssh/machines/events', machinesEvents)
   app.get('/api/desktop/dsh-tauri-ssh/sync/preview', syncPreview)
   app.post('/api/desktop/dsh-tauri-ssh/sync/apply', syncApply)
-  app.options('/api/desktop/dsh-tauri-ssh/settings', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/session/role', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/machines', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/machines/test', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/machines/connect', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/machines/disconnect', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/machines/install', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/machines/events', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/sync/preview', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-ssh/sync/apply', desktopPreflight)
 })

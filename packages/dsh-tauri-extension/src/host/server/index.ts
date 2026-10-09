@@ -1,6 +1,6 @@
 import type { ExtensionRouteDeps } from './routes/index.types'
 import { defineWebServer } from 'dsh-h3'
-import { desktopPreflight, desktopRequestGuard } from 'dsh-tauri'
+import { desktopRequestGuard } from 'dsh-tauri'
 import restart from './routes/host/restart/post'
 import importApply from './routes/import/apply/post'
 import importScan from './routes/import/scan/get'
@@ -46,18 +46,4 @@ export const server = defineWebServer<ExtensionRouteDeps>((app) => {
   app.delete('/api/desktop/dsh-tauri-extension/roots', rootsRemove)
 
   app.post('/api/desktop/dsh-tauri-extension/host/restart', restart)
-
-  app.options('/api/desktop/dsh-tauri-extension/skills', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/skills/refresh', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/skill', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/skill/policy', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/open/dir', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/mcp', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/mcp/toggle', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/mcp/check', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/mcp/copy', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/import/scan', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/import/apply', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/roots', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-extension/host/restart', desktopPreflight)
 })

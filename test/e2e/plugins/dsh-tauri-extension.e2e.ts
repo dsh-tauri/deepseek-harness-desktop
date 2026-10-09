@@ -105,14 +105,15 @@ describe('L2 宿主路由', () => {
     expect(body.error, '404 的领域文案必须精确').toBe('skill not found')
   })
 
-  it('验证 MCP 列表结构固定且标记需要重启', async () => {
+  it('验证 MCP 列表结构固定且按宿主热加载能力标记', async () => {
     const response = await fetch(apiUrl('/mcp'), { headers: apiHeaders() })
 
     expect(response.status, 'MCP 列表必须可读').toBe(200)
 
     const body = await response.json() as McpListBody
     expect(Array.isArray(body.servers), '响应体必须带 servers 数组字段').toBe(true)
-    expect(body.restartNeeded, 'MCP 变更恒需重启才生效').toBe(true)
+    expect(typeof body.restartNeeded, 'restartNeeded 必须是布尔标记').toBe('boolean')
+    expect(body.restartNeeded, '共享宿主已挂载 hmr 服务，MCP 变更无需重启').toBe(false)
     expect(body.error, '成功路径不得带 error 字段').toBeUndefined()
   })
 
@@ -368,7 +369,8 @@ describe('L2 宿主路由', () => {
     const body = await response.json() as ImportApplyBody
     expect(body.ok, '无操作分支仍须回报 ok:true').toBe(true)
     expect(body.results, '没有候选行时逐行结果必须为空').toEqual([])
-    expect(body.restartNeeded, 'MCP 变更恒需重启才生效').toBe(true)
+    expect(typeof body.restartNeeded, 'restartNeeded 必须是布尔标记').toBe('boolean')
+    expect(body.restartNeeded, '共享宿主已挂载 hmr 服务，变更无需重启').toBe(false)
     expect(readPatchFile(), '空 items 不得改写 patch 文件').toBe(before)
   })
 

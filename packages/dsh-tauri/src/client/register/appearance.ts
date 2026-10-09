@@ -36,8 +36,9 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
         ? `body :has(>[data-slot="main"]),body [data-rightbar-col]{--dsw-alias-bg-base:${canvas};background:${canvas}!important} `
         + `[data-slot="settings.content"]{--dsw-alias-bg-base:${canvas};background:${canvas}!important}`
         : '',
+      translucent ? `body [data-composer-seat]{--dsw-alias-bg-base:${canvas}}` : '',
       current.terminal ? 'body [data-sidebar-collapsed]:has(>[data-shell-overlay]){grid-template-columns:var(--dsh-appearance-columns)!important}body [data-sidebar-collapsed] [data-slot="sidebar"]{visibility:hidden}' : '',
-      appearanceBootCss(current, true),
+      appearanceBootCss(current),
     ].filter(Boolean).join('\n')
   }
 

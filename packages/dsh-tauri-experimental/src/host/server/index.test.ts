@@ -51,8 +51,8 @@ const EXPECTED_ROUTES: ReadonlyArray<readonly [string, string]> = [
 const EXPECTED_PATHS: readonly string[] = [...new Set(EXPECTED_ROUTES.map(([, path]) => path))]
 
 const ALLOW_BY_PATH: Readonly<Record<string, string>> = {
-  [SUMMARY_PATH]: 'GET, HEAD, OPTIONS',
-  [LIVE_PATH]: 'GET, HEAD, OPTIONS',
+  [SUMMARY_PATH]: 'GET, HEAD',
+  [LIVE_PATH]: 'GET, HEAD',
 }
 
 const UNDECLARED_METHOD = 'PUT'
@@ -157,18 +157,18 @@ describe('running-changes 路由声明', () => {
     dispose()
   })
 
-  it('预检 OPTIONS 返回 204 并带 allow 头', async () => {
+  it('oPTIONS 未声明时返回 405 并带 allow 头', async () => {
     const harness = createHarness()
     const dispose = mount(harness)
     const base = await listen(harness.registered)
 
     const summary = await fetch(`${base}${SUMMARY_PATH}`, { method: 'OPTIONS' })
-    expect(summary.status).toBe(204)
-    expect(summary.headers.get('allow')).toBe('GET, HEAD, OPTIONS')
+    expect(summary.status).toBe(405)
+    expect(summary.headers.get('allow')?.split(', ').sort()).toEqual('GET, HEAD'.split(', ').sort())
 
     const live = await fetch(`${base}${LIVE_PATH}`, { method: 'OPTIONS' })
-    expect(live.status).toBe(204)
-    expect(live.headers.get('allow')).toBe('GET, HEAD, OPTIONS')
+    expect(live.status).toBe(405)
+    expect(live.headers.get('allow')?.split(', ').sort()).toEqual('GET, HEAD'.split(', ').sort())
 
     dispose()
   })

@@ -3,8 +3,8 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.2`
-- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Version: `dsh-v0.2.1-alpha.1`
+- Revision: `5badb15009ae1756c3afe0ae0cef1faafc290ccc`
 - Source: `source/deepseek-harness`
 - License: MIT — Copyright (c) 2026 DeepSeek
 
@@ -48,6 +48,11 @@ Re-implemented instead of copied:
 
 - Styling runs on this repo's `css-render` stack (`client/models/styles.ts`, `client/models/styles.overrides.ts`); upstream `.module.css` files are not copied.
 - `client/register/styles.ts`, `client/models/remote.ts`, `client/models/settings-forms.ts`, `client/types/remotes.ts`, `client/constants/index.ts` are this repo's own glue.
+
+## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The derived `packages/client/ui-settings-models/src/` tree is byte-for-byte unchanged across this corridor, including onboarding, credential events, provider forms, model compatibility fields, and slots.
+- The new Cordis release needs its matching Include, Loader, and Group peers. They are pinned in the workspace so the fork shares the same augmented `Context` as the official client packages.
 
 ## License
 

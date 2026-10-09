@@ -16,6 +16,11 @@ on:
           - macos
           - linux
           - windows
+      nightly:
+        description: 验证独立夜间构建身份及资产名称
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -62,10 +67,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Stamp nightly version
+        if: inputs.nightly
+        shell: bash
+        run: node scripts/stamp-version.mjs 0.0.0-nightly.test
+
       # 不注入任何签名/公证 secrets，产出未签名（unsigned/no-notarized）bundle，
       # 依然完整走一遍 beforeBuildCommand（build:plugins + 前端）+ cargo release 构建。
       - name: Build package
-        run: pnpm tauri build --target ${{ matrix.target }}
+        run: pnpm tauri build --target ${{ matrix.target }} ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }}
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs src-tauri/target/${{ matrix.target }}/release/bundle/dmg
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
@@ -99,19 +112,29 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Stamp nightly version
+        if: inputs.nightly
+        shell: bash
+        run: node scripts/stamp-version.mjs 0.0.0-nightly.test
+
       - name: Build packages
-        run: pnpm tauri build --bundles appimage
+        run: pnpm tauri build --bundles appimage,deb ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }}
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
         with:
           name: build-test-linux
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: 7
 
@@ -137,6 +160,11 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Stamp nightly version
+        if: inputs.nightly
+        shell: bash
+        run: node scripts/stamp-version.mjs 0.0.0-nightly.test
+
       # WiX 只接受纯数字版本；NSIS 仍使用完整 SemVer。
       - name: Prepare MSI version override
         shell: bash
@@ -150,7 +178,10 @@ jobs:
           "
 
       - name: Build packages
-        run: pnpm tauri build --config release-msi-version.tmp.json
+        run: pnpm tauri build ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }} --config release-msi-version.tmp.json
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/nsis src-tauri/target/release/bundle/msi
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6

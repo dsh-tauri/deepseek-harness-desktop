@@ -151,6 +151,17 @@ export default c([
       background: 'var(--dsw-alias-label-primary)',
     }),
   ]),
+  // 官方 `ChatView` 把整条会话的节点全量挂进 `[data-chat-flow]` 列（无虚拟滚动），长会话的
+  // 布局与绘制开销随节点数线性增长。节点本身是列的直接子元素 `[data-chat-anchor-key]`，这里
+  // 交给浏览器原生的 `content-visibility: auto` 跳过屏外节点的布局与绘制；`contain-intrinsic-size`
+  // 的 `auto` 关键字让它记住上次渲染尺寸，避免估算值把滚动位置顶偏。
+  c('[data-chat-flow] > [data-chat-anchor-key]', {
+    contentVisibility: 'auto',
+    containIntrinsicSize: 'auto 320px',
+  }),
+  c('[data-chat-flow-key]:has(> [data-slot="conversation.chat.node"] > [data-dsh-tauri-ui-continue-notice])', {
+    display: 'none !important',
+  }),
 
   c('[class$="sidebarCol"]', {
     borderRight: 'none !important',

@@ -38,6 +38,8 @@ vi.mock('dsh-tauri-ui/client', () => {
     Tag: Empty,
     Text: Content,
     Textarea: Empty,
+    Toast: ({ text }: { text: string }) => <div>{text}</div>,
+    TriangleExclamation: Empty,
   }
 })
 

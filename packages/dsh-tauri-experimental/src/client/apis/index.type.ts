@@ -2,8 +2,6 @@ export type GetApiDesktopDshTauriExperimentalSummaryResponse = { sessionId: stri
 export type GetApiDesktopDshTauriExperimentalSummaryQuerySessionId = undefined | string;
 export type GetApiDesktopDshTauriExperimentalLiveResponse = { active: false | true; turn: null | number; fileCount: number; insertions: number; deletions: number } | { error: string };
 export type GetApiDesktopDshTauriExperimentalLiveQuerySessionId = undefined | string;
-export type OptionsApiDesktopDshTauriExperimentalSummaryResponse = void;
-export type OptionsApiDesktopDshTauriExperimentalLiveResponse = void;
 
 export interface GetApiDesktopDshTauriExperimentalSummaryQuery {
   sessionId?: GetApiDesktopDshTauriExperimentalSummaryQuerySessionId;

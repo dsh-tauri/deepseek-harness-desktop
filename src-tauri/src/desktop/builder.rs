@@ -228,7 +228,7 @@ pub fn tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
         .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Deepseek Harness Desktop")
+        .tooltip(crate::desktop::product_name(app))
         .on_menu_event(move |app, event| handle_menu_event(app, &event))
         .on_tray_icon_event(move |tray, event| handle_tray_icon_event(tray, &event))
         .build(app)?;
@@ -238,7 +238,7 @@ pub fn tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Deepseek Harness Desktop")
+        .tooltip(crate::desktop::product_name(app))
         .on_menu_event(move |app, event| handle_menu_event(app, &event))
         .on_tray_icon_event(move |tray, event| handle_tray_icon_event(tray, &event))
         .build(app)?;
@@ -381,11 +381,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let services =
         PredefinedMenuItem::services(app, Some(&crate::config::i18n::t("menu.services")))?;
     let services_separator = PredefinedMenuItem::separator(app)?;
-    let app_name = app
-        .config()
-        .product_name
-        .as_deref()
-        .unwrap_or(&app.package_info().name);
+    let app_name = crate::desktop::product_name(app);
     let hide_label = format!("{} {}", crate::config::i18n::t("menu.hide"), app_name);
     let hide = PredefinedMenuItem::hide(app, Some(&hide_label))?;
     let hide_others =
@@ -398,7 +394,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let system_application_menu = Submenu::with_id_and_items(
         app,
         "desktop-system-application-menu",
-        app.package_info().name.clone(),
+        app_name,
         true,
         &[
             &about,
@@ -1054,7 +1050,7 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
 
     let webview_builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
-            .title("Deepseek Harness Desktop");
+            .title(crate::desktop::product_name(app));
 
     // Windows/WebView2 在 build() 尚未返回时就可能绘制窗口。先隐藏创建，
     // 等保存的几何恢复完成再显示，避免启动时先闪出默认尺寸再跳到历史尺寸。
@@ -1223,7 +1219,7 @@ pub fn build_extra_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::W
     build_shell_window(
         app,
         format!("window-{sequence}"),
-        "Deepseek Harness Desktop",
+        crate::desktop::product_name(app),
     )
 }
 
@@ -1578,10 +1574,12 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::remove_core,
         crate::bridge::update_local_core,
         crate::bridge::proxy_health_check,
+        crate::bridge::harness_ownership,
         crate::bridge::get_runtime_info,
         crate::bridge::runtime_ready,
         crate::bridge::get_app_config,
         crate::bridge::update_app_config,
+        crate::bridge::get_effective_heap_limit_mb,
         crate::bridge::test_proxy,
         crate::bridge::get_launch_on_login,
         crate::bridge::set_launch_on_login,
@@ -1672,6 +1670,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         .manage(crate::desktop::pet_mouse::PetMouseStreamState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
+            crate::desktop::autostart::init(&app_handle)?;
             // 首装检测必须最先执行：窗口几何恢复/退出保存等任何 store 写入都会
             // 创建 store 文件，判定晚于它们会把首装误判为升级（见
             // config::detect_first_install 的时序说明）。
@@ -1887,12 +1886,6 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
     let builder = builder.plugin(crate::desktop::tauri_internals::shim());
 
     let builder = builder
-        // 官方跨平台登录启动实现：Windows HKCU Run、macOS LaunchAgent、Linux XDG。
-        .plugin(
-            tauri_plugin_autostart::Builder::new()
-                .app_name(crate::desktop::autostart::app_name())
-                .build(),
-        )
         // Opener plugin
         .plugin(tauri_plugin_opener::init())
         // Notification plugin（官方插件）：权限查询等通用通知能力。

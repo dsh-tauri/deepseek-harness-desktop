@@ -7,11 +7,6 @@ export type PostApiDesktopDshTauriArchiveSessionWorkspaceArchiveResponse = { arc
 export type DeleteApiDesktopDshTauriArchiveSessionWorkspaceArchiveResponse = { ok: true } | { ok: false; error: string };
 export type PostApiDesktopDshTauriArchiveSessionArchiveRestoreResponse = { ok: true } | { ok: false; error: string };
 export type PostApiDesktopDshTauriArchiveSessionOpenPathResponse = { ok: false | true; error?: undefined | string };
-export type OptionsApiDesktopDshTauriArchiveSessionArchiveResponse = void;
-export type OptionsApiDesktopDshTauriArchiveSessionArchiveClearResponse = void;
-export type OptionsApiDesktopDshTauriArchiveSessionWorkspaceArchiveResponse = void;
-export type OptionsApiDesktopDshTauriArchiveSessionArchiveRestoreResponse = void;
-export type OptionsApiDesktopDshTauriArchiveSessionOpenPathResponse = void;
 
 export interface PostApiDesktopDshTauriArchiveSessionArchiveBody {
   sessionId: string;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from './index'
+import { registerContinueNotice } from './register/continue-notice'
 import { registerSettings } from './register/settings'
 
 vi.mock('./components', () => ({}))
@@ -8,6 +9,7 @@ vi.mock('./components/segmented-control', () => ({}))
 vi.mock('./hooks/use-mount-style', () => ({}))
 vi.mock('./locales', () => ({ locale: { registerLocale: vi.fn() } }))
 vi.mock('./register/composer-resume', () => ({ composerResumeFeature: vi.fn() }))
+vi.mock('./register/continue-notice', () => ({ registerContinueNotice: vi.fn() }))
 vi.mock('./register/hero-workspace', () => ({ heroWorkspaceFeature: vi.fn() }))
 vi.mock('./register/im-panel', () => ({ registerImPanel: vi.fn() }))
 vi.mock('./register/new-session', () => ({ sidebarNewSessionFeature: vi.fn(), ungroupedNewSessionFeature: vi.fn() }))
@@ -32,7 +34,8 @@ describe('ui client settings effect registration', () => {
     apply({ effect } as unknown as Parameters<typeof apply>[0])
 
     expect(effect).toHaveBeenCalledWith(registerSettings, 'dsh-tauri-ui: settings panel')
-    expect(effect).toHaveBeenCalledTimes(11)
+    expect(effect).toHaveBeenCalledTimes(12)
+    expect(effect).toHaveBeenCalledWith(registerContinueNotice, 'dsh-tauri-ui: continue notice')
     expect(effect).toHaveBeenCalledWith(expect.any(Function), 'dsh-tauri-ui: styles')
     expect(effect.mock.calls.some(([, name]) => name.includes('mobile'))).toBe(false)
   })

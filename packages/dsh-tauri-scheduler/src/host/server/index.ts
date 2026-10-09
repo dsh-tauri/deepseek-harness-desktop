@@ -1,5 +1,5 @@
 import { defineWebServer } from 'dsh-h3'
-import { desktopPreflight, desktopRequestGuard } from 'dsh-tauri'
+import { desktopRequestGuard } from 'dsh-tauri'
 import historyDelete from './routes/history/delete'
 import history from './routes/history/get'
 import options from './routes/options/get'
@@ -23,11 +23,4 @@ export const server = defineWebServer((app) => {
   app.delete('/api/desktop/dsh-tauri-scheduler/history', historyDelete)
   app.get('/api/desktop/dsh-tauri-scheduler/options', options)
   app.post('/api/desktop/dsh-tauri-scheduler/runs/recover', recover)
-
-  app.options('/api/desktop/dsh-tauri-scheduler/tasks', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-scheduler/tasks/toggle', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-scheduler/tasks/run', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-scheduler/history', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-scheduler/options', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-scheduler/runs/recover', desktopPreflight)
 })

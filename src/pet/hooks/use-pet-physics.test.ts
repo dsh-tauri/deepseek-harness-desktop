@@ -259,6 +259,25 @@ describe('usePetPhysics', () => {
     expect(pet.fling).not.toHaveBeenCalled()
   })
 
+  it('卸载后晚到的屏幕信息不会重新启动飞行或移动窗口', async () => {
+    let resolve!: (monitor: unknown) => void
+    mocks.monitor.mockReturnValueOnce(new Promise((yes) => {
+      resolve = yes
+    }))
+    const pet = createPet()
+    const { result, unmount } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    act(() => {
+      result.current.onFling(flingEvent(600, 0))
+    })
+    unmount()
+    await act(async () => {
+      resolve({ workArea: WORK_AREA })
+    })
+    advanceFrames(3)
+    expect(mocks.window.setPosition).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('抓住宠物（命中箱按下）立刻停住飞行，不等落地', async () => {
     const pet = createPet()
     const { result } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))

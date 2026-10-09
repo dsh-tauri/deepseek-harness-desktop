@@ -92,3 +92,41 @@ describe('center column surface', () => {
     expect(css).not.toContain('data-dsh-center-col')
   })
 })
+
+/**
+ * 聊天流屏外渲染契约。
+ *
+ * 官方 `ChatView` 把整条会话的节点全量挂在 `[data-chat-flow]` 列里，没有滚动虚拟化：
+ * 每个节点是列的直接子元素 `[data-chat-anchor-key]`（`flowItem`）。长会话因此把上千棵
+ * markdown 与工具卡片子树留在文档里，布局与绘制开销随会话长度线性增长。本仓不动 DOM
+ * 与产品逻辑，把浏览器原生的 `content-visibility: auto` 交给这些节点：屏外节点跳过
+ * 布局与绘制，滚回来仍按真实尺寸渲染；`contain-intrinsic-size` 的 `auto` 关键字让浏览器
+ * 记住上次渲染尺寸，只有首次滚过用估算值，避免把滚动位置顶偏。这里按生成 CSS 断言规则
+ * 只做「跳过渲染」，不得用 `hidden`（那会让屏外内容在浏览器查找与无障碍树里消失）。
+ */
+describe('chat flow off-screen rendering', () => {
+  const rules: Record<string, Record<string, string>> = {}
+  postcss.parse(globalStyle.render()).walkRules((rule) => {
+    if (rule.selector.includes('data-chat-flow')) {
+      rules[rule.selector] = {}
+      rule.walkDecls((decl) => {
+        rules[rule.selector][decl.prop] = decl.value
+      })
+    }
+  })
+
+  it('对聊天流锚点启用原生屏外跳过渲染并保留尺寸记忆', () => {
+    expect(rules['[data-chat-flow] > [data-chat-anchor-key]']).toEqual({
+      'content-visibility': 'auto',
+      'contain-intrinsic-size': 'auto 320px',
+    })
+  })
+
+  it('只移除带 continue 标记的外层聊天节点，不留下间距', () => {
+    expect(rules['[data-chat-flow-key]:has(> [data-slot="conversation.chat.node"] > [data-dsh-tauri-ui-continue-notice])']).toEqual({ display: 'none' })
+  })
+
+  it('不把内容整块藏起来（保浏览器查找与无障碍树）', () => {
+    expect(globalStyle.render()).not.toMatch(/content-visibility:\s*hidden/)
+  })
+})

@@ -18,9 +18,25 @@ export const IFRAME_LOAD_TIMEOUT = 20000
  */
 export const IFRAME_FRAME_GRACE_TIMEOUT = 5000
 
-/** 健康探测退避区间（1s 起、1.5 倍递增、封顶 5s） */
-export const HEALTH_PROBE_INITIAL_INTERVAL = 1000
-export const HEALTH_PROBE_MAX_INTERVAL = 5000
+/**
+ * 服务就绪探测间隔。
+ *
+ * 固定 1s，不退避：端口起来后一轮探测约 0.3-0.5s，退避却会让「服务已就绪」最多
+ * 晚 5s 才被发现，而这正是启动尾段的全部剩余时间；探测几乎零成本的轮次改用
+ * HEALTH_PROBE_FAST_RETRY_INTERVAL。
+ */
+export const HEALTH_PROBE_INTERVAL = 1000
+
+/**
+ * 探测几乎零成本时的快扫间隔（端口未监听 / 启动页尚未登记）。
+ *
+ * 这两种状态都由 Rust 侧在取任何 bundle 之前判定，单轮探测不足 5ms（端口门禁只做
+ * 一次 bind，启动页未登记只发一次请求），于是用快扫去撞状态结束的那一刻：常规 1s
+ * 间隔下平均还要空等 ~0.5s 才会被下一次探测发现，实测这段空等正好压在启动尾段
+ * （boot page 404 之后白等满 1s 才重试）。其余失败仍走 1s：那些轮次已经拉了约
+ * 18MB 的 bundle，加快节奏只会和页面加载抢带宽。
+ */
+export const HEALTH_PROBE_FAST_RETRY_INTERVAL = 250
 
 /** 服务启动阶段：无活动 / 绝对上限 */
 export const STARTUP_INACTIVITY_TIMEOUT = 180000

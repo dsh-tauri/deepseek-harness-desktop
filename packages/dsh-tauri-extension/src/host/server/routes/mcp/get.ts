@@ -5,5 +5,5 @@ import { mcp } from '../../../service/mcp'
 
 export default defineEventHandler((event): McpListResponse | { error: string } => {
   const deps = getServerOptions<ExtensionRouteDeps>(event)
-  return { ...mcp.list(deps.profileDirPath), restartNeeded: true }
+  return { ...mcp.list(deps.profileDirPath), restartNeeded: !deps.hotReload() }
 })

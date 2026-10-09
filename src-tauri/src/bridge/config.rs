@@ -13,6 +13,18 @@ pub async fn get_app_config(app_handle: AppHandle) -> Result<config::Setting, St
     Ok(config::get_store_dat_setting(&app_handle))
 }
 
+/// 当前设置下 Harness 进程实际生效的 V8 old-space 上限（MB）。
+///
+/// 与启动链路共用 `workflow::heap` 的同一个判定：用户设置 > 进程环境
+/// `NODE_OPTIONS` 里的上限 > 按物理内存算出的自动值。崩溃提示要用它，避免
+/// 提示里写死一个与真实上限无关的数字。
+#[tauri::command]
+pub fn get_effective_heap_limit_mb(app_handle: AppHandle) -> Option<u32> {
+    crate::service::workflow::effective_heap_limit_mb(
+        config::get_store_dat_setting(&app_handle).harness_max_heap_mb,
+    )
+}
+
 /// 当前桌面端是否为 dev 构建（`tauri dev` / `pnpm dev:desktop`）。
 ///
 /// 插件用它决定是否挂载只面向开发的调试入口（例如 dsh-tauri-ui 的「UI 组件」页）；

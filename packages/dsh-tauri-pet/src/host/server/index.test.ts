@@ -261,16 +261,17 @@ afterEach(async () => {
 })
 
 describe('pet host apply()', () => {
-  it('注册会话流路由：GET /api/desktop/dsh-tauri-pet/session-stream 是 exact 路由，非 GET 一律 405', async () => {
+  it('会话流只声明 GET，POST 与 OPTIONS 返回原生 405 和 GET/HEAD 方法集合', async () => {
     const host = createHost()
     apply(host.ctx)
     expect(host.routes).toEqual([{ kind: 'exact', path: SESSION_STREAM_PATH }])
 
-    // 只声明了 GET：同路径 POST 由 defineWebServer 统一挡成 405（handler 不参与）。
     const connection = await host.connect()
-    const rejected = await fetch(connection.url, { method: 'POST' })
-    expect(rejected.status).toBe(405)
-    expect(rejected.headers.get('allow')).toContain('GET')
+    for (const method of ['POST', 'OPTIONS']) {
+      const rejected = await fetch(connection.url, { method })
+      expect(rejected.status).toBe(405)
+      expect(rejected.headers.get('allow')?.split(', ').sort()).toEqual(['GET', 'HEAD'])
+    }
   })
 
   it('sSE 响应头与首帧：content-type 为 text/event-stream，首帧携带 retry: 1000', async () => {

@@ -1,0 +1,406 @@
+name: Build & Release (Nightly)
+
+# 夜间版（dig-node 形态）：滚动发布 main 的每日构建，保留最近 N 天。
+# - 注入 0.0.0-nightly.YYYYMMDD.g<sha>（构建期写入、不入库）：不占用正式版号段。
+# - 每次构建写两个 Release：当日日期 tag (nightly-YYYYMMDD) 与滚动别名 nightly (均标记为 pre-release)。
+# - workflow 名称故意不等于 "Build & Release"，避免误触发 release-bundle.yml。
+on:
+  # UTC 18:00 = 北京时间次日 02:00
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 忽略「main 无新提交即跳过」，强制重新构建
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-nightly
+  cancel-in-progress: false
+
+env:
+  # 保留窗口：含当天在内最近 N 天，更早的连 tag 一起删除。
+  NIGHTLY_RETAIN_DAYS: '10'
+  # 夜间版说明（唯一出处）：草稿阶段就写进 Release 正文，变更日志紧随其后；
+  # 发布时在其后追加产物清单与构建时间。
+  NIGHTLY_DESCRIPTION: |
+    ### ⚠️重要通知
+    这是专为测试目的创建的**开发构建版本**。请注意:
+
+    - 此版本**不适用于**生产环境
+    - 功能可能不完整或不稳定
+    - 仅用于在桌面环境中验证 PR 更改
+    - 可能包含尚未经过全面审查的实验性代码
+    - 不提供任何稳定性或可靠性方面的保证
+
+    ### 预期用途
+    - 针对 PR 变更进行重点测试
+    - 验证桌面特定行为
+    - 桌面平台上的 UI/UX 验证
+    - 在目标设备上进行性能测试
+
+    ---
+
+jobs:
+  prepare:
+    name: Prepare Nightly
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    outputs:
+      should_build: ${{ steps.plan.outputs.should_build }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      source_ref: ${{ steps.plan.outputs.source_ref }}
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Plan nightly version
+        id: plan
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}
+        run: |
+          set -euo pipefail
+          source_ref="$(git rev-parse HEAD)"
+          date="$(date -u +%Y%m%d)"
+          tag="nightly-$date"
+          version="0.0.0-nightly.$date.g${source_ref:0:7}"
+          should_build="true"
+
+          if [ "$FORCE" != "true" ]; then
+            # 使用 gh jq 过滤获取最新一个 nightly-YYYYMMDD 标签，减少多重管道耗时
+            last_tag="$(gh release list --limit 100 --json tagName -q '[.[].tagName | select(test("^nightly-[0-9]{8}$"))] | sort | last // ""')"
+            if [ -n "$last_tag" ]; then
+              last_sha="$(gh release view "$last_tag" --json body -q .body | sed -n 's/.*nightly-sha:\([0-9a-f]\{7,40\}\).*/\1/p' | head -1)"
+              if [ -n "$last_sha" ] && [ "$last_sha" = "$source_ref" ]; then
+                should_build="false"
+              fi
+            fi
+          fi
+
+          {
+            echo "should_build=$should_build"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "source_ref=$source_ref"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$should_build" = "false" ]; then
+            echo "::notice::main 自 $last_tag 以来没有新提交，跳过本次夜间构建"
+          else
+            echo "::notice::夜间版 $version（tag $tag，提交 $source_ref）"
+          fi
+
+      - name: Clean up leftover drafts
+        if: steps.plan.outputs.should_build == 'true'
+        env:
+          NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          today="${NIGHTLY_TAG#nightly-}"
+
+          # 清理当天与历史残留的草稿 Release
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            -q '.[] | select(.draft and (.tag_name | test("^nightly-[0-9]{8}$"))) | (.id|tostring) + " " + .tag_name' |
+            while read -r id tag; do
+              day="${tag#nightly-}"
+              if [ "$day" -le "$today" ]; then
+                echo "dropping draft release $id ($tag)"
+                gh api -X DELETE "repos/$GH_REPO/releases/$id"
+              fi
+            done
+
+      - name: Ensure draft release exists
+        if: steps.plan.outputs.should_build == 'true'
+        env:
+          NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
+          NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          day="${NIGHTLY_TAG#nightly-}"
+          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
+
+          if gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
+            # 当天已经发布过：构建期间原样保留，等三个平台都构建成功后再由 finalize 更新，
+            # 避免构建失败时把已发布的 Release 打回草稿。
+            if [ "$(gh release view "$NIGHTLY_TAG" --json isDraft -q .isDraft)" != "true" ]; then
+              echo "::notice::$NIGHTLY_TAG 已经是已发布状态，构建期间原样保留。"
+              exit 0
+            fi
+
+            body="$(gh release view "$NIGHTLY_TAG" --json body -q .body)"
+            if [ "$(printf '%s\n' "$body" | head -1)" = "$(printf '%s\n' "$NIGHTLY_DESCRIPTION" | head -1)" ]; then
+              echo "草稿 $NIGHTLY_TAG 已带说明。"
+              exit 0
+            fi
+            {
+              printf '%s\n' "$NIGHTLY_DESCRIPTION"
+              echo
+              printf '%s\n' "$body"
+            } > draft_notes.md
+            gh release edit "$NIGHTLY_TAG" --title "$title" --notes-file draft_notes.md
+            exit 0
+          fi
+
+          printf '%s\n' "$NIGHTLY_DESCRIPTION" > draft_notes.md
+          gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
+            --title "$title" --prerelease --notes-file draft_notes.md
+          gh release edit "$NIGHTLY_TAG" --title "$title" --notes-file draft_notes.md
+
+  build-macos:
+    name: Build macOS Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  build-windows:
+    name: Build Windows Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  build-linux:
+    name: Build Linux Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  finalize:
+    name: Publish Nightly Release
+    needs: [prepare, build-macos, build-windows, build-linux]
+    if: >-
+      always() && needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      needs.build-macos.result == 'success' &&
+      needs.build-windows.result == 'success' &&
+      needs.build-linux.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
+      NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+    steps:
+      - name: Download build outputs
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          # 放在 workspace 之外：下一步 actions/checkout 会清空 workspace 目录
+          # （工作区还不是 git 仓库时会先「Deleting the contents of …」），产物会被删掉。
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+
+      - name: Verify downloaded assets
+        run: |
+          find "$RUNNER_TEMP/release-assets" -type f -print
+          [ -n "$(find "$RUNNER_TEMP/release-assets" -type f -print -quit)" ] || {
+            echo '::error::No nightly assets were downloaded'
+            exit 1
+          }
+
+      # 三个平台都构建成功后才移动日期 tag、生成变更日志：构建失败时已发布的 Release
+      # 及其 tag 保持原样。
+      - name: Point dated nightly tag at this commit
+        uses: actions/github-script@v8
+        env:
+          NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
+        with:
+          script: |
+            const ref = `tags/${process.env.NIGHTLY_TAG}`;
+            const sha = process.env.NIGHTLY_SHA;
+            try {
+              await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
+            } catch (error) {
+              if (error.status !== 404 && error.status !== 422) throw error;
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+            }
+
+      - name: Checkout source for changelog
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install changelog dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$NIGHTLY_TAG:refs/tags/$NIGHTLY_TAG"
+
+          from="$(gh release list --limit 100 --json tagName -q '[.[].tagName | select(test("^nightly-[0-9]{8}$"))] | sort | .[]' |
+            while read -r t; do
+              if [[ "$t" < "$NIGHTLY_TAG" ]]; then echo "$t"; fi
+            done | tail -1)"
+
+          if [ -z "$from" ]; then
+            from="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          fi
+
+          day="${NIGHTLY_TAG#nightly-}"
+          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
+          args=(--draft --prerelease --to "$NIGHTLY_TAG" --name "$title")
+          if [ -n "$from" ]; then
+            args+=(--from "$from")
+            echo "变更日志范围：$from..$NIGHTLY_TAG"
+          else
+            echo '::warning::找不到变更日志起点，按全部历史生成'
+          fi
+
+          pnpm exec changelogithub "${args[@]}" || \
+            echo '::warning::changelogithub 生成变更日志失败，Release 只保留产物与提示'
+
+      - name: Upload assets to the draft release
+        run: |
+          set -euo pipefail
+          mapfile -d '' assets < <(find "$RUNNER_TEMP/release-assets" -type f -print0)
+          gh release upload "$NIGHTLY_TAG" "${assets[@]}" --clobber
+
+      - name: Point rolling alias tag at this commit
+        uses: actions/github-script@v8
+        env:
+          NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+        with:
+          script: |
+            const ref = 'tags/nightly';
+            const sha = process.env.NIGHTLY_SHA;
+            try {
+              await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
+            } catch (error) {
+              if (error.status !== 404 && error.status !== 422) throw error;
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+            }
+
+      - name: Compose release notes
+        run: |
+          set -euo pipefail
+          body="$(gh release view "$NIGHTLY_TAG" --json body -q .body)"
+
+          {
+            # 说明固定排在最前：变更日志步骤会重写正文，这里按需补回。
+            if [ "$(printf '%s\n' "$body" | head -1)" != "$(printf '%s\n' "$NIGHTLY_DESCRIPTION" | head -1)" ]; then
+              printf '%s\n' "$NIGHTLY_DESCRIPTION"
+              echo
+            fi
+            printf '%s\n' "$body"
+            echo
+            # 与正式版（release.yml 的 Append Artifacts section）保持同一份产物清单
+            echo '### 📦 Artifacts'
+            echo '- **macOS (Apple Silicon)**: 下载 `aarch64.dmg`'
+            echo '- **macOS (Intel)**: 下载 `x64.dmg`'
+            echo '- **Windows**: 下载 `.exe`'
+            echo '- **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）'
+            echo
+            echo '> 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 Node.js 运行时、pnpm'
+            echo '> 与打包好的 dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，'
+            echo '> 首次启动时按需下载运行时依赖。'
+            echo
+            echo "提交 \`$NIGHTLY_SHA\` · 构建时间 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo "<!-- nightly-sha:$NIGHTLY_SHA -->"
+          } > nightly_notes.md
+
+          day="${NIGHTLY_TAG#nightly-}"
+          gh release edit "$NIGHTLY_TAG" --title "Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})" \
+            --notes-file nightly_notes.md --draft=false --prerelease --latest=false
+
+      - name: Prune nightlies outside the retention window
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d "-$((NIGHTLY_RETAIN_DAYS - 1)) days" +%Y%m%d)"
+          gh release list --limit 100 --json tagName -q '.[].tagName' |
+            sed -n 's/^nightly-\([0-9]\{8\}\)$/\1/p' |
+            while read -r day; do
+              if [ "$day" -lt "$cutoff" ]; then
+                echo "pruning nightly-$day"
+                gh release delete "nightly-$day" --yes --cleanup-tag
+              fi
+            done
+
+      - name: Refresh rolling nightly alias
+        run: |
+          set -euo pipefail
+          day="${NIGHTLY_TAG#nightly-}"
+          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
+          if ! gh release view nightly >/dev/null 2>&1; then
+            gh release create nightly --draft --target "$NIGHTLY_SHA" \
+              --title "$title" --prerelease
+          fi
+          mapfile -d '' assets < <(find "$RUNNER_TEMP/release-assets" -type f -print0)
+          gh release upload nightly "${assets[@]}" --clobber
+
+          gh release view "$NIGHTLY_TAG" --json body -q .body > alias_notes.md
+          {
+            echo "> 滚动别名：本页资产始终是最近一版夜间版，本次对应 [\`$NIGHTLY_TAG\`](https://github.com/$GH_REPO/releases/tag/$NIGHTLY_TAG)。"
+            echo
+            sed "s|/download/$NIGHTLY_TAG/|/download/nightly/|g" alias_notes.md
+          } > nightly_alias_notes.md
+
+          gh release edit nightly --title "$title" --notes-file nightly_alias_notes.md \
+            --draft=false --prerelease --latest=false
+
+      - name: Prune stale nightly installer assets
+        if: success()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const files = fs.readdirSync(path.join(process.env.RUNNER_TEMP, 'release-assets'), { recursive: true, withFileTypes: true });
+            const keep = new Set(files.filter(file => file.isFile()).map(file => file.name));
+            const nightlyAsset = /^Deepseek\.Harness\.Desktop_0\.0\.0(?:-nightly(?:\.[0-9A-Za-z-]+)*)?_[^/\\]+\.(?:exe|msi|dmg|AppImage|deb)(?:\.sig)?$/;
+            for (const tag of [process.env.NIGHTLY_TAG, 'nightly']) {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
+              const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...context.repo, release_id: release.id, per_page: 100 });
+              for (const asset of assets) {
+                if (nightlyAsset.test(asset.name) && !keep.has(asset.name)) {
+                  await github.rest.repos.deleteReleaseAsset({ ...context.repo, asset_id: asset.id });
+                }
+              }
+            }

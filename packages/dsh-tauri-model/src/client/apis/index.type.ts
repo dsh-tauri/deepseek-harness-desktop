@@ -8,9 +8,6 @@ export type GetApiDesktopDshTauriModelEndpointModelsQueryApiKey = undefined | st
 export type GetApiDesktopDshTauriModelEndpointModelsQueryHeaders = undefined | string;
 export type GetApiDesktopDshTauriModelPresetsResponse = { ok?: undefined | false | true; source?: undefined | string; fetchedAt?: undefined | string; stale?: undefined | false | true; count?: undefined | number; presets?: undefined | { [key: string]: number[] }; error?: undefined | string };
 export type GetApiDesktopDshTauriModelPresetsQueryForce = undefined | string;
-export type OptionsApiDesktopDshTauriModelConfigOpenResponse = void;
-export type OptionsApiDesktopDshTauriModelEndpointModelsResponse = void;
-export type OptionsApiDesktopDshTauriModelPresetsResponse = void;
 
 export interface PostApiDesktopDshTauriModelConfigOpenQuery {
   dry?: PostApiDesktopDshTauriModelConfigOpenQueryDry;

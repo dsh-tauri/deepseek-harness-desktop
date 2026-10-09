@@ -52,7 +52,7 @@ fn build_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 
     let mut builder = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("Deepseek Harness Desktop")
+        .with_tooltip(crate::desktop::product_name(app))
         .with_menu_on_left_click(false);
     if let Some(icon) = app.default_window_icon() {
         match Icon::from_rgba(icon.rgba().to_vec(), icon.width(), icon.height()) {

@@ -3,10 +3,10 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.2`
-- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Version: `dsh-v0.2.1-alpha.1`
+- Revision: `5badb15009ae1756c3afe0ae0cef1faafc290ccc`
 - Source: `source/deepseek-harness`
-- Catalog pin: `dsh:` → `0.2.0-rc.2` (`pnpm-workspace.yaml`)
+- Catalog pin: `dsh:` → `0.2.1-alpha.1` (`pnpm-workspace.yaml`)
 - License: MIT — Copyright (c) 2026 DeepSeek
 - Not copied: the official workspace browser and settings sidebar are extended through official slots, official primitives `Menu` entries and the official sessions / workspaces service surfaces.
 
@@ -20,6 +20,11 @@ Integration points:
 Deliberate difference:
 
 - The official entry only unarchives; this package's "Archived chats" page adds search, sort, grouping, project filter, delete, and a "delete workspace" action rewritten into "archive workspace".
+
+## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The sessions and workspaces integration still delegates to official services. Optional draft initialization on `uiWorkspace.startSession` does not replace the adapter open path.
+- The official workspace menu and row shapes used by the archive-entry patch remain compatible; no removed invariant export is imported.
 
 ## License
 

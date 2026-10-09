@@ -36,11 +36,11 @@ const EXPECTED_ROUTES: ReadonlyArray<readonly [string, string]> = [
 const EXPECTED_PATHS: readonly string[] = [...new Set(EXPECTED_ROUTES.map(([, path]) => path))]
 
 const ALLOW_BY_PATH: Readonly<Record<string, string>> = {
-  [`${P}/session/archive`]: 'GET, HEAD, POST, DELETE, OPTIONS',
-  [`${P}/session/archive/clear`]: 'POST, DELETE, OPTIONS',
-  [`${P}/session/workspace/archive`]: 'POST, DELETE, OPTIONS',
-  [`${P}/session/archive/restore`]: 'POST, OPTIONS',
-  [`${P}/session/open/path`]: 'POST, OPTIONS',
+  [`${P}/session/archive`]: 'GET, HEAD, POST, DELETE',
+  [`${P}/session/archive/clear`]: 'POST, DELETE',
+  [`${P}/session/workspace/archive`]: 'POST, DELETE',
+  [`${P}/session/archive/restore`]: 'POST',
+  [`${P}/session/open/path`]: 'POST',
 }
 
 const UNDECLARED_METHOD = 'PUT'
@@ -256,18 +256,18 @@ describe('归档路由声明', () => {
     dispose()
   })
 
-  it('oPTIONS 预检返回 204 并带 allow 头', async () => {
+  it('oPTIONS 未声明时返回 405 并带 allow 头', async () => {
     const harness = createHarness()
     const dispose = mount(harness)
     const base = await listen(harness.registered)
 
     const archive = await fetch(`${base}${P}/session/archive`, { method: 'OPTIONS' })
-    expect(archive.status).toBe(204)
-    expect(archive.headers.get('allow')).toBe('GET, HEAD, POST, DELETE, OPTIONS')
+    expect(archive.status).toBe(405)
+    expect(archive.headers.get('allow')?.split(', ').sort()).toEqual('GET, HEAD, POST, DELETE'.split(', ').sort())
 
     const clear = await fetch(`${base}${P}/session/archive/clear`, { method: 'OPTIONS' })
-    expect(clear.status).toBe(204)
-    expect(clear.headers.get('allow')).toBe('POST, DELETE, OPTIONS')
+    expect(clear.status).toBe(405)
+    expect(clear.headers.get('allow')?.split(', ').sort()).toEqual('POST, DELETE'.split(', ').sort())
 
     dispose()
   })

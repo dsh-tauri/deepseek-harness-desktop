@@ -10,6 +10,7 @@ import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { REMOTE_ROOT } from '../config/constants'
 import { MachineId } from '../types/index'
+import { DSH_MIRROR_PREFIXES } from '../utils/assets'
 import { FALLBACK_DSH_TAG, RECOMMENDED_DSH_VERSION } from '../utils/version'
 import {
   buildInstallScript,
@@ -72,7 +73,7 @@ const LINUX_ASSETS = [
 /** The default injected fetchers (no network): a healthy metadata view. */
 function healthyFetchers(overrides: Partial<{
   listReleases: () => Promise<typeof RELEASES>
-  listAssets: () => Promise<typeof LINUX_ASSETS>
+  listAssets: () => Promise<Array<{ name: string, url: string, digest?: string }>>
   npmDist: () => Promise<{ url: string, mirrorUrl: string, integrity?: string }>
 }> = {}) {
   return {
@@ -232,7 +233,7 @@ describe('planRemoteInstall', () => {
     expect(plan.dsh.tag).toBe(DSH_TAG)
     expect(plan.dsh.digest).toBe(LINUX_ASSETS[0]?.digest)
     expect(plan.dsh.urls[0]).toBe(LINUX_ASSETS[0]?.url)
-    expect(plan.dsh.urls[1]).toContain('ghfast.top/')
+    expect(plan.dsh.urls.slice(1).map(url => new URL(url).host)).toEqual([...DSH_MIRROR_PREFIXES].map(prefix => new URL(prefix).host))
     expect(plan.dshEntry).toBe('node_modules/@deepseek-ai/dsh/lib/bin.js')
     expect(plan.dshVersion).toBe(DSH_VERSION)
     expect(plan.notes).toEqual([])
@@ -253,6 +254,19 @@ describe('planRemoteInstall', () => {
     expect(plan.node.urls[0]).toBe('https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-arm64.tar.gz')
     expect(plan.node.filename).toBe('node-v22.22.0-linux-arm64.tar.gz')
     expect(plan.node.version).toBe('v22.22.0')
+  })
+
+  it('drops every mirror when the release digest is unavailable', async () => {
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers({
+      // The asset exists but the release carries no digest, so nothing can be verified.
+      listAssets: () => Promise.resolve(LINUX_ASSETS.map(asset => ({ name: asset.name, url: asset.url }))),
+    }))
+    if (plan.dsh.kind !== 'pkg-zip')
+      throw new Error('expected pkg-zip')
+    expect(plan.dsh.digest).toBeUndefined()
+    // An unverifiable download must not gain extra writable sources.
+    expect(plan.dsh.urls).toEqual([LINUX_ASSETS[0]?.url])
+    expect(plan.notes.join('\n')).toContain('未取得')
   })
 
   it('derives deterministic URLs and notes skipped verification when metadata fails', async () => {
@@ -367,15 +381,42 @@ describe('buildInstallScript', () => {
       throw new Error('expected npm-tgz')
     expect(plan.dsh.urls).toEqual([mirrorOnly])
   })
+  it('verifies each candidate inside the fallback loop, never after it', async () => {
+    const pkgScript = buildInstallScript(await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers()))
+    expect(pkgScript).toContain('fetch_verified "$TMP/node.tar.gz"')
+    expect(pkgScript).toContain('fetch_verified "$TMP/pnpm.tgz"')
+    expect(pkgScript).toContain('fetch_verified "$TMP/dsh-pkg.zip"')
+    // 校验必须留在逐个候选的循环里：循环外的一次性 verify 会让坏镜像中断兜底
+    expect(pkgScript).not.toContain('verify "$TMP/')
+    const npmScript = buildInstallScript(await planRemoteInstall('Linux 5.15 aarch64', {}, healthyFetchers()))
+    expect(npmScript).toContain('fetch_verified "$TMP/dsh.tgz"')
+  })
+  it('authenticates the node checksum manifest against the pinned digest before trusting it', async () => {
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+    const script = buildInstallScript(plan)
+    // 清单自身也必须过摘要：镜像提供的清单只有在与官方逐字节相同时才被接受，
+    // 否则「镜像改过的运行时 + 镜像改过的清单」会被当成一次合法安装。
+    expect(script).toContain(
+      `fetch_verified "$TMP/SHASUMS256.txt" "sha256:${plan.node.shasumSha256}" "SHASUMS256.txt"`,
+    )
+    expect(script).not.toContain('fetch "$TMP/SHASUMS256.txt"')
+  })
+  it('fails closed when the remote cannot compute a digest instead of skipping verification', async () => {
+    const script = buildInstallScript(await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers()))
+    expect(script).toContain('REMOTE_INSTALL_NO_DIGEST_TOOL')
+    expect(script).toContain('exit 14')
+    // 摘要工具缺失或失效时必须报错退出：走「跳过校验」会让镜像清单与镜像归档被一起替换后仍然装成功
+    expect(script).not.toContain('远端缺少摘要工具，跳过校验')
+  })
 })
 
 describe('install script execution (real POSIX sh)', () => {
   /**
    * Run one generated script under the real `sh` inside a sandboxed HOME,
    * with a fake `curl` first on PATH that "downloads" tampered bytes and a
-   * SHASUMS256.txt pinning a digest those bytes cannot match.
+   * SHASUMS256.txt whose own bytes cannot match the pinned manifest digest.
    */
-  function runScript(script: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
+  function runScript(script: string, sandbox: string, options: { brokenDigestTool?: boolean } = {}): Promise<{ code: number, stdout: string, stderr: string }> {
     const binDir = join(sandbox, 'fake-bin')
     mkdirSync(binDir, { recursive: true })
     const fakeCurl = join(binDir, 'curl')
@@ -400,6 +441,13 @@ describe('install script execution (real POSIX sh)', () => {
       'exit 0',
     ].join('\n'))
     chmodSync(fakeCurl, 0o755)
+    if (options.brokenDigestTool === true) {
+      for (const tool of ['sha256sum', 'shasum']) {
+        const broken = join(binDir, tool)
+        writeFileSync(broken, '#!/bin/sh\nexit 1\n')
+        chmodSync(broken, 0o755)
+      }
+    }
     const scriptPath = join(sandbox, 'install.sh')
     writeFileSync(scriptPath, script)
     const run = promisify(execFile)
@@ -426,6 +474,21 @@ describe('install script execution (real POSIX sh)', () => {
     expect(existsSync(join(sandbox, REMOTE_ROOT, 'tmp'))).toBe(false)
     expect(existsSync(join(sandbox, REMOTE_ROOT, 'runtime.new'))).toBe(false)
     expect(existsSync(join(sandbox, REMOTE_ROOT, 'dependencies', 'dsh'))).toBe(false)
+  })
+
+  /**
+   * The sandbox sha256sum/shasum exist but cannot produce a digest, i.e. the
+   * remote reaches every URL yet cannot verify anything. Installing anyway
+   * would hand the mirror both the runtime and the manifest that vouches for it.
+   */
+  it('refuses to install when the remote cannot compute a digest (real POSIX sh)', async () => {
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+    const sandbox = tempDir()
+    const outcome = await runScript(buildInstallScript(plan), sandbox, { brokenDigestTool: true })
+    expect(outcome.code).toBe(14)
+    expect(outcome.stdout).toContain('REMOTE_INSTALL_NO_DIGEST_TOOL')
+    expect(outcome.stdout).not.toContain('跳过校验')
+    expect(existsSync(join(sandbox, REMOTE_ROOT, 'runtime'))).toBe(false)
   })
 
   it('skips every section when the three components are already installed', async () => {
@@ -549,7 +612,13 @@ describe('install script execution (real POSIX sh)', () => {
     }))
     // The pinned pnpm digest is the real release's; point it at the crafted
     // tarball so the verify step passes against what the fake curl serves.
-    const plan: RemoteInstallPlan = { ...basePlan, pnpm: { ...basePlan.pnpm, sha256: digest(pnpmTgz, 'sha256', 'hex') } }
+    // Same for the node manifest: its own digest is pinned in the plan, so the
+    // crafted SHASUMS256.txt must be declared as the trusted one.
+    const plan: RemoteInstallPlan = {
+      ...basePlan,
+      node: { ...basePlan.node, shasumSha256: digest(join(served, 'SHASUMS256.txt'), 'sha256', 'hex') },
+      pnpm: { ...basePlan.pnpm, sha256: digest(pnpmTgz, 'sha256', 'hex') },
+    }
 
     const sandbox = tempDir()
     const outcome = await runScriptServing(buildInstallScript(plan), sandbox, served)
@@ -564,6 +633,128 @@ describe('install script execution (real POSIX sh)', () => {
     expect(existsSync(join(root, 'dependencies', 'dsh', 'lib', 'bin.js'))).toBe(true)
     expect(existsSync(join(root, 'runtime', 'bin', 'node'))).toBe(true)
     expect(existsSync(join(root, 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'))).toBe(true)
+  })
+  /**
+   * Same as runScriptServing, but the fake curl serves tampered bytes for the
+   * FIRST mirror of every artifact (the official host) and real bytes from
+   * `servedDir` for the fallback mirror, so a script that verifies only once
+   * after the whole fallback loop cannot recover.
+   */
+  function runScriptWithBrokenFirstSource(script: string, sandbox: string, servedDir: string): Promise<{ code: number, stdout: string, stderr: string }> {
+    const binDir = join(sandbox, 'fake-bin')
+    mkdirSync(binDir, { recursive: true })
+    const fakeCurl = join(binDir, 'curl')
+    writeFileSync(fakeCurl, [
+      '#!/bin/sh',
+      'dst=""',
+      'prev=""',
+      'for arg in "$@"; do',
+      '  if [ "$prev" = "-o" ]; then dst="$arg"; fi',
+      '  prev="$arg"',
+      'done',
+      'url=""',
+      'for arg in "$@"; do url="$arg"; done',
+      'case "$url" in',
+      '  *SHASUMS256.txt) cat "$SERVED/SHASUMS256.txt" > "$dst"; exit 0 ;;',
+      '  *nodejs.org*) printf \'tampered-download-bytes\' > "$dst"; exit 0 ;;',
+      'esac',
+      'if [ -f "$SERVED/$(basename "$url")" ]; then cp "$SERVED/$(basename "$url")" "$dst"; exit 0; fi',
+      'echo "fake curl: no artifact for $url" >&2',
+      'exit 22',
+    ].join('\n'))
+    chmodSync(fakeCurl, 0o755)
+    const scriptPath = join(sandbox, 'install.sh')
+    writeFileSync(scriptPath, script)
+    const run = promisify(execFile)
+    return run('sh', [scriptPath], {
+      env: { ...process.env, HOME: sandbox, SERVED: servedDir, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+    }).then(
+      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
+      (error: { code?: number, stdout?: string, stderr?: string }) =>
+        ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
+    )
+  }
+
+  it('keeps trying the next source when a mirror serves bytes that fail the digest (real POSIX sh)', async () => {
+    const work = tempDir()
+    const served = join(work, 'served')
+    mkdirSync(served, { recursive: true })
+
+    const nodeDir = join(work, 'node-v22.22.0-linux-x64')
+    mkdirSync(join(nodeDir, 'bin'), { recursive: true })
+    mkdirSync(join(nodeDir, 'include'), { recursive: true })
+    writeFileSync(join(nodeDir, 'bin', 'node'), '#!/bin/sh\nexec sh "$@"\n')
+    writeFileSync(join(nodeDir, 'include', 'node'), 'headers\n')
+    const nodeTgz = join(served, 'node-v22.22.0-linux-x64.tar.gz')
+    await promisify(execFile)('tar', ['-czf', nodeTgz, '-C', work, 'node-v22.22.0-linux-x64'])
+    writeFileSync(
+      join(served, 'SHASUMS256.txt'),
+      `${createHash('sha256').update(readFileSync(nodeTgz)).digest('hex')}  node-v22.22.0-linux-x64.tar.gz\n`,
+    )
+
+    const basePlan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+    expect(basePlan.node.urls[0]).toContain('nodejs.org')
+    // The crafted manifest stands in for the official one: pin its own digest so
+    // the run exercises the ARCHIVE fallback, not the manifest check.
+    const plan: RemoteInstallPlan = {
+      ...basePlan,
+      node: { ...basePlan.node, shasumSha256: createHash('sha256').update(readFileSync(join(served, 'SHASUMS256.txt'))).digest('hex') },
+    }
+
+    const sandbox = tempDir()
+    // pnpm and dsh are pre-installed so the run exercises the node section,
+    // whose official source is the broken mirror.
+    const root = join(sandbox, REMOTE_ROOT)
+    mkdirSync(join(root, 'dependencies', 'pnpm', 'bin'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), 'placeholder')
+    mkdirSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'placeholder')
+
+    const outcome = await runScriptWithBrokenFirstSource(buildInstallScript(plan), sandbox, served)
+    expect(outcome.stderr).toBe('')
+    expect(outcome.code).toBe(0)
+    // The broken official source is reported, but the fallback mirror installs.
+    expect(outcome.stdout).toContain('改用下一个下载源')
+    expect(outcome.stdout).not.toContain('::dsh failed')
+    expect(outcome.stdout).toContain('node 安装完成')
+    expect(outcome.stdout).toContain('远端初始化完成')
+    expect(existsSync(join(root, 'runtime', 'bin', 'node'))).toBe(true)
+  })
+
+  it('fails closed when no served manifest matches the pinned digest (real POSIX sh)', async () => {
+    const work = tempDir()
+    const served = join(work, 'served')
+    mkdirSync(served, { recursive: true })
+
+    const nodeDir = join(work, 'node-v22.22.0-linux-x64')
+    mkdirSync(join(nodeDir, 'bin'), { recursive: true })
+    mkdirSync(join(nodeDir, 'include'), { recursive: true })
+    writeFileSync(join(nodeDir, 'bin', 'node'), '#!/bin/sh\nexec sh "$@"\n')
+    writeFileSync(join(nodeDir, 'include', 'node'), 'headers\n')
+    const nodeTgz = join(served, 'node-v22.22.0-linux-x64.tar.gz')
+    await promisify(execFile)('tar', ['-czf', nodeTgz, '-C', work, 'node-v22.22.0-linux-x64'])
+    // A manifest that matches the served archive but NOT the pinned digest: the
+    // whole point is that the archive fallback must not rescue a rewritten manifest.
+    writeFileSync(
+      join(served, 'SHASUMS256.txt'),
+      `${createHash('sha256').update(readFileSync(nodeTgz)).digest('hex')}  node-v22.22.0-linux-x64.tar.gz\n`,
+    )
+
+    const plan = await planRemoteInstall('Linux 6.8 x86_64', {}, healthyFetchers())
+
+    const sandbox = tempDir()
+    const root = join(sandbox, REMOTE_ROOT)
+    mkdirSync(join(root, 'dependencies', 'pnpm', 'bin'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), 'placeholder')
+    mkdirSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+    writeFileSync(join(root, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'placeholder')
+
+    const outcome = await runScriptWithBrokenFirstSource(buildInstallScript(plan), sandbox, served)
+    expect(outcome.stderr).toBe('')
+    expect(outcome.code).toBe(11)
+    expect(outcome.stdout).toContain('checksum mismatch: SHASUMS256.txt')
+    expect(outcome.stdout).not.toContain('node 安装完成')
+    expect(existsSync(join(root, 'runtime'))).toBe(false)
   })
 })
 

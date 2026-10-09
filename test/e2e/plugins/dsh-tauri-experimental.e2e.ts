@@ -26,8 +26,8 @@ const FEATURE_DIR = 'dsh-tauri-experimental'
 /** 两条只声明 GET 的读路径。 */
 const READ_PATHS = [SUMMARY_PATH, LIVE_PATH] as const
 
-/** 只读路由公布的方法集合（顺序属实现细节，实测为固定三元的字典序）。 */
-const READ_ONLY_ALLOW = ['GET', 'HEAD', 'OPTIONS']
+/** 只读路由公布的方法集合，按集合比较。 */
+const READ_ONLY_ALLOW = ['GET', 'HEAD']
 
 interface ErrorBody {
   error?: string
@@ -88,10 +88,10 @@ describe('宿主路由：方法矩阵', () => {
     for (const path of READ_PATHS) {
       const preflight = await fetch(url(path), { method: 'OPTIONS', headers: apiHeaders() })
 
-      expect(preflight.status, `OPTIONS ${path} 必须走默认 204 预检`).toBe(204)
+      expect(preflight.status, `OPTIONS ${path} 未声明，必须走原生 405`).toBe(405)
       expect(
         allowMethods(preflight),
-        `OPTIONS ${path} 的 allow 必须公布 GET / HEAD（GET 隐含）/ OPTIONS`,
+        `OPTIONS ${path} 的 allow 必须公布 GET / HEAD（GET 隐含）`,
       ).toEqual(READ_ONLY_ALLOW)
 
       const post = await fetch(url(path), {

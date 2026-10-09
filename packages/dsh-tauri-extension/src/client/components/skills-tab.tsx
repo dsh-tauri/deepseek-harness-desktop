@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { Translate } from '../locales/index.types'
 import type { SkillRowView } from '../types'
-import { Action, ArrowRotateRight, Button, Card, Checkbox, Field, GraduationCap, Icon, Input, LogoGithub, Modal, Notice, Pill, SegmentedControl, StateDot, Switch, Tag, Text, Textarea } from 'dsh-tauri-ui/client'
+import { Action, ArrowRotateRight, Button, Card, Checkbox, Field, GraduationCap, Icon, Input, LogoGithub, Modal, Pill, SegmentedControl, Switch, Tag, Text, Textarea, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
 import { orderBy, uniq } from 'dsh-tauri/client'
 import { useEffect, useMemo, useState } from 'react'
 import { deleteSkill, getSkill, getSkills, postOpenDir, postRoots, postSkill, postSkillPolicy, postSkillsRefresh } from '../apis'
@@ -34,7 +34,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
   const [preview, setPreview] = useState(false)
   const [confirmName, setConfirmName] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [outcome, setOutcome] = useState<{ ok: boolean, text: string } | null>(null)
+  const [toast, setToast] = useState<{ text: string, seq: number } | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
   const [query, setQuery] = useState('')
@@ -50,7 +50,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
         if (current) {
           if ('error' in body) {
             setSkills([])
-            setOutcome({ ok: false, text: failText(t, new Error(body.error)) })
+            setToast({ text: failText(t, new Error(body.error)), seq: Date.now() })
             return
           }
           setSkills(body.skills)
@@ -59,7 +59,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
       (error: unknown) => {
         if (current) {
           setSkills([])
-          setOutcome({ ok: false, text: failText(t, error) })
+          setToast({ text: failText(t, error), seq: Date.now() })
         }
       },
     )
@@ -75,7 +75,6 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
       if ('error' in body)
         throw new Error(body.error)
       setSkills(body.skills)
-      setOutcome({ ok: true, text: t('refreshed') })
     }
     catch {
       setReload(value => value + 1)
@@ -112,7 +111,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
       setPreview(!skill.editable)
       setEditor({ mode: skill.editable ? 'edit' : 'view', name: skill.name, description: skill.description, whenToUse: skill.whenToUse ?? '', modelInvocable: skill.invocation.modelInvocable, userInvocable: skill.invocation.userInvocable, content: body.content })
     }
-    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
+    catch (error) { setToast({ text: failText(t, error), seq: Date.now() }) }
     finally { setBusy(false) }
   }
 
@@ -125,7 +124,6 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     try {
       await postSkill({ name: editor.name.trim(), description: editor.description, whenToUse: editor.whenToUse.trim() || undefined, modelInvocable: editor.modelInvocable, userInvocable: editor.userInvocable, content: editor.content })
       setEditor(null)
-      setOutcome({ ok: true, text: t('saved') })
       refreshUntil(rows => rows.some(row => row.name === name))
     }
     catch (error) { setFormError(error instanceof Error ? error.message : String(error)) }
@@ -139,10 +137,9 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     setBusy(true)
     try {
       await deleteSkill({ name })
-      setOutcome({ ok: true, text: t('saved') })
       refreshUntil(rows => !rows.some(row => row.name === name))
     }
-    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
+    catch (error) { setToast({ text: failText(t, error), seq: Date.now() }) }
     finally {
       setBusy(false)
       setConfirmName(null)
@@ -154,13 +151,12 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     setBusy(true)
     try {
       await postSkillPolicy({ name: skill.name, enabled: !enabled })
-      setOutcome({ ok: true, text: t(enabled ? 'skillDisabledMsg' : 'skillEnabled') })
       refreshUntil((rows) => {
         const row = rows.find(item => item.name === skill.name)
         return row !== undefined && row.invocation.modelInvocable === !enabled && row.invocation.userInvocable === !enabled
       })
     }
-    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
+    catch (error) { setToast({ text: failText(t, error), seq: Date.now() }) }
     finally { setBusy(false) }
   }
 
@@ -168,7 +164,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     try {
       await postOpenDir(target)
     }
-    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
+    catch (error) { setToast({ text: failText(t, error), seq: Date.now() }) }
   }
 
   const doCreate = async (): Promise<void> => {
@@ -176,7 +172,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     try {
       await createSkill()
     }
-    catch (error) { setOutcome({ ok: false, text: `${t('skillCreatorFailed')}: ${error instanceof Error ? error.message : String(error)}` }) }
+    catch (error) { setToast({ text: `${t('skillCreatorFailed')}: ${error instanceof Error ? error.message : String(error)}`, seq: Date.now() }) }
     finally {
       if (mounted.current)
         setBusy(false)
@@ -193,7 +189,6 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     setFormError(null)
     try {
       await postRoots({ kind: 'git', url })
-      setOutcome({ ok: true, text: t('importRepositorySuccess') })
       setImportOpen(false)
       setRepositoryUrl('')
       for (const delay of IMPORT_REFRESH_DELAYS_MS) {
@@ -239,12 +234,6 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
         <Button variant="primary" size="sm" disabled={busy} onClick={() => void doCreate()}>{t('newSkill')}</Button>
       </div>
       <Text tone="tertiary">{t('skillsIntro')}</Text>
-      {outcome && (
-        <Notice kind={outcome.ok ? 'ok' : 'error'}>
-          <StateDot state={outcome.ok ? 'done' : 'error'} size={10} />
-          <div className="flex-1 min-w-0 flex flex-col gap-[4px]">{outcome.text}</div>
-        </Notice>
-      )}
       <div className="flex items-center gap-[7px] px-[2px] mt-[2px] [&_h3]:m-0 [&_h3]:text-[13px] [&_h3]:leading-[20px] [&_h3]:font-semibold">
         <h3>{t('skillsTab')}</h3>
         {skills && (
@@ -371,6 +360,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
           </div>
         </div>
       </Modal>
+      {toast !== null && <Toast key={toast.seq} text={toast.text} icon={<Icon as={Warning} />} onDone={() => setToast(null)} />}
     </div>
   )
 }

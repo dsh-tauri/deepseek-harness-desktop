@@ -245,7 +245,7 @@
         "name": "DSH IM",
         "description": "通过扫码或机器人凭据把IM机器人接入DeepSeek Harness（支持飞书、微信、钉钉、企业微信、QQ、Slack、Telegram、Discord和WhatsApp）。 Connect IM bots to DeepSeek Harness via QR code or credentials (9 channels).",
         "repo": "https://github.com/xmanrui/dsh-im",
-        "recommended": true,
+        "recommended": false,
         "checked": false,
         "version": [
           {
@@ -261,6 +261,26 @@
             "dsh": "^0.2.0-rc.1"
           }
         ]
+      },
+      {
+        "id": "@changfenhuang/dsh-genui",
+        "spec": "@changfenhuang/dsh-genui",
+        "name": "DSH GenUI",
+        "description": "GenUI for DeepSeek Harness: interactive UI components rendered inline in assistant replies via the dsh-ui fence — layout, charts, plots, forms, quizzes, mermaid, 3D scenes, and an action event loop back to the model. Ships the fence-teaching host plugin, the browser renderer (client half), and the genui skill.",
+        "repo": "https://github.com/omdsh-dev/dsh-genui",
+        "recommended": false,
+        "checked": false,
+        "version": "latest"
+      },
+      {
+        "id": "dsh-context",
+        "spec": "dsh-context",
+        "name": "DSH Context",
+        "description": "The best DeepSeek Harness plugin for context insight and management, with context dashboard / browser / sidebar and context command, for context statistics, composition, breakdown, evolution details, understanding how the context is made of, and how it evolves. 一站式 DeepSeek Harness 上下文可视化插件，Context 面板及浏览器和侧边栏与 Context 命令，透视上下文组成、演进、压缩、剪枝等事件与动作。",
+        "repo": "https://github.com/bowenliang123/dsh-context",
+        "recommended": false,
+        "checked": false,
+        "version": "latest"
       }
     ]
   },

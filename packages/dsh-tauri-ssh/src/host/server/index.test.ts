@@ -25,16 +25,16 @@ const PATHS = [
 ]
 
 const ALLOW: Record<string, string> = {
-  [`${BASE}/settings`]: 'GET, HEAD, POST, OPTIONS',
-  [`${BASE}/session/role`]: 'GET, HEAD, OPTIONS',
-  [`${BASE}/machines`]: 'GET, HEAD, POST, DELETE, OPTIONS',
-  [`${BASE}/machines/test`]: 'POST, OPTIONS',
-  [`${BASE}/machines/connect`]: 'POST, OPTIONS',
-  [`${BASE}/machines/disconnect`]: 'POST, OPTIONS',
-  [`${BASE}/machines/install`]: 'POST, OPTIONS',
-  [`${BASE}/machines/events`]: 'GET, HEAD, OPTIONS',
-  [`${BASE}/sync/preview`]: 'GET, HEAD, OPTIONS',
-  [`${BASE}/sync/apply`]: 'POST, OPTIONS',
+  [`${BASE}/settings`]: 'GET, HEAD, POST',
+  [`${BASE}/session/role`]: 'GET, HEAD',
+  [`${BASE}/machines`]: 'GET, HEAD, POST, DELETE',
+  [`${BASE}/machines/test`]: 'POST',
+  [`${BASE}/machines/connect`]: 'POST',
+  [`${BASE}/machines/disconnect`]: 'POST',
+  [`${BASE}/machines/install`]: 'POST',
+  [`${BASE}/machines/events`]: 'GET, HEAD',
+  [`${BASE}/sync/preview`]: 'GET, HEAD',
+  [`${BASE}/sync/apply`]: 'POST',
 }
 
 const view: MachineView = {
@@ -216,10 +216,10 @@ describe('ssh REST route table', () => {
     expect([...disposed].sort()).toEqual([...PATHS].sort())
   })
 
-  it('answers the CORS preflight of every endpoint with its declared method set', async () => {
+  it('refuses undeclared OPTIONS with native 405 and each endpoint method set', async () => {
     for (const path of PATHS) {
       const reply = await call('OPTIONS', path)
-      expect(reply.status).toBe(204)
+      expect(reply.status).toBe(405)
       expect(reply.allow?.split(', ').sort()).toEqual(ALLOW[path].split(', ').sort())
     }
   })

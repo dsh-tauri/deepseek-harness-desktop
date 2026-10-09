@@ -13,9 +13,14 @@ pub const NODE_MIRROR_BASE_URL: &str = "https://npmmirror.com/mirrors/node/";
 pub const DSH_CORE_URL: &str =
     "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/";
 
-/// GitHub Release 的 ghfast.top 中转前缀（透传官方 URL，下载内容一致、
-/// 仍可做 SHA-256 完整性校验），用作官方直连失败时的兜底镜像。
-pub const DSH_MIRROR_PREFIX: &str = "https://ghfast.top/";
+/// GitHub Release 的代理镜像前缀列表（透传官方 URL，下载内容一致、
+/// 仍可做 SHA-256 完整性校验），按实测延迟从低到高排列，官方直连失败时依次兜底。
+pub const DSH_MIRROR_PREFIXES: &[&str] = &[
+    "https://gh-proxy.com/",
+    "https://gh.llkk.cc/",
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+];
 
 /// 捆绑的 pnpm 版本（与 deepseek-harness-pkg 的 packageManager: pnpm@11.7.0 对齐）
 pub const PNPM_VERSION: &str = "11.7.0";
@@ -65,9 +70,10 @@ pub const DSH_HOME_DIR_NAME: &str = ".dsh";
 /// 同时运行时互不干扰，也不会互相污染对方的会话数据。
 pub const DSH_HOME_DEV_DIR_NAME: &str = ".dsh.dev";
 
-/// 应用标识符：`app_data_dir()` / `app_local_data_dir()` 的目录名，必须与
-/// `tauri.conf.json` 的 `identifier` 逐字一致（日志目录同样由它派生）。
-pub const APP_IDENTIFIER: &str = "dsh-tauri";
+/// 启动前的目录解析也读取有效构建配置，避免夜间版读写正式版日志和 Store。
+pub const APP_IDENTIFIER: &str = env!("DSH_APP_IDENTIFIER");
+
+pub const HARNESS_PID_MARKER_NAMES: [&str; 2] = [".harness.pid", ".harness-nightly.pid"];
 
 /// 开发构建在 AppData 下使用的独立子目录。Node、Harness、pnpm、Git 等可执行
 /// 核心不应与 release 共用，否则开发版更新/切换核心会替换正在运行的生产文件。

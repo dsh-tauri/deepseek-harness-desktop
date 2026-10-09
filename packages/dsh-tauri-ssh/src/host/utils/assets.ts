@@ -97,6 +97,15 @@ export function nodeShasumUrls(): string[] {
   ]
 }
 
+/**
+ * v22.22.0 官方 SHASUMS256.txt 的 SHA-256。
+ *
+ * 清单本身也要过摘要校验：镜像（npmmirror）提供的清单只有在与官方逐字节
+ * 相同时才被接受，否则归档源兜底会把「镜像改过的运行时 + 镜像改过的清单」
+ * 当成一次合法安装。升级 NODE_VERSION 时必须同步更新本常量。
+ */
+export const NODE_SHASUMS256_SHA256 = '782c13291346fa7b5ac3ce3d6f0a466a1c9c317a30471a3f65f9ab7f6f7156c0'
+
 export function pnpmDownloadUrls(): string[] {
   return [
     `${PNPM_BASE_URL}pnpm-${PNPM_VERSION}.tgz`,
@@ -104,9 +113,17 @@ export function pnpmDownloadUrls(): string[] {
   ]
 }
 
+/** GitHub Release 代理镜像前缀（与桌面端 config::DSH_MIRROR_PREFIXES 保持同一份清单） */
+export const DSH_MIRROR_PREFIXES = [
+  'https://gh-proxy.com/',
+  'https://gh.llkk.cc/',
+  'https://ghfast.top/',
+  'https://ghproxy.net/',
+] as const
+
 export function dshZipDownloadUrls(repo: string, tag: string, assetName: string): string[] {
   const official = `https://github.com/${repo}/releases/download/${tag}/${assetName}`
-  return [official, `https://ghfast.top/${official}`]
+  return [official, ...DSH_MIRROR_PREFIXES.map(prefix => `${prefix}${official}`)]
 }
 
 export function dshNpmTarballUrls(packageName: string, version: string): string[] {

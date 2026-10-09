@@ -1,6 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Fragment>
+    <DirectoryRef Id="TARGETDIR">
+      <Directory Id="SystemFolder" />
+    </DirectoryRef>
+    <Property Id="LEGACY_INSTALLDIR" Secure="yes">
+      <RegistrySearch Id="LegacyGithubInstallDirNoName" Root="HKCU" Key="Software\github\Deepseek Harness Desktop" Type="raw" />
+      <RegistrySearch Id="LegacyGithubInstallDirWithName" Root="HKCU" Key="Software\github\Deepseek Harness Desktop" Name="InstallDir" Type="raw" />
+      <RegistrySearch Id="LegacyInstallDirNoName" Root="HKCU" Key="Software\dsh-tauri\Deepseek Harness Desktop" Type="raw" />
+      <RegistrySearch Id="LegacyInstallDirWithName" Root="HKCU" Key="Software\dsh-tauri\Deepseek Harness Desktop" Name="InstallDir" Type="raw" />
+    </Property>
+    <!-- 改名后的默认模板只搜索新产品注册键；沿用旧目录才能保住登录启动项的路径。 -->
+    <SetProperty Id="INSTALLDIR" Action="UseLegacyInstallDir" Value="[LEGACY_INSTALLDIR]" After="AppSearch" Sequence="both">
+      NOT INSTALLDIR AND LEGACY_INSTALLDIR
+    </SetProperty>
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Directory Id="LegacyApplicationProgramsFolder" Name="Deepseek Harness Desktop" />
+    </DirectoryRef>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="CleanupLegacyShortcuts" Guid="*">
+        <Condition>WIX_UPGRADE_DETECTED AND LEGACY_INSTALLDIR</Condition>
+        <RemoveFile Id="RemoveLegacyDesktopShortcut" Name="Deepseek Harness Desktop.lnk" Directory="DesktopFolder" On="install" />
+        <RemoveFile Id="RemoveLegacyStartMenuShortcut" Name="Deepseek Harness Desktop.lnk" Directory="LegacyApplicationProgramsFolder" On="install" />
+        <RemoveFile Id="RemoveLegacyUninstallShortcut" Name="Uninstall Deepseek Harness Desktop.lnk" Property="LEGACY_INSTALLDIR" On="install" />
+        <RemoveFolder Id="RemoveLegacyProgramsFolder" Directory="LegacyApplicationProgramsFolder" On="install" />
+        <RegistryValue Root="HKCU" Key="Software\dsh-tauri\DSH Tauri" Name="Legacy Shortcut Cleanup" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
     <CustomAction
       Id="RemoveAutostartRunValue"
       Directory="SystemFolder"

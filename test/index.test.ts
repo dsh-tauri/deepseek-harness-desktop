@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { containsHeapOomError, containsInotifyLimitError, formatLogLine, pickErrorLines } from '../src/components/logs.utils'
+import { containsHeapOomError, containsInotifyLimitError, formatLogLine, heapPeakFromLogs, pickErrorLines } from '../src/components/logs.utils'
 
 describe('formatLogLine', () => {
   it('strips the official GitHub release download prefix', () => {
@@ -9,10 +9,12 @@ describe('formatLogLine', () => {
     )
   })
 
-  it('strips the ghfast.top mirror wrapper prefix', () => {
-    const url = 'https://ghfast.top/https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.1.x-x/deepseek-harness-pkg-linux.zip'
-    expect(formatLogLine(`Download ${url}`)).toContain('deepseek-harness-pkg-linux.zip')
-    expect(formatLogLine(`Download ${url}`)).not.toContain('ghfast.top')
+  it('strips every mirror wrapper prefix', () => {
+    const asset = 'https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.1.x-x/deepseek-harness-pkg-linux.zip'
+    for (const prefix of ['https://gh-proxy.com/', 'https://gh.llkk.cc/', 'https://ghfast.top/', 'https://ghproxy.net/']) {
+      const formatted = formatLogLine(`Download ${prefix}${asset}`)
+      expect(formatted).toBe('Download dsh-0.1.x-x/deepseek-harness-pkg-linux.zip')
+    }
   })
 
   it('leaves ordinary log lines untouched', () => {
@@ -87,5 +89,23 @@ describe('containsInotifyLimitError', () => {
 
   it('handles empty input', () => {
     expect(containsInotifyLimitError([])).toBe(false)
+  })
+})
+
+describe('heapPeakFromLogs', () => {
+  it('reads the peak heap size from the V8 GC trace line', () => {
+    expect(heapPeakFromLogs(['Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB'])).toBe(8234)
+  })
+
+  it('takes the largest peak across the whole tail', () => {
+    expect(heapPeakFromLogs([
+      'Mark-Compact 4020.1 (4096.0) -> 4010.0 (4102.5) MB',
+      'Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB',
+    ])).toBe(8234)
+  })
+
+  it('returns undefined when the tail carries no GC trace line', () => {
+    expect(heapPeakFromLogs(['FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory'])).toBeUndefined()
+    expect(heapPeakFromLogs([])).toBeUndefined()
   })
 })

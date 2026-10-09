@@ -105,20 +105,20 @@ describe('右键菜单路由声明', () => {
     for (const [, path] of EXPECTED_ROUTES) {
       const response = await fetch(`${base}${path}`)
       expect(response.status, path).toBe(405)
-      expect(response.headers.get('allow')?.split(', ').sort(), path).toEqual('POST, OPTIONS'.split(', ').sort())
+      expect(response.headers.get('allow')?.split(', ').sort(), path).toEqual('POST'.split(', ').sort())
     }
 
     dispose()
   })
 
-  it('oPTIONS 预检返回 204 并带 allow 头', async () => {
+  it('oPTIONS 未声明时返回 405 并带 allow 头', async () => {
     const harness = createHarness()
     const dispose = mount(harness)
     const base = await listen(harness.registered)
 
     const response = await fetch(`${base}${P}/open/url`, { method: 'OPTIONS' })
-    expect(response.status).toBe(204)
-    expect(response.headers.get('allow')).toBe('POST, OPTIONS')
+    expect(response.status).toBe(405)
+    expect(response.headers.get('allow')?.split(', ').sort()).toEqual('POST'.split(', ').sort())
 
     dispose()
   })

@@ -15,7 +15,7 @@ afterEach(() => {
   clearTurnEndFacts()
 })
 
-it('serves turn-end facts and preserves HEAD, OPTIONS, allowed methods and disposal', async () => {
+it('serves turn-end facts and preserves HEAD, allowed methods and disposal', async () => {
   const registered = new Map<string, WebRoute>()
   const unmount = server({
     webServer: {
@@ -47,11 +47,11 @@ it('serves turn-end facts and preserves HEAD, OPTIONS, allowed methods and dispo
     expect(head.status).toBe(200)
     expect(await head.text()).toBe('')
     const options = await fetch(base, { method: 'OPTIONS' })
-    expect(options.status).toBe(204)
-    expect(options.headers.get('allow')).toBe('GET, HEAD, OPTIONS')
+    expect(options.status).toBe(405)
+    expect(options.headers.get('allow')?.split(', ').sort()).toEqual('GET, HEAD'.split(', ').sort())
     const invalid = await fetch(base, { method: 'POST' })
     expect(invalid.status).toBe(405)
-    expect(invalid.headers.get('allow')?.split(', ').sort()).toEqual(['GET', 'HEAD', 'OPTIONS'])
+    expect(invalid.headers.get('allow')?.split(', ').sort()).toEqual(['GET', 'HEAD'])
     unmount()
     expect(registered.size).toBe(0)
   }

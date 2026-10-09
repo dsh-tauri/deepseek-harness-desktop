@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="TARGETDIR">
+      <Directory Id="SystemFolder" />
+    </DirectoryRef>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="NightlyAutostartCleanup" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\dsh-tauri-nightly\DSH Tauri Nightly" Name="Autostart Cleanup" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+    <CustomAction
+      Id="RemoveAutostartRunValue"
+      Directory="SystemFolder"
+      ExeCommand="reg.exe delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;DSH Tauri Nightly&quot; /f"
+      Execute="immediate"
+      Impersonate="yes"
+      Return="ignore"
+    />
+    <CustomAction
+      Id="RemoveAutostartApprovalValue"
+      Directory="SystemFolder"
+      ExeCommand="reg.exe delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run&quot; /v &quot;DSH Tauri Nightly&quot; /f"
+      Execute="immediate"
+      Impersonate="yes"
+      Return="ignore"
+    />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveAutostartRunValue" Before="RemoveFiles">
+        REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE
+      </Custom>
+      <Custom Action="RemoveAutostartApprovalValue" After="RemoveAutostartRunValue">
+        REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE
+      </Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

@@ -2,7 +2,6 @@ import type { Middleware } from 'h3'
 import type { IncomingMessage } from 'node:http'
 import type { ConnectionGate } from '../types'
 import { getServerContext } from 'dsh-h3/utils'
-import { defineEventHandler } from 'h3'
 
 export const desktopRequestGuard: Middleware = async (event, next) => {
   const ctx = getServerContext(event)
@@ -44,12 +43,3 @@ export const desktopRequestGuard: Middleware = async (event, next) => {
     throw error
   }
 }
-
-export const desktopPreflight = defineEventHandler((event) => {
-  const methods = new Set<string | undefined>(event.app?.['~routes'].map(route => route.method))
-  if (methods.has('GET'))
-    methods.add('HEAD')
-  const allow = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].filter(method => methods.has(method)).join(', ')
-  event.res.status = 204
-  event.res.headers.set('allow', allow)
-})

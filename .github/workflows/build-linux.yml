@@ -6,6 +6,11 @@ on:
       source_ref:
         required: true
         type: string
+      version:
+        description: 注入的版本号；为空时沿用仓库内版本，仅夜间构建使用
+        required: false
+        type: string
+        default: ''
     secrets:
       TAURI_SIGNING_PRIVATE_KEY:
         required: false
@@ -54,16 +59,22 @@ jobs:
           done
           [ "$apt_ok" = "1" ] || { echo "apt-get update 连续 3 次失败，中止"; exit 1; }
           # squashfs-tools 提供 mksquashfs，供 AppImage 宿主库剔除后重打包使用。
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf squashfs-tools
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad squashfs-tools
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Stamp injected version
+        if: inputs.version != ''
+        env:
+          STAMP_VERSION: ${{ inputs.version }}
+        run: node scripts/stamp-version.mjs "$STAMP_VERSION"
 
       - name: Build packages
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles appimage,deb
+        run: pnpm tauri build --bundles appimage,deb ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }}
 
       # Tauri 固定的 linuxdeploy 会把构建镜像的 libwayland-*/libxkbcommon/libxcb/
       # libXau/libXdmcp 一并打进 AppImage，AppRun 又把这些库置于 LD_LIBRARY_PATH 首位；
@@ -79,6 +90,9 @@ jobs:
           for appimage in "${appimages[@]}"; do
             bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
           done
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6

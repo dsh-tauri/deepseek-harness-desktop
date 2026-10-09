@@ -39,10 +39,22 @@ describe('remote poll logging', () => {
   it('logs an unreachable instance once per outage, not once per poll', async () => {
     const { result } = renderHook(useRemote, { wrapper: Wrapper })
     await waitFor(() => expect(result.current.available).toBe(false))
-    await act(async () => {
-      await result.current.refresh()
-      await result.current.refresh()
-    })
+    for (const attempt of [2, 3]) {
+      let rejectRequest!: (reason: unknown) => void
+      invoke.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        rejectRequest = reject
+      }))
+      let resetPromise!: Promise<void>
+      act(() => {
+        resetPromise = client.resetQueries({ queryKey: queryKeys.remoteMachines, exact: true })
+      })
+      await waitFor(() => expect(result.current.available).toBe(true))
+      rejectRequest(new Error(`REMOTE_REQUEST_FAILED: connection refused (attempt ${attempt})`))
+      await act(async () => {
+        await resetPromise
+      })
+      await waitFor(() => expect(result.current.available).toBe(false))
+    }
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn).toHaveBeenCalledWith('[remote] ssh api unreachable:', 'REMOTE_REQUEST_FAILED: connection refused')
   })

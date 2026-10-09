@@ -43,7 +43,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<McpApplyImportRes
       mcp.save(dir, input)
       results.push({ name: server.name, ok: true })
     }
-    return { ok: results.every(item => item.ok), results, restartNeeded: true }
+    return { ok: results.every(item => item.ok), results, restartNeeded: !deps.hotReload() }
   }
   catch (error) {
     event.res.status = 500

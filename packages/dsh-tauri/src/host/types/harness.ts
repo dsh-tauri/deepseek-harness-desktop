@@ -7,7 +7,7 @@
  * storageDomain / approval）。本文件只补桌面端自有的宿主服务（webServer / loader），
  * 并作为 dsh-tauri 宿主侧全部类型的统一出口。
  *
- * 【基准】@deepseek-ai/* 0.2.0-rc.2（版本由 pnpm-workspace.yaml 的 `dsh` catalog 钉住）。
+ * 【基准】@deepseek-ai/* 0.2.1-alpha.1（版本由 pnpm-workspace.yaml 的 `dsh` catalog 钉住）。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'

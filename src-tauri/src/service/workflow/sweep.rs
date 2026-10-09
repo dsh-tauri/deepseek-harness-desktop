@@ -5,16 +5,41 @@ use crate::config;
 use std::fs;
 use std::process::Command;
 
-use super::process::{has_owned_process, kill_pid_tree, terminate_stale_harness_processes};
+use super::process::{
+    has_owned_process, kill_pid_tree, take_startup_sweep, terminate_stale_harness_processes,
+};
 use super::utils::is_port_in_use;
 
-/// 孤儿清扫用的 PID/端口标记文件路径（$DSH_HOME/.harness.pid，两行：PID、端口）。
+/// 孤儿清扫用的 PID/端口标记文件路径（两行：PID、端口）。
 ///
 /// 应用被强杀（崩溃、任务管理器结束等）时无法执行退出清理，其 Harness 子进程
 /// 会继续占用端口；下一次启动只能一路漂移端口（3080→3081→…）并触发服务端
 /// "already running"，表现为应用"坏掉"。启动前据此文件识别并清理这类残留。
-pub(super) fn harness_pid_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
-    config::get_dsh_data_path(app_handle).join(".harness.pid")
+pub(super) fn harness_pid_path<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> std::path::PathBuf {
+    let channel = usize::from(app_handle.config().identifier == "dsh-tauri-nightly");
+    config::get_dsh_data_path(app_handle).join(config::HARNESS_PID_MARKER_NAMES[channel])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::harness_pid_path;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn harness_pid_marker_is_isolated_by_channel() {
+        for (identifier, marker) in [
+            ("dsh-tauri", ".harness.pid"),
+            ("dsh-tauri-nightly", ".harness-nightly.pid"),
+        ] {
+            let mut context = mock_context(noop_assets());
+            context.config_mut().identifier = identifier.into();
+            let app = mock_builder().build(context).unwrap();
+            let path = harness_pid_path(app.handle());
+            assert_eq!(path.file_name().unwrap(), marker);
+        }
+    }
 }
 
 /// 记录本次启动的 Harness PID 与端口，供下次启动清扫孤儿用。
@@ -38,7 +63,12 @@ pub fn sweep_orphan_harness(app_handle: &tauri::AppHandle) {
     // 先按命令行路径清扫所有从本应用 dsh 安装目录启动的孤儿 Harness 实例：
     // 标记文件只记录最近一次会话的 PID，应用多次崩溃/强杀会遗留更早的孤儿。
     // Windows 按入口路径与转发链状态回收，不按共享标记结束另一个仍在运行的 dev 实例。
-    terminate_stale_harness_processes(app_handle);
+    // 启动期只做一次：本次启动已清扫过就跳过（重复枚举同一份进程快照没有新结论）。
+    if take_startup_sweep() {
+        terminate_stale_harness_processes(app_handle);
+    } else {
+        log::debug!("Skipping orphan Harness sweep: already swept during this launch");
+    }
     if cfg!(windows) {
         return;
     }

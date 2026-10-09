@@ -728,7 +728,7 @@ fn copy_dir_tree(src: &Path, dst: &Path) -> Result<(), String> {
             let name = entry.file_name();
             // 仅跳过运行时产物（不随克隆迁移）
             if let Some(s) = name.to_str() {
-                if s == ".harness.pid" || s == ".backups" {
+                if crate::config::HARNESS_PID_MARKER_NAMES.contains(&s) || s == ".backups" {
                     return Ok(());
                 }
             }
@@ -1035,7 +1035,9 @@ mod clone_tests {
         let tmp = std::env::temp_dir().join(format!("dsh-clone-ok-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let root = tmp.join("profiles");
-        scaffold_source(&root, "web");
+        let source = scaffold_source(&root, "web");
+        std::fs::write(source.join(".harness.pid"), "12345").unwrap();
+        std::fs::write(source.join(".harness-nightly.pid"), "23456").unwrap();
 
         let profile = clone_with_root(&root, "web", None).unwrap();
         assert_eq!(profile.id, "web-1");
@@ -1047,6 +1049,8 @@ mod clone_tests {
         assert!(dst.join("package.json").is_file());
         assert!(dst.join("cordis.patch.yml").is_file());
         assert!(dst.join("sub/deep.txt").is_file());
+        assert!(!dst.join(".harness.pid").exists());
+        assert!(!dst.join(".harness-nightly.pid").exists());
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

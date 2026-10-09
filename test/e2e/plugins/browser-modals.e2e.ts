@@ -1,7 +1,7 @@
 import type { Browser, BrowserContext, Page } from 'playwright'
 import type { SyntheticFallback } from '../support/browser'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { dismissAppModals, launchDshBrowser, selectSettingsSection } from '../support/browser'
+import { appUrl, dismissAppModals, launchDshBrowser, newDshPage, selectSettingsSection } from '../support/browser'
 
 const SETTINGS = `<section role="dialog" aria-modal="true" data-shortcut-modal="settings" data-slot-sidebar="dsh-tauri-ui">
   <button onclick="this.closest('section').remove()">关闭设置</button>
@@ -74,5 +74,28 @@ describe('浏览器编排：阻塞引导弹窗', () => {
 
     expect(await page.getByRole('dialog').count(), '所有阻塞引导必须被关闭，不得因设置页保护而漏关').toBe(0)
     expect(fallbacks, '引导关闭必须走真实指针事件').toEqual([])
+  })
+
+  it('首次启动时等待并关闭晚于 ready 锚点挂载的引导弹窗', async () => {
+    await context.route(appUrl('/'), route => route.fulfill({
+      contentType: 'text/html',
+      body: `<main data-slot="sidebar">ready</main><script>
+        setTimeout(() => document.body.insertAdjacentHTML('beforeend', ${JSON.stringify(ONBOARDING)}), 600)
+        setTimeout(() => document.body.dataset.lateModalWindow = 'elapsed', 1_300)
+      </script>`,
+    }))
+
+    const preparedBrowser = new Proxy(browser, {
+      get(target, property, receiver) {
+        if (property === 'newContext')
+          return async () => context
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const app = await newDshPage(preparedBrowser)
+    await app.frame.locator('body[data-late-modal-window="elapsed"]').waitFor({ state: 'attached' })
+
+    expect(await app.frame.getByRole('dialog').count(), '真实启动入口必须关闭发现窗口内晚挂载的引导').toBe(0)
+    expect(app.syntheticFallbacks, '晚挂载引导仍必须走真实指针事件').toEqual([])
   })
 })

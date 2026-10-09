@@ -6,6 +6,11 @@ on:
       source_ref:
         required: true
         type: string
+      version:
+        description: 注入的版本号；为空时沿用仓库内版本，仅夜间构建使用
+        required: false
+        type: string
+        default: ''
     secrets:
       TAURI_SIGNING_PRIVATE_KEY:
         required: false
@@ -38,6 +43,14 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # windows-latest 默认 PowerShell，$STAMP_VERSION 会被当成本地变量读成空串；显式用 bash。
+      - name: Stamp injected version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          STAMP_VERSION: ${{ inputs.version }}
+        run: node scripts/stamp-version.mjs "$STAMP_VERSION"
+
       # WiX 只接受纯数字版本；NSIS 仍使用完整 SemVer。
       - name: Prepare MSI version override
         shell: bash
@@ -54,7 +67,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --config release-msi-version.tmp.json
+        run: pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --config release-msi-version.tmp.json
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/nsis src-tauri/target/release/bundle/msi
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6

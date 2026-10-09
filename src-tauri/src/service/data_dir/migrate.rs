@@ -122,7 +122,7 @@ pub(super) fn run(
 ) -> Result<MigrationOutcome, String> {
     // 动手前的最后一道安全网：调用方（`data_dir::migrate`）已经停过服，这里再确认一次，
     // 避免 Harness 在停服与迁移之间被重新拉起。
-    if !harness_stopped(app_handle) {
+    if !harness_stopped(source) {
         return Err(format!(
             "DATA_DIR_HARNESS_RUNNING: {} 仍在使用数据目录",
             source.display()
@@ -199,7 +199,7 @@ pub(super) fn rollback(
     backup: Option<&Path>,
     emit: ProgressSink<'_>,
 ) -> Result<MigrationOutcome, String> {
-    if !harness_stopped(app_handle) {
+    if !harness_stopped(current) {
         return Err(format!(
             "DATA_DIR_HARNESS_RUNNING: {} 仍在使用数据目录",
             current.display()

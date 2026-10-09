@@ -37,6 +37,7 @@ describe('apply provider lifecycle', () => {
     const dispose = effects.get('dsh-tauri-extension: skill provider')!()
     expect(provider.start).toHaveBeenCalledExactlyOnceWith(packagedSkillsDir())
     expect(dispose).toBe(disposeProviderRuntime)
+    expect(server.__host_instance!.options.hotReload()).toBe(false)
     await server.__host_instance!.options.remountProvider()
     expect(server.__host_instance!.options.profileDirPath).toBe('/profiles/chosen')
     expect(provider.start).toHaveBeenCalledTimes(2)
@@ -45,5 +46,22 @@ describe('apply provider lifecycle', () => {
     expect(providerRuntime.fiber).toBeUndefined()
     unmount()
     expect(() => getServerContext(server)).toThrow()
+  })
+
+  it('宿主挂载 hmr 服务时报告可热加载', () => {
+    const effects = new Map<string, () => (() => void)>()
+    const host = {
+      marker: 'host',
+      webServer: { register: vi.fn(() => () => {}) },
+      get: (name: string) => (name === 'hmr' ? { runExclusive: async () => {} } : undefined),
+    }
+    const ctx = {
+      inject: vi.fn((_names: string[], callback: (context: unknown) => unknown) => callback(host)),
+      effect: vi.fn((effect: () => (() => void), label: string) => effects.set(label, effect)),
+    }
+    apply(ctx as unknown as HostContext)
+    expect(providerRuntime.disposed).toBe(false)
+    disposers.push(effects.get('dsh-tauri-extension: routes')!())
+    expect(server.__host_instance!.options.hotReload()).toBe(true)
   })
 })

@@ -233,6 +233,8 @@ interface FrameSnapshot {
 
 const SNAPSHOT_TIMEOUT_MS = 5_000
 const SNAPSHOT_ELEMENT_BUDGET = 4_000
+/** 模型引导会在宿主 ready 锚点之后异步挂载；每个隔离浏览器 context 都要留一次发现窗口。 */
+const INITIAL_MODAL_DISCOVERY_MS = 3_000
 
 /** 采集 frame 内快照；自身绝不抛错、绝不拖死用例（超时降级成一行文本）。 */
 async function captureFrameSnapshot(frame: Frame): Promise<FrameSnapshot | string> {
@@ -391,7 +393,7 @@ export async function newDshPage(
   }
 
   if (options.dismissModals ?? true) {
-    await dismissAppModals(page, frame, syntheticFallbacks)
+    await dismissAppModals(page, frame, syntheticFallbacks, 20_000, INITIAL_MODAL_DISCOVERY_MS)
   }
 
   return {
@@ -528,21 +530,31 @@ async function dismissOneModal(
   return true
 }
 
-/** 确保帧内无阻塞弹层（可重入的闸）。 */
+/**
+ * 确保帧内无阻塞弹层（可重入的闸）。
+ * `discoveryMs` 只延长「尚未发现弹层」的启动观察期；发现并关闭后仍沿用 300ms 复核。
+ */
 export async function dismissAppModals(
   page: Page,
   frame: Frame,
   fallbacks?: SyntheticFallback[],
   timeoutMs = 20_000,
+  discoveryMs = 0,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
+  let discoveryDeadline = Math.min(deadline, Date.now() + discoveryMs)
   while (Date.now() < deadline) {
-    if (await dismissOneModal(page, frame, fallbacks))
+    if (await dismissOneModal(page, frame, fallbacks)) {
+      discoveryDeadline = Date.now()
       continue
+    }
     await delay(300)
-    if (await dismissOneModal(page, frame, fallbacks))
+    if (await dismissOneModal(page, frame, fallbacks)) {
+      discoveryDeadline = Date.now()
       continue
-    return
+    }
+    if (Date.now() >= discoveryDeadline)
+      return
   }
 
   const remaining = await frame.locator(APP_MODAL).count()

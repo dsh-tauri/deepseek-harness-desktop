@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
       mcpScopeDir(scope, deps.profileDirPath),
       mcpRowToInput(source),
     )
-    return { ok: true, id: createdId, scope, restartNeeded: true }
+    return { ok: true, id: createdId, scope, restartNeeded: !deps.hotReload() }
   }
   catch (error) {
     event.res.status = 500

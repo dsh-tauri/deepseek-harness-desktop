@@ -139,13 +139,13 @@ describe('migration safety contract', () => {
 
   it('refuses to migrate while the Harness still holds the data directory', () => {
     const module = readSource(MODULE)
-    expect(module).toContain('pub(super) fn harness_stopped(app_handle: &AppHandle) -> bool')
-    expect(module).toContain('.harness.pid')
+    expect(module).toContain('pub(super) fn harness_stopped(root: &Path) -> bool')
+    expect(readSource('src-tauri/src/config/constants.rs')).toContain('[".harness.pid", ".harness-nightly.pid"]')
     const source = readSource(MIGRATE)
     expect(source).toContain('DATA_DIR_HARNESS_RUNNING')
     // 预检（preview_data_dir_migration）不停服，用户点「预检」时 Harness 通常正在运行，
     // 所以停服检查只能落在真正动手的 run() 里；放进 plan() 会让预检永远失败。
-    const guard = 'if !harness_stopped(app_handle) {'
+    const guard = 'if !harness_stopped(source) {'
     const plan = source.slice(source.indexOf('pub(super) fn plan('), source.indexOf('pub(super) fn run('))
     const run = source.slice(source.indexOf('pub(super) fn run('), source.indexOf('pub(super) fn rollback('))
     expect(plan).not.toContain('harness_stopped')
@@ -165,8 +165,8 @@ describe('migration safety contract', () => {
       .filter(body => body.includes('workflow::stop'))
     expect(bodies.length).toBe(2)
     for (const body of bodies) {
-      const recorded = body.indexOf('let recorded = data_dir::harness_marker(&app_handle);')
-      const reject = body.indexOf('reject_unreadable_marker(recorded)?;')
+      const recorded = body.indexOf('let recorded = data_dir::harness_markers(&crate::config::get_dsh_data_path(&app_handle));')
+      const reject = body.indexOf('reject_unreadable_markers(recorded)?;')
       const stop = body.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;')
       const confirm = body.indexOf('confirm_harness_stopped(recorded)?;')
       expect(recorded).toBeGreaterThan(-1)
@@ -180,7 +180,7 @@ describe('migration safety contract', () => {
     // 停之前那道检查必须放行「存活 PID」分支
     expect(bridge).toContain('HarnessMarker::Missing | HarnessMarker::Pid(_) => Ok(())')
     // 停之前那一步必须排在 `stop()` 前面，否则标记已经被删、什么都查不出
-    expect(bridge.indexOf('reject_unreadable_marker(recorded)?;')).toBeLessThan(bridge.indexOf('workflow::stop'))
+    expect(bridge.indexOf('reject_unreadable_markers(recorded)?;')).toBeLessThan(bridge.indexOf('workflow::stop'))
     expect(bridge).toContain('DATA_DIR_HARNESS_RUNNING')
     expect(bridge).toContain('DATA_DIR_HARNESS_MARKER_INVALID')
     // 标记读不出来与标记不在必须分开：前者要先拒绝，否则 `stop()` 删掉标记后
@@ -189,9 +189,9 @@ describe('migration safety contract', () => {
     expect(bridge).toContain('HarnessMarker::Missing')
     const module = readSource(MODULE)
     expect(module).toContain('pub(crate) enum HarnessMarker {')
-    expect(module).toContain('pub(crate) fn harness_marker(app_handle: &AppHandle) -> HarnessMarker {')
-    // `harness_stopped` 复用同一份分类，不再各写一遍解析逻辑
-    expect(module).toContain('match harness_marker(app_handle) {')
+    expect(module).toContain('pub(crate) fn harness_markers(root: &Path) -> [HarnessMarker; 2] {')
+    expect(module).toContain('HARNESS_PID_MARKER_NAMES.map(|name| harness_marker_at(&root.join(name)))')
+    expect(module).toMatch(/harness_markers\(root\)\s*\.into_iter\(\)\s*\.all\(\|marker\| match marker \{/)
   })
 
   it('moves a non-empty rollback target aside instead of overwriting it', () => {

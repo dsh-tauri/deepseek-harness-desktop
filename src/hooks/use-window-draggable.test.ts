@@ -409,9 +409,9 @@ describe('useWindowDraggable', () => {
     expect(windowMock.setPosition).not.toHaveBeenCalled()
   })
 
-  it('挂载时拉起后端鼠标设备流', () => {
+  it('拖拽订阅不提前启动由穿透控制器管理的设备流', () => {
     renderHook(() => useDraggable())
 
-    expect(invokeMock).toHaveBeenCalledWith('start_pet_mouse_stream')
+    expect(invokeMock).not.toHaveBeenCalledWith('start_pet_mouse_stream')
   })
 })

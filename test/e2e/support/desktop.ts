@@ -21,7 +21,7 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..
 export const APP_PORT = 3081
 
 /** 应用主窗口标题（`src-tauri/src/desktop/builder.rs:484`）。 */
-export const APP_TITLE = 'Deepseek Harness Desktop'
+export const APP_TITLE = 'DSH Tauri'
 
 /**
  * 主窗口的 webview label，同时也是 WebDriver 的 window handle
@@ -29,7 +29,7 @@ export const APP_TITLE = 'Deepseek Harness Desktop'
  */
 export const MAIN_WEBVIEW = 'main'
 
-/** 残留实例的进程名（按 `productName` 推导）。 */
+/** 残留实例的进程名（与 Cargo 主二进制一致）。 */
 const APP_PROCESS_NAME = 'deepseek-harness-desktop'
 
 /** E2E 模式下的 Store 文件名（`config::setting::store_dat_file_name` 的测试分支）。 */

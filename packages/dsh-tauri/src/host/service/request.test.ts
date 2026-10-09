@@ -8,7 +8,7 @@ import { getServerOptions } from 'dsh-h3/utils'
 import { defineEventHandler, H3Event, readBody } from 'h3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getServerContext } from '../utils/server'
-import { desktopPreflight, desktopRequestGuard } from './request'
+import { desktopRequestGuard } from './request'
 
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -35,7 +35,6 @@ async function activate(rejection?: 401 | 403) {
     app.use(desktopRequestGuard)
     app.get('/api/demo', defineEventHandler(event => ({ label: getServerOptions<{ label: string }>(event).label })))
     app.post('/api/demo', defineEventHandler(async event => ({ body: await readBody(event) })))
-    app.options('/api/demo', desktopPreflight)
     app.get('/api/error', defineEventHandler(() => {
       throw new Error('boom')
     }))
@@ -64,11 +63,11 @@ describe('desktop H3 request boundary', () => {
     expect(typedContext).toBe(context)
     expect(await (await fetch(`${base}/api/demo`)).json()).toEqual({ label: 'first' })
     const preflight = await fetch(`${base}/api/demo`, { method: 'OPTIONS' })
-    expect(preflight.status).toBe(204)
-    expect(preflight.headers.get('allow')).toBe('GET, HEAD, POST, OPTIONS')
+    expect(preflight.status).toBe(405)
+    expect(preflight.headers.get('allow')?.split(', ').sort()).toEqual(['GET', 'HEAD', 'POST'])
     const invalid = await fetch(`${base}/api/demo`, { method: 'DELETE' })
     expect(invalid.status).toBe(405)
-    expect(new Set(invalid.headers.get('allow')?.split(', '))).toEqual(new Set(['GET', 'HEAD', 'POST', 'OPTIONS']))
+    expect(new Set(invalid.headers.get('allow')?.split(', '))).toEqual(new Set(['GET', 'HEAD', 'POST']))
     const body = { text: 'x'.repeat(1024 * 1024 + 1) }
     const response = await fetch(`${base}/api/demo`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
@@ -76,9 +75,9 @@ describe('desktop H3 request boundary', () => {
     expect(response.headers.get('cache-control')).toBeNull()
   })
 
-  it.each([401, 403] as const)('retains connection rejection %s for requests and preflight', async (status) => {
+  it.each([401, 403] as const)('retains connection rejection %s for declared requests', async (status) => {
     const { base } = await activate(status)
-    for (const method of ['GET', 'POST', 'OPTIONS']) {
+    for (const method of ['GET', 'POST']) {
       const response = await fetch(`${base}/api/demo`, { method })
       expect(response.status).toBe(status)
       expect(await response.json()).toEqual({ error: status === 401 ? 'unauthorized' : 'forbidden' })

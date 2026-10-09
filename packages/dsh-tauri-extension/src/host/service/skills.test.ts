@@ -21,7 +21,6 @@ vi.mock('dsh-tauri', async () => {
     defineService: service.defineService,
     getServerContext: server.getServerContext,
     desktopRequestGuard: () => undefined,
-    desktopPreflight: () => new Response(null, { status: 204 }),
     fsAtomicDriver: driver.fsAtomicDriver,
   }
 })

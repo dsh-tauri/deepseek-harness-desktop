@@ -32,10 +32,10 @@ const EXPECTED_PATHS: readonly string[] = [
 ]
 
 const ALLOW_BY_PATH: Readonly<Record<string, string>> = {
-  [P]: 'POST, DELETE, OPTIONS',
-  [`${P}/bindings`]: 'GET, HEAD, POST, OPTIONS',
-  [`${P}/status`]: 'GET, HEAD, OPTIONS',
-  [`${P}/checkouts`]: 'POST, OPTIONS',
+  [P]: 'POST, DELETE',
+  [`${P}/bindings`]: 'GET, HEAD, POST',
+  [`${P}/status`]: 'GET, HEAD',
+  [`${P}/checkouts`]: 'POST',
 }
 
 const UNDECLARED_METHOD = 'PUT'
@@ -156,18 +156,18 @@ describe('工作树路由声明', () => {
     dispose()
   })
 
-  it('预检 OPTIONS 返回 204 并带 allow 头', async () => {
+  it('未声明的 OPTIONS 返回原生 405 与实际方法集合', async () => {
     const harness = createHarness()
     const dispose = server(harness.ctx)
     const base = await listen(harness.registered)
 
     const collection = await fetch(`${base}${P}`, { method: 'OPTIONS' })
-    expect(collection.status).toBe(204)
-    expect(collection.headers.get('allow')?.split(', ').sort()).toEqual(['DELETE', 'OPTIONS', 'POST'])
+    expect(collection.status).toBe(405)
+    expect(collection.headers.get('allow')?.split(', ').sort()).toEqual(['DELETE', 'POST'])
 
     const status = await fetch(`${base}${P}/status`, { method: 'OPTIONS' })
-    expect(status.status).toBe(204)
-    expect(status.headers.get('allow')?.split(', ').sort()).toEqual(['GET', 'HEAD', 'OPTIONS'])
+    expect(status.status).toBe(405)
+    expect(status.headers.get('allow')?.split(', ').sort()).toEqual(['GET', 'HEAD'])
 
     dispose()
   })

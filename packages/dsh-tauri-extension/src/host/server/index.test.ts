@@ -44,13 +44,13 @@ const EXPECTED_ROUTES: ReadonlyArray<readonly [string, string]> = [
 
 const EXPECTED_PATHS: readonly string[] = [...new Set(EXPECTED_ROUTES.map(([, path]) => path))]
 
-const ALLOW_ORDER = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const
+const ALLOW_ORDER = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
 
 function allowFor(path: string): string {
   const methods = new Set(EXPECTED_ROUTES.filter(([, candidate]) => candidate === path).map(([method]) => method))
   if (methods.has('GET'))
     methods.add('HEAD')
-  return ALLOW_ORDER.filter(method => method === 'OPTIONS' || methods.has(method)).join(', ')
+  return ALLOW_ORDER.filter(method => methods.has(method)).join(', ')
 }
 
 const UNDECLARED_METHOD = 'PATCH'
@@ -100,10 +100,11 @@ function createHarness(): Harness {
 
 const disposers: Array<() => void> = []
 
-function mount(harness: Harness): () => void {
+function mount(harness: Harness, hotReload = false): () => void {
   const dispose = server(harness.ctx as Context, {
     profileDirPath: join(harness.dir, 'profiles', 'web'),
     remountProvider: async () => {},
+    hotReload: () => hotReload,
   })
   disposers.push(dispose)
   return dispose
@@ -178,16 +179,16 @@ describe('能力管理器路由声明', () => {
     dispose()
   })
 
-  it('oPTIONS 预检返回 204 并带 allow 头', async () => {
+  it('oPTIONS 未声明时返回 405 并带 allow 头', async () => {
     const { base, dispose } = await start()
 
     const read = await fetch(`${base}${P}/mcp`, { method: 'OPTIONS' })
-    expect(read.status).toBe(204)
-    expect(read.headers.get('allow')).toBe('GET, HEAD, POST, DELETE, OPTIONS')
+    expect(read.status).toBe(405)
+    expect(read.headers.get('allow')?.split(', ').sort()).toEqual('GET, HEAD, POST, DELETE'.split(', ').sort())
 
     const mutate = await fetch(`${base}${P}/mcp/toggle`, { method: 'OPTIONS' })
-    expect(mutate.status).toBe(204)
-    expect(mutate.headers.get('allow')).toBe('POST, OPTIONS')
+    expect(mutate.status).toBe(405)
+    expect(mutate.headers.get('allow')?.split(', ').sort()).toEqual('POST'.split(', ').sort())
 
     dispose()
   })
@@ -233,6 +234,19 @@ describe('能力管理器路由声明', () => {
     const response = await fetch(`${base}${P}/mcp`)
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ servers: [], restartNeeded: true })
+
+    dispose()
+  })
+
+  it('hMR 在线时 mcp 列表不再要求重启', async () => {
+    const harness = createHarness()
+    dirs.push(harness.dir)
+    const dispose = mount(harness, true)
+    const base = await listen(harness.registered)
+
+    const response = await fetch(`${base}${P}/mcp`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ servers: [], restartNeeded: false })
 
     dispose()
   })

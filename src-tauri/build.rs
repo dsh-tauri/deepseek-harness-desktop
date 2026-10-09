@@ -1,4 +1,16 @@
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let target = tauri_utils::platform::Target::from_triple(&std::env::var("TARGET")?);
+    let (mut config, _) = tauri_utils::config::parse::read_from(target, &std::env::current_dir()?)?;
+    if let Ok(extra) = std::env::var("TAURI_CONFIG") {
+        json_patch::merge(&mut config, &serde_json::from_str(&extra)?);
+    }
+    for (key, variable) in [
+        ("identifier", "DSH_APP_IDENTIFIER"),
+        ("productName", "DSH_PRODUCT_NAME"),
+    ] {
+        let value = config[key].as_str().ok_or("missing Tauri app identity")?;
+        println!("cargo:rustc-env={variable}={value}");
+    }
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
     let attributes = tauri_build::Attributes::new();
@@ -15,5 +27,6 @@ fn main() {
     } else {
         attributes
     };
-    tauri_build::try_build(attributes).expect("failed to build Tauri resources")
+    tauri_build::try_build(attributes)?;
+    Ok(())
 }

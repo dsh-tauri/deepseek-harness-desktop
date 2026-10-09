@@ -17,7 +17,10 @@ pub fn report(message: &str) {
     log::error!("{message}");
     #[cfg(windows)]
     rfd::MessageDialog::new()
-        .set_title("DeepSeek Harness Desktop — 启动失败 / Startup failed")
+        .set_title(format!(
+            "{} — 启动失败 / Startup failed",
+            env!("DSH_PRODUCT_NAME")
+        ))
         .set_description(message)
         .set_level(rfd::MessageLevel::Error)
         .show();
@@ -160,7 +163,7 @@ mod tests {
                 let mut title = [0u16; 256];
                 let length = GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32);
                 let title = String::from_utf16_lossy(&title[..length as usize]);
-                if title.contains("DeepSeek Harness Desktop") && title.contains("Startup failed") {
+                if title.contains(env!("DSH_PRODUCT_NAME")) && title.contains("Startup failed") {
                     probe.1 = PostMessageW(window, WM_CLOSE, 0, 0) != 0;
                     return 0;
                 }

@@ -26,12 +26,7 @@ fn create_symlink(target: &Path, dst: &Path) -> std::io::Result<()> {
         .or_else(|_| std::os::windows::fs::symlink_file(target, dst))
 }
 
-const EXCLUDED_NAMES: &[&str] = &[
-    ".backups",
-    ".harness.pid",
-    ".plugin-backups",
-    "node_modules",
-];
+const EXCLUDED_NAMES: &[&str] = &[".backups", ".plugin-backups", "node_modules"];
 
 /// 凭据文件名。
 const CREDENTIALS_FILE: &str = ".credentials.yaml";
@@ -44,7 +39,8 @@ const CREDENTIALS_FILE: &str = ".credentials.yaml";
 /// - `.credentials.yaml` 按 `include_credentials` 决定。
 fn is_excluded(rel: &Path, include_credentials: bool) -> bool {
     if let Some(name) = rel.file_name().and_then(|n| n.to_str()) {
-        if EXCLUDED_NAMES.contains(&name) {
+        if EXCLUDED_NAMES.contains(&name) || crate::config::HARNESS_PID_MARKER_NAMES.contains(&name)
+        {
             return true;
         }
         if name == CREDENTIALS_FILE && !include_credentials {
@@ -622,6 +618,7 @@ mod tests {
         let mut files = config.to_vec();
         files.extend([
             (".harness.pid", "12345"),
+            (".harness-nightly.pid", "23456"),
             ("node_modules/.modules.yaml", "modules: {}"),
             (
                 "node_modules/.pnpm/example@1.0.0/node_modules/example/index.js",
@@ -642,6 +639,7 @@ mod tests {
                 .all(|entry| !Path::new(entry).components().any(|component| {
                     component.as_os_str() == "node_modules"
                         || component.as_os_str() == ".harness.pid"
+                        || component.as_os_str() == ".harness-nightly.pid"
                 })),
             "运行时依赖和 PID 应被排除，实际条目: {entries:?}"
         );

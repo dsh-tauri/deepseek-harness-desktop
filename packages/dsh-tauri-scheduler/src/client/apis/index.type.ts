@@ -113,12 +113,6 @@ export type GetApiDesktopDshTauriSchedulerOptionsResponse = {
   defaultModel: null | { provider: string; providerLabel: string; model: string; label: string; description?: undefined | string; reasoning?: undefined | { efforts: { id: string; name: string; description?: undefined | string }[]; defaultEffort?: undefined | string } };
 };
 export type PostApiDesktopDshTauriSchedulerRunsRecoverResponse = { ok?: undefined | false | true; error?: undefined | string };
-export type OptionsApiDesktopDshTauriSchedulerTasksResponse = void;
-export type OptionsApiDesktopDshTauriSchedulerTasksToggleResponse = void;
-export type OptionsApiDesktopDshTauriSchedulerTasksRunResponse = void;
-export type OptionsApiDesktopDshTauriSchedulerHistoryResponse = void;
-export type OptionsApiDesktopDshTauriSchedulerOptionsResponse = void;
-export type OptionsApiDesktopDshTauriSchedulerRunsRecoverResponse = void;
 
 export interface PostApiDesktopDshTauriSchedulerTasksBody {
   name: string;

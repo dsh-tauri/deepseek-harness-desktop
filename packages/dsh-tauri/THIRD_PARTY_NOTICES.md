@@ -3,8 +3,8 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.2`
-- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Version: `dsh-v0.2.1-alpha.1`
+- Revision: `5badb15009ae1756c3afe0ae0cef1faafc290ccc`
 - Source: `source/deepseek-harness`
 - License: MIT — Copyright (c) 2026 DeepSeek
 
@@ -23,6 +23,11 @@ Not derived:
 Note:
 
 - The account-stream carrier gate and the sidebar/DOM contracts mirrored here survived `0.2.0-rc.1` → `0.2.0-rc.2` unchanged; `dshDesktop` still reports `protocolVersion: 1` with the optional `deviceInfo` member, and `DESKTOP_HOST_PROTOCOL_VERSION` stays `4`.
+
+## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The account watch, carrier marker, index injection union, and connection authentication gates remain unchanged from `0.2.0-rc.2` to `0.2.1-alpha.1`.
+- The target still uses desktop product protocol `1` and desktop host protocol `4`; no Electron product API is added to the Tauri marker.
 
 ## License
 

@@ -1040,7 +1040,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-harness-desktop"
-version = "0.22.3"
+version = "0.22.4"
 dependencies = [
  "arboard",
  "async-trait",
@@ -1052,6 +1052,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "image",
+ "json-patch",
  "libc",
  "log",
  "objc2-app-kit",
@@ -1081,6 +1082,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
  "tauri-plugin-wdio-webdriver",
+ "tauri-utils",
  "tempfile",
  "time",
  "tokio",

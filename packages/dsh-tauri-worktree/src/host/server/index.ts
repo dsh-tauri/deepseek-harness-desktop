@@ -1,5 +1,5 @@
 import { defineWebServer } from 'dsh-h3'
-import { desktopPreflight, desktopRequestGuard } from 'dsh-tauri'
+import { desktopRequestGuard } from 'dsh-tauri'
 import bindings from './routes/bindings/get'
 import attach from './routes/bindings/post'
 import checkout from './routes/checkouts/post'
@@ -15,8 +15,4 @@ export const server = defineWebServer((app) => {
   app.get('/api/desktop/dsh-tauri-worktree/status', status)
   app.post('/api/desktop/dsh-tauri-worktree/bindings', attach)
   app.post('/api/desktop/dsh-tauri-worktree/checkouts', checkout)
-  app.options('/api/desktop/dsh-tauri-worktree', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-worktree/bindings', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-worktree/status', desktopPreflight)
-  app.options('/api/desktop/dsh-tauri-worktree/checkouts', desktopPreflight)
 })

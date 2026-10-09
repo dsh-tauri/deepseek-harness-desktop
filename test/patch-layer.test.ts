@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   containsPatchEntryUnresolved,
   containsPatchLayerParseError,
@@ -10,6 +10,34 @@ import {
   quarantineFailureDetail,
 } from '../src/store/modules/harness/patch-layer'
 
+const eventListeners = new Map<string, (event: unknown) => void>()
+const invoke = vi.fn()
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (event: string, callback: (payload: unknown) => void) => {
+    eventListeners.set(event, callback)
+    return vi.fn()
+  }),
+}))
+vi.mock('@/config/client', () => ({ queryClient: { invalidateQueries: vi.fn() } }))
+vi.mock('../src/store/modules/harness-updater', () => ({
+  harnessUpdater: { checkForUpdate: vi.fn() },
+}))
+
+// 必须在 mock 工厂所需的变量初始化之后再取用 store（vi.mock 会被提升到文件顶部）。
+const { harness } = await import('../src/store/modules/harness')
+
+beforeEach(() => {
+  eventListeners.clear()
+  invoke.mockReset()
+  Object.assign(harness, {
+    status: 'ready',
+    errorMsg: '',
+    errorLogs: [],
+    busyAction: null,
+  })
+})
 /**
  * issue #525：用户手写的 `cordis.patch.yml` 解析失败时，启动失败信息里的真实
  * 原因被包在「Plugin installation 阶段失败」里，前端必须能识别出来并给出
@@ -168,5 +196,49 @@ describe('unresolved-entry recovery wiring', () => {
 
   it('backs the file up before rewriting it', () => {
     expect(rustSource).toContain('backup_path(&layer, "bak"')
+  })
+
+  it('routes every recovery entry through the shared busy reservation', () => {
+    for (const call of [
+      'runPatchRepair(\'safe-mode\'',
+      'runPatchRepair(\'quarantine\'',
+      'runPatchRepair(\'strip\'',
+    ]) {
+      expect(storeSource).toContain(call)
+    }
+  })
+
+  it('reserves the busy state before the repair callback gets to run', async () => {
+    let release: () => void = () => {}
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    // 让修复之后的 restart 能安静跑完：这条用例只关心占住忙态的时机。
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'get_runtime_info')
+        return { service_url: 'http://127.0.0.1:31415' }
+      if (command === 'runtime_ready')
+        return true
+      if (command === 'proxy_health_check')
+        return 'Healthy'
+      if (command === 'get_preinstall_pending')
+        return false
+      if (command === 'detect_plugin_recovery')
+        return { plugins: [], reason: 'unknown', detail: '', rawError: '' }
+      if (command === 'read_service_logs')
+        return ''
+      if (command === 'get_app_config')
+        return { installed: true, port: 3080, harness_max_heap_mb: 16384, proxy_url: '', auto_start: true, cli_link_enabled: true, zoom_factor: 1, close_action: 'tray', backup_retention_count: 10, backup_include_credentials: false, language: null }
+      return undefined
+    })
+
+    const repair = harness.runPatchRepair('safe-mode', async () => {
+      await pending
+    })
+    // 忙态必须在修复动作的第一次 await 之前就占住：顺序反过来就等于没占，
+    // 退出处理器的自动恢复会在修复途中把它自己的重启插进来。
+    expect(harness.busyAction).toBe('repair')
+    release()
+    await repair
   })
 })

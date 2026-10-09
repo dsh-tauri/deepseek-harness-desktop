@@ -89,4 +89,18 @@ describe('built-in desktop appearance', () => {
       await app.close()
     }
   })
+
+  it('keeps the composer backing opaque when the conversation canvas is translucent', async () => {
+    const app = await newDshPage(browser, { ready: 'style[id="dsh-tauri:appearance"]' })
+    try {
+      await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: { palette: 'nord', transparency: true, opacity: 70, sidebarOnly: false } }, location.origin))
+      const composer = app.frame.locator('[data-composer-seat]').first()
+      await expect.poll(() => composer.evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-alias-bg-base')), { message: '固定输入区的渐变底色不能透出后方滚动的文字' }).toMatch(/^#(?:2e3440|eceff4)$/)
+      expect(await app.frame.locator('body').evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-alias-bg-base')), '会话画布仍保持透明').toBe('transparent')
+      expect(app.errors).toEqual([])
+    }
+    finally {
+      await app.close()
+    }
+  })
 })

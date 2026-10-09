@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DSH Tauri Nightly",
+  "identifier": "dsh-tauri-nightly",
+  "mainBinaryName": "deepseek-harness-desktop-nightly",
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["dsh-nightly"]
+      }
+    },
+    "notifications": {
+      "windows": {
+        "toastActivatorClsid": "77B0D48C-22BB-46A8-B57D-895B403B3148",
+        "iconPath": "icons/nightly/32x32.png"
+      }
+    }
+  },
+  "bundle": {
+    "icon": [
+      "icons/nightly/32x32.png",
+      "icons/nightly/128x128.png",
+      "icons/nightly/128x128@2x.png",
+      "icons/nightly/icon.icns",
+      "icons/nightly/icon.ico",
+      "icons/nightly/icon.png"
+    ],
+    "resources": ["resources/**/*", "icons/nightly/32x32.png"],
+    "linux": {
+      "deb": {
+        "conflicts": [],
+        "replaces": []
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/nightly/icon.ico",
+        "uninstallerIcon": "icons/nightly/icon.ico"
+      },
+      "wix": {
+        "upgradeCode": "11f927a0-72f4-5b2c-b24a-6b1c0fb6602f",
+        "fragmentPaths": ["./windows/fragments/autostart-cleanup-nightly.wxs"],
+        "componentRefs": ["NightlyAutostartCleanup"]
+      }
+    }
+  }
+}

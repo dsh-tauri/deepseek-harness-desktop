@@ -251,7 +251,7 @@ pub async fn rollback(
     .map_err(|e| format!("DATA_DIR_TASK: {e}"))?
 }
 
-/// `.harness.pid` 的读取结果（两行：PID、端口，见 `workflow::sweep::persist_harness_pid`）。
+/// Harness 标记的读取结果（两行：PID、端口）。
 ///
 /// 「文件不在」与「文件在但读不出来 / 解析不出来」必须分开：前者是正常的
 /// 「从未启动过、或上次已正常清理」，后者说明有人正动这个文件（占用、权限、写到
@@ -268,12 +268,8 @@ pub(crate) enum HarnessMarker {
     Pid(u32),
 }
 
-/// 读 `.harness.pid` 并分类。
-///
-/// 只认标记文件，不做端口猜测：端口可能被别的程序占用，也可能因为端口漂移而
-/// 记着上一个端口；标记文件里的 PID 才是「本应用启动的 Harness」的唯一凭据。
-pub(crate) fn harness_marker(app_handle: &AppHandle) -> HarnessMarker {
-    harness_marker_at(&crate::config::get_dsh_data_path(app_handle).join(".harness.pid"))
+pub(crate) fn harness_markers(root: &Path) -> [HarnessMarker; 2] {
+    crate::config::HARNESS_PID_MARKER_NAMES.map(|name| harness_marker_at(&root.join(name)))
 }
 
 /// 无 `AppHandle` 版本：路径由调用方给出，便于用临时目录直接测三种分类。
@@ -297,19 +293,15 @@ fn harness_marker_at(marker: &Path) -> HarnessMarker {
     HarnessMarker::Pid(pid)
 }
 
-/// 是否为「Harness 已经退出」的稳定状态：`.harness.pid` 里的进程不再存活。
-///
-/// 只有「标记不存在」才算已退出——那是从未启动过或上次已正常清理的样子。
-/// 其余一律按「可能还在跑」处理（fail closed）：读失败（占用、权限）说明有人正
-/// 动这个文件，内容解析不出来则可能正写到一半，两种情况下接着改数据目录都可能
-/// 复制到一份撕裂的数据。文件被删掉与写坏这两种「假阴性」的代价完全不对等：
-/// 前者只是让用户重试一次，后者会毁掉用户唯一无法重建的会话数据。
-pub(super) fn harness_stopped(app_handle: &AppHandle) -> bool {
-    match harness_marker(app_handle) {
-        HarnessMarker::Missing => true,
-        HarnessMarker::Invalid => false,
-        HarnessMarker::Pid(pid) => !process_alive(pid),
-    }
+// 两个通道共享 DSH_HOME；任一仍在运行或标记不可读都不能迁移。
+pub(super) fn harness_stopped(root: &Path) -> bool {
+    harness_markers(root)
+        .into_iter()
+        .all(|marker| match marker {
+            HarnessMarker::Missing => true,
+            HarnessMarker::Invalid => false,
+            HarnessMarker::Pid(pid) => !process_alive(pid),
+        })
 }
 
 /// 进程是否存活（只查该 PID，不刷新整张进程表）。
@@ -394,6 +386,30 @@ mod tests {
         std::fs::create_dir(&marker).unwrap();
         assert_eq!(harness_marker_at(&marker), HarnessMarker::Invalid);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migration_requires_both_channels_to_be_stopped() {
+        let root = temp_dir("channels");
+        assert_eq!(harness_markers(&root), [HarnessMarker::Missing; 2]);
+        assert!(harness_stopped(&root));
+        for (index, name) in [".harness.pid", ".harness-nightly.pid"]
+            .into_iter()
+            .enumerate()
+        {
+            let path = root.join(name);
+            std::fs::write(&path, format!("{}\n3080\n", std::process::id())).unwrap();
+            let mut expected = [HarnessMarker::Missing; 2];
+            expected[index] = HarnessMarker::Pid(std::process::id());
+            assert_eq!(harness_markers(&root), expected);
+            assert!(!harness_stopped(&root));
+            std::fs::write(&path, "broken\n").unwrap();
+            assert!(!harness_stopped(&root));
+            std::fs::write(&path, format!("{}\n3080\n", u32::MAX)).unwrap();
+            assert!(harness_stopped(&root));
+            std::fs::remove_file(path).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// 迁移刚把旧目录改名搬走、Harness 还没重建它时，目录会短暂不存在。

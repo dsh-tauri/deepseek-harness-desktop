@@ -6,10 +6,6 @@ export type GetApiDesktopDshTauriWorktreeStatusQuerySessionId = undefined | stri
 export type GetApiDesktopDshTauriWorktreeStatusQueryJobId = undefined | string;
 export type PostApiDesktopDshTauriWorktreeBindingsResponse = { ok?: undefined | false | true; workspaceId?: undefined | string; error?: undefined | string };
 export type PostApiDesktopDshTauriWorktreeCheckoutsResponse = { ok?: undefined | false | true; branch?: undefined | string; projectPath?: undefined | string; targetSessionId?: undefined | string; error?: undefined | string };
-export type OptionsApiDesktopDshTauriWorktreeResponse = void;
-export type OptionsApiDesktopDshTauriWorktreeBindingsResponse = void;
-export type OptionsApiDesktopDshTauriWorktreeStatusResponse = void;
-export type OptionsApiDesktopDshTauriWorktreeCheckoutsResponse = void;
 
 export interface PostApiDesktopDshTauriWorktreeBody {
   sessionId?: undefined | string;

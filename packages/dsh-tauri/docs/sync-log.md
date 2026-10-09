@@ -6,6 +6,14 @@
 
 ## 当前状态
 
+- 已采纳基线：`dsh-v0.2.1-alpha.1`（`5badb15009a`）
+- 上一声明/依赖基线：`dsh-v0.2.0-rc.2`（`639ed015397`）；原实际 gitlink 为 `aa8262e`，本轮纠正。
+- 当前依赖：DSH `0.2.1-alpha.1` 与配套 Cordis `4.0.5-alpha.1`，Group / Include / Loader peers 显式一致。
+- 本轮逐包契约、七类接缝、验证范围与回滚依据：[兼容核对](./compatibility-0.2.1-alpha.1.md)。
+- 默认推荐与回退仍为 rc.2：`dsh-0.2.0-rc.2-36556493178`；兼容目标产物已核实为 `dsh-0.2.1-alpha.1-37117505103`，供显式选择。
+
+## 0.2.0-rc.1 → 0.2.0-rc.2 历史记录
+
 - 已采纳基线：`dsh-v0.2.0-rc.2`（`639ed015397`）
 - 上一基线：`dsh-v0.2.0-rc.1`（`4878cdabd87`）
 - 本地路径：`source/deepseek-harness`（git submodule，HEAD 与基线一致）

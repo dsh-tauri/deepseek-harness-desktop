@@ -1,7 +1,12 @@
 /** DSH 发行版 GitHub Release 下载 URL 前缀：日志展示时剥离，避免整段长 URL 占满一行 */
 const DSH_RELEASE_URL_PREFIX = 'https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/'
-/** ghfast.top 镜像透传包装前缀（与官方 URL 拼接），同样剥离 */
-const DSH_MIRROR_URL_PREFIX = 'https://ghfast.top/'
+/** GitHub 代理镜像的透传包装前缀（与官方 URL 拼接），同样剥离 */
+const DSH_MIRROR_URL_PREFIXES = [
+  'https://gh-proxy.com/',
+  'https://gh.llkk.cc/',
+  'https://ghfast.top/',
+  'https://ghproxy.net/',
+]
 
 /** 日志中认定为「错误行」的标记（大小写不敏感） */
 const ERROR_LINE_MARKERS = /error|duplicate|fatal|panic|throw|✖|exception|failed/i
@@ -12,10 +17,9 @@ const ERROR_LINE_MARKERS = /error|duplicate|fatal|panic|throw|✖|exception|fail
  * 用 split/join 代替 replaceAll 以保证各构建目标下行为一致。
  */
 export function formatLogLine(line: string): string {
-  return line
-    .split(DSH_RELEASE_URL_PREFIX)
-    .join('')
-    .replace(DSH_MIRROR_URL_PREFIX, '')
+  let formatted = line.split(DSH_RELEASE_URL_PREFIX).join('')
+  for (const prefix of DSH_MIRROR_URL_PREFIXES) formatted = formatted.split(prefix).join('')
+  return formatted
 }
 
 /**
@@ -42,4 +46,31 @@ export function containsInotifyLimitError(lines: readonly string[]): boolean {
 
 export function containsHeapOomError(lines: readonly string[]): boolean {
   return lines.some(line => /JavaScript heap out of memory|Ineffective mark-compacts near heap limit/i.test(line))
+}
+
+/** V8 GC 追踪行：`Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB`，最后一个括号里是提交的堆总量 */
+const HEAP_COMMITTED_MB = /\(\d+(?:\.\d+)?\)\s*->[^(]*\((\d+(?:\.\d+)?)\)\s*MB/
+
+/**
+ * 从日志尾部取崩溃瞬间实际提交到的堆上限（MB，取整）。
+ *
+ * V8 堆耗尽时会把 GC 追踪行写进日志，括号里的第二个数就是当时的堆总量；
+ * 它通常略高于配置上限（V8 会略微超发），因此比"设置页里现在填了什么"
+ * 更能说明崩溃现场的真实上限。没有 GC 追踪行时返回 undefined。
+ */
+export function heapPeakFromLogs(lines: readonly string[]): number | undefined {
+  let peak: number | undefined
+  for (const line of lines) {
+    const matched = HEAP_COMMITTED_MB.exec(line)
+    if (!matched) {
+      continue
+    }
+    const committed = Number(matched[1])
+    if (!Number.isFinite(committed)) {
+      continue
+    }
+    const mb = Math.floor(committed)
+    peak = peak === undefined ? mb : Math.max(peak, mb)
+  }
+  return peak
 }

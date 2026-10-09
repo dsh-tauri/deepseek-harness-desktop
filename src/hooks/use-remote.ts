@@ -34,6 +34,7 @@ export function useRemote() {
   const [connectDismissed, setConnectDismissed] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const epochRef = useRef(0)
+  const outageLoggedRef = useRef(false)
   const machinesQuery = useQuery({
     queryKey: queryKeys.remoteMachines,
     queryFn: async () => {
@@ -126,9 +127,17 @@ export function useRemote() {
     if (!document.hidden)
       void refresh()
   })
-  useWatch([available], () => {
-    if (!available)
+  useWatch([machinesQuery.isError, machinesQuery.isSuccess], () => {
+    // 失败查询在下一轮 2 秒轮询落回 error 前可能短暂经过 pending；这仍是同一次
+    // 故障，只有真正成功的响应才能重新开放告警。若直接监听 `available = !isError`，
+    // 本地服务尚未启动时就会每轮轮询都写一次相同警告。
+    if (machinesQuery.isSuccess) {
+      outageLoggedRef.current = false
+    }
+    else if (machinesQuery.isError && !outageLoggedRef.current) {
+      outageLoggedRef.current = true
       console.warn('[remote] ssh api unreachable:', String(machinesQuery.error))
+    }
   })
   useUnmount(() => {
     epochRef.current += 1

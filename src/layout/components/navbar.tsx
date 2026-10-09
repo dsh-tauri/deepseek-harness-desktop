@@ -13,11 +13,12 @@ import {
 import { Button, Chip, Description, Dropdown, Label, Separator } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
 import { useQuery } from '@tanstack/react-query'
+import { getIdentifier } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Fragment, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { If } from 'react-if-lite'
+import { Else, If, Then } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
 import { useStore } from 'valtio-define'
 import { queryKeys } from '@/config/query-keys'
@@ -241,6 +242,11 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
   const { t } = useTranslation()
   const isFullscreen = useMacOSFullscreen()
   const isMaximized = useMaximized()
+  const { data: appIdentifier } = useQuery({
+    queryKey: queryKeys.appIdentifier,
+    queryFn: getIdentifier,
+    staleTime: Infinity,
+  })
   // 只读取「dsh-tauri 插件是否已安装」；查询键与「插件」面板共用（同一份缓存），
   // 挂载时自动拉取，服务重启 / 插件操作后的失效由 store 与该缓存同步共同保证。
   const { data: plugins = [] } = useQuery({
@@ -261,6 +267,8 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
 
   // 仅当 dsh-tauri 插件启用（已安装）时显示左侧导航控件
   const tauriEnabled = plugins.some(plugin => plugin.id === TAURI_PLUGIN_ID)
+  const isNightly = appIdentifier === 'dsh-tauri-nightly'
+  const showUpdateAvailable = appIdentifier != null && !isNightly && updateInfo != null
   function handleWindowAction(action: 'minimize' | 'maximize' | 'background') {
     const appWindow = getCurrentWindow()
     switch (action) {
@@ -762,7 +770,7 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
                 >
                   <span className="flex w-full items-center justify-between gap-3">
                     <Label>{t('menu.check_update')}</Label>
-                    <If cond={updateInfo != null}>
+                    <If cond={showUpdateAvailable}>
                       <Description>{t('menu.new_version')}</Description>
                     </If>
                   </span>
@@ -781,16 +789,25 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
         </div>
       </If>
 
-      <If cond={updateInfo != null}>
-        <Chip
-          color="success"
-          size="sm"
-          variant="soft"
-          className="ml-1 cursor-pointer text-xs mr-1"
-          onClick={handleOpenUpdateDialog}
-        >
-          {t('update.chip_available')}
-        </Chip>
+      <If cond={isNightly}>
+        <Then>
+          <Chip color="accent" size="sm" variant="soft" className="ml-1 text-xs mr-1">
+            {t('navbar.nightly_build')}
+          </Chip>
+        </Then>
+        <Else>
+          <If cond={showUpdateAvailable}>
+            <Chip
+              color="success"
+              size="sm"
+              variant="soft"
+              className="ml-1 cursor-pointer text-xs mr-1"
+              onClick={handleOpenUpdateDialog}
+            >
+              {t('update.chip_available')}
+            </Chip>
+          </If>
+        </Else>
       </If>
 
       <If cond={import.meta.env.DEV}>
