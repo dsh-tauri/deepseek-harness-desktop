@@ -219,14 +219,6 @@ if "%DSH_PREFER_BUNDLED_PNPM%"=="1" (
   if exist "%PNPM_BIN%" goto :after_user
 )
 
-rem Re-entry guard: DSH_PNPM, or the first pnpm found on PATH, may itself be a shim
-rem that resolves back through PATH into this file; forwarding twice would exec the
-rem two shims into each other forever and the installer child would never exit.
-rem Armed once here, before either forward, and checked on entry: a re-entered shim
-rem goes straight to the bundled pnpm. That escape hatch only exists while the bundle
-rem does, so a missing bundle keeps user resolution alive; otherwise a nested pnpm
-rem call -- a `pnpm run` script invoking pnpm again -- would inherit this variable
-rem from the caller and be told pnpm is not installed.
 if "%DSH_PNPM_SHIM_GUARD%"=="1" if exist "%PNPM_BIN%" goto :after_user
 set "DSH_PNPM_SHIM_GUARD=1"
 
@@ -269,12 +261,32 @@ rem target keeps arguments byte-identical. A batch target transfers control, so 
 rem exit code is ours; a `.exe`/`.com` target returns, and `exit /b %ERRORLEVEL%`
 rem still forwards its code (issue #130).
 :use_selected
+if exist "%PNPM_BIN%" goto :forward_selected
+if defined DSH_PNPM_SHIM_CHAIN goto :append_selected
+set "DSH_PNPM_SHIM_CHAIN=1"
+goto :forward_selected
+:append_selected
+if not "%DSH_PNPM_SHIM_CHAIN:~15,1%"=="" goto :reentry_limit
+set "DSH_PNPM_SHIM_CHAIN=%DSH_PNPM_SHIM_CHAIN%1"
+:forward_selected
 "%DSH_PNPM%" %*
 exit /b %ERRORLEVEL%
 
 :use_user
+if exist "%PNPM_BIN%" goto :forward_user
+if defined DSH_PNPM_SHIM_CHAIN goto :append_user
+set "DSH_PNPM_SHIM_CHAIN=1"
+goto :forward_user
+:append_user
+if not "%DSH_PNPM_SHIM_CHAIN:~15,1%"=="" goto :reentry_limit
+set "DSH_PNPM_SHIM_CHAIN=%DSH_PNPM_SHIM_CHAIN%1"
+:forward_user
 "%USER_PNPM%" %*
 exit /b %ERRORLEVEL%
+
+:reentry_limit
+1>&2 echo [pnpm] PNPM_REENTRY_LIMIT: Recursive forwarding exceeded 16 calls.
+exit /b 1
 
 :after_user
 {node_resolve}
@@ -328,24 +340,30 @@ if (-not $systemGitWorks -and $gitDir -and (Test-Path -LiteralPath (Join-Path $g
 $hasBundled = Test-Path -LiteralPath $pnpmBin -PathType Leaf
 $useBundled = $env:DSH_PREFER_BUNDLED_PNPM -eq '1' -and $hasBundled
 
-# Re-entry guard: DSH_PNPM, or the first pnpm found on PATH, may itself be a shim
-# that resolves back through PATH into this file; forwarding twice would exec the
-# two shims into each other forever and the installer child would never exit.
-# The guard only short-circuits user resolution while the bundled pnpm exists: with
-# no bundle it cannot end a forwarding chain either, and honouring it would break
-# legitimate nested calls (`pnpm run` scripts invoking pnpm again) by reporting an
-# installed pnpm as missing.
 if (-not $useBundled -and -not ($hasBundled -and $env:DSH_PNPM_SHIM_GUARD -eq '1')) {{
     # The guard must not outlive this call: `$env:` writes are process-wide, so a
     # forwarded pnpm would leave DSH_PNPM_SHIM_GUARD set in the caller's shell and
     # send every later pnpm call straight to the bundled one. The cmd shim is
     # immune through `setlocal`; PowerShell has no equivalent.
     $guardBefore = $env:DSH_PNPM_SHIM_GUARD
+    $chainBefore = $env:DSH_PNPM_SHIM_CHAIN
 
     # Use the exact user pnpm discovered by the desktop app.
     if ($env:DSH_PNPM -and (Test-Path -LiteralPath $env:DSH_PNPM -PathType Leaf)) {{
-        $env:DSH_PNPM_SHIM_GUARD = '1'
-        try {{ & $env:DSH_PNPM @args }} finally {{ $env:DSH_PNPM_SHIM_GUARD = $guardBefore }}
+        try {{
+            if (-not $hasBundled) {{
+                if ($chainBefore.Length -ge 16) {{
+                    [Console]::Error.WriteLine('[pnpm] PNPM_REENTRY_LIMIT: Recursive forwarding exceeded 16 calls.')
+                    exit 1
+                }}
+                $env:DSH_PNPM_SHIM_CHAIN = $chainBefore + '1'
+            }}
+            $env:DSH_PNPM_SHIM_GUARD = '1'
+            & $env:DSH_PNPM @args
+        }} finally {{
+            $env:DSH_PNPM_SHIM_GUARD = $guardBefore
+            $env:DSH_PNPM_SHIM_CHAIN = $chainBefore
+        }}
         exit $LASTEXITCODE
     }}
 
@@ -355,8 +373,20 @@ if (-not $useBundled -and -not ($hasBundled -and $env:DSH_PNPM_SHIM_GUARD -eq '1
         Where-Object {{ $_.Source -and -not $_.Source.StartsWith($selfDir, [System.StringComparison]::OrdinalIgnoreCase) }} |
         Select-Object -First 1
     if ($userPnpm) {{
-        $env:DSH_PNPM_SHIM_GUARD = '1'
-        try {{ & $userPnpm.Source @args }} finally {{ $env:DSH_PNPM_SHIM_GUARD = $guardBefore }}
+        try {{
+            if (-not $hasBundled) {{
+                if ($chainBefore.Length -ge 16) {{
+                    [Console]::Error.WriteLine('[pnpm] PNPM_REENTRY_LIMIT: Recursive forwarding exceeded 16 calls.')
+                    exit 1
+                }}
+                $env:DSH_PNPM_SHIM_CHAIN = $chainBefore + '1'
+            }}
+            $env:DSH_PNPM_SHIM_GUARD = '1'
+            & $userPnpm.Source @args
+        }} finally {{
+            $env:DSH_PNPM_SHIM_GUARD = $guardBefore
+            $env:DSH_PNPM_SHIM_CHAIN = $chainBefore
+        }}
         exit $LASTEXITCODE
     }}
 }}
@@ -398,16 +428,17 @@ if [ "$DSH_PREFER_BUNDLED_PNPM" = "1" ] && [ -f "$PNPM_BIN" ]; then
   USE_BUNDLED=1
 fi
 
-# Re-entry guard: DSH_PNPM, or the first pnpm found on PATH, may itself be a shim
-# that resolves back through PATH into this file (mise shims exec whatever `pnpm`
-# PATH resolves to). Forwarding twice would then exec the two shims into each
-# other forever, so the installer child never exits and the app hangs with no
-# output at all. Once forwarded, skip user resolution and use the bundled pnpm --
-# but only while that bundle exists: without it the guard cannot end the chain, and
-# it would break nested `pnpm run` scripts by claiming pnpm is not installed.
 if [ -z "$USE_BUNDLED" ] && ! {{ [ "$DSH_PNPM_SHIM_GUARD" = "1" ] && [ -f "$PNPM_BIN" ]; }}; then
   # Use the exact user pnpm discovered by the desktop app unless bundled was requested.
   if [ -n "$DSH_PNPM" ] && [ -x "$DSH_PNPM" ]; then
+    if [ ! -f "$PNPM_BIN" ]; then
+      if [ "${{#DSH_PNPM_SHIM_CHAIN}}" -ge 16 ]; then
+        echo "[pnpm] PNPM_REENTRY_LIMIT: Recursive forwarding exceeded 16 calls." >&2
+        exit 1
+      fi
+      DSH_PNPM_SHIM_CHAIN="${{DSH_PNPM_SHIM_CHAIN}}1"
+      export DSH_PNPM_SHIM_CHAIN
+    fi
     DSH_PNPM_SHIM_GUARD=1
     export DSH_PNPM_SHIM_GUARD
     exec "$DSH_PNPM" "$@"
@@ -421,6 +452,14 @@ if [ -z "$USE_BUNDLED" ] && ! {{ [ "$DSH_PNPM_SHIM_GUARD" = "1" ] && [ -f "$PNPM
       continue
     fi
     if [ -x "$dir/pnpm" ]; then
+      if [ ! -f "$PNPM_BIN" ]; then
+        if [ "${{#DSH_PNPM_SHIM_CHAIN}}" -ge 16 ]; then
+          echo "[pnpm] PNPM_REENTRY_LIMIT: Recursive forwarding exceeded 16 calls." >&2
+          exit 1
+        fi
+        DSH_PNPM_SHIM_CHAIN="${{DSH_PNPM_SHIM_CHAIN}}1"
+        export DSH_PNPM_SHIM_CHAIN
+      fi
       DSH_PNPM_SHIM_GUARD=1
       export DSH_PNPM_SHIM_GUARD
       exec "$dir/pnpm" "$@"
