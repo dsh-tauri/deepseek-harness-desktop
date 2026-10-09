@@ -14,6 +14,7 @@ export default defineProject({
   },
   test: {
     name: 'unit',
+    server: { deps: { inline: ['@deepseek-ai/dsh-client-ui-primitives'] } },
     include: [
       'packages/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}',
       'test/**/*.test.ts',

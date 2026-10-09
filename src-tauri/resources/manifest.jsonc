@@ -95,6 +95,12 @@
         "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-mobile-ui"
       },
       {
+        "id": "dsh-tauri-bridge",
+        "spec": "dsh-tauri-bridge",
+        "name": "DSH Tauri Bridge",
+        "repo": "https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-bridge"
+      },
+      {
         "id": "dsh-tauri-worktree",
         "spec": "dsh-tauri-worktree",
         "name": "DSH Tauri Worktree",

@@ -1,0 +1,37 @@
+import { defineLocale } from 'dsh-tauri/client'
+import { PLUGIN_ID } from '../../shared/constants'
+
+export const locale = defineLocale(PLUGIN_ID, {
+  zh: {
+    'kernel.label': '内核',
+    'kernel.pending': '正在读取会话内核',
+    'kernel.unavailable': '未安装',
+    'kernel.authMissing': '未登录',
+    'kernel.authUnknown': '登录状态未知',
+    'kernel.drift': '协议不兼容',
+    'kernel.newSession': '新建 {backend} 会话',
+    'kernel.createFailed': '新建内核会话失败',
+    'kernel.readFailed': '内核检测失败',
+    'kernel.fork': '派生会话不能继续原生内核',
+    'kernel.creating': '正在新建会话',
+    'kernel.retry': '重新检测',
+    'kernel.selectorScope': '选择会新建会话，仅记住此选择器的下次选择，不更改当前会话或官方新建快捷键',
+    'kernel.immutable': '此会话已绑定原生内核，不能更换模型或内核',
+  },
+  en: {
+    'kernel.label': 'Kernel',
+    'kernel.pending': 'Reading session kernel',
+    'kernel.unavailable': 'Not installed',
+    'kernel.authMissing': 'Not signed in',
+    'kernel.authUnknown': 'Sign-in status unknown',
+    'kernel.drift': 'Incompatible protocol',
+    'kernel.newSession': 'New {backend} session',
+    'kernel.createFailed': 'Failed to create kernel session',
+    'kernel.readFailed': 'Kernel detection failed',
+    'kernel.fork': 'Forked sessions cannot resume the native kernel',
+    'kernel.creating': 'Creating a session',
+    'kernel.retry': 'Detect again',
+    'kernel.selectorScope': 'Selection creates a new session and is remembered for this picker only; it does not change the current session or official new-session shortcuts',
+    'kernel.immutable': 'This session is bound to a native kernel; its model and kernel cannot be changed',
+  },
+})

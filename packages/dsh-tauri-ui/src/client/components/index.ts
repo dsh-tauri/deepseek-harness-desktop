@@ -1,4 +1,5 @@
 export * from './action'
+export * from './brand-icons'
 export * from './button'
 export * from './card'
 export * from './checkbox'

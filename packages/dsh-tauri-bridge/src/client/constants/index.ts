@@ -1,0 +1,4 @@
+export const HERO_AGENT_PRESET_SLOT = 'conversation.hero.agentPreset'
+export const MODEL_KERNEL_SLOT = 'conversation.input.model'
+export const SIDEBAR_KERNEL_SLOT = 'sidebar.session.row.leading'
+export const SIDEBAR_KERNEL_HOVER_SLOT = 'sidebar.session.row.hover'

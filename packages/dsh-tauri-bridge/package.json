@@ -1,0 +1,72 @@
+{
+  "name": "dsh-tauri-bridge",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "在官方会话界面中连接用户本机安装的 Codex 和 Claude 内核。",
+  "author": "Hairyf <wwu710632@gmail.com>",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": {
+      "types": "./dist/client.d.cts",
+      "default": "./dist/client.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["cordis.patch.yml", "dist"],
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-store",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "dsh-tauri",
+        "dsh-tauri-ui"
+      ],
+      "external": ["dsh-tauri/client", "dsh-tauri-ui/client"],
+      "platform": "web"
+    },
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "dsh-h3": "catalog:",
+    "dsh-tauri": "workspace:*",
+    "h3": "catalog:",
+    "zod": "catalog:utils"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "catalog:dsh",
+    "@deepseek-ai/cordis-plugin-loader": "catalog:dsh",
+    "@deepseek-ai/dsh-agent": "catalog:dsh",
+    "@deepseek-ai/dsh-agent-preset-registry": "catalog:dsh",
+    "@deepseek-ai/dsh-api-session-controller": "catalog:dsh",
+    "@deepseek-ai/dsh-client-connection": "catalog:dsh",
+    "@deepseek-ai/dsh-client-ui-conversation": "catalog:dsh",
+    "@deepseek-ai/dsh-client-ui-session": "catalog:dsh",
+    "@deepseek-ai/dsh-client-ui-slots": "catalog:dsh",
+    "@deepseek-ai/dsh-client-ui-workspace": "catalog:dsh",
+    "@deepseek-ai/dsh-llm": "catalog:dsh",
+    "@deepseek-ai/dsh-session": "catalog:dsh",
+    "@deepseek-ai/dsh-session-projection": "catalog:dsh",
+    "@deepseek-ai/dsh-user-approval": "catalog:dsh",
+    "@deepseek-ai/dsh-user-questions": "catalog:dsh",
+    "@deepseek-ai/dsh-workspace": "catalog:dsh",
+    "dsh-tauri-tsdown": "workspace:*",
+    "dsh-tauri-ui": "workspace:*",
+    "tsdown": "catalog:cli"
+  }
+}
