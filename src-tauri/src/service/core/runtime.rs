@@ -1119,7 +1119,9 @@ fn push_probe_stamp_item(out: &mut Vec<String>, item: String, cap: usize) -> Opt
 /// 已存在的 `.node` 只改文件自身的时间，目录的修改时间不变，只记目录就会漏掉这次替换，
 /// 进而跳过一次本该做的探测；`prebuilds/<platform>/addon.node` 这类文件连第一层都不在，
 /// 只记一层同样会漏。元数据读不到即返回 `None`：读不到就不能断言「和上次一样」，宁可
-/// 重跑探测。
+/// 重跑探测。指向目录的链接同样返回 `None`：`artifact_stamp` 跟随链接、只记下目标的目录
+/// 元数据，而链接本身不被下钻（防成环），目标里的 `.node` 被等长原地覆盖时目录元数据
+/// 可以不变，这份指纹就不再完整。
 fn push_probe_stamp_artifacts(
     dir: &Path,
     label: &str,
@@ -1134,10 +1136,21 @@ fn push_probe_stamp_artifacts(
         };
         let path = entry.path();
         let label = format!("{label}/{name}");
+        // 链接判定必须和本文件其余四处一致：Windows 上 junction 是 mount point 重解析点，
+        // 标准库的 `is_symlink()` 对它返回 false（实测本机 junction 会被当成普通目录），
+        // 只有 `is_symlink_dir()` 认得。用 `DirEntry::file_type()` 同样漏 junction。
+        let file_type = std::fs::symlink_metadata(&path).ok()?.file_type();
+        #[cfg(windows)]
+        let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
+        #[cfg(not(windows))]
+        let is_link = file_type.is_symlink();
+        if is_link && path.is_dir() {
+            return None;
+        }
         push_probe_stamp_item(out, format!("{label}={}", artifact_stamp(&path)?), cap)?;
         // 链接（pnpm 的包目录、junction）不下钻：跟随链接会把同一份内容记两次，
         // 自指的链接还会绕成死循环。链接自身的目标大小与时间已经记在上面一项里。
-        if entry.file_type().ok()?.is_dir() {
+        if !is_link && file_type.is_dir() {
             push_probe_stamp_artifacts(&path, &label, out, cap)?;
         }
     }
@@ -1840,6 +1853,46 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// 指向目录的链接必须让整份指纹作废：链接不被下钻（防成环），而 `artifact_stamp`
+    /// 跟随链接只记目标目录元数据，目标里的 `.node` 被等长原地覆盖时这份指纹会漏掉变化。
+    ///
+    /// 用仓库自带的 junction 构造器建链接：Windows 上 `symlink_dir` 需要开发者模式
+    /// （实测本机被拒），junction 不需要特权，且同样以 reparse point 形态出现
+    /// （`FileType::is_symlink()` 为真），正是这里要覆盖的形态。
+    #[test]
+    fn probe_stamp_rejects_a_directory_symlink_it_cannot_descend() {
+        let root = std::env::temp_dir().join(format!("dsh-probe-stamp-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("pkg/prebuilds/real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("addon.node"), "native").unwrap();
+        let linked = root.join("pkg/prebuilds/win32-x64");
+        let canonical_real = real.canonicalize().unwrap();
+        create_directory_link(&canonical_real, &linked)
+            .unwrap_or_else(|e| panic!("link must be created without privileges: {e}"));
+        assert!(
+            std::fs::symlink_metadata(&linked)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link must be treated as a link"
+        );
+        let mut out = Vec::new();
+        let rejected = push_probe_stamp_artifacts(
+            &root.join("pkg/prebuilds"),
+            "pkg/prebuilds",
+            &mut out,
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_none();
+        // 先断开链接再删树：`remove_dir_all` 会跟随 junction 去删目标（这里恰好是同一棵树，
+        // 于是删除中途树已被抽空而报错，并把 junction 留在原地污染下一次运行）。
+        let _ = std::fs::remove_dir(&linked);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(rejected);
+    }
+
 
     fn probe_stamp_entries(dir: &Path) -> Vec<String> {
         let mut out = Vec::new();
