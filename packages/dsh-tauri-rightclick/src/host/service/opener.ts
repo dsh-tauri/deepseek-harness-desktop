@@ -1,5 +1,6 @@
 import type { OperationResult } from '../types'
-import { defineService, getServerContext, openDirectory, openUrl } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService, openDirectory, openUrl } from 'dsh-tauri'
 import { PLUGIN_ID } from '../../shared/constants'
 import { server } from '../server'
 import { mutationQueue } from './mutation-queue'

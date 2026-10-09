@@ -1,6 +1,7 @@
 import type { CheckoutInfo, HostContext, OperationResult, PendingHandoff } from '../types'
 import { randomUUID } from 'node:crypto'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { get } from 'lodash-es'
 import { pendingWorktreeTitles } from '../config/runtime'
 import { server } from '../server'

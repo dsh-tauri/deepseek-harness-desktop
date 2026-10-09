@@ -1,7 +1,8 @@
 import type { Inbox } from '@deepseek-ai/dsh-agent'
 import type { HostContext, PlatformModuleLoader, SessionResumeOutcome } from '../types'
 import type { CreateUserMessage, PlanSession } from './session.types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { contentRiskRecoveryRange, eventOf, isContentRiskFailure, lastTurnEndReason } from '../../shared/content-risk'
 import { server } from '../server'
 

@@ -1,6 +1,7 @@
 import type { PetSessionPayload, SessionStreamSink } from '../types'
 import type { PetSessionEvent, PetSessionPeer, ProjectionRegistryLike, TitleServiceLike } from './session-stream.types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import {
   closeSessionBus,
   isSessionBusAttached,

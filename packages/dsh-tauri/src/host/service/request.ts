@@ -3,43 +3,40 @@ import type { IncomingMessage } from 'node:http'
 import type { ConnectionGate } from '../types'
 import { getServerContext } from 'dsh-h3/utils'
 
-export const desktopRequestGuard: Middleware = async (event, next) => {
+const LOCALHOST_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+export const guard: Middleware = async (event, next) => {
   const ctx = getServerContext(event)
-  const request = event.runtime?.node?.req
-  if (!request) {
+  const req = event.runtime?.node?.req as IncomingMessage | undefined
+
+  if (!req) {
     event.res.status = 403
     return { error: 'forbidden' }
   }
-  const connection = ctx.connection as unknown as ConnectionGate | undefined
-  const rejection = connection?.requestRejection?.(request as IncomingMessage)
+
+  const connection = ctx.connection as ConnectionGate | undefined
+  const rejection = connection?.requestRejection?.(req)
   if (rejection !== undefined) {
     event.res.status = rejection
     return { error: rejection === 401 ? 'unauthorized' : 'forbidden' }
   }
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(event.req.method)) {
-    const address = request.socket.remoteAddress
-    if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') {
+
+  if (MUTATION_METHODS.has(event.req.method)) {
+    if (!LOCALHOST_IPS.has(req.socket.remoteAddress ?? '')) {
       event.res.status = 403
-      return { error: '变更操作仅限本机（127.0.0.1）调用' }
+      return { error: 'Change operation is limited to local machine (127.0.0.1) calls only' }
     }
-    const origin = request.headers.origin
-    if (origin !== undefined) {
-      let sameOrigin = false
-      try {
-        sameOrigin = new URL(origin).host === request.headers.host
-      }
-      catch {}
-      if (!sameOrigin) {
-        event.res.status = 403
-        return { error: 'cross-origin-request' }
-      }
+    if (req.headers.origin && URL.parse(req.headers.origin)?.host !== req.headers.host) {
+      event.res.status = 403
+      return { error: 'cross-origin-request' }
     }
   }
+
   try {
     return await next()
-  }
-  catch (error) {
-    ctx.logger?.error(`[dsh-tauri] 路由处理失败: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+  } catch (error) {
+    ctx.logger?.error(`[dsh-tauri] Routing processing failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
     throw error
   }
 }

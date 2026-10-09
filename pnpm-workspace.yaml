@@ -94,7 +94,7 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-typert-registry@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-util-time@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-util-workspace-path@0.2.1-alpha.1'
-  - dsh-h3@0.2.0
+  - dsh-h3@0.2.1
   - '@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1'
 shellEmulator: true
 
@@ -114,7 +114,7 @@ catalog:
   '@genapi/shared': ^4.1.4
   '@tauri-apps/plugin-os': ^2.3.2
   '@tauri-apps/plugin-store': ^2.4.4
-  dsh-h3: 0.2.0
+  dsh-h3: 0.2.1
   h3: 2.0.1
   valtio: ^2.3.2
 

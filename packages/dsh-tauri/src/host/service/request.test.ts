@@ -5,12 +5,11 @@ import type { AddressInfo } from 'node:net'
 import type { ConnectionHost } from '../types'
 import { createServer } from 'node:http'
 import { defineWebServer } from 'dsh-h3'
-import { getServerOptions } from 'dsh-h3/utils'
+import { getServerContext, getServerOptions } from 'dsh-h3/utils'
 import { defineEventHandler, H3Event, readBody } from 'h3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getServerContext } from '../utils/server'
 import { gate } from './gate'
-import { desktopRequestGuard } from './request'
+import { guard } from './request'
 
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -35,7 +34,7 @@ async function activate(rejection?: 401 | 403) {
     logger: { error: vi.fn() },
   } as unknown as Context
   const service = defineWebServer<{ label: string }>((app) => {
-    app.use(desktopRequestGuard)
+    app.use(guard)
     app.get('/api/demo', defineEventHandler(event => ({ label: getServerOptions<{ label: string }>(event).label })))
     app.post('/api/demo', defineEventHandler(async event => ({ body: await readBody(event) })))
     app.get('/api/error', defineEventHandler(() => {
@@ -113,7 +112,7 @@ describe('desktop H3 request boundary', () => {
     Object.defineProperty(event, 'runtime', { value: { node: { req: request } } })
     event.context.__host_instance = { context: {}, options: undefined }
     const next = vi.fn()
-    expect(await desktopRequestGuard(event, next)).toEqual({ error: '变更操作仅限本机（127.0.0.1）调用' })
+    expect(await guard(event, next)).toEqual({ error: '变更操作仅限本机（127.0.0.1）调用' })
     expect(event.res.status).toBe(403)
     expect(next).not.toHaveBeenCalled()
   })

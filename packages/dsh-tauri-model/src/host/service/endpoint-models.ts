@@ -1,5 +1,6 @@
 import type { EndpointModelCard } from '../server/routes/index.types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { server } from '../server'
 import {
   apiKeyRefOf,

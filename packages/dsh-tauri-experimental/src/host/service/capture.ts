@@ -12,7 +12,8 @@
 
 import type { LiveSnapshot, SnapshotStore, TurnFileChange, TurnRecord } from '../types'
 import type { ActiveTurn, BeginningTurn, CaptureLogger } from './capture.types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { RUNNING_CHANGES_REASON_WORKSPACE_CHANGED as REASON_WORKSPACE_CHANGED } from '../../shared/constants'
 import { LOCK_BARRIER_TIMEOUT_MS, REASON_SNAPSHOT_FAILED, REASON_UNSAFE_WORKSPACE } from '../config/constants'
 import {

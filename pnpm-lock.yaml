@@ -63,8 +63,8 @@ catalogs:
       specifier: ^2.4.4
       version: 2.4.4
     dsh-h3:
-      specifier: 0.2.0
-      version: 0.2.0
+      specifier: 0.2.1
+      version: 0.2.1
     h3:
       specifier: 2.0.1
       version: 2.0.1
@@ -551,7 +551,7 @@ importers:
         version: 15.0.5
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       eslint:
         specifier: catalog:lint
         version: 10.8.1(jiti@2.7.0)
@@ -602,7 +602,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       h3:
         specifier: 'catalog:'
         version: 2.0.1
@@ -663,7 +663,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -730,7 +730,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -761,7 +761,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -835,7 +835,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -890,7 +890,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -918,7 +918,7 @@ importers:
         version: 0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-fs@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-brand@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-llm@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-sandbox@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-llm@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-session@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-scope@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)))))(@deepseek-ai/dsh-home-paths@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-skill@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-llm@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-scope@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)))
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -958,7 +958,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -989,7 +989,7 @@ importers:
         version: 6.0.0
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -1041,7 +1041,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -1117,7 +1117,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -1181,7 +1181,7 @@ importers:
     dependencies:
       dsh-h3:
         specifier: 'catalog:'
-        version: 0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
@@ -4396,8 +4396,8 @@ packages:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
     engines: {node: '>=12'}
 
-  dsh-h3@0.2.0:
-    resolution: {integrity: sha512-RyqUVle9e2YctHAzjNgsSSU5S3rqVE7IWwA9LdyUazk8zp3S+BbWW0qde6xmYp59a2+0W+4/pH9qBBOG5WcEfw==}
+  dsh-h3@0.2.1:
+    resolution: {integrity: sha512-QqZ2iODuDzObFXNk2ZQ7htiaE5UpybHnWNFSdvc8BsayIh9L6MOiv5rwYqIYPnW3NmMoONdkHPfd5nEqzMd6aw==}
     peerDependencies:
       '@deepseek-ai/cordis': ^4.0.4
       '@deepseek-ai/dsh-host-webserver': ^0.2.0-rc.2
@@ -10082,7 +10082,7 @@ snapshots:
 
   dotenv@17.4.2: {}
 
-  dsh-h3@0.2.0(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3):
+  dsh-h3@0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3):
     dependencies:
       '@deepseek-ai/cordis': 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
       '@deepseek-ai/dsh-host-webserver': 0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1)

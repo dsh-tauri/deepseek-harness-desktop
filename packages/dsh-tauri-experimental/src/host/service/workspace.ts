@@ -12,7 +12,8 @@ import type { HostContext, WorkspaceProbe } from '../types'
  * `process.cwd()` 兜底：宿主进程的工作目录未必是会话工作区。
  */
 
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { resolve } from 'pathe'
 import { RUNNING_CHANGES_REASON_GIT_UNAVAILABLE as REASON_GIT_UNAVAILABLE } from '../../shared/constants'
 import { REASON_GIT_REQUIRED, REASON_UNSAFE_WORKSPACE } from '../config/constants'

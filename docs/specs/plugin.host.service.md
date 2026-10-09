@@ -44,7 +44,7 @@ import { defineService } from 'dsh-tauri'
 ### 3. 签名与宿主隔离 (Signatures & Host Isolation)
 
 * **参数扁平**：按业务需求直接传参，不做无意义的单对象包装[cite: 1]。
-* **无 `ctx`/`host` 参**：领域服务方法不得透传宿主对象。`apply.ts` 先通过 `ctx.effect(() => server(ctx, options), label)` 激活服务，服务内部从 `dsh-tauri` 导入 `getServerContext`，使用 `getServerContext<HostContext>(server)` 按需读取宿主能力；不再建立独立的宿主绑定与清除函数。
+* **无 `ctx`/`host` 参**：领域服务方法不得透传宿主对象。`apply.ts` 先通过 `ctx.effect(() => server(ctx, options), label)` 激活服务，服务内部从 `dsh-h3/utils` 导入原生 `getServerContext`，使用 `getServerContext<HostContext>(server)` 按需读取宿主能力；不在 `dsh-tauri` 重导出，不建立泛型兼容层或独立的宿主绑定与清除函数。
 * **隔离访问**：只有 `service/` 读取业务宿主能力；`server/routes/`、`tools/` 等通过领域服务调用。路由可以通过 `dsh-h3/utils` 的 `getServerOptions<Options>(event)` 读取当前请求所属实例的配置，不得用模块变量代替。
 * **基础设施例外**：`dsh-tauri` 的请求安全中间件可以从 event 读取 Context，载体鉴权适配 `gate.attach(ctx)` 可以显式接收 Context；两者不属于业务宿主透传。共享请求中间件不适用领域服务的 `defineService` 宏。
 
@@ -135,7 +135,8 @@ export const workspace = defineService({
 ```typescript
 // service/session-context.ts
 import type { HostContext } from '../types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { server } from '../server'
 
 export const sessionContext = defineService({

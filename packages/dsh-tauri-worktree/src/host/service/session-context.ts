@@ -1,5 +1,6 @@
 import type { HostContext } from '../types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { get, isString } from 'lodash-es'
 import { isAbsolute } from 'pathe'
 import { server } from '../server'

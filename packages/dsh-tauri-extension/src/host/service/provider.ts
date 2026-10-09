@@ -1,6 +1,7 @@
 import type { PanelExtensionHost } from '../types'
 import { existsSync } from 'node:fs'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { providerRuntime } from '../config/runtime'
 import { providerHooks } from '../events'
 import { server } from '../server'

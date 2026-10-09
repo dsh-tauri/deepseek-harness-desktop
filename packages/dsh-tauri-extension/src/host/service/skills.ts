@@ -9,7 +9,8 @@ import type {
   SkillSourceEntry,
 } from './skills.types'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { orderBy } from 'lodash-es'
 import { isAbsolute, relative, resolve, sep } from 'pathe'
 import { SKILL_NAME_RE, SKILLS_DATA_DIR } from '../config/constants'

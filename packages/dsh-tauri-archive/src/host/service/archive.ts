@@ -1,6 +1,7 @@
 import type { SessionHost } from '../types'
 import type { ArchivedListPayload } from './ledger.types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { archiveHooks } from '../events'
 import { server } from '../server'
 import { ledger } from './ledger'

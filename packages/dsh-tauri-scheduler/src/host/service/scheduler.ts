@@ -1,5 +1,6 @@
 import type { HostContext, OperationResult, SchedulerTask } from '../types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { filter, isEmpty, isNil, take } from 'lodash-es'
 import { server } from '../server'
 import { nextOccurrence } from '../utils/schedule'

@@ -1,6 +1,7 @@
 import type { ArchiveRegistrySurface, ArchiveTableSurface, SessionHost, SessionLike } from '../types'
 import type { ArchiveAccounting, ArchivedListPayload } from './ledger.types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { server } from '../server'
 import { session } from './session'
 

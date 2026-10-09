@@ -1,5 +1,6 @@
 import type { HostContext, ModelCatalogFailure, ModelOption, PermissionOption, SchedulerOptions } from '../types'
-import { defineService, getServerContext } from 'dsh-tauri'
+import { getServerContext } from 'dsh-h3/utils'
+import { defineService } from 'dsh-tauri'
 import { filter, find, head, isArray, isEmpty, isString, map, uniqBy } from 'lodash-es'
 import { server } from '../server'
 
