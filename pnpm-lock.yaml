@@ -710,15 +710,15 @@ importers:
       dsh-tauri-pet:
         specifier: workspace:*
         version: link:../dsh-tauri-pet
+      dsh-tauri-remote:
+        specifier: workspace:*
+        version: link:../dsh-tauri-remote
       dsh-tauri-rightclick:
         specifier: workspace:*
         version: link:../dsh-tauri-rightclick
       dsh-tauri-scheduler:
         specifier: workspace:*
         version: link:../dsh-tauri-scheduler
-      dsh-tauri-ssh:
-        specifier: workspace:*
-        version: link:../dsh-tauri-ssh
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
@@ -954,6 +954,73 @@ importers:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
 
+  packages/dsh-tauri-remote:
+    dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+      dsh-tauri:
+        specifier: workspace:*
+        version: link:../dsh-tauri
+      dsh-tauri-ui:
+        specifier: workspace:*
+        version: link:../dsh-tauri-ui
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
+      pathe:
+        specifier: catalog:utils
+        version: 2.0.3
+      schemastery:
+        specifier: catalog:utils
+        version: 3.18.0
+      ssh2:
+        specifier: catalog:utils
+        version: 1.17.0
+      yaml:
+        specifier: catalog:testing
+        version: 2.9.0
+    devDependencies:
+      '@testing-library/dom':
+        specifier: catalog:testing
+        version: 10.4.2
+      '@testing-library/react':
+        specifier: catalog:testing
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@types/node':
+        specifier: catalog:types
+        version: 22.20.1
+      '@types/react':
+        specifier: catalog:types
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: catalog:types
+        version: 19.2.4(@types/react@19.2.18)
+      '@types/ssh2':
+        specifier: catalog:types
+        version: 1.15.6
+      dsh-tauri-tsdown:
+        specifier: workspace:*
+        version: link:../dsh-tauri-tsdown
+      jsdom:
+        specifier: catalog:testing
+        version: 26.1.0
+      react:
+        specifier: catalog:runtime
+        version: 19.2.8
+      react-dom:
+        specifier: catalog:runtime
+        version: 19.2.8(react@19.2.8)
+      tsdown:
+        specifier: catalog:cli
+        version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
+      typescript:
+        specifier: catalog:cli
+        version: 5.8.3
+      vitest:
+        specifier: catalog:testing
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/dsh-tauri-rightclick:
     dependencies:
       dsh-h3:
@@ -1033,73 +1100,6 @@ importers:
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
-      vitest:
-        specifier: catalog:testing
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.9.0))
-
-  packages/dsh-tauri-ssh:
-    dependencies:
-      dsh-h3:
-        specifier: 'catalog:'
-        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
-      dsh-tauri:
-        specifier: workspace:*
-        version: link:../dsh-tauri
-      dsh-tauri-ui:
-        specifier: workspace:*
-        version: link:../dsh-tauri-ui
-      h3:
-        specifier: 'catalog:'
-        version: 2.0.1
-      pathe:
-        specifier: catalog:utils
-        version: 2.0.3
-      schemastery:
-        specifier: catalog:utils
-        version: 3.18.0
-      ssh2:
-        specifier: catalog:utils
-        version: 1.17.0
-      yaml:
-        specifier: catalog:testing
-        version: 2.9.0
-    devDependencies:
-      '@testing-library/dom':
-        specifier: catalog:testing
-        version: 10.4.2
-      '@testing-library/react':
-        specifier: catalog:testing
-        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@types/node':
-        specifier: catalog:types
-        version: 22.20.1
-      '@types/react':
-        specifier: catalog:types
-        version: 19.2.18
-      '@types/react-dom':
-        specifier: catalog:types
-        version: 19.2.4(@types/react@19.2.18)
-      '@types/ssh2':
-        specifier: catalog:types
-        version: 1.15.6
-      dsh-tauri-tsdown:
-        specifier: workspace:*
-        version: link:../dsh-tauri-tsdown
-      jsdom:
-        specifier: catalog:testing
-        version: 26.1.0
-      react:
-        specifier: catalog:runtime
-        version: 19.2.8
-      react-dom:
-        specifier: catalog:runtime
-        version: 19.2.8(react@19.2.8)
-      tsdown:
-        specifier: catalog:cli
-        version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
-      typescript:
-        specifier: catalog:cli
-        version: 5.8.3
       vitest:
         specifier: catalog:testing
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.9.0))
@@ -6459,7 +6459,6 @@ packages:
   tsdown@0.17.4:
     resolution: {integrity: sha512-z+kNuv1rwM1POQIufDUVrdNc/uGy0ueRVafCyDH39IdHxin4JXgB8DNGSPoqdIpcOpqUoRbNreK8NxENFmlhKw==}
     engines: {node: '>=20.19.0'}
-    deprecated: Including an unexpected breaking change (copy behavior)
     hasBin: true
     peerDependencies:
       '@arethetypeswrong/core': ^0.18.1
