@@ -2,12 +2,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import type { ConnectionHost } from '../types'
 import { createServer } from 'node:http'
 import { defineWebServer } from 'dsh-h3'
 import { getServerOptions } from 'dsh-h3/utils'
 import { defineEventHandler, H3Event, readBody } from 'h3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getServerContext } from '../utils/server'
+import { gate } from './gate'
 import { desktopRequestGuard } from './request'
 
 const cleanups: Array<() => void | Promise<void>> = []
@@ -15,6 +17,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse())
     await cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 async function activate(rejection?: 401 | 403) {
@@ -82,6 +85,15 @@ describe('desktop H3 request boundary', () => {
       expect(response.status).toBe(status)
       expect(await response.json()).toEqual({ error: status === 401 ? 'unauthorized' : 'forbidden' })
     }
+  })
+
+  it.each([401, 403] as const)('embedded gate bypasses only login, preserving rejection %s on native plugin routes', async (rejection) => {
+    const { base, context } = await activate(rejection)
+    vi.stubEnv('DSH_TAURI_EMBEDDED', '1')
+    cleanups.push(gate.attach(context as unknown as ConnectionHost))
+    const response = await fetch(`${base}/api/demo`)
+    expect(response.status).toBe(rejection === 401 ? 200 : 403)
+    expect(await response.json()).toEqual(rejection === 401 ? { label: 'first' } : { error: 'forbidden' })
   })
 
   it('rejects cross-origin writes and malformed origins, allows same-origin and headless writes', async () => {
