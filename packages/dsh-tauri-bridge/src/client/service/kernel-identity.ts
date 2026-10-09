@@ -21,7 +21,7 @@ export function kernelFromList(state: SessionListState, sessionId: SessionId): K
 }
 
 export function isBackendAvailable(backend: BackendDetection | undefined): boolean {
-  return backend !== undefined && backend.installed && !backend.drift && backend.auth !== 'missing'
+  return backend !== undefined && backend.installed && backend.bridgeReady !== false && !backend.drift && backend.auth !== 'missing'
 }
 
 export function isForkedIdentity(value: unknown, sessionId: string | undefined): boolean {

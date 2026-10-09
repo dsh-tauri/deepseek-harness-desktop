@@ -1,4 +1,4 @@
-export type GetApiTauriBridgeBackendsResponse = { id: "dsh" | "codex" | "claude"; installed: false | true; auth: "ok" | "missing" | "unknown"; version: null | string; drift: false | true; hint: null | string }[];
+export type GetApiTauriBridgeBackendsResponse = { id: "dsh" | "codex" | "claude"; installed: false | true; bridgeReady?: undefined | false | true; auth: "ok" | "missing" | "unknown"; version: null | string; drift: false | true; hint: null | string }[];
 export type PostApiTauriBridgeSessionsResponse = { sessionId: string };
 
 export interface PostApiTauriBridgeSessionsBody {

@@ -19,10 +19,12 @@ export const backend = defineService({
       if (!runtime.ready || typeof modules.appendPluginRecord !== 'function' || typeof modules.pluginRecordOf !== 'function' || typeof ctx.sessions.get !== 'function' || typeof ctx.sessionProjections.stateOf !== 'function')
         throw new Error('BRIDGE_CORE_UNAVAILABLE: 当前核心未提供完整的官方内核桥接接口。')
       runtime.lifetime.signal.throwIfAborted()
+      result.detection.bridgeReady = true
     }
     catch {
-      result.detection.installed = false
-      result.detection.hint = 'BRIDGE_CORE_UNAVAILABLE: 当前核心未提供完整的官方内核桥接接口，不能连接本机 CLI。'
+      result.detection.bridgeReady = false
+      if (result.detection.installed)
+        result.detection.hint = 'BRIDGE_CORE_UNAVAILABLE: 当前核心未提供完整的官方内核桥接接口，不能连接本机 CLI。'
       delete result.command
     }
     if (!runtime.lifetime.signal.aborted)

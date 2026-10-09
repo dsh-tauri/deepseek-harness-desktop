@@ -126,15 +126,21 @@ describe('hero kernel picker', () => {
   })
 
   it.each([
-    { patch: { auth: 'unknown' as const }, hint: 'BRIDGE_AUTH_UNKNOWN: Run codex login status', label: 'Codex · Sign-in status unknown · BRIDGE_AUTH_UNKNOWN: Run codex login status', disabled: false },
-    { patch: { installed: false, auth: 'unknown' as const }, hint: 'BRIDGE_CORE_UNAVAILABLE: Official plugin records are unavailable', label: 'Codex · Not installed · BRIDGE_CORE_UNAVAILABLE: Official plugin records are unavailable', disabled: true },
-  ])('the real Menu retains the shared backend hint: $hint', ({ patch, hint, label, disabled }) => {
+    { patch: { installed: false, bridgeReady: true }, hint: 'BRIDGE_EXECUTABLE_MISSING: Install Codex and check PATH', label: 'Codex · Not installed', disabled: true },
+    { patch: { installed: false, bridgeReady: false }, hint: 'BRIDGE_CORE_UNAVAILABLE: Official plugin records are unavailable', label: 'Codex · Not installed', disabled: true },
+    { patch: { installed: true, bridgeReady: false, version: '0.162.0' }, hint: 'BRIDGE_CORE_UNAVAILABLE: Official plugin records are unavailable', label: 'Codex · Bridge unavailable', disabled: true },
+    { patch: { auth: 'unknown' as const, bridgeReady: true }, hint: 'BRIDGE_AUTH_UNKNOWN: Run codex login status', label: 'Codex · Sign-in status unknown', disabled: false },
+    { patch: { auth: 'missing' as const, bridgeReady: true }, hint: 'BRIDGE_AUTH_MISSING: Run codex login', label: 'Codex · Not signed in', disabled: true },
+    { patch: { drift: true, bridgeReady: true }, hint: 'BRIDGE_PROTOCOL: The native protocol does not match', label: 'Codex · Incompatible protocol', disabled: true },
+    { patch: { bridgeReady: true }, hint: 'BRIDGE_PROBE_DETAIL: Verbose backend diagnostic', label: 'Codex', disabled: false },
+  ])('the real Menu uses only the short backend status: $label', ({ patch, hint, label, disabled }) => {
     kernelStore.$patch({ backends: kernelStore.$state.backends.map(item => item.id === 'codex' ? { ...item, ...patch, hint } : item) })
     const props = heroProps({ sessionId: 'session-a', identity: null })
     const view = render(<HeroKernel {...props} />)
     fireEvent.click(view.getByRole('button', { name: 'Kernel' }))
     const choice = view.getByRole('menuitem', { name: label }) as HTMLButtonElement
     expect(choice.disabled).toBe(disabled)
+    expect(view.queryByText(hint, { exact: false })).toBeNull()
     if (disabled) {
       fireEvent.click(choice)
       expect(props.createSession).not.toHaveBeenCalled()

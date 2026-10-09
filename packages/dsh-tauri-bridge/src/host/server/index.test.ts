@@ -99,7 +99,7 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     const base = await start()
     const response = await fetch(`${base}/api/tauri/bridge/backends`)
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual([dsh, codex, claude])
+    expect(await response.json()).toEqual([dsh, { ...codex, bridgeReady: true }, { ...claude, bridgeReady: true }])
     expect(requestRejection).toHaveBeenCalledOnce()
     expect(requestRejection.mock.calls[0]![0].method).toBe('GET')
     expect(vi.mocked(detectBackend).mock.calls.map(([id]) => id).sort()).toEqual(['claude', 'codex'])
@@ -119,15 +119,15 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     expect(runtime.sessions.size).toBe(0)
   })
 
-  it('returns an unavailable hint rather than HTTP 500 when the official record capability is absent', async () => {
+  it('retains CLI installation status while marking the bridge unavailable when official record support is absent', async () => {
     runtimeSession = legacySessionModule
     const base = await start()
     const response = await fetch(`${base}/api/tauri/bridge/backends`)
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual([
       dsh,
-      { ...codex, installed: false, hint: 'BRIDGE_CORE_UNAVAILABLE: 当前核心未提供完整的官方内核桥接接口，不能连接本机 CLI。' },
-      { ...claude, hint: 'BRIDGE_CORE_UNAVAILABLE: 当前核心未提供完整的官方内核桥接接口，不能连接本机 CLI。' },
+      { ...codex, bridgeReady: false, hint: 'BRIDGE_CORE_UNAVAILABLE: 当前核心未提供完整的官方内核桥接接口，不能连接本机 CLI。' },
+      { ...claude, bridgeReady: false },
     ])
     expect(requestRejection).toHaveBeenCalledOnce()
   })

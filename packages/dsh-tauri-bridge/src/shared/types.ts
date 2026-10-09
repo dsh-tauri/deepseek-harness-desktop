@@ -3,6 +3,7 @@ export type BackendId = 'dsh' | 'codex' | 'claude'
 export interface BackendDetection {
   id: BackendId
   installed: boolean
+  bridgeReady?: boolean
   auth: 'ok' | 'missing' | 'unknown'
   version: string | null
   drift: boolean

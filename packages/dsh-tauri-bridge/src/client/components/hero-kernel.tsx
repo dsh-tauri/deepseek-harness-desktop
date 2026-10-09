@@ -12,14 +12,17 @@ import { KernelIcon } from './kernel-icon'
 const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude' }
 
 function backendHint(backend: BackendDetection | undefined): string | undefined {
-  const status = backend === undefined || !backend.installed
-    ? locale.text('kernel.unavailable')
-    : backend.drift
-      ? locale.text('kernel.drift')
-      : backend.auth === 'missing'
-        ? locale.text('kernel.authMissing')
-        : backend.auth === 'unknown' ? locale.text('kernel.authUnknown') : undefined
-  return [status, backend?.hint].filter(Boolean).join(' · ') || undefined
+  if (backend === undefined || !backend.installed)
+    return locale.text('kernel.unavailable')
+  if (backend.bridgeReady === false)
+    return locale.text('kernel.coreUnavailable')
+  if (backend.drift)
+    return locale.text('kernel.drift')
+  if (backend.auth === 'missing')
+    return locale.text('kernel.authMissing')
+  if (backend.auth === 'unknown')
+    return locale.text('kernel.authUnknown')
+  return undefined
 }
 
 export function HeroKernel(props: HeroKernelProps): ReactElement {

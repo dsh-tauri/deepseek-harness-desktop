@@ -53,6 +53,8 @@ describe('session kernel identity', () => {
   it('uninstalled, incompatible, and signed-out native kernels are disabled', () => {
     expect(isBackendAvailable(undefined)).toBe(false)
     expect(isBackendAvailable(detection({ installed: false }))).toBe(false)
+    expect(isBackendAvailable(detection({ bridgeReady: false }))).toBe(false)
+    expect(isBackendAvailable(detection({ bridgeReady: true }))).toBe(true)
     expect(isBackendAvailable(detection({ drift: true }))).toBe(false)
     expect(isBackendAvailable(detection({ auth: 'missing' }))).toBe(false)
     expect(isBackendAvailable(detection({ auth: 'unknown' }))).toBe(true)

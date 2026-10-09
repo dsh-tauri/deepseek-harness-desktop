@@ -59,22 +59,28 @@ export async function resolveNativeCommand(backend: 'codex' | 'claude', override
     if (!entry)
       throw new Error(`BRIDGE_EXECUTABLE_MISSING: 本机未安装 ${backend === 'codex' ? 'Codex' : 'Claude'} CLI，或其不在 PATH 中。`)
   }
+  let packageRoot: string | undefined
   const suffix = extname(entry).toLowerCase()
   if (suffix === '.cmd' || suffix === '.ps1') {
     const text = await boundedRead(entry)
-    const packagePath = backend === 'codex' ? '@openai[/\\\\]codex[/\\\\]bin[/\\\\]codex\\.js' : '@anthropic-ai[/\\\\]claude-code[/\\\\]cli\\.js'
+    const packagePath = backend === 'codex' ? '@openai[/\\\\]codex[/\\\\]bin[/\\\\]codex\\.js' : '@anthropic-ai[/\\\\]claude-code[/\\\\](?:cli\\.js|bin[/\\\\]claude(?:\\.exe)?)'
     const match = new RegExp(`(?:node_modules[/\\\\]${packagePath})`, 'i').exec(text)
     if (!match)
       throw new Error('BRIDGE_SHIM_UNSUPPORTED: 此命令包装器无法安全解析，请配置原生可执行文件路径。')
     entry = join(dirname(entry), match[0].replace(/[\\/]/g, '/'))
+    packageRoot = backend === 'claude' && /\.js$/i.test(entry) ? dirname(entry) : dirname(dirname(entry))
   }
   entry = await realpath(entry)
-  if (/\.[cm]?js$/i.test(entry)) {
-    const root = backend === 'codex' ? dirname(dirname(entry)) : dirname(entry)
+  const script = /\.[cm]?js$/i.test(entry)
+  if (packageRoot !== undefined || script) {
+    const root = packageRoot ?? (backend === 'codex' ? dirname(dirname(entry)) : dirname(entry))
     const metadata = JSON.parse(await boundedRead(join(root, 'package.json'))) as { name?: string }
     const expected = backend === 'codex' ? '@openai/codex' : '@anthropic-ai/claude-code'
     if (metadata.name !== expected)
       throw new Error('BRIDGE_PACKAGE_MISMATCH: CLI 包装器不是所选内核的官方安装。')
+  }
+  if (script) {
+    const root = backend === 'codex' ? dirname(dirname(entry)) : dirname(entry)
     if (backend === 'claude')
       return { file: process.execPath, args: [entry], env }
     const target = codexTarget(platform, options.arch ?? process.arch)

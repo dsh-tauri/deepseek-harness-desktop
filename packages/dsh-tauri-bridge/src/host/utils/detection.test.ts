@@ -227,6 +227,23 @@ describe('native command resolution', () => {
     expect(result).toEqual({ file: process.execPath, args: [await realpath(entry)], env: { Path: root, HOME: root, USERPROFILE: root } })
   })
 
+  it.each(['cmd', 'ps1'])('resolves the official Claude native npm %s entrypoint without invoking a shell', async (extension) => {
+    const native = await file('node_modules/@anthropic-ai/claude-code/bin/claude.exe')
+    await file('node_modules/@anthropic-ai/claude-code/package.json', JSON.stringify({ name: '@anthropic-ai/claude-code', version: '2.1.295', bin: { claude: 'bin/claude.exe' } }))
+    const shim = await file(`claude.${extension}`, '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*')
+    const result = await resolveNativeCommand('claude', shim, options())
+    expect(result).toEqual({ file: await realpath(native), args: [], env: { Path: root, HOME: root, USERPROFILE: root } })
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects an impersonated native Claude package before using its executable', async () => {
+    await file('node_modules/@anthropic-ai/claude-code/bin/claude.exe')
+    await file('node_modules/@anthropic-ai/claude-code/package.json', '{"name":"not-anthropic"}')
+    const shim = await file('claude.cmd', '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*')
+    await expect(resolveNativeCommand('claude', shim, options())).rejects.toThrow('BRIDGE_PACKAGE_MISMATCH: CLI 包装器不是所选内核的官方安装。')
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
   it('refuses an unrecognized wrapper instead of falling back to another PATH installation', async () => {
     const shim = await file('chosen/codex.cmd', '@ECHO off\ncustom-command %*')
     await file('codex.exe')
