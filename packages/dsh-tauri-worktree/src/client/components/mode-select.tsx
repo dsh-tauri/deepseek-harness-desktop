@@ -156,12 +156,9 @@ function WorktreeModeControl({ sessionId, useInput, inputActions, sessionsRuntim
         const worktreePath = result.worktreePath
         if (!worktreePath)
           throw new Error('Failed to create worktree.')
-        if (result.inherited) {
-          await waitForSessionListed({ sessions: sessionsRuntime, sessionId: targetSessionId, wait })
-        }
-        else {
-          await sessionsRuntime.create({ cwd: worktreePath, sessionId: targetSessionId })
-        }
+        if (result.inherited !== true)
+          throw new Error(locale.text('inheritanceFailed'))
+        await waitForSessionListed({ sessions: sessionsRuntime, sessionId: targetSessionId, wait })
         await attach({ sessionId: targetSessionId })
         // 目标输入面只在切换后才物化，而源附件一旦摘除、源作用域随切换销毁就再也回不去：
         // 先用源输入面探测该核心的附件面是否可写，不可写就整体中止（此时草稿与附件都还没动）。
@@ -205,8 +202,7 @@ function WorktreeModeControl({ sessionId, useInput, inputActions, sessionsRuntim
             forEach(targetAttachmentIds, attachmentId => removeDraftAttachment(actions, attachmentId))
           }
         })
-        if (result.inherited)
-          await workspacesRuntime.archiveSession(sessionId).catch(() => {})
+        await workspacesRuntime.archiveSession(sessionId).catch(() => {})
       }
       catch (error) {
         const message = get(error, 'message', String(error))

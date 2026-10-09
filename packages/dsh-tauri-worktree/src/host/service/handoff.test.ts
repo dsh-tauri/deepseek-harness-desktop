@@ -1,4 +1,8 @@
 import type { Binding, PendingHandoff } from '../types'
+import { resolve } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
+import { MessageId } from '@deepseek-ai/dsh-llm'
+import { Session, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { pendingWorktreeTitles, resetRuntime } from '../config/runtime'
 import { server } from '../server'
@@ -44,20 +48,24 @@ interface SetupOptions {
   session?: unknown
   warn?: (message: string) => void
   create?: (options: any) => Promise<unknown>
+  presets?: unknown
+  sourceContext?: unknown
+  getAgent?: (id: string) => unknown
 }
 
 function setup(options: SetupOptions = {}): { created: any[] } {
   const created: any[] = []
   disposers.push(server({
     agents: {
-      get: (id: string) => (id === 'session-source'
-        ? { session: options.session ?? (sourceAgent() as any).session, ctx: {}, options: {} }
-        : undefined),
+      get: options.getAgent ?? ((id: string) => (id === 'session-source'
+        ? { session: options.session ?? (sourceAgent() as any).session, ctx: options.sourceContext ?? {}, options: {} }
+        : undefined)),
       create: async (value: any) => {
         created.push(value)
         return options.create?.(value)
       },
     },
+    get: () => options.presets,
     workspaceRegistry: { resolveByPath: async () => undefined },
     logger: { warn: options.warn ?? (() => {}) },
     webServer: { register: () => () => {} },
@@ -72,9 +80,123 @@ function sessionOf(events: readonly unknown[]): unknown {
 afterEach(() => {
   disposeServers()
   resetRuntime()
+  vi.restoreAllMocks()
 })
 
 describe('handoff.inherit', () => {
+  it('composes the source preset without returning its id as an agent setup commit', async () => {
+    const sourceContext = { preset: 'source' }
+    const targetContext = { preset: 'target' }
+    const composeFrom = vi.fn(() => 'composed')
+    const composedPreset = vi.fn(() => 'composed')
+    const { created } = setup({
+      sourceContext,
+      presets: { composedPreset, composeFrom },
+      create: async (options) => {
+        (await options.setup?.(targetContext, { ctx: targetContext }))?.commit()
+      },
+    })
+
+    expect(await handoff.inherit('session-source', 'session-target', 'C:/worktrees/w1')).toEqual({
+      ok: true,
+      targetSessionId: 'session-target',
+      seedLength: 2,
+    })
+    expect(created).toHaveLength(1)
+    expect(created[0].meta).toEqual({
+      cwd: 'C:/worktrees/w1',
+      parentSession: 'session-source',
+      isSeeded: true,
+      agentPreset: 'composed',
+    })
+    expect(composedPreset).toHaveBeenCalledExactlyOnceWith(sourceContext)
+    expect(composeFrom).toHaveBeenCalledExactlyOnceWith(targetContext, sourceContext)
+  })
+
+  it('replays the actual kernel history with seeded lineage and an end-seed marker', async () => {
+    const context = new Context()
+    try {
+      const sessions = new SessionStore(context)
+      const source = Session.create(SessionId('session-source'))
+      source.append('user/message', {
+        id: MessageId('message-first'),
+        role: 'user',
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: '你好' }],
+      }, { surfaceOp: 'append' })
+      source.append('assistant/message', {
+        turn: 0,
+        step: 0,
+        message: {
+          id: MessageId('message-reply'),
+          role: 'assistant',
+          source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' },
+          content: [{ type: 'text', text: '你好，有什么可以帮你？' }],
+        },
+        stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [0], texts: ['你好，有什么可以帮你？'] }],
+      }, { surfaceOp: 'append' })
+      source.append('turn/end', { turn: 0, reason: { kind: 'completed' } })
+      const targets: Session[] = []
+      const cwd = resolve('worktrees/w1')
+      setup({
+        session: source,
+        presets: { composedPreset: () => 'default', composeFrom: () => 'default' },
+        create: async (options) => {
+          const target = sessions.prepare(SessionId(options.sessionId), options)
+          const commit = await options.setup?.(context, { session: target })
+          commit?.commit()
+          targets.push(target)
+        },
+      })
+
+      expect(await handoff.inherit('session-source', 'session-target', cwd)).toEqual({
+        ok: true,
+        targetSessionId: 'session-target',
+        seedLength: 3,
+      })
+      expect(targets).toHaveLength(1)
+      expect(targets[0]!.header).toMatchObject({ cwd, parentSession: 'session-source', isSeeded: true, agentPreset: 'default' })
+      expect(targets[0]!.snapshotEvents()).toEqual([
+        ...source.snapshotEvents(),
+        expect.objectContaining({ type: 'session/end-seed', seq: 3, data: { inherited: true } }),
+      ])
+    }
+    finally {
+      await context.fiber.dispose()
+    }
+  })
+
+  it('returns the snapshot read error before attempting target agent creation', async () => {
+    const warn = vi.fn()
+    const { created } = setup({
+      session: {
+        id: 'session-source',
+        snapshotEvents: () => {
+          throw new Error('snapshot unavailable')
+        },
+      },
+      warn,
+    })
+
+    expect(await handoff.inherit('session-source', 'session-target', 'C:/work')).toEqual({
+      ok: false,
+      error: 'snapshot unavailable',
+    })
+    expect(created).toHaveLength(0)
+    expect(pendingWorktreeTitles.size).toBe(0)
+    expect(warn).toHaveBeenCalledExactlyOnceWith('dsh-tauri-worktree: session inheritance failed for session-target: snapshot unavailable')
+  })
+
+  it('reports a missing source session before attempting target agent creation', async () => {
+    const { created } = setup({ getAgent: () => undefined })
+
+    expect(await handoff.inherit('session-source', 'session-target', 'C:/work')).toEqual({
+      ok: false,
+      error: '未找到源会话：session-source',
+    })
+    expect(created).toHaveLength(0)
+  })
+
   it('seeds the target session from the kernel snapshot log', async () => {
     const { created } = setup()
     const outcome = await handoff.inherit('session-source', 'session-target', 'C:/worktrees/w1')
@@ -131,7 +253,7 @@ describe('handoff.inherit', () => {
     })
     const outcome = await handoff.inherit('session-source', 'session-target', 'C:/work')
 
-    expect(outcome.ok).toBe(false)
+    expect(outcome).toEqual({ ok: false, error: 'boom' })
     expect(pendingWorktreeTitles.size).toBe(0)
   })
 
@@ -173,7 +295,7 @@ describe('handoff.complete', () => {
     const followup = vi.fn()
     const create = vi.fn(async (_options: any) => ({ agent: { followup } }))
     const sourceContext = { preset: 'source' }
-    const composeFrom = vi.fn()
+    const composeFrom = vi.fn(() => 'composed')
     const composedPreset = vi.fn(() => 'composed')
     const attachSession = vi.fn(async () => {})
     disposers.push(server({
@@ -195,7 +317,7 @@ describe('handoff.complete', () => {
     }))
     expect(composedPreset).toHaveBeenCalledWith(sourceContext)
     const targetContext = { preset: 'target' }
-    create.mock.calls[0]![0].setup(targetContext)
+    expect(create.mock.calls[0]![0].setup(targetContext)).toBeUndefined()
     expect(composeFrom).toHaveBeenCalledExactlyOnceWith(targetContext, sourceContext)
     expect(attachSession).toHaveBeenCalledWith('session-target')
     expect(followup).toHaveBeenCalledTimes(1)

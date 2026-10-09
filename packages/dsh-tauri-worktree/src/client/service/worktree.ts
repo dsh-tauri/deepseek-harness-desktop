@@ -25,6 +25,8 @@ export async function create(input: {
 }): Promise<CreateOutcome> {
   try {
     const created = await postWorktree(input)
+    if (!created.ok)
+      return { ok: false, error: created.error ?? locale.text('progressError') }
     store.worktree.patch(input.sessionId, {
       mode: 'worktree',
       phase: 'created',
@@ -39,7 +41,7 @@ export async function create(input: {
     return { ok: true, result: created }
   }
   catch (error) {
-    return { ok: false, error: get(error, 'message', String(error)) }
+    return { ok: false, error: get(error, 'data.error') ?? get(error, 'message', String(error)) }
   }
 }
 

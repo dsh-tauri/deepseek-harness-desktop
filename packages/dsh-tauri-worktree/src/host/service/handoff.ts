@@ -133,13 +133,13 @@ async function createInherited(
   const sourceSession = agent?.session ?? sessionContext.peek(sourceSessionId)
   if (!sourceSession)
     return { ok: false, error: `未找到源会话：${sourceSessionId}` }
-  const seed = sessionEvents(sourceSession)
-  if (seed.length === 0)
-    return { ok: false, error: `源会话没有可继承的事件：${sourceSessionId}` }
-
   const { cwd, attach = false } = options
   const targetSessionId = options.targetSessionId ?? `session-${randomUUID()}`
   try {
+    const seed = sessionEvents(sourceSession)
+    if (seed.length === 0)
+      return { ok: false, error: `源会话没有可继承的事件：${sourceSessionId}` }
+
     await createAgent(sourceSession, agent, targetSessionId, cwd, seed, options.parentSession)
     if (!hasInheritedConversation(seed))
       pendingWorktreeTitles.add(targetSessionId)
@@ -175,13 +175,16 @@ async function createAgent(
       cwd,
       parentSession,
       isSeeded: true,
-      seedLength: seed.length,
       ...(parentPreset ? { agentPreset: parentPreset } : {}),
     },
     inheritedEventCount: seed.length,
     agentOptions: sourceAgent?.options ?? {},
     ...(sourceAgent && presets && parentPreset
-      ? { setup: (agentCtx: any) => presets.composeFrom(agentCtx, sourceAgent.ctx) }
+      ? {
+          setup: (agentCtx: any): void => {
+            presets.composeFrom(agentCtx, sourceAgent.ctx)
+          },
+        }
       : {}),
   })
 }

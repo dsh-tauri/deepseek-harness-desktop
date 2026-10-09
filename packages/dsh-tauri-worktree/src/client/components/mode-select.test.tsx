@@ -39,7 +39,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function transferSurface() {
+function transferSurface(attachmentIds: string[] = []) {
   worktreeState.mode = 'pending'
   const draft = {
     text: 'see /a.ts, then @previous\n',
@@ -48,17 +48,17 @@ function transferSurface() {
       { source: 'sessions', ref: 'previous', offset: 16, length: 9, label: 'previous', clipboardText: '@previous', appearance: 'session' as const, invalid: true },
     ],
   }
-  const sourceActions = { setDraft: vi.fn(), persistDraft: vi.fn(), submit: vi.fn() }
+  const sourceActions = { setDraft: vi.fn(), persistDraft: vi.fn(), submit: vi.fn(), addAttachments: vi.fn(() => true), removeAttachment: vi.fn() }
   const targetActions = { setDraft: vi.fn(), persistDraft: vi.fn(), submit: vi.fn() }
   const sourceInput: SessionInputRuntime = { draftSnapshot: draft, setDraft: vi.fn() }
   const targetInput: SessionInputRuntime = { draftSnapshot: { text: '', references: [] }, setDraft: vi.fn() }
   let current = 'source'
-  vi.mocked(create).mockResolvedValue({ ok: true, result: { worktreePath: '/scratch/worktree', inherited: false } } as Awaited<ReturnType<typeof create>>)
+  vi.mocked(create).mockResolvedValue({ ok: true, result: { worktreePath: '/scratch/worktree', inherited: true } } as Awaited<ReturnType<typeof create>>)
   vi.mocked(attach).mockResolvedValue({ ok: true })
   const props: ModeSelectProps = {
     sessionId: 'source',
     useInput(selector) {
-      const [input] = useState({ draft: draft.text })
+      const [input] = useState({ draft: draft.text, attachmentIds })
       return selector(input)
     },
     inputActions: sourceActions,
@@ -66,7 +66,7 @@ function transferSurface() {
       create: vi.fn(async options => options.sessionId),
       open(id) { current = id },
       refresh: vi.fn(async () => {}),
-      list: { getSnapshot: () => ({ ids: [current], current }), subscribe: () => () => {} },
+      list: { getSnapshot: () => ({ ids: [current, ...vi.mocked(create).mock.calls.map(([input]) => input.sessionId)], current }), subscribe: () => () => {} },
       provideInfo: id => ({ props: { inputActions: id === 'source' ? sourceActions : targetActions } }),
     },
     workspacesRuntime: { archiveSession: vi.fn(async () => {}), list: { getSnapshot: () => ({ items: [] }) }, insertSessionBefore: vi.fn() },
@@ -101,14 +101,45 @@ it('leaves the source draft intact when semantic capture is unavailable on a sem
   expect(targetActions.submit).not.toHaveBeenCalled()
 })
 
+it.each([false, undefined])('keeps the source draft when inheritance is not confirmed (%s)', async (inherited) => {
+  const { view, props, sourceActions, targetActions } = transferSurface(['file-a'])
+  vi.mocked(create).mockResolvedValue({ ok: true, result: { worktreePath: '/scratch/worktree', inherited } } as Awaited<ReturnType<typeof create>>)
+  fireEvent.click(view.getByRole('button', { name: 'Send' }))
+  await waitFor(() => expect(store.worktree.patch).toHaveBeenCalledWith('source', expect.objectContaining({ mode: 'local', phase: 'error', error: 'inheritanceFailed' })))
+  expect(props.sessionsRuntime.create).not.toHaveBeenCalled()
+  expect(props.sessionsRuntime.list.getSnapshot().current).toBe('source')
+  expect(attach).not.toHaveBeenCalled()
+  expect(sourceActions.removeAttachment).not.toHaveBeenCalled()
+  expect(sourceActions.setDraft).not.toHaveBeenCalled()
+  expect(sourceActions.persistDraft).not.toHaveBeenCalled()
+  expect(targetActions.submit).not.toHaveBeenCalled()
+  expect(props.workspacesRuntime.archiveSession).not.toHaveBeenCalled()
+})
+
+it('keeps the source draft when the host rejects session inheritance', async () => {
+  const { view, props, sourceActions, targetActions } = transferSurface(['file-a'])
+  vi.mocked(create).mockResolvedValue({ ok: false, error: '会话历史继承失败：preset unavailable' })
+  fireEvent.click(view.getByRole('button', { name: 'Send' }))
+  await waitFor(() => expect(store.worktree.patch).toHaveBeenCalledWith('source', expect.objectContaining({ mode: 'local', phase: 'error', error: '会话历史继承失败：preset unavailable' })))
+  expect(sourceActions.removeAttachment).not.toHaveBeenCalled()
+  expect(props.sessionsRuntime.create).not.toHaveBeenCalled()
+  expect(props.sessionsRuntime.list.getSnapshot().current).toBe('source')
+  expect(sourceActions.setDraft).not.toHaveBeenCalled()
+  expect(sourceActions.persistDraft).not.toHaveBeenCalled()
+  expect(targetActions.submit).not.toHaveBeenCalled()
+  expect(props.workspacesRuntime.archiveSession).not.toHaveBeenCalled()
+})
+
 it('transfers the captured semantic draft into the new worktree before submitting', async () => {
-  const { view, draft, sourceActions, targetActions, targetInput } = transferSurface()
+  const { view, props, draft, sourceActions, targetActions, targetInput } = transferSurface()
   fireEvent.click(view.getByRole('button', { name: 'Send' }))
   await waitFor(() => expect(targetActions.submit).toHaveBeenCalledOnce())
   expect(targetInput.setDraft).toHaveBeenCalledExactlyOnceWith(draft)
   expect(sourceActions.setDraft).toHaveBeenCalledExactlyOnceWith('')
   expect(sourceActions.persistDraft).toHaveBeenCalledOnce()
   expect(sourceActions.submit).not.toHaveBeenCalled()
+  expect(props.sessionsRuntime.create).not.toHaveBeenCalled()
+  expect(props.workspacesRuntime.archiveSession).toHaveBeenCalledExactlyOnceWith('source')
 })
 
 it('restores the complete source draft when the target semantic import fails after switching', async () => {

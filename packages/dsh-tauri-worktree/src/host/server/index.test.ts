@@ -79,6 +79,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   resetRuntime()
   for (const directory of temporaryDirectories.splice(0))
     rmSync(directory, { recursive: true, force: true })
@@ -222,6 +223,90 @@ describe('工作树路由真实创建链路', () => {
     const response = await sendJson(base, P, 'POST', JSON.stringify(body))
     return { status: response.status, body: await response.json() }
   }
+
+  function bindInheritanceFailure(repository: string) {
+    const source = { id: 'source', header: { cwd: repository }, snapshotEvents: () => [{ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你好' }] } }] }
+    const create = vi.fn(async (): Promise<unknown> => {
+      throw new Error('preset unavailable')
+    })
+    sessionHost = {
+      sessions: { get: (id: string) => id === 'source' ? source : undefined },
+      agents: { get: () => undefined, create },
+    }
+    return create
+  }
+
+  it('继承失败返回具体错误并保留工作树供显式清理', async () => {
+    const repository = createRepository()
+    bindInheritanceFailure(repository)
+    const harness = createHarness()
+    const dispose = server(harness.ctx)
+    try {
+      const base = await listen(harness.registered)
+      const { status, body } = await postCreate(base, { sessionId: 'target', sourceSessionId: 'source', inherit: true })
+      expect(status).toBe(500)
+      expect(body.error).toContain('会话历史继承失败：preset unavailable')
+      expect(body.ok).not.toBe(true)
+      const binding = ledger.load('target')!
+      expect(body.error).toContain(binding.worktreePath)
+      expect(worktreeRegistrations(repository)).toBe(2)
+      expect(readFileSync(join(binding.worktreePath, 'README.md'), 'utf8')).toBe('# repo\n')
+    }
+    finally {
+      dispose()
+    }
+  })
+
+  it('继承失败保留此前已存在的工作树和用户文件', async () => {
+    const repository = createRepository()
+    bindInheritanceFailure(repository)
+    const harness = createHarness()
+    const dispose = server(harness.ctx)
+    try {
+      const base = await listen(harness.registered)
+      const initial = await postCreate(base, { sessionId: 'target', sourceSessionId: 'source' })
+      expect(initial.status).toBe(200)
+      const binding = ledger.load('target')!
+      writeFileSync(join(binding.worktreePath, 'user.txt'), 'keep me')
+      const { status, body } = await postCreate(base, { sessionId: 'target', sourceSessionId: 'source', inherit: true })
+      expect(status).toBe(500)
+      expect(body.error).toContain('会话历史继承失败：preset unavailable')
+      expect(worktreeRegistrations(repository)).toBe(2)
+      expect(ledger.load('target')).toEqual(binding)
+      expect(readFileSync(join(binding.worktreePath, 'user.txt'), 'utf8')).toBe('keep me')
+    }
+    finally {
+      dispose()
+    }
+  })
+
+  it('继承失败后可显式重试并复用工作树继承源历史', async () => {
+    const repository = createRepository()
+    const create = bindInheritanceFailure(repository)
+    const harness = createHarness()
+    const dispose = server(harness.ctx)
+    try {
+      const base = await listen(harness.registered)
+      const request = { sessionId: 'target', sourceSessionId: 'source', inherit: true }
+      const failed = await postCreate(base, request)
+      expect(failed.status).toBe(500)
+      const binding = ledger.load('target')!
+      create.mockResolvedValue({ agent: {} })
+      const { status, body } = await postCreate(base, request)
+      expect(status).toBe(200)
+      expect(body).toMatchObject({ ok: true, inherited: true, existed: true, worktreePath: binding.worktreePath })
+      expect(create).toHaveBeenLastCalledWith(expect.objectContaining({
+        sessionId: 'target',
+        meta: expect.objectContaining({ cwd: binding.worktreePath, parentSession: 'source', isSeeded: true }),
+        seed: [{ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你好' }] } }],
+        inheritedEventCount: 1,
+      }))
+      expect(worktreeRegistrations(repository)).toBe(2)
+    }
+    finally {
+      dispose()
+    }
+  })
 
   it('pOST 集合根在真实 git 仓库上创建工作树并落盘绑定', async () => {
     const repository = createRepository()

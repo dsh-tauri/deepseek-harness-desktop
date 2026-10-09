@@ -31,7 +31,11 @@ export default defineEventHandler<EventHandlerRequest, Promise<WorktreeCreate>>(
   let inherited = false
   if (body.inherit === true) {
     const inheritedSession = await handoff.inherit(sourceSessionId, sessionId, created.binding.worktreePath)
-    inherited = inheritedSession.ok
+    if (!inheritedSession.ok) {
+      event.res.status = 500
+      return { error: `会话历史继承失败：${inheritedSession.error}；工作树已保留：${created.binding.worktreePath}` }
+    }
+    inherited = true
   }
 
   const { binding } = created
