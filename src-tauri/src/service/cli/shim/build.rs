@@ -657,10 +657,10 @@ mod tests {
         // 应用内部安装可经 DSH_PREFER_BUNDLED_PNPM=1 强制捆绑版（须在用户搜索前生效）
         assert!(content.contains("DSH_PREFER_BUNDLED_PNPM"));
         let env_at = content.find("DSH_PREFER_BUNDLED_PNPM").unwrap();
-        let exact_at = content.find("if defined DSH_PNPM").unwrap();
+        let exact_at = content.find("if defined DSH_PNPM (").unwrap();
         let user_at = content.find("where pnpm").unwrap();
         assert!(env_at < exact_at && exact_at < user_at);
-        assert_eq!(content.matches("if defined DSH_PNPM").count(), 1);
+        assert_eq!(content.matches("if defined DSH_PNPM (").count(), 1);
     }
 
     /// issue #130：真实执行生成的 cmd shim，确保用户 pnpm 的失败码不会因 cmd
