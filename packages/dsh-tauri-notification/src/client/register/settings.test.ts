@@ -5,7 +5,7 @@ import { SETTINGS_GENERAL_ITEM_ID, SETTINGS_GENERAL_ITEM_ORDER, SETTINGS_GENERAL
 import { settingsFeature } from './settings'
 
 // 真 `defineRegister` 会在 effect 运行时创建控制器与适配器；这里只验证注册形状，
-// 直接拿 setup 回调调用即可（与 `dsh-tauri-ssh` 的注册测试同一套路）。
+// 直接拿 setup 回调调用即可（与 `dsh-tauri-remote` 的注册测试同一套路）。
 vi.mock('dsh-tauri/client', () => ({
   defineLocale: (ns: string, dictionaries: Record<string, unknown>) => ({ NS: ns, ...dictionaries }),
   defineRegister: (setup: unknown) => setup,

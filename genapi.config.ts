@@ -13,7 +13,7 @@ const plugins = [
   'dsh-tauri-ui',
   'dsh-tauri-notification',
   'dsh-tauri-worktree',
-  'dsh-tauri-ssh',
+  'dsh-tauri-remote',
 ]
 
 export default defineConfig({
@@ -48,7 +48,7 @@ export default defineConfig({
       },
     })),
     {
-      input: 'packages/dsh-tauri-ssh/src/host/server/index.ts',
+      input: 'packages/dsh-tauri-remote/src/host/server/index.ts',
       output: { main: 'src/apis/remote.ts', type: 'src/apis/remote.types.ts' },
       meta: { import: { http: './http' } },
     },

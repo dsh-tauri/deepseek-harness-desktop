@@ -32,7 +32,7 @@ const Icons: Record<string, IconComponent | undefined> = {
   'agent-presets': Cubes3Overlap,
   'dsh-tauri-archive': Tray,
   'plugins': Puzzle,
-  'dsh-tauri-ssh': Server,
+  'dsh-tauri-remote': Server,
   'dsh-tauri-pet-settings': Ghost,
   'better-sidebar': LayoutSplitSideContentRight,
 }

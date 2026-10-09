@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * S5 整体验收·数据面全旅程驱动脚本（无头，直驱 /api/tauri/ssh REST 面）。
+ * S5 整体验收·数据面全旅程驱动脚本（无头，直驱 /api/tauri/remote REST 面）。
  *
  * 旅程（对应 S5 Spec 验收标准 2 的可自动化子集）：
  *   POST /machines（dev 真机，含 color/tintBorder/startCommand）
@@ -16,7 +16,7 @@
  * → 303 + set-cookie），随后所有请求带着该 Cookie 走；也可以直接给 `--cookie`
  * （例如从浏览器 DevTools 复制）。
  *
- * 用法（先起一个挂了 dsh-tauri-ssh 的本地 dsh 实例，见
+ * 用法（先起一个挂了 dsh-tauri-remote 的本地 dsh 实例，见
  * docs/testing/s5-ssh-e2e-evidence.md 的复现步骤）：
  *   node scripts/e2e-ssh-data-plane.mjs \
  *     --base http://127.0.0.1:3185 --token <alpha-token> \
@@ -45,7 +45,7 @@ const remotePort = Number(argOf('remote-port', '3082'))
 const startCommand = argOf('start-command', '')
 const outPath = argOf('out', '')
 const machineId = randomUUID()
-const api = `${base}/api/tauri/ssh`
+const api = `${base}/api/tauri/remote`
 let cookie = argOf('cookie', '')
 
 const lines = []
@@ -118,7 +118,7 @@ async function main() {
 
   const settings = await request('GET', '/settings')
   if (settings.enabled !== true)
-    throw new Error('dsh-tauri-ssh 未启用：先 POST /api/tauri/ssh/settings {"enabled":true}')
+    throw new Error('dsh-tauri-remote 未启用：先 POST /api/tauri/remote/settings {"enabled":true}')
 
   log(`# S5 SSH 数据面全旅程 — ${new Date().toISOString()}`)
   log(`base=${base} host=${host} user=${user} sshPort=${sshPort} remotePort=${remotePort}`)

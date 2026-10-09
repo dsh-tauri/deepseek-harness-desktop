@@ -101,8 +101,8 @@ describe('tooling configuration contracts', () => {
       ['archive/contract.test.ts', []],
       ['source/contract.test.ts', []],
       ['packages/dsh-tauri/node_modules/copy/index.test.ts', []],
-      ['packages/dsh-tauri-ssh/src/client/components/panel.test.tsx', ['unit']],
-      ['packages/dsh-tauri-ssh/src/client/index.test.ts', ['unit']],
+      ['packages/dsh-tauri-remote/src/client/components/panel.test.tsx', ['unit']],
+      ['packages/dsh-tauri-remote/src/client/index.test.ts', ['unit']],
       ['src/layout/components/remote-switcher.test.tsx', ['unit']],
       ['src/layout/components/connect-dialog.test.tsx', ['unit']],
     ] as const
@@ -114,8 +114,8 @@ describe('tooling configuration contracts', () => {
     expect(specs.filter(spec => spec.moduleId.endsWith('/test/e2e/desktop/boot.e2e.ts')).map(spec => spec.project.name)).toEqual(['desktop'])
     expect(specs.filter(spec => spec.moduleId.endsWith('/test/e2e/plugins/dsh-tauri.e2e.ts')).map(spec => spec.project.name)).toEqual(['plugin'])
     for (const file of [
-      'packages/dsh-tauri-ssh/src/client/components/machines-section.test.tsx',
-      'packages/dsh-tauri-ssh/src/client/index.test.ts',
+      'packages/dsh-tauri-remote/src/client/components/machines-section.test.tsx',
+      'packages/dsh-tauri-remote/src/client/index.test.ts',
       'src/layout/components/remote-switcher.test.tsx',
       'src/layout/components/connect-dialog.test.tsx',
     ]) {

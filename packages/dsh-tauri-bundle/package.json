@@ -12,7 +12,7 @@
     "dsh-tauri-pet": "workspace:*",
     "dsh-tauri-rightclick": "workspace:*",
     "dsh-tauri-scheduler": "workspace:*",
-    "dsh-tauri-ssh": "workspace:*",
+    "dsh-tauri-remote": "workspace:*",
     "dsh-tauri-ui": "workspace:*",
     "dsh-tauri-worktree": "workspace:*"
   }

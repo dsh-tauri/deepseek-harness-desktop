@@ -1,14 +1,14 @@
 import type { NavbarProps } from './navbar'
 import type { IframeOutboundMessage } from '@/hooks/use-iframe-post'
 
-/** 设置浮层分区 id：SSH（dsh-tauri-ssh 插件注册的唯一分区，内部再用 Tabs 分页）。 */
-export const SSH_SECTION = 'dsh-tauri-ssh'
+/** 设置浮层分区 id：SSH（dsh-tauri-remote 插件注册的唯一分区，内部再用 Tabs 分页）。 */
+export const REMOTE_SECTION = 'dsh-tauri-remote'
 
-/** SSH 分区内的标签页 id（与插件 `SSH_TAB_*` 约定一致）。 */
-export const SSH_TAB_MACHINES = 'machines'
+/** SSH 分区内的标签页 id（与插件 `REMOTE_TAB_*` 约定一致）。 */
+export const REMOTE_TAB_MACHINES = 'machines'
 
 /** 同步到远端标签页 id。 */
-export const SSH_TAB_SYNC = 'sync'
+export const REMOTE_TAB_SYNC = 'sync'
 
 /**
  * 导航栏回调桥：把每个导航栏动作翻译成一条宿主 → iframe 协议消息。
@@ -29,7 +29,7 @@ export function navBridgeOf(post: (message: IframeOutboundMessage) => void, live
     onNewChat: () => post({ type: 'dsh://session:new' }),
     onOpenFolder: () => post({ type: 'dsh://workspace:add' }),
     // 机器管理与同步同属 SSH 分区：分区相同，靠 tab 字段落到对应标签页
-    onOpenMachineManager: () => post({ type: 'dsh://settings:open', section: SSH_SECTION, tab: SSH_TAB_MACHINES }),
-    onOpenSyncToRemote: () => post({ type: 'dsh://settings:open', section: SSH_SECTION, tab: SSH_TAB_SYNC }),
+    onOpenMachineManager: () => post({ type: 'dsh://settings:open', section: REMOTE_SECTION, tab: REMOTE_TAB_MACHINES }),
+    onOpenSyncToRemote: () => post({ type: 'dsh://settings:open', section: REMOTE_SECTION, tab: REMOTE_TAB_SYNC }),
   }
 }
