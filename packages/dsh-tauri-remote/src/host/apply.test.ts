@@ -1,7 +1,6 @@
 import type { AddressInfo } from 'node:net'
 import type { Config as RemoteConfig } from './config/schema'
 import type { RemoteHostContext } from './types/index'
-import type { AddressInfo } from 'node:net'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
@@ -94,7 +93,7 @@ afterEach(() => {
 })
 
 /** One scripted context: cordis-shaped surface without real cordis types. */
-function scriptedCtx(webServer: unknown): { ctx: RemoteHostContext, disposers: Array<() => void> } {
+function scriptedCtx(webServer: unknown, logger?: RemoteHostContext['logger']): { ctx: RemoteHostContext, disposers: Array<() => void> } {
   const disposers: Array<() => void> = []
   const ctx = {
     provide: vi.fn(),
@@ -103,6 +102,7 @@ function scriptedCtx(webServer: unknown): { ctx: RemoteHostContext, disposers: A
       if (typeof disposer === 'function')
         disposers.push(disposer)
     }),
+    ...logger === undefined ? {} : { logger },
     webServer,
   } as unknown as RemoteHostContext
   return { ctx, disposers }
@@ -508,5 +508,167 @@ describe('remote plugin', () => {
     const { ctx, webServer } = construct()
     expect(webServer.routes.map(route => `${route.kind} ${route.path}`)).toEqual(REST_ENDPOINTS.map(path => `exact ${path}`))
     expect(apply(ctx, { ...baseConfig, sshDir, statePath })).toBeUndefined()
+  })
+})
+
+describe('stored transport rows', () => {
+  it('reads a stored ssh transport as the default and never writes the key back', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: { ...row('a'), transport: 'ssh' } } } })
+    const profile = machineProfiles.get(MachineId('a'))
+    expect(profile).toMatchObject({ id: 'a', name: 'machine-a' })
+    expect(profile).not.toHaveProperty('transport')
+    await service.save(MachineId('a'), { name: 'alpha-2', host: '10.0.0.1', port: 22, user: 'root', remotePort: 3080 })
+    expect(readState().machines.a).not.toHaveProperty('transport')
+  })
+})
+
+/** 旧状态目录下的文档路径（迁移源）。 */
+function legacyDocument(home: string, file: string): string {
+  return join(home, 'ssh', file)
+}
+
+/** 新状态目录下的文档路径（迁移目标）。 */
+function stateDocument(home: string, file: string): string {
+  return join(home, 'remote', file)
+}
+
+function writeDocument(file: string, document: unknown): void {
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`)
+}
+
+/** 像真实档案那样只用 DSH_HOME 定位状态：不传 statePath / knownHostsPath，迁移才会触发。 */
+async function bootWithHome(home: string, logger: RemoteHostContext['logger']): Promise<typeof machine> {
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    const { ctx } = scriptedCtx(scriptedHttpServer(), logger)
+    apply(ctx, { ...baseConfig, sshDir })
+    await machine.start()
+  }
+  finally {
+    if (previous === undefined)
+      delete process.env.DSH_HOME
+    else
+      process.env.DSH_HOME = previous
+  }
+  return machine
+}
+
+function quietLogger(): { error: (message: string) => void, warn: (message: string) => void } {
+  return { error: () => {}, warn: vi.fn<(message: string) => void>() }
+}
+
+/** 记下的告警文案（迁移只在未完成时写 warn，因此它就是迁移结论）。 */
+function warnedMessages(logger: { warn: (message: string) => void }): string[] {
+  return vi.mocked(logger.warn).mock.calls.map(call => String(call[0]))
+}
+
+describe('state directory migration', () => {
+  it('carries machines and known-hosts over while leaving the legacy files in place', async () => {
+    const home = join(sshDir, 'legacy-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    writeDocument(legacyDocument(home, 'known-hosts.json'), [{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    const legacyState = readFileSync(legacyDocument(home, 'machines.json'), 'utf8')
+    const legacyHosts = readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.enabled()).toBe(true)
+    expect(service.profileViews().map(view => view.id)).toEqual(['a'])
+    await expect(readHostKeyRecords(stateDocument(home, 'known-hosts.json'))).resolves.toEqual([{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    expect(readFileSync(legacyDocument(home, 'machines.json'), 'utf8')).toBe(legacyState)
+    expect(readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')).toBe(legacyHosts)
+    expect(warnedMessages(logger)).toEqual([])
+    expect(migrateLegacyState()).toBeUndefined()
+    expect(readFileSync(stateDocument(home, 'machines.json'), 'utf8')).toBe(`${JSON.stringify({ version: 1, enabled: true, machines: { a: row('a') } }, null, 2)}\n`)
+  })
+
+  it('prefers an existing target document and never rewrites it', async () => {
+    const home = join(sshDir, 'existing-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { legacy: row('legacy') } })
+    writeDocument(stateDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { current: row('current') } })
+    const current = readFileSync(stateDocument(home, 'machines.json'), 'utf8')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.profileViews().map(view => view.id)).toEqual(['current'])
+    expect(readFileSync(stateDocument(home, 'machines.json'), 'utf8')).toBe(current)
+    expect(existsSync(legacyDocument(home, 'machines.json'))).toBe(true)
+    expect(warnedMessages(logger)).toEqual([])
+  })
+
+  it('treats an empty target document as already migrated and starts from the default state', async () => {
+    const home = join(sshDir, 'half-migrated-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    mkdirSync(dirname(stateDocument(home, 'machines.json')), { recursive: true })
+    writeFileSync(stateDocument(home, 'machines.json'), '')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.profileViews()).toEqual([])
+    expect(readFileSync(stateDocument(home, 'machines.json'), 'utf8')).toBe('')
+    expect(warnedMessages(logger)).toEqual([])
+  })
+
+  it('warns instead of failing when the legacy document is corrupt, then accepts new machines', async () => {
+    const home = join(sshDir, 'corrupt-home')
+    mkdirSync(dirname(legacyDocument(home, 'machines.json')), { recursive: true })
+    writeFileSync(legacyDocument(home, 'machines.json'), '{ not json')
+    writeDocument(legacyDocument(home, 'known-hosts.json'), [{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.profileViews()).toEqual([])
+    expect(warnedMessages(logger)).toHaveLength(1)
+    expect(warnedMessages(logger)[0]).toContain('旧状态目录迁移未完成')
+    expect(warnedMessages(logger)[0]).toContain('不是合法 JSON')
+    expect(migrationWarningOf()).toContain('不是合法 JSON')
+    await expect(readHostKeyRecords(stateDocument(home, 'known-hosts.json'))).resolves.toEqual([{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    await service.save(MachineId('c'), { name: 'gamma', host: '10.0.0.3', port: 22, user: 'root', remotePort: 3080 })
+    expect(service.profileViews().map(view => view.id)).toEqual(['c'])
+    expect(existsSync(legacyDocument(home, 'machines.json'))).toBe(true)
+  })
+
+  it('warns instead of failing when the new state directory cannot be created, then starts empty', async () => {
+    const home = join(sshDir, 'blocked-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    writeDocument(legacyDocument(home, 'known-hosts.json'), [{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    const legacyState = readFileSync(legacyDocument(home, 'machines.json'), 'utf8')
+    const legacyHosts = readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')
+    writeFileSync(join(home, 'remote'), 'blocked')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.enabled()).toBe(false)
+    expect(service.profileViews()).toEqual([])
+    expect(warnedMessages(logger)).toHaveLength(1)
+    expect(warnedMessages(logger)[0]).toContain('旧状态目录迁移未完成')
+    expect(warnedMessages(logger)[0]).toContain(migrationWarningOf())
+    expect(migrationWarningOf()).toContain('mkdir')
+    expect(migrateLegacyState()).toBe(migrationWarningOf())
+    expect(readFileSync(legacyDocument(home, 'machines.json'), 'utf8')).toBe(legacyState)
+    expect(readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')).toBe(legacyHosts)
+  })
+
+  it('skips migration entirely when the state paths are configured explicitly', async () => {
+    const home = join(sshDir, 'configured-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    const previous = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      apply(scriptedCtx(scriptedHttpServer()).ctx, { ...baseConfig, sshDir, knownHostsPath: join(sshDir, 'known-hosts.json'), statePath })
+      await machine.start()
+      expect(machine.profileViews()).toEqual([])
+      await machine.setEnabled(true)
+      expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ version: 1, enabled: true })
+      expect(existsSync(stateDocument(home, 'machines.json'))).toBe(false)
+    }
+    finally {
+      if (previous === undefined)
+        delete process.env.DSH_HOME
+      else
+        process.env.DSH_HOME = previous
+    }
   })
 })
