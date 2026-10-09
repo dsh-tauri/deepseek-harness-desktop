@@ -1,8 +1,7 @@
-export type TurnEndResult = {
-  reason?: string;
-  turn?: number;
-};
+export type GetApiDesktopDshTauriNotificationTurnEndResponse = { reason?: undefined | string; turn?: undefined | number };
+export type GetApiDesktopDshTauriNotificationTurnEndQuerySessionId = undefined | string;
+export type OptionsApiDesktopDshTauriNotificationTurnEndResponse = void;
 
-export interface GetTurnEndQuery {
-  sessionId?: string;
+export interface GetApiDesktopDshTauriNotificationTurnEndQuery {
+  sessionId?: GetApiDesktopDshTauriNotificationTurnEndQuerySessionId;
 }

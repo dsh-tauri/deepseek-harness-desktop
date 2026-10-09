@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import type { McpSaveBody } from '../apis/index.type'
+import type { PostApiDesktopDshTauriExtensionMcpBody as McpSaveBody } from '../apis/index.type'
 import type { McpRow } from '../types'
 import type { McpEditorMode, McpEditorState, McpImportItem, McpTabProps } from './mcp-tab.types'
 import { Action, ArrowRotateRight, Button, Card, Icon, Modal, Notice, PlugConnection, Select, StateDot, Tag, Text } from 'dsh-tauri-ui/client'
@@ -41,6 +41,11 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     void getMcp().then(
       (body) => {
         if (current) {
+          if ('error' in body) {
+            setServers([])
+            setOutcome({ ok: false, text: failText(t, new Error(body.error)) })
+            return
+          }
           setServers(body.servers)
           setGlobalError(body.globalError ?? '')
         }
@@ -62,6 +67,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setImportItems(null)
     try {
       const body = await getImportScan()
+      if ('error' in body)
+        throw new Error(body.error)
       const existing = new Set(body.existing)
       setImportItems(body.servers.map(server => ({
         server,
@@ -82,6 +89,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setBusy(true)
     try {
       const body = await postImportApply({ items })
+      if ('error' in body)
+        throw new Error(body.error)
       const failed = body.results.filter(item => !item.ok)
       setOutcome(failed.length === 0
         ? null
@@ -102,6 +111,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setChecking(row.id)
     try {
       const result = await postMcpCheck({ id: row.id })
+      if ('error' in result)
+        throw new Error(result.error)
       setOutcome({ ok: result.ok, text: result.ok ? `${t('connectivityOk')}${result.detail ? ` (${result.detail})` : ''}` : `${t('connectivityFailed')}: ${result.detail ?? ''}` })
     }
     catch (error) {

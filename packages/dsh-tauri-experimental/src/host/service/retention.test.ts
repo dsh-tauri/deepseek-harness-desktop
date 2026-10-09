@@ -8,7 +8,7 @@ import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetTestDshHome, testDshHome } from '../../../../.test/test-utils'
 import { MAX_FILE_BYTES } from '../config/constants'
-import { clearHostRuntime } from '../config/runtime'
+import { disposeRuntime } from '../config/runtime'
 import { gitInRepo, gitInSnapshot } from '../utils/git'
 import { retention } from './retention'
 import { snapshot } from './snapshot'
@@ -53,7 +53,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  clearHostRuntime()
+  disposeRuntime()
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })))
   cleanPluginData()
 })

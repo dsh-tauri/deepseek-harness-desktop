@@ -35,7 +35,7 @@
 Official contracts used:
 
 - Skills provider: `src/host/service/provider.utils.ts` imports the official `@deepseek-ai/dsh-skill-filesystem` through the platform loader; `src/host/service/provider.ts` re-mounts it with `customSkillDirs` = packaged `skills/` + managed skill roots + agent roots.
-- Skill policy: `src/host/routes/skill/policy/post.ts` calls the official `setPolicy(path, enabled)`.
+- Skill policy: `src/host/server/routes/skill/policy/post.ts` calls the official `setPolicy(path, enabled)`.
 - Skill format and roots: `SKILL.md` directory bundle or flat `<name>.md` with YAML frontmatter, in the official project/custom/user priority order, including the official `user-dsh` root `<DSH_HOME>/skills`.
 - MCP: every `cordis.patch.yml` row is an official `@deepseek-ai/dsh-mcp-client` instance (`MCP_PLUGIN` in `src/host/config/constants.ts`) using the official `serverName` / `transport` / `command` / `args` / `env` / `cwd` or `url` / `headers` shape.
 - MCP config subset: the official `toolCallTimeoutMs`, `failOnStartupError`, `maxInstructionBytes` and `reconnect` keys are not surfaced yet.

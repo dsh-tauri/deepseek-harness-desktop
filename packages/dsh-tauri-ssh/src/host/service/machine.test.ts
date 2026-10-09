@@ -8,7 +8,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearHostRuntime, machineStates, machineTable, setHostConfig, setKnownHostsPath, setMachineDeps } from '../config/runtime'
+import { machineStates, machineTable, resetRuntime, setHostConfig, setKnownHostsPath, setMachineDeps } from '../config/runtime'
 import { MachineId, SshError } from '../types/index'
 import { EMPTY_ALLOWLIST } from '../utils/allowlist'
 import { events } from './events'
@@ -302,7 +302,7 @@ afterEach(async () => {
         process.env.DSH_HOME = harnessHomeBefore
       vi.unstubAllGlobals()
       vi.restoreAllMocks()
-      clearHostRuntime()
+      resetRuntime()
     }
   }
 })
@@ -342,7 +342,7 @@ function boot(overrides: Partial<{
   const transport = new FakeTransport(overrides.sessionFactory ?? (() => new FakeSession(() => true)))
   transport.rejectKeys = overrides.rejectKeys ?? false
   const emits: Array<{ id: MachineId, state: string, progress?: { phase: string } }> = []
-  clearHostRuntime()
+  resetRuntime()
   if (overrides.envCredentials !== undefined)
     process.env.DSH_HOME = harnessHomeWith(overrides.envCredentials())
   setHostConfig({ ...(overrides.config ?? config), sshDir: tempRoot() })

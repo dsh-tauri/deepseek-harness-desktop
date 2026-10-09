@@ -1,7 +1,4 @@
-import type { HostContext, PendingHandoff } from '../types'
-import { defineHostRuntime } from 'dsh-tauri'
-
-export const { setCurrentHostInstance, getCurrentHostInstance } = defineHostRuntime<HostContext>()
+import type { PendingHandoff } from '../types'
 
 export const pendingHandoffs = new Map<string, PendingHandoff>()
 
@@ -10,9 +7,8 @@ export const pendingWorktreeTitles = new Set<string>()
 
 export const injectedCheckoutContexts = new Set<string>()
 
-export function clearHostRuntime(): void {
+export function resetRuntime(): void {
   pendingHandoffs.clear()
   pendingWorktreeTitles.clear()
   injectedCheckoutContexts.clear()
-  setCurrentHostInstance(undefined)
 }

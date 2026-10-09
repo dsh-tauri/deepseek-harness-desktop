@@ -2,17 +2,18 @@ import type {
   Binding,
   CheckoutOptions,
   EnsureOptions,
+  HostContext,
   OperationResult,
   WorktreeParams,
   WorktreeProcessController,
 } from '../types'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import process from 'node:process'
-import { defineService, DSH_HOME } from 'dsh-tauri'
+import { defineService, DSH_HOME, getServerContext } from 'dsh-tauri'
 import { compact, filter, find, get, isEmpty, map, reject, some } from 'lodash-es'
 import { basename, dirname, join, resolve } from 'pathe'
 import { TRASH_DIR, WORKTREES_DIR } from '../config/constants'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import {
   copyMissingChildren,
   isDependencyInstallCommand,
@@ -460,7 +461,7 @@ export const worktree = defineService({
     ])
     const unlinked = await unlinkWorktreeDependencies(binding.worktreePath, directories)
     if (unlinked.length > 0) {
-      getCurrentHostInstance().logger?.info?.(
+      getServerContext<HostContext>(server).logger?.info?.(
         `dsh-tauri-worktree: unlinked ${unlinked.join(', ')} before install in ${binding.worktreePath}; `
         + 'the package manager will materialize an independent copy',
       )
@@ -552,7 +553,7 @@ async function isRegisteredWorktree(root: string, path: string, signal?: AbortSi
 async function stopWorktreeProcesses(sessionId: string, path: string): Promise<void> {
   let ctx: unknown
   try {
-    ctx = getCurrentHostInstance()
+    ctx = getServerContext<HostContext>(server)
   }
   catch {
     ctx = undefined

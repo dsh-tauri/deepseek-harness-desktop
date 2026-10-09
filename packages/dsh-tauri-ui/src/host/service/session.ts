@@ -1,8 +1,8 @@
 import type { Inbox } from '@deepseek-ai/dsh-agent'
-import type { PlatformModuleLoader, SessionResumeOutcome } from '../types'
+import type { HostContext, PlatformModuleLoader, SessionResumeOutcome } from '../types'
 import type { CreateUserMessage, PlanSession } from './session.types'
-import { defineService } from 'dsh-tauri'
-import { getCurrentHostInstance } from '../config/runtime'
+import { defineService, getServerContext } from 'dsh-tauri'
+import { server } from '../server'
 
 const CONTINUE_INSTRUCTION = 'Continue the interrupted task from where it stopped. Do not repeat work that is already complete.'
 
@@ -54,7 +54,7 @@ export const session = defineService({
 // --- internal ---
 
 async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcome> {
-  const ctx = getCurrentHostInstance()
+  const ctx = getServerContext<HostContext>(server)
   const agent = ctx?.agents?.get?.(sessionId)
   if (agent === undefined || agent === null)
     return { ok: false, code: 404, error: '会话不存在或尚未运行' }

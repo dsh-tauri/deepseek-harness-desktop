@@ -1,21 +1,29 @@
 /*
- * @title dsh-tauri-ui
+ * @title index
  * @swagger 2.0
  * @version 0.0.0
  */
 
-import type { FetchOptions } from "dsh-tauri/client";
-import { ofetch } from "dsh-tauri/client";
 import type * as Types from "./index.type";
-
-export const baseURL = "/api/desktop/dsh-tauri-ui";
+import { ofetch } from "dsh-tauri/client";
+import type { FetchOptions } from "dsh-tauri/client";
 
 /** @method post */
-export function postSessionResume(body: Types.PostSessionResumeBody, options?: FetchOptions) {
-  return ofetch<Types.SessionResumeResponse>("/session/resume", { baseURL, method: "post", body, ...options });
+export function postSessionResume(body: Types.PostApiDesktopDshTauriUiSessionResumeBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiDesktopDshTauriUiSessionResumeResponse>("/api/desktop/dsh-tauri-ui/session/resume", { method: "post", body, ...options });
+}
+
+/** @method options */
+export function optionsSessionResume(options?: FetchOptions) {
+  return ofetch<Types.OptionsApiDesktopDshTauriUiSessionResumeResponse>("/api/desktop/dsh-tauri-ui/session/resume", { method: "options", ...options });
 }
 
 /** @method get */
 export function getUngrouped(options?: FetchOptions) {
-  return ofetch<Types.UngroupedResponse>("/ungrouped", { baseURL, method: "get", ...options });
+  return ofetch<Types.GetApiDesktopDshTauriUiUngroupedResponse>("/api/desktop/dsh-tauri-ui/ungrouped", { method: "get", ...options });
+}
+
+/** @method options */
+export function optionsUngrouped(options?: FetchOptions) {
+  return ofetch<Types.OptionsApiDesktopDshTauriUiUngroupedResponse>("/api/desktop/dsh-tauri-ui/ungrouped", { method: "options", ...options });
 }

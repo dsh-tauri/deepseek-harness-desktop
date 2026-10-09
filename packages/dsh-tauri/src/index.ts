@@ -7,27 +7,12 @@ export const inject = ['connection']
 
 export { apply } from './host/apply'
 export * from './host/config/constants'
-export { defineHostRuntime } from './host/config/runtime'
-
-export type { HostRuntime } from './host/config/runtime'
-export * from './host/modules/h3'
-export * from './host/routes'
-
-export type {
-  HttpMethod,
-  RouteDefinition,
-  RouteDisposer,
-  RouteHandler,
-  RouteKind,
-  RouteMethod,
-  RoutesContext,
-  RoutesRegistration,
-  RoutesSetup,
-} from './host/routes/index.type'
 export * from './host/service'
+export * from './host/service/request'
 export * from './host/types/harness'
 export * from './host/utils/atomic'
 export * from './host/utils/driver'
 export * from './host/utils/open'
+export * from './host/utils/server'
 export * from './host/utils/spawn'
 export * from './host/utils/url'

@@ -1,21 +1,29 @@
 /*
- * @title dsh-tauri-experimental
+ * @title index
  * @swagger 2.0
  * @version 0.0.0
  */
 
-import type { FetchOptions } from "dsh-tauri/client";
-import { ofetch } from "dsh-tauri/client";
 import type * as Types from "./index.type";
-
-export const baseURL = "/api/desktop/dsh-tauri-experimental";
+import { ofetch } from "dsh-tauri/client";
+import type { FetchOptions } from "dsh-tauri/client";
 
 /** @method get */
-export function getLive(params?: Types.GetLiveQuery, options?: FetchOptions) {
-  return ofetch<Types.LiveSnapshot>("/live", { baseURL, method: "get", params, ...options });
+export function getSummary(params?: Types.GetApiDesktopDshTauriExperimentalSummaryQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiDesktopDshTauriExperimentalSummaryResponse>("/api/desktop/dsh-tauri-experimental/summary", { method: "get", params, ...options });
+}
+
+/** @method options */
+export function optionsSummary(options?: FetchOptions) {
+  return ofetch<Types.OptionsApiDesktopDshTauriExperimentalSummaryResponse>("/api/desktop/dsh-tauri-experimental/summary", { method: "options", ...options });
 }
 
 /** @method get */
-export function getSummary(params?: Types.GetSummaryQuery, options?: FetchOptions) {
-  return ofetch<Types.SummaryPayload>("/summary", { baseURL, method: "get", params, ...options });
+export function getLive(params?: Types.GetApiDesktopDshTauriExperimentalLiveQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiDesktopDshTauriExperimentalLiveResponse>("/api/desktop/dsh-tauri-experimental/live", { method: "get", params, ...options });
+}
+
+/** @method options */
+export function optionsLive(options?: FetchOptions) {
+  return ofetch<Types.OptionsApiDesktopDshTauriExperimentalLiveResponse>("/api/desktop/dsh-tauri-experimental/live", { method: "options", ...options });
 }

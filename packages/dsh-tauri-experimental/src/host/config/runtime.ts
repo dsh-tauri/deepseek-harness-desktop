@@ -1,17 +1,15 @@
 /**
- * host/config/runtime.ts — 宿主侧内存单例与宿主绑定（SSOT）。
+ * host/config/runtime.ts — 宿主侧内存单例（SSOT）。
  *
  * 进程内全部跨调用可变状态收拢在这里：工作区串行队列、资格探测缓存、账本串行队列、
  * 在途 turn 捕获状态与容量治理标记。服务层只读这些实例，不再各自持有模块级散装状态。
  */
 
 import type { ActiveTurn, BeginningTurn } from '../service/capture.types'
-import type { HostContext, WorkspaceProbe } from '../types'
-import { defineHostRuntime, DSH_HOME } from 'dsh-tauri'
+import type { WorkspaceProbe } from '../types'
+import { DSH_HOME } from 'dsh-tauri'
 import { createWorkspaceLock } from '../utils/lock'
 import { createWorkspaceQueue } from '../utils/queue'
-
-export const { setCurrentHostInstance, getCurrentHostInstance } = defineHostRuntime<HostContext>()
 
 /**
  * 工作区级串行队列：私有仓 index/refs 是共享可变状态，捕获、结算、实时读数与容量治理
@@ -52,11 +50,10 @@ export function resetHostRuntime(): void {
   captureDisposed = false
 }
 
-/** 插件卸载：清空内存态并解绑宿主实例。 */
-export function clearHostRuntime(): void {
+/** 插件卸载：清空内存态。 */
+export function disposeRuntime(): void {
   clearState()
   captureDisposed = true
-  setCurrentHostInstance(undefined)
 }
 
 function clearState(): void {

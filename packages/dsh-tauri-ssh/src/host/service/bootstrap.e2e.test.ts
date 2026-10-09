@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { clearHostRuntime, setHostConfig, setKnownHostsPath, setMachineDeps } from '../config/runtime'
+import { resetRuntime, setHostConfig, setKnownHostsPath, setMachineDeps } from '../config/runtime'
 import { MachineId } from '../types/index'
 import { EMPTY_ALLOWLIST } from '../utils/allowlist'
 import { resolveSshAuth } from '../utils/ssh-config'
@@ -103,7 +103,7 @@ describe.skipIf(HOST === undefined)('bootstrap E2E (real linux x64 remote)', () 
   beforeAll(() => {
     const known = mkdtempSync(join(tmpdir(), 'dsh-ssh-e2e-'))
     roots.push(known)
-    clearHostRuntime()
+    resetRuntime()
     setHostConfig({ ...E2E_CONFIG, sshDir: SSH_DIR })
     setKnownHostsPath(join(known, 'known-hosts.json'))
     setMachineDeps({ transport, emitStatus: () => {}, localAllowlist: () => EMPTY_ALLOWLIST })

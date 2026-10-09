@@ -1,8 +1,4 @@
 import type { ProviderRuntime } from '../service/provider.types'
-import type { PanelExtensionHost } from '../types'
-import { defineHostRuntime } from 'dsh-tauri'
-
-export const { setCurrentHostInstance, getCurrentHostInstance } = defineHostRuntime<PanelExtensionHost>()
 
 export const providerRuntime: ProviderRuntime = {
   fiber: undefined,
@@ -16,9 +12,8 @@ export function resetProviderRuntime(): void {
   providerRuntime.disposed = false
 }
 
-export function clearHostRuntime(): void {
+export function disposeProviderRuntime(): void {
   providerRuntime.fiber = undefined
   providerRuntime.chain = Promise.resolve()
   providerRuntime.disposed = true
-  setCurrentHostInstance(undefined)
 }

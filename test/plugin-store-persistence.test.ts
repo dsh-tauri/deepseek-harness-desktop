@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const memory = new Map<string, string>()
@@ -7,10 +6,7 @@ const stores: Array<{ $persist?: { dehydrate: () => void } }> = []
 beforeEach(() => {
   vi.resetModules()
   memory.clear()
-  for (const plugin of ['notification', 'scheduler', 'model']) {
-    const require = createRequire(new URL(`../packages/dsh-tauri-${plugin}/src/client/index.ts`, import.meta.url))
-    vi.doMock(require.resolve('dsh-tauri/client'), () => import('../packages/dsh-tauri/src/client/modules/valtio-define'))
-  }
+  vi.doMock('dsh-tauri/client', () => import('../packages/dsh-tauri/src/client/modules/valtio-define'))
   vi.stubGlobal('localStorage', {
     getItem: (key: string) => memory.get(key) ?? null,
     setItem: (key: string, value: string) => memory.set(key, value),
@@ -21,6 +17,7 @@ afterEach(() => {
   for (const store of stores)
     store.$persist?.dehydrate()
   stores.length = 0
+  vi.doUnmock('dsh-tauri/client')
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })

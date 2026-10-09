@@ -60,7 +60,9 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "dsh-tauri": "workspace:*"
+    "dsh-h3": "catalog:",
+    "dsh-tauri": "workspace:*",
+    "h3": "catalog:"
   },
   "devDependencies": {
     "@css-render/plugin-bem": "catalog:ui",

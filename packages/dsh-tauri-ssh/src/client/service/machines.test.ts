@@ -8,7 +8,7 @@ import * as service from './machines'
 
 vi.mock('dsh-tauri/client', async () => (await import('../test-utils/client-mock')).clientMock)
 
-const API = api.baseURL
+const API = '/api/desktop/dsh-tauri-ssh'
 
 const machineA: MachineRow = {
   id: 'a',

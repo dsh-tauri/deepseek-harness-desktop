@@ -1,7 +1,8 @@
+import type { SessionHost } from '../types'
 import type { ArchivedListPayload } from './ledger.types'
-import { defineService } from 'dsh-tauri'
-import { getCurrentHostInstance } from '../config/runtime'
+import { defineService, getServerContext } from 'dsh-tauri'
 import { archiveHooks } from '../events'
+import { server } from '../server'
 import { ledger } from './ledger'
 import { session } from './session'
 
@@ -56,7 +57,7 @@ export const archive = defineService({
  * 仍列」的幽灵。
  */
 async function permanentlyDelete(rawIds: readonly string[]): Promise<{ ok: true }> {
-  const host = getCurrentHostInstance()
+  const host = getServerContext<SessionHost>(server)
   const ids = [...new Set(rawIds.map(String).filter(Boolean))]
   if (ids.length === 0)
     throw new Error('缺少 sessionIds')

@@ -1,4 +1,4 @@
-import type { EndpointModelCard } from '../routes/index.types'
+import type { EndpointModelCard } from '../server/routes/index.types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

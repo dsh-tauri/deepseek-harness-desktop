@@ -62,9 +62,12 @@ catalogs:
     '@tauri-apps/plugin-store':
       specifier: ^2.4.4
       version: 2.4.4
+    dsh-h3:
+      specifier: 0.2.0
+      version: 0.2.0
     h3:
-      specifier: 2.0.1-rc.31
-      version: 2.0.1-rc.31
+      specifier: 2.0.1
+      version: 2.0.1
     valtio:
       specifier: ^2.3.2
       version: 2.3.2
@@ -118,6 +121,9 @@ catalogs:
       specifier: 0.2.0-rc.2
       version: 0.2.0-rc.2
     '@deepseek-ai/dsh-client-ui-theme':
+      specifier: 0.2.0-rc.2
+      version: 0.2.0-rc.2
+    '@deepseek-ai/dsh-host-webserver':
       specifier: 0.2.0-rc.2
       version: 0.2.0-rc.2
     '@deepseek-ai/dsh-llm':
@@ -441,6 +447,9 @@ importers:
       '@deepseek-ai/dsh-client-ui-theme':
         specifier: catalog:dsh
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: catalog:dsh
+        version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
       '@deepseek-ai/dsh-llm':
         specifier: catalog:dsh
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
@@ -522,12 +531,18 @@ importers:
       changelogithub:
         specifier: catalog:release
         version: 15.0.5
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       eslint:
         specifier: catalog:lint
         version: 10.8.1(jiti@2.7.0)
       eslint-plugin-react-refresh:
         specifier: catalog:lint
         version: 0.5.4(eslint@10.8.1(jiti@2.7.0))
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       jsdom:
         specifier: catalog:testing
         version: 26.1.0
@@ -567,9 +582,12 @@ importers:
 
   packages/dsh-tauri:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       h3:
         specifier: 'catalog:'
-        version: 2.0.1-rc.31
+        version: 2.0.1
       hookable:
         specifier: catalog:utils
         version: 6.1.1
@@ -625,9 +643,15 @@ importers:
 
   packages/dsh-tauri-archive:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       hookable:
         specifier: catalog:utils
         version: 6.1.1
@@ -686,12 +710,18 @@ importers:
 
   packages/dsh-tauri-experimental:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       hookable:
         specifier: catalog:utils
         version: 6.1.1
@@ -711,9 +741,15 @@ importers:
 
   packages/dsh-tauri-extension:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       hookable:
         specifier: catalog:utils
         version: 6.1.1
@@ -779,12 +815,18 @@ importers:
 
   packages/dsh-tauri-model:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: catalog:dsh
@@ -828,12 +870,18 @@ importers:
 
   packages/dsh-tauri-notification:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
     devDependencies:
       dsh-tauri-tsdown:
         specifier: workspace:*
@@ -850,9 +898,15 @@ importers:
       '@deepseek-ai/dsh-skill-filesystem':
         specifier: catalog:dsh
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-fs@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-brand@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-sandbox@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-session@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-scope@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))))))(@deepseek-ai/dsh-home-paths@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-skill@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-scope@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))))
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: catalog:dsh
@@ -884,9 +938,15 @@ importers:
 
   packages/dsh-tauri-rightclick:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       lodash-es:
         specifier: catalog:utils
         version: 4.18.1
@@ -909,12 +969,18 @@ importers:
       cron-schedule:
         specifier: catalog:utils
         version: 6.0.0
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       lodash-es:
         specifier: catalog:utils
         version: 4.18.1
@@ -955,12 +1021,18 @@ importers:
 
   packages/dsh-tauri-ssh:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       pathe:
         specifier: catalog:utils
         version: 2.0.3
@@ -1025,9 +1097,15 @@ importers:
 
   packages/dsh-tauri-ui:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
     devDependencies:
       '@css-render/plugin-bem':
         specifier: catalog:ui
@@ -1083,9 +1161,15 @@ importers:
 
   packages/dsh-tauri-worktree:
     dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3)
       dsh-tauri:
         specifier: workspace:*
         version: link:../dsh-tauri
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
       lodash-es:
         specifier: catalog:utils
         version: 4.18.1
@@ -1650,6 +1734,11 @@ packages:
 
   '@deepseek-ai/dsh-host-directory-picker@0.2.0-rc.2':
     resolution: {integrity: sha512-qrgr2mgIaLCQJbJnMiVCuDnrGyQUgamjOnC9/K3oUL4YRc6ymNy7SJ5y+6YHtziA1dF81pSmFAA2QPZd2zQDVA==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.4
+
+  '@deepseek-ai/dsh-host-webserver@0.2.0-rc.2':
+    resolution: {integrity: sha512-0zvI44emJMRr928Tfl//cPJlx/hiTGWfD1zaDlXu35eGIgOATFJlTPkJLApJvJOPVPPAlSOSdhI2L+j1TnzStw==}
     peerDependencies:
       '@deepseek-ai/cordis': ~4.0.4
 
@@ -3935,6 +4024,10 @@ packages:
     resolution: {integrity: sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q==}
     engines: {node: '>=18'}
 
+  bytes@3.1.2:
+    resolution: {integrity: sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==}
+    engines: {node: '>= 0.8'}
+
   c12@1.11.2:
     resolution: {integrity: sha512-oBs8a4uvSDO9dm8b7OCFW7+dgtVrwmwnrVXYzLm43ta7ep2jCn/0MhoUFygIWtxhyy6+/MG7/agvpY0U1Iemew==}
     peerDependencies:
@@ -4073,6 +4166,14 @@ packages:
     resolution: {integrity: sha512-6FqVXeETqWPoGcfzrXb37E50NP0LXT8kAMu5ooZayhWWdgEY4lBEEcbQNXtkuKQsGduxiIcI4gOTsxTmuq/bSg==}
     engines: {node: '>= 14'}
 
+  compressible@2.0.18:
+    resolution: {integrity: sha512-AF3r7P5dWxL8MxyITRMlORQNaOA2IkAFaTr4k7BUumjPtRpGDTZpl0Pb1XCO6JeDCBdp126Cgs9sMxqSjgYyRg==}
+    engines: {node: '>= 0.6'}
+
+  compression@1.8.2:
+    resolution: {integrity: sha512-o8vI5RE5A6EVVOd9o41jKp41aJom+QTEO/Bx8MYNjexMo/Bv2WOjUfZr+aL0WnYSgymUy6zeguqLTsIhV0gMvQ==}
+    engines: {node: '>= 0.8.0'}
+
   confbox@0.1.8:
     resolution: {integrity: sha512-RMtmw0iFkeR4YV+fUOSucriAQNb9g8zFR52MWCtl+cCZOFRNL6zeB395vPzFhEjjn4fMxXudmELnl/KF/WrK6w==}
 
@@ -4082,6 +4183,10 @@ packages:
   consola@3.4.2:
     resolution: {integrity: sha512-5IKcdX0nnYavi6G7TtOhwkYzyjfJlatbjMjuLSfE2kYT5pMDOilZ4OvMhi637CcDICTmz3wARPoyhqyX1Y+XvA==}
     engines: {node: ^14.18.0 || >=16.10.0}
+
+  content-type@2.1.0:
+    resolution: {integrity: sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==}
+    engines: {node: '>=18'}
 
   convert-gitmoji@0.1.5:
     resolution: {integrity: sha512-4wqOafJdk2tqZC++cjcbGcaJ13BZ3kwldf06PTiAQRAB76Z1KJwZNL1SaRZMi2w1FM9RYTgZ6QErS8NUl/GBmQ==}
@@ -4177,6 +4282,14 @@ packages:
   date-fns@4.4.0:
     resolution: {integrity: sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==}
 
+  debug@2.6.9:
+    resolution: {integrity: sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==}
+    peerDependencies:
+      supports-color: '*'
+    peerDependenciesMeta:
+      supports-color:
+        optional: true
+
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
     engines: {node: '>=6.0'}
@@ -4236,6 +4349,10 @@ packages:
   destr@2.0.5:
     resolution: {integrity: sha512-ugFTXCtDZunbzasqBxrK93Ik/DRYsO6S/fedkWEMKqt04xZ4csmnmwGDBAb07QWNaGMAmnTIemsYZCksjATwsA==}
 
+  destroy@1.2.0:
+    resolution: {integrity: sha512-2sJGJTaXIIaR1w4iJSNoN0hnMY7Gpc/n8D4qSCJw8QqFWXf7cuAgnEHxBpweaVcPevC2l3KpjYCx3NypQQgaJg==}
+    engines: {node: '>= 0.8', npm: 1.2.8000 || >= 1.4.16}
+
   detect-indent@7.0.2:
     resolution: {integrity: sha512-y+8xyqdGLL+6sh0tVeHcfP/QDd8gUgbasolJJpY7NgeQGSZ739bDtSiaiDgtoicy+mtYB81dKLxO9xRhCyIB3A==}
     engines: {node: '>=12.20'}
@@ -4284,6 +4401,19 @@ packages:
   dotenv@17.4.2:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
     engines: {node: '>=12'}
+
+  dsh-h3@0.2.0:
+    resolution: {integrity: sha512-RyqUVle9e2YctHAzjNgsSSU5S3rqVE7IWwA9LdyUazk8zp3S+BbWW0qde6xmYp59a2+0W+4/pH9qBBOG5WcEfw==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.4
+      '@deepseek-ai/dsh-host-webserver': ^0.2.0-rc.2
+      '@genapi/shared': ^4.1.4
+      typescript: ^5.8.3 || ^6.0.3
+    peerDependenciesMeta:
+      '@genapi/shared':
+        optional: true
+      typescript:
+        optional: true
 
   dsh-pet-component@0.2.4:
     resolution: {integrity: sha512-q8HIQX7sx47Rb53g67YXWgNOlFFDooXNvxAAkYW6Nhzyu1mGnTjZ14cGsuD5QKumxVnG5yE8yvR2SqWnk1DEKQ==}
@@ -4831,9 +4961,9 @@ packages:
   h3@1.15.11:
     resolution: {integrity: sha512-L3THSe2MPeBwgIZVSH5zLdBBU90TOxarvhK9d04IDY2AmVS8j2Jz2LIWtwsGOU3lu2I5jCN7FNvVfY2+XyF+mg==}
 
-  h3@2.0.1-rc.31:
-    resolution: {integrity: sha512-AG7qZzF99a0BSYoXT3evJgIhwSIUKow7R+hwkLRZS06WJ9nbSb7QXUDgs1ByBjp6svTvl++N/GKA7I9YPz9cQQ==}
-    engines: {node: '>=20.11.1'}
+  h3@2.0.1:
+    resolution: {integrity: sha512-trUtZ82iNkfYi8An9M2kIM/SPlomO59pTRMt4zMBffuVPdwv5v1Bxs7uShxi7bOIAuZne6zq6TsD9hVYdNgo+A==}
+    engines: {node: '>=20.19.0'}
     hasBin: true
     peerDependencies:
       crossws: ^0.4.12
@@ -5487,6 +5617,9 @@ packages:
     resolution: {integrity: sha512-tzzskb3bG8LvYGFF/mDTpq3jpI6Q9wc3LEmBaghu+DdCssd1FakN7Bc0hVNmEyGq1bq3RgfkCb3cmQLpNPOroA==}
     engines: {node: '>=4'}
 
+  ms@2.0.0:
+    resolution: {integrity: sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==}
+
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
@@ -5503,6 +5636,14 @@ packages:
 
   natural-orderby@5.0.0:
     resolution: {integrity: sha512-kKHJhxwpR/Okycz4HhQKKlhWe4ASEfPgkSWNmKFHd7+ezuQlxkA5cM3+XkBPvm1gmHen3w53qsYAv+8GwRrBlg==}
+    engines: {node: '>=18'}
+
+  negotiator@0.6.4:
+    resolution: {integrity: sha512-myRT3DiWPHqho5PrJaIRyaMv2kgYf0mUVgBNOYMuCH5Ki1yEiQaf/ZJuQ62nvpc44wL5WDbTX7yGJi1Neevw8w==}
+    engines: {node: '>= 0.6'}
+
+  negotiator@1.1.0:
+    resolution: {integrity: sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==}
     engines: {node: '>=18'}
 
   netmask@2.1.1:
@@ -5617,6 +5758,10 @@ packages:
 
   ohash@2.0.12:
     resolution: {integrity: sha512-65S/5gk9YSsaRjcyf7Nfa6h/d3E8/1gslpXfI4W7Dxn/oap8IKRuNT5VXkLQ1YFKIEg4apRY4Pj6aiwFzrDdmw==}
+
+  on-headers@1.1.0:
+    resolution: {integrity: sha512-737ZY3yNnXy37FHkQxPzt4UZ2UWPWiCZWLvFZ4fu5cueciegX0zGPnrlY6bwRg4FdQOe9YU8MkmJwGhoMybl8A==}
+    engines: {node: '>= 0.8'}
 
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
@@ -6008,8 +6153,9 @@ packages:
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
     hasBin: true
 
-  rou3@0.9.2:
-    resolution: {integrity: sha512-3SOzvaAg8rkHrXtRjpCvCvbyO5to9oOO27Z/XqHEYXfMRVSw/qMIVdmaOk9W2lcRLtR6dlqTjo9hDeJk70QBYQ==}
+  rou3@1.0.0:
+    resolution: {integrity: sha512-ySeaQkSrua+ut9g+65I7FHqOFBaY8tV0FmccXItoq0q21se32Q3u4YiW7/RqXSosWgYJaaKwRHXy3BST9PeCNQ==}
+    engines: {node: '>=20.19.0'}
 
   rrweb-cssom@0.8.0:
     resolution: {integrity: sha512-guoltQEx+9aMf2gDZ0s62EcV8lsXR+0w8915TC3ITdn2YueuNjdAYh/levpU9nFaoChh9RUS5ZdQMrKfVEN9tw==}
@@ -6134,8 +6280,8 @@ packages:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
     engines: {node: '>= 10.x'}
 
-  srvx@1.0.4:
-    resolution: {integrity: sha512-eZmYaxUfZSo7/8m8UdsHRJNmTLSCTPPom9d7a60vMmuVeZvwhbvflRR+00/CxTCjMOFa5+H8tgBeNDVZ+w7AAQ==}
+  srvx@1.0.5:
+    resolution: {integrity: sha512-KvSKRpgPG/oaq3cyT614OQ2bAa7DynuGamivCZeoZzIUULOdbQz6wUtnnVuC4+DCx2Zglzo8v5gBYmWIWYhDxA==}
     engines: {node: '>=20.16.0'}
     hasBin: true
 
@@ -6545,6 +6691,10 @@ packages:
         optional: true
       react:
         optional: true
+
+  vary@1.1.2:
+    resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
+    engines: {node: '>= 0.8'}
 
   verkit@0.3.2:
     resolution: {integrity: sha512-zj/ob3UsvJGN0whEAKFp53REA5X66hvffVqoCtVQAakJKnKlH+/PcOfMoFwIG/o4rElqLv/ycAFlx8ZlXUorCg==}
@@ -7364,6 +7514,15 @@ snapshots:
   '@deepseek-ai/dsh-host-directory-picker@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+
+  '@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+      '@deepseek-ai/schemastery': 3.18.4
+      compression: 1.8.2
+      negotiator: 1.1.0
+    transitivePeerDependencies:
+      - supports-color
 
   '@deepseek-ai/dsh-http-proxy@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)':
     dependencies:
@@ -9575,6 +9734,8 @@ snapshots:
     dependencies:
       run-applescript: 7.1.0
 
+  bytes@3.1.2: {}
+
   c12@1.11.2:
     dependencies:
       chokidar: 3.6.0
@@ -9749,11 +9910,30 @@ snapshots:
       normalize-path: 3.0.0
       readable-stream: 4.7.0
 
+  compressible@2.0.18:
+    dependencies:
+      mime-db: 1.54.0
+
+  compression@1.8.2:
+    dependencies:
+      bytes: 3.1.2
+      compressible: 2.0.18
+      debug: 2.6.9
+      destroy: 1.2.0
+      negotiator: 0.6.4
+      on-headers: 1.1.0
+      safe-buffer: 5.2.1
+      vary: 1.1.2
+    transitivePeerDependencies:
+      - supports-color
+
   confbox@0.1.8: {}
 
   confbox@0.2.4: {}
 
   consola@3.4.2: {}
+
+  content-type@2.1.0: {}
 
   convert-gitmoji@0.1.5: {}
 
@@ -9839,6 +10019,10 @@ snapshots:
 
   date-fns@4.4.0: {}
 
+  debug@2.6.9:
+    dependencies:
+      ms: 2.0.0
+
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
@@ -9882,6 +10066,8 @@ snapshots:
   dequal@2.0.3: {}
 
   destr@2.0.5: {}
+
+  destroy@1.2.0: {}
 
   detect-indent@7.0.2: {}
 
@@ -9927,6 +10113,18 @@ snapshots:
   dotenv@16.6.1: {}
 
   dotenv@17.4.2: {}
+
+  dsh-h3@0.2.0(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-host-webserver@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@genapi/shared@4.1.4)(typescript@5.8.3):
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+      '@deepseek-ai/dsh-host-webserver': 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
+      h3: 2.0.1
+    optionalDependencies:
+      '@genapi/shared': 4.1.4
+      typescript: 5.8.3
+    transitivePeerDependencies:
+      - crossws
+      - ocache
 
   dsh-pet-component@0.2.4(change-case@5.4.4)(react@19.2.8):
     dependencies:
@@ -10644,10 +10842,10 @@ snapshots:
       ufo: 1.6.4
       uncrypto: 0.1.3
 
-  h3@2.0.1-rc.31:
+  h3@2.0.1:
     dependencies:
-      rou3: 0.9.2
-      srvx: 1.0.4
+      rou3: 1.0.0
+      srvx: 1.0.5
 
   has-flag@4.0.0: {}
 
@@ -11456,6 +11654,8 @@ snapshots:
 
   mri@1.2.0: {}
 
+  ms@2.0.0: {}
+
   ms@2.1.3: {}
 
   nan@2.29.0:
@@ -11466,6 +11666,12 @@ snapshots:
   natural-compare@1.4.0: {}
 
   natural-orderby@5.0.0: {}
+
+  negotiator@0.6.4: {}
+
+  negotiator@1.1.0:
+    dependencies:
+      content-type: 2.1.0
 
   netmask@2.1.1: {}
 
@@ -11569,6 +11775,8 @@ snapshots:
   ohash@1.1.6: {}
 
   ohash@2.0.12: {}
+
+  on-headers@1.1.0: {}
 
   once@1.4.0:
     dependencies:
@@ -12055,7 +12263,7 @@ snapshots:
       '@rollup/rollup-win32-x64-msvc': 4.62.4
       fsevents: 2.3.3
 
-  rou3@0.9.2: {}
+  rou3@1.0.0: {}
 
   rrweb-cssom@0.8.0: {}
 
@@ -12155,7 +12363,7 @@ snapshots:
 
   split2@4.2.0: {}
 
-  srvx@1.0.4: {}
+  srvx@1.0.5: {}
 
   ssh2@1.17.0:
     dependencies:
@@ -12523,6 +12731,8 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.18
       react: 19.2.8
+
+  vary@1.1.2: {}
 
   verkit@0.3.2: {}
 

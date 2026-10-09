@@ -9,7 +9,13 @@
 
     /* Bundler mode */
     "moduleResolution": "bundler",
-    "paths": { "@/*": ["src/*"] },
+    "paths": {
+      "@/*": ["src/*"],
+      "dsh-tauri": ["packages/dsh-tauri/src/index.ts"],
+      "dsh-tauri/client": ["packages/dsh-tauri/src/client/index.ts"],
+      "dsh-tauri-ui": ["packages/dsh-tauri-ui/src/index.ts"],
+      "dsh-tauri-ui/client": ["packages/dsh-tauri-ui/src/client/index.ts"]
+    },
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
 

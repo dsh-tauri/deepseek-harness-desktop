@@ -1,12 +1,12 @@
 import type { HostContext } from './types'
 import { clearInterval, setInterval } from 'node:timers'
-import { clearHostRuntime, setCurrentHostInstance } from './config/runtime'
+import { resetRuntime } from './config/runtime'
 import { handleSessionEvent } from './events/session-event'
 import { handleToolsExecute } from './events/tools-execute'
 import { checkoutContextProvider } from './prompts/checkout-context'
 import { worktreeContextProvider } from './prompts/worktree-context'
 import { worktreeSectionProvider } from './prompts/worktree-section'
-import { routes } from './routes'
+import { server } from './server'
 import { workspace } from './service/workspace'
 import { worktree } from './service/worktree'
 import { checkoutWorktreeTool } from './tools/checkout-worktree'
@@ -15,7 +15,7 @@ import { createWorktreeTool } from './tools/create-worktree'
 const RECOVER_INTERVAL_MS = 5 * 60_000
 
 export function apply(ctx: HostContext): void {
-  setCurrentHostInstance(ctx)
+  ctx.effect(() => server(ctx), 'plugin: routes')
 
   ctx.tools.register(createWorktreeTool())
   ctx.tools.register(checkoutWorktreeTool())
@@ -40,7 +40,5 @@ export function apply(ctx: HostContext): void {
     return () => clearInterval(timer)
   }, 'plugin: worktree discard recovery')
 
-  ctx.effect(() => routes(ctx), 'plugin: routes')
-
-  ctx.effect(() => () => clearHostRuntime(), 'plugin: host runtime')
+  ctx.effect(() => () => resetRuntime(), 'plugin: host runtime')
 }

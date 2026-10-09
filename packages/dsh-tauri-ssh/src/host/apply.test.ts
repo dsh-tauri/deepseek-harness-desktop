@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apply, inject, name } from './apply'
-import { clearHostRuntime, knownHostsFilePath, machineProfiles } from './config/runtime'
+import { knownHostsFilePath, machineProfiles, resetRuntime } from './config/runtime'
 import { machine } from './service/machine'
 import { MachineId } from './types/index'
 
@@ -53,7 +53,7 @@ let sshDir: string
 let statePath: string
 
 beforeEach(() => {
-  clearHostRuntime()
+  resetRuntime()
   sshDir = mkdtempSync(join(tmpdir(), 'ssh-index-'))
   statePath = join(sshDir, 'machines.json')
 })
@@ -61,7 +61,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   rmSync(sshDir, { recursive: true, force: true })
-  clearHostRuntime()
+  resetRuntime()
 })
 
 /** One scripted context: cordis-shaped surface without real cordis types. */

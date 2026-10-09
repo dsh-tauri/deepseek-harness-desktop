@@ -10,9 +10,9 @@ import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import process from 'node:process'
-import { defineService } from 'dsh-tauri'
+import { defineService, getServerContext } from 'dsh-tauri'
 import { join } from 'pathe'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 import { loadSchedulerRuntimeModules, resolveSetupAgent } from '../utils/agent-runtime'
 import { applyUnattendedPermission } from '../utils/permission'
 import { decideRunOutcome, isPluginUnloadError, summarizeCollectedRun, waitForTurnStart, watchSessionEvents } from './executor.utils'
@@ -35,7 +35,7 @@ interface ExecuteOutcome {
 
 export const executor = defineService({
   async run(task: SchedulerTask, trigger: RunTrigger): Promise<ExecuteOutcome> {
-    const ctx = getCurrentHostInstance()
+    const ctx = getServerContext<HostContext>(server)
     const runId = `run-${randomUUID()}`
     const scheduledFor = new Date().toISOString()
     const sessionId = `task-${randomUUID()}`

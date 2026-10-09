@@ -19,29 +19,36 @@ dshHome.value = testDshHome
 type Cleaner = typeof import('./cleaner')['cleaner']
 type Worktree = typeof import('./worktree')['worktree']
 type Runtime = typeof import('../config/runtime')
+type Server = typeof import('../server')['server']
 
 let cleaner: Cleaner
 let worktree: Worktree
 let runtime: Runtime
+let server: Server
+const disposers: Array<() => void> = []
 
 const repositories: string[] = []
 
 beforeEach(async () => {
   vi.resetModules()
   resetTestDshHome()
-  const [cleanerModule, worktreeModule, runtimeModule] = await Promise.all([
+  const [cleanerModule, worktreeModule, runtimeModule, serverModule] = await Promise.all([
     import('./cleaner'),
     import('./worktree'),
     import('../config/runtime'),
+    import('../server'),
   ])
   cleaner = cleanerModule.cleaner
   worktree = worktreeModule.worktree
   runtime = runtimeModule
-  runtime.clearHostRuntime()
+  server = serverModule.server
+  runtime.resetRuntime()
 })
 
 afterEach(() => {
-  runtime?.clearHostRuntime()
+  for (const dispose of disposers.splice(0))
+    dispose()
+  runtime?.resetRuntime()
   for (const repository of repositories.splice(0))
     rmSync(repository, { recursive: true, force: true })
 })
@@ -74,7 +81,7 @@ function expectedPath(repository: string, sessionId: string): string {
 
 function hostWithProcessController(controller: unknown): unknown {
   return new Proxy(
-    { get: (name: string) => (name === 'worktreeProcessController' ? controller : undefined) },
+    { get: (name: string) => (name === 'worktreeProcessController' ? controller : undefined), webServer: { register: () => () => {} } },
     {
       get(target, property, receiver) {
         if (property in target)
@@ -308,7 +315,7 @@ describe('worktree.remove', () => {
       return
 
     const stopSessionProcesses = vi.fn(async () => {})
-    runtime.setCurrentHostInstance(hostWithProcessController({ stopSessionProcesses }) as never)
+    disposers.push(server(hostWithProcessController({ stopSessionProcesses }) as never))
 
     const removed = await worktree.remove(sessionId)
     expect(removed.ok).toBe(true)

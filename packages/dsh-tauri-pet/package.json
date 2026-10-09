@@ -60,7 +60,9 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-skill-filesystem": "catalog:dsh",
-    "dsh-tauri": "workspace:*"
+    "dsh-h3": "catalog:",
+    "dsh-tauri": "workspace:*",
+    "h3": "catalog:"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "catalog:dsh",

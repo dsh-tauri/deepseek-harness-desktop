@@ -62,8 +62,10 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "dsh-h3": "catalog:",
     "dsh-tauri": "workspace:*",
     "dsh-tauri-ui": "workspace:*",
+    "h3": "catalog:",
     "pathe": "catalog:utils",
     "schemastery": "catalog:utils",
     "ssh2": "catalog:utils",

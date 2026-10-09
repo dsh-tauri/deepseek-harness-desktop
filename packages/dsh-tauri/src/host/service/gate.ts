@@ -2,7 +2,6 @@ import type { IncomingMessage } from 'node:http'
 import type { ConnectionHost } from '../types'
 import process from 'node:process'
 import { PLUGIN_ID } from '../../shared/constants'
-import { getCurrentHostInstance } from '../config/runtime'
 import { defineService } from './index'
 
 /**
@@ -26,14 +25,14 @@ const EMBEDDED_ENV = 'DSH_TAURI_EMBEDDED'
  * 一个整体，缺一道就整个适配 noop —— 表现为嵌入 WebView 与健康探测都恒拿 401。
  */
 export const gate = defineService({
-  attach(): () => void {
+  attach(ctx: ConnectionHost): () => void {
     if (process.env[EMBEDDED_ENV] !== '1') {
       return noop
     }
 
-    const { connection } = getCurrentHostInstance()
+    const { connection } = ctx
     if (connection === undefined || connection === null) {
-      warn('宿主实例缺少 connection 服务，桌面载体鉴权适配未生效')
+      warn(ctx, '宿主实例缺少 connection 服务，桌面载体鉴权适配未生效')
       return noop
     }
 
@@ -71,7 +70,7 @@ export const gate = defineService({
     }
 
     if (restores.length === 0) {
-      warn('connection 服务缺少 requestRejection/authorizeIndex，桌面载体鉴权适配未生效')
+      warn(ctx, 'connection 服务缺少 requestRejection/authorizeIndex，桌面载体鉴权适配未生效')
       return noop
     }
 
@@ -87,9 +86,6 @@ export const gate = defineService({
 
 function noop(): void {}
 
-function warn(message: string): void {
-  try {
-    getCurrentHostInstance().logger?.warn?.(`[${PLUGIN_ID}] ${message}`)
-  }
-  catch {}
+function warn(ctx: ConnectionHost, message: string): void {
+  ctx.logger?.warn?.(`[${PLUGIN_ID}] ${message}`)
 }

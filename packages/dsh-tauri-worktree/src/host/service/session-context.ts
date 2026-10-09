@@ -1,14 +1,15 @@
-import { defineService } from 'dsh-tauri'
+import type { HostContext } from '../types'
+import { defineService, getServerContext } from 'dsh-tauri'
 import { get, isString } from 'lodash-es'
 import { isAbsolute } from 'pathe'
-import { getCurrentHostInstance } from '../config/runtime'
+import { server } from '../server'
 
 export const sessionContext = defineService({
   peek(sessionId: string): any {
     if (!sessionId)
       return null
     try {
-      const ctx: any = getCurrentHostInstance()
+      const ctx = getServerContext<HostContext>(server)
       return ctx.sessions.get(sessionId)
         ?? ctx.sessions.list().find((session: any) => session.id === sessionId)
         ?? null
@@ -26,7 +27,7 @@ export const sessionContext = defineService({
     if (isAbsolute(cwd))
       return cwd
     try {
-      const workspace = await getCurrentHostInstance().workspaceRegistry.resolveByPath(cwd)
+      const workspace = await getServerContext<HostContext>(server).workspaceRegistry.resolveByPath(cwd)
       return workspace?.path || cwd
     }
     catch {

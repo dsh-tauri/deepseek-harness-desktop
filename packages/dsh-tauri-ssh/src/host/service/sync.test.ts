@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_REMOTE_PROFILE } from '../config/constants'
-import { clearHostRuntime, machineTable, setHostConfig, setMachineDeps, setSyncDeps } from '../config/runtime'
+import { machineTable, resetRuntime, setHostConfig, setMachineDeps, setSyncDeps } from '../config/runtime'
 import { MachineId } from '../types/index'
 import { EMPTY_ALLOWLIST } from '../utils/allowlist'
 import { layoutNodeBinary } from './bootstrap.utils'
@@ -141,7 +141,7 @@ describe('syncEngine.apply', () => {
   }
 
   function seed(wiring: Wiring): void {
-    clearHostRuntime()
+    resetRuntime()
     setHostConfig(HOST_CONFIG)
     setMachineDeps({ transport: { connect: wiring.connect }, emitStatus: () => {}, localAllowlist: () => EMPTY_ALLOWLIST })
     setSyncDeps({

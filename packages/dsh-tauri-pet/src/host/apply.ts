@@ -1,6 +1,6 @@
 import type { HostContext } from 'dsh-tauri'
-import { clearHostRuntime, setCurrentHostInstance } from './config/runtime'
-import { routes } from './routes'
+import { resetRuntime } from './config/runtime'
+import { server } from './server'
 
 const PET_ROUTES_EFFECT = 'dsh-tauri-pet: routes'
 
@@ -13,8 +13,6 @@ const PET_HOST_RUNTIME_EFFECT = 'dsh-tauri-pet: host runtime'
  * 桌宠展示态后，经 HTTP SSE 流发布；Rust 用 reqwest 订阅该流并 `emit_to('pet')`。
  */
 export function apply(ctx: HostContext): void {
-  setCurrentHostInstance(ctx)
-
-  ctx.effect(() => routes(ctx), PET_ROUTES_EFFECT)
-  ctx.effect(() => () => clearHostRuntime(), PET_HOST_RUNTIME_EFFECT)
+  ctx.effect(() => server(ctx), PET_ROUTES_EFFECT)
+  ctx.effect(() => () => resetRuntime(), PET_HOST_RUNTIME_EFFECT)
 }

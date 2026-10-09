@@ -1,11 +1,11 @@
-export type OperationResult = {
-  ok: boolean;
-  error?: string;
-};
+export type PostApiDesktopDshTauriRightclickOpenUrlResponse = { ok: false | true; error?: undefined | string };
+export type PostApiDesktopDshTauriRightclickOpenPathResponse = { ok: false | true; error?: undefined | string };
+export type OptionsApiDesktopDshTauriRightclickOpenUrlResponse = void;
+export type OptionsApiDesktopDshTauriRightclickOpenPathResponse = void;
 
-export interface PostOpenPathBody {
-  path?: string;
+export interface PostApiDesktopDshTauriRightclickOpenUrlBody {
+  url?: undefined | string;
 }
-export interface PostOpenUrlBody {
-  url?: string;
+export interface PostApiDesktopDshTauriRightclickOpenPathBody {
+  path?: undefined | string;
 }

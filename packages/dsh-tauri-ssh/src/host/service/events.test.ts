@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EVENT_RING_CAPACITY } from '../config/constants'
-import { clearHostRuntime, setEventCapacity } from '../config/runtime'
+import { resetRuntime, setEventCapacity } from '../config/runtime'
 import { MachineId } from '../types/index'
 import { events } from './events'
 
@@ -8,7 +8,7 @@ const m1 = MachineId('m1')
 const m2 = MachineId('m2')
 
 beforeEach(() => {
-  clearHostRuntime()
+  resetRuntime()
   setEventCapacity(EVENT_RING_CAPACITY)
 })
 

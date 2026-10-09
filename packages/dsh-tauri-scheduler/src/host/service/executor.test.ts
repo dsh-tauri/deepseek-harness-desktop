@@ -1,6 +1,7 @@
 import type { HostContext, SchedulerTask } from '../types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearHostRuntime, setCurrentHostInstance } from '../config/runtime'
+import { resetWriteQueue } from '../config/runtime'
+import { server } from '../server'
 
 import { loadSchedulerRuntimeModules } from '../utils/agent-runtime'
 import { executor } from './executor'
@@ -27,6 +28,8 @@ const taskFixture: SchedulerTask = {
   createdAt: '2025-12-31T00:00:00.000Z',
   updatedAt: '2025-12-31T00:00:00.000Z',
 }
+
+const disposers: Array<() => void> = []
 
 interface Harness {
   cancel: ReturnType<typeof vi.fn>
@@ -74,7 +77,7 @@ function installHost(): Harness {
       },
     },
   }
-  setCurrentHostInstance(host as unknown as HostContext)
+  disposers.push(server({ ...host, webServer: { register: () => () => {} } } as unknown as HostContext))
   return { cancel, flush, converge: releaseIdle, failConvergence: rejectIdle }
 }
 
@@ -87,7 +90,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  clearHostRuntime()
+  disposers.splice(0).forEach(dispose => dispose())
+  resetWriteQueue()
 })
 
 describe('executor.run', () => {

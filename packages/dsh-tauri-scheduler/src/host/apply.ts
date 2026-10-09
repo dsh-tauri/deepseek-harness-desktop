@@ -1,7 +1,7 @@
 import type { HostContext } from './types'
 import { PLUGIN_ID } from '../shared/constants'
-import { clearHostRuntime, setCurrentHostInstance } from './config/runtime'
-import { routes } from './routes'
+import { resetWriteQueue } from './config/runtime'
+import { server } from './server'
 import { recovery } from './service/recovery'
 import { scheduler } from './service/scheduler'
 import { createTaskTool } from './tools/create-task'
@@ -24,7 +24,7 @@ export interface Config {
 }
 
 export function apply(ctx: HostContext, config: Config = {}): void {
-  setCurrentHostInstance(ctx)
+  ctx.effect(() => server(ctx), SCHEDULER_ROUTES_EFFECT)
 
   ctx.tools.register(createTaskTool())
   ctx.tools.register(listTasksTool())
@@ -42,6 +42,5 @@ export function apply(ctx: HostContext, config: Config = {}): void {
   }, SCHEDULER_RECOVER_EFFECT)
 
   ctx.effect(() => scheduler.start(tickMs), SCHEDULER_TICK_EFFECT)
-  ctx.effect(() => routes(ctx), SCHEDULER_ROUTES_EFFECT)
-  ctx.effect(() => () => clearHostRuntime(), SCHEDULER_RUNTIME_EFFECT)
+  ctx.effect(() => () => resetWriteQueue(), SCHEDULER_RUNTIME_EFFECT)
 }

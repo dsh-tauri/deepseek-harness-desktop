@@ -54,6 +54,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "dsh-h3": "catalog:",
     "h3": "catalog:",
     "hookable": "catalog:utils",
     "ofetch": "catalog:utils",

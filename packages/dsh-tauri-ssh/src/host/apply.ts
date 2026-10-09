@@ -1,10 +1,11 @@
+import type { Context } from '@deepseek-ai/cordis'
 import type z from 'schemastery'
 import type { Config as SshRemoteConfig } from './config/schema'
 import type { SshHostContext } from './types/index'
 import { SSH_PLUGIN_NAME } from '../shared/constants'
-import { clearHostRuntime, setCurrentHostInstance, setHostConfig, setMachineDeps, setSyncDeps } from './config/runtime'
+import { resetRuntime, setHostConfig, setMachineDeps, setSyncDeps } from './config/runtime'
 import { ConfigSchema } from './config/schema'
-import { routes } from './routes'
+import { server } from './server'
 import { machine } from './service/machine'
 import { transport } from './service/transport'
 import { packSkills, profileAllowlistReader, profileDependenciesReader, skillRootsScanner } from './utils/local'
@@ -22,7 +23,6 @@ export const inject = ['webServer', 'connection']
 export const Config: z<SshRemoteConfig> = ConfigSchema
 
 export function apply(ctx: SshHostContext, config: SshRemoteConfig): void {
-  setCurrentHostInstance(ctx)
   setHostConfig(config)
   setMachineDeps({
     transport,
@@ -40,11 +40,11 @@ export function apply(ctx: SshHostContext, config: SshRemoteConfig): void {
     void machine.start().catch(() => undefined)
   }, SSH_START_EFFECT)
 
-  ctx.effect(() => routes(ctx), SSH_ROUTES_EFFECT)
+  ctx.effect(() => server(ctx as unknown as Context), SSH_ROUTES_EFFECT)
 
   ctx.effect(() => () => {
     void machine.dispose()
-    clearHostRuntime()
+    resetRuntime()
   }, SSH_RUNTIME_EFFECT)
 }
 

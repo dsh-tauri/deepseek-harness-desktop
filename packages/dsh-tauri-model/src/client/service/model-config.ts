@@ -74,7 +74,7 @@ export async function loadModelCapacities(
 
 export async function openConfigFile(): Promise<ConfigFileOpen> {
   try {
-    const response = await postConfigOpen({ ignoreResponseError: true })
+    const response = await postConfigOpen(undefined, { ignoreResponseError: true })
     if (response.error !== undefined)
       return { ok: false, error: response.error }
     return { ok: true, path: response.path ?? '', opened: response.opened ?? 'file' }

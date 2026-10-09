@@ -1,7 +1,15 @@
 import type { Binding, PendingHandoff } from '../types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearHostRuntime, pendingWorktreeTitles, setCurrentHostInstance } from '../config/runtime'
+import { pendingWorktreeTitles, resetRuntime } from '../config/runtime'
+import { server } from '../server'
 import { handoff } from './handoff'
+
+const disposers: Array<() => void> = []
+
+function disposeServers(): void {
+  for (const dispose of disposers.splice(0))
+    dispose()
+}
 
 vi.mock('dsh-tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('dsh-tauri')>()
@@ -40,7 +48,7 @@ interface SetupOptions {
 
 function setup(options: SetupOptions = {}): { created: any[] } {
   const created: any[] = []
-  setCurrentHostInstance({
+  disposers.push(server({
     agents: {
       get: (id: string) => (id === 'session-source'
         ? { session: options.session ?? (sourceAgent() as any).session, ctx: {}, options: {} }
@@ -52,7 +60,8 @@ function setup(options: SetupOptions = {}): { created: any[] } {
     },
     workspaceRegistry: { resolveByPath: async () => undefined },
     logger: { warn: options.warn ?? (() => {}) },
-  })
+    webServer: { register: () => () => {} },
+  } as never))
   return { created }
 }
 
@@ -61,7 +70,8 @@ function sessionOf(events: readonly unknown[]): unknown {
 }
 
 afterEach(() => {
-  clearHostRuntime()
+  disposeServers()
+  resetRuntime()
 })
 
 describe('handoff.inherit', () => {
@@ -105,7 +115,7 @@ describe('handoff.inherit', () => {
       { type: 'user/message', seq: 0, time: 1, data: { source: { kind: 'tool-jobs' }, content: [{ type: 'text', text: 'job done' }] } },
     ]
     for (const seed of [blank, notice]) {
-      clearHostRuntime()
+      resetRuntime()
       setup({ session: sessionOf(seed) })
       await handoff.inherit('session-source', 'session-target', 'C:/work')
       expect([...pendingWorktreeTitles]).toEqual(['session-target'])
@@ -166,11 +176,12 @@ describe('handoff.complete', () => {
     const composeFrom = vi.fn()
     const composedPreset = vi.fn(() => 'composed')
     const attachSession = vi.fn(async () => {})
-    setCurrentHostInstance({
+    disposers.push(server({
       agents: { get: () => undefined, create },
       get: () => ({ composedPreset, composeFrom }),
       workspaceRegistry: { resolveByPath: async () => ({ attachSession }) },
-    })
+      webServer: { register: () => () => {} },
+    } as never))
     await handoff.complete({
       sourceAgent: { ...(sourceAgent() as object), ctx: sourceContext, options: { model: 'inherited' } },
       targetSessionId: 'session-target',

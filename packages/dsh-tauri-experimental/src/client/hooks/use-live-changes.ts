@@ -51,7 +51,7 @@ export function useLiveChanges(sessionId: string | undefined, shouldPoll: boolea
       const next = await getLive({ sessionId: currentId })
       if (generationRef.current !== generation)
         return
-      setReading(next.active ? { sessionId: currentId, generation, live: next } : null)
+      setReading('active' in next && next.active ? { sessionId: currentId, generation, live: next } : null)
     }
     catch {
       // 读数失败只影响提示条：静默清空，不打断会话。

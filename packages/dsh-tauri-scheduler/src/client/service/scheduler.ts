@@ -48,7 +48,8 @@ export async function recoverScheduler(): Promise<{ ok: boolean, error?: string 
 }
 
 export async function createTask(input: TaskInput): Promise<{ ok: boolean, error?: string }> {
-  const result = await postTasks(input)
+  const schedule = input.schedule.kind === 'weekly' ? { ...input.schedule, weekdays: [...input.schedule.weekdays] } : input.schedule
+  const result = await postTasks({ ...input, schedule })
   if (!result.ok)
     return { ok: false, error: result.error }
   await loadScheduler()
@@ -56,7 +57,8 @@ export async function createTask(input: TaskInput): Promise<{ ok: boolean, error
 }
 
 export async function updateTask(id: string, input: TaskInput): Promise<{ ok: boolean, error?: string }> {
-  const result = await putTasks({ id, ...input })
+  const schedule = input.schedule.kind === 'weekly' ? { ...input.schedule, weekdays: [...input.schedule.weekdays] } : input.schedule
+  const result = await putTasks({ id, ...input, schedule })
   if (!result.ok)
     return { ok: false, error: result.error }
   await loadScheduler()
