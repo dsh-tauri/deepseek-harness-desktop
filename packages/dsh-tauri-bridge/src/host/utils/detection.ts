@@ -117,7 +117,7 @@ export async function detectBackend(backend: 'codex' | 'claude', override?: stri
     const auth = await probe(command, backend === 'codex' ? ['login', 'status'] : ['auth', 'status', '--json'], timeout).catch(() => undefined)
     if (auth) {
       if (backend === 'codex') {
-        detection.auth = auth.code === 0 ? 'ok' : /not logged in|log in|not authenticated/i.test(auth.output) ? 'missing' : 'unknown'
+        detection.auth = auth.code === 0 ? 'ok' : 'unknown'
       }
       else {
         try {
@@ -127,7 +127,11 @@ export async function detectBackend(backend: 'codex' | 'claude', override?: stri
         catch {}
       }
     }
-    detection.hint = detection.auth === 'missing' ? `请先在终端运行 ${backend === 'codex' ? 'codex login' : 'claude auth login'}。` : detection.auth === 'unknown' ? '无法确认登录状态；原生 CLI 会在连接时检查认证。' : null
+    detection.hint = detection.auth === 'missing'
+      ? '请先在终端运行 claude auth login。'
+      : detection.auth === 'unknown'
+        ? backend === 'codex' ? '无法确认 Codex 认证状态；请检查原生 CLI 的 provider 配置和认证方式。' : '无法确认登录状态；原生 CLI 会在连接时检查认证。'
+        : null
     return { detection, command }
   }
   catch (error) {

@@ -35,11 +35,21 @@ describe('verified official model kernel lock', () => {
   it.each(['codex', 'claude'] as const)('the %s identity disables the native-bound model seat without touching its session', (backend) => {
     const feature = fixture({ backend, nativeSessionId: 'native-a', sessionId: 'session-a' })
     const view = render(<ModelKernel {...feature.props} />)
-    const trigger = view.getByRole('button', { name: 'Official model' }) as HTMLButtonElement
+    const trigger = view.getByRole('button', { name: `bridge/${backend}` }) as HTMLButtonElement
     expect(trigger.disabled).toBe(true)
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(trigger.querySelector('[aria-hidden] svg')).not.toBeNull()
+    expect(trigger.className).toContain('h-[28px]')
+    expect(trigger.title).toBe('This session is bound to a native kernel; its model and kernel cannot be changed')
+    expect(view.container.textContent).toBe(`bridge/${backend}`)
+    expect(view.queryByRole('button', { name: 'Official model' })).toBeNull()
     fireEvent.click(trigger)
+    fireEvent.keyDown(trigger, { key: 'Enter' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(view.queryByRole('menu')).toBeNull()
     expect(feature.select).not.toHaveBeenCalled()
-    expect(view.getByText('This session is bound to a native kernel; its model and kernel cannot be changed')).toBeTruthy()
     expect(feature.ensureProjection).not.toHaveBeenCalled()
   })
 
@@ -62,8 +72,10 @@ describe('verified official model kernel lock', () => {
   it('unknown identity stays locked and requests only the nonactivating projection read', async () => {
     const feature = fixture(undefined)
     const view = render(<ModelKernel {...feature.props} />)
-    expect((view.getByRole('button', { name: 'Official model' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(view.getByText('Reading session kernel')).toBeTruthy()
+    const trigger = view.getByRole('button', { name: 'Kernel' }) as HTMLButtonElement
+    expect(trigger.disabled).toBe(true)
+    expect(trigger.title).toBe('Reading session kernel')
+    expect(view.container.textContent).toBe('Kernel')
     await vi.waitFor(() => expect(feature.ensureProjection).toHaveBeenCalledExactlyOnceWith('session-a'))
   })
 

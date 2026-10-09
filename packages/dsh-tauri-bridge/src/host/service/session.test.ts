@@ -192,6 +192,31 @@ function observe(agent: Agent) {
 }
 
 describe('official native session lifecycle', () => {
+  it('connects Codex with unknown login status and leaves provider authentication native-owned', async () => {
+    vi.mocked(detectBackend).mockResolvedValue({
+      detection: { id: 'codex', installed: true, auth: 'unknown', version: 'test', drift: false, hint: 'Check native provider authentication' },
+      command: { file: 'boundary-only', args: ['codex'] },
+    })
+    const connection = native('custom-provider-thread')
+    vi.mocked(createCodexSession).mockResolvedValue(connection)
+    const result = await creating()
+    expect(identity.resolve(officialHandle!.agent)).toEqual({ backend: 'codex', nativeSessionId: 'custom-provider-thread', sessionId: result.sessionId })
+    expect(createCodexSession).toHaveBeenCalledOnce()
+    expect(createClaudeSession).not.toHaveBeenCalled()
+    expect(connection.submit).not.toHaveBeenCalled()
+  }, 10_000)
+
+  it('rejects explicitly missing Claude authentication before starting a native process', async () => {
+    vi.mocked(detectBackend).mockResolvedValue({
+      detection: { id: 'claude', installed: true, auth: 'missing', version: 'test', drift: false, hint: '请先在终端运行 claude auth login。' },
+      command: { file: 'boundary-only', args: ['claude'] },
+    })
+    await expect(creating('claude')).rejects.toThrow('请先在终端运行 claude auth login。')
+    expect(createClaudeSession).not.toHaveBeenCalled()
+    expect(createCodexSession).not.toHaveBeenCalled()
+    expect(runtime.sessions.size).toBe(0)
+  }, 10_000)
+
   it.each(['codex', 'claude'] as const)('publishes %s only after native ACK and official identity commit', async (id) => {
     const ack = deferred<NativeSession>()
     const started = deferred<void>()

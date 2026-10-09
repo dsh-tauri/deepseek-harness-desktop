@@ -365,9 +365,9 @@ describe('backend detection capability probes', () => {
   })
 
   it.each([
-    [{ stderr: 'Not logged in', code: 1 }, 'missing', '请先在终端运行 codex login。'],
-    [{ stderr: 'Native authentication backend unavailable', code: 2 }, 'unknown', '无法确认登录状态；原生 CLI 会在连接时检查认证。'],
-  ] as const)('distinguishes explicit missing Codex auth from an unavailable status probe %j', async (auth, status, hint) => {
+    [{ stderr: 'Not logged in', code: 1 }, 'unknown', '无法确认 Codex 认证状态；请检查原生 CLI 的 provider 配置和认证方式。'],
+    [{ stderr: 'Native authentication backend unavailable', code: 2 }, 'unknown', '无法确认 Codex 认证状态；请检查原生 CLI 的 provider 配置和认证方式。'],
+  ] as const)('keeps Codex login status informational for custom providers %j', async (auth, status, hint) => {
     await file('codex.exe')
     healthyCodex(auth)
     const result = await detectBackend('codex', undefined, options())
@@ -400,7 +400,7 @@ describe('backend detection capability probes', () => {
     await file('codex.exe')
     healthyCodex({ error: new Error('auth executable error') })
     const result = await detectBackend('codex', undefined, options())
-    expect(result.detection).toEqual({ id: 'codex', installed: true, auth: 'unknown', version: '0.147.0', drift: false, hint: '无法确认登录状态；原生 CLI 会在连接时检查认证。' })
+    expect(result.detection).toEqual({ id: 'codex', installed: true, auth: 'unknown', version: '0.147.0', drift: false, hint: '无法确认 Codex 认证状态；请检查原生 CLI 的 provider 配置和认证方式。' })
     expect(result.command?.args).toEqual([])
   })
 

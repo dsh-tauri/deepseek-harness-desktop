@@ -20,8 +20,6 @@ function backendHint(backend: BackendDetection | undefined): string | undefined 
     return locale.text('kernel.drift')
   if (backend.auth === 'missing')
     return locale.text('kernel.authMissing')
-  if (backend.auth === 'unknown')
-    return locale.text('kernel.authUnknown')
   return undefined
 }
 
