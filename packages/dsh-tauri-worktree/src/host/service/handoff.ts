@@ -1,10 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle, AgentSetupCommit } from '@deepseek-ai/dsh-agent'
+import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { NativeSessionBridge } from 'dsh-tauri'
 import type { CheckoutInfo, HostContext, OperationResult, PendingHandoff } from '../types'
 import { randomUUID } from 'node:crypto'
-import { MessageId } from '@deepseek-ai/dsh-llm'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { get } from 'lodash-es'
@@ -90,7 +90,7 @@ export const handoff = defineService({
       if (!hasInheritedConversation(seed))
         pendingWorktreeTitles.add(targetSessionId)
       handle.agent.followup({
-        id: MessageId(`message-${randomUUID()}`),
+        id: `message-${randomUUID()}` as MessageId,
         role: 'user',
         content: [{
           type: 'text',

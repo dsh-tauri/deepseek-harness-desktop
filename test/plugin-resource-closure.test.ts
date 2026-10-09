@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const BUNDLE_MANIFEST = new URL('../packages/dsh-tauri-bundle/package.json', import.meta.url)
@@ -39,6 +40,19 @@ function packageJsonFiles(root: URL): string[] {
   }
   return files
 }
+
+describe('worktree handoff host dependency closure', () => {
+  it('erases official message-id types without a static DSH runtime import', () => {
+    const source = readFileSync(new URL('../packages/dsh-tauri-worktree/src/host/service/handoff.ts', import.meta.url), 'utf8')
+    const { outputText } = ts.transpileModule(source, {
+      fileName: 'handoff.ts',
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, verbatimModuleSyntax: true },
+    })
+    expect(outputText).toContain('randomUUID()')
+    expect(outputText).toContain('handle.agent.followup(')
+    expect(outputText).not.toMatch(DSH_STATIC_IMPORT)
+  })
+})
 
 describe.skipIf(!BUILT)('bundled plugin resource closure', () => {
   it('contains every bundled plugin with a valid entry', () => {

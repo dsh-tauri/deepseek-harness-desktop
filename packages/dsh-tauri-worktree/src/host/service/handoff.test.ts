@@ -219,7 +219,7 @@ describe('handoff.inherit', () => {
           return { agent }
         },
       })
-      expect(await handoff.inherit('session-source', 'session-target', 'C:/work')).toEqual({ ok: true, targetSessionId: 'session-target', seedLength: 1 })
+      expect(await handoff.inherit('session-source', 'session-target', resolve('worktrees/w1'))).toEqual({ ok: true, targetSessionId: 'session-target', seedLength: 1 })
       expect(created).toHaveLength(1)
       expect(created[0].signal).toBe(lifetime.signal)
       expect(preparingSignal).toBeInstanceOf(AbortSignal)
@@ -286,7 +286,7 @@ describe('handoff.inherit', () => {
           return { agent }
         },
       })
-      const pending = handoff.inherit('session-source', 'session-target', 'C:/work')
+      const pending = handoff.inherit('session-source', 'session-target', resolve('worktrees/w1'))
       await Promise.race([entered.promise, pending.then((result) => {
         throw new Error(`Native preparation was bypassed: ${JSON.stringify(result)}`)
       })])
@@ -756,7 +756,7 @@ describe('handoff.complete', () => {
         logger: { error },
         webServer: { register: () => () => {} },
       } as never))
-      await handoff.complete({ sourceAgent: { session: source, ctx: context, options: {} }, targetSessionId: 'session-target', binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding })
+      await handoff.complete({ sourceAgent: { session: source, ctx: context, options: {} }, targetSessionId: 'session-target', binding: { worktreePath: resolve('worktrees/w1'), projectPath: resolve('project') } as Binding })
       expect(remove).toHaveBeenCalledExactlyOnceWith('session-target')
       expect(followup).not.toHaveBeenCalled()
       expect(attachSession).not.toHaveBeenCalled()
@@ -805,7 +805,7 @@ describe('handoff.complete', () => {
         logger: { error },
         webServer: { register: () => () => {} },
       } as never))
-      await handoff.complete({ sourceAgent: { session: source, ctx: context, options: {} }, targetSessionId: 'session-target', binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding })
+      await handoff.complete({ sourceAgent: { session: source, ctx: context, options: {} }, targetSessionId: 'session-target', binding: { worktreePath: resolve('worktrees/w1'), projectPath: resolve('project') } as Binding })
       expect(commit).toHaveBeenCalledTimes(1)
       expect(published?.session.id).toBe('session-target')
       expect(remove).not.toHaveBeenCalled()
@@ -875,6 +875,11 @@ describe('handoff.complete', () => {
     expect(pendingWorktreeTitles.size).toBe(0)
     expect(followup).toHaveBeenCalledTimes(1)
     const followupMessage = followup.mock.calls[0][0]
+    expect(followupMessage).toMatchObject({
+      id: expect.stringMatching(/^message-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+      role: 'user',
+      source: { kind: 'user' },
+    })
     const text = followupMessage.content.map((block: any) => block.text).join('')
     expect(text).toContain('is_worktree: true')
     expect(text).toContain('Worktree path: C:/worktrees/w1')
