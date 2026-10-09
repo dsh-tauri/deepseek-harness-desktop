@@ -14,6 +14,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import i18next from 'i18next'
 import { defineStore } from 'valtio-define'
+import { containsHeapOomError } from '@/components/logs.utils'
 import { queryClient } from '@/config/client'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
@@ -31,6 +32,7 @@ import {
   PLUGIN_INACTIVITY_TIMEOUT,
   STARTUP_ABSOLUTE_TIMEOUT,
 } from './constants'
+import { planHeapRecovery } from './heap-recovery'
 import { BoundedReloadGate, SingleFlight, waitForActivityTask } from './readiness'
 import { runtimeExitMessageKey, shouldAcceptRuntimeExit } from './runtime'
 import {
@@ -38,6 +40,7 @@ import {
   checkHealthViaProxy,
   generateTimestampedUrl,
   internalPluginReason,
+  notifyHeapRecovery,
   notifyPatchEntryStrip,
   notifyPatchQuarantine,
   pollHarnessReadiness,
@@ -237,6 +240,39 @@ export const harness = defineStore({
         error.patchLayerHint,
         error.heapOomHint,
       )
+      // 自动恢复（issue #947）：只认「V8 堆耗尽」这一种退出——把上限翻倍写回设置，
+      // 再走与「设置里点了重启」同一条路径（restart 先 shutdown 再 boot，避免在退出
+      // 事件里抢进程槽）。每次翻倍、顶到 HARNESS_HEAP_MAX_MB 后后端返回 null 自然停下；
+      // 不满足条件时原样留在错误页，不覆盖上面的诊断结果。
+      const limitMb = await planHeapRecovery({
+        heapExhausted: containsHeapOomError(error.logLines ?? []),
+        // recovery store 的 state 字段同名，这里读的是「插件修复界面是否已接管」
+        pluginRecoveryRequired: recovery.recovery.required,
+        busy: this.busyAction,
+        queryLimitMb: () => invoke<number | null>('get_heap_recovery_limit_mb'),
+      })
+      if (limitMb === null || exitToken !== bootToken)
+        return
+      // 查询期间用户可能已经点了别的动作（`openBrowser` 之类不推 bootToken，只占忙态）：
+      // 这时写设置再 restart() 会被 restart 自己挡回来，用户只看到一条「已抬高上限」
+      // 的通知却没有重启，等于报了个假结果。复核一次再动手。
+      if (this.busyAction !== null)
+        return
+      try {
+        await setting.update({ harnessMaxHeapMb: limitMb })
+        // 写设置是异步的，期间用户可能已经点了「停止」：shutdown 会推进 bootToken，
+        // 此时再重启就是把用户刚停掉的服务又拉起来。
+        if (exitToken !== bootToken)
+          return
+        // 写入也是异步的：这里再复核一次忙态，避免通知发出后 restart 空转。
+        if (this.busyAction !== null)
+          return
+        notifyHeapRecovery(limitMb)
+        await this.restart()
+      }
+      catch (recoverError) {
+        console.error('[Harness] automatic heap recovery failed:', recoverError)
+      }
     },
 
     /**
@@ -802,6 +838,8 @@ export const harness = defineStore({
     async shutdown() {
       if (this.busyAction)
         return
+      // 作废仍在进行的启动/自动恢复流程，否则它们会在停止之后把服务又拉起来
+      ++bootToken
       this.busyAction = 'shutdown'
       // 停止服务后应用回到「已停止」态，配置弹窗已无意义，与 restart 一致地关闭它
       void hooks['config.dialog.hidden'].trigger()

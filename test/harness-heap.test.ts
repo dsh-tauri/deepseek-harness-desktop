@@ -22,6 +22,7 @@ const HEAP_KEYS = [
   'messages.heap_restart_hint',
   'messages.heap_invalid',
   'messages.heap_save_failed',
+  'messages.heap_recovered',
 ]
 
 function locale(file: 'zh-CN.json' | 'en-US.json'): Record<string, string> {
