@@ -1,7 +1,7 @@
-import type { GetApiDesktopDshTauriExperimentalLiveResponse, GetApiDesktopDshTauriExperimentalSummaryResponse } from '../apis/index.type'
+import type { GetApiTauriExperimentalLiveResponse, GetApiTauriExperimentalSummaryResponse } from '../apis/index.type'
 
-export type LiveSnapshot = Exclude<GetApiDesktopDshTauriExperimentalLiveResponse, { error: string }>
-type SummaryPayload = Exclude<GetApiDesktopDshTauriExperimentalSummaryResponse, { error: string }>
+export type LiveSnapshot = Exclude<GetApiTauriExperimentalLiveResponse, { error: string }>
+type SummaryPayload = Exclude<GetApiTauriExperimentalSummaryResponse, { error: string }>
 export type TurnFileChange = SummaryPayload['turns'][number]['files'][number]
 export type TurnFileStatus = TurnFileChange['status']
 

@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import type { PostApiDesktopDshTauriExtensionMcpBody as McpSaveBody } from '../apis/index.type'
+import type { PostApiTauriExtensionMcpBody as McpSaveBody } from '../apis/index.type'
 import type { McpRow } from '../types'
 import type { McpEditorMode, McpEditorState, McpImportItem, McpTabProps } from './mcp-tab.types'
 import { Action, ArrowRotateRight, Button, Card, Icon, Modal, PlugConnection, Select, Tag, Text, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'

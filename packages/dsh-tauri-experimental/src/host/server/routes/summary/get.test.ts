@@ -19,7 +19,7 @@ vi.mock('dsh-tauri', async (importOriginal) => {
 vi.mock('../../../service/ledger', () => ({ ledger: { load: vi.fn() } }))
 vi.mock('../../../service/workspace', () => ({ workspace: { peek: vi.fn(), resolve: vi.fn() } }))
 
-const SUMMARY_PATH = '/api/desktop/dsh-tauri-experimental/summary'
+const SUMMARY_PATH = '/api/tauri/experimental/summary'
 
 const routeKey = (kind: string, path: string): string => `${kind}\u0000${path}`
 

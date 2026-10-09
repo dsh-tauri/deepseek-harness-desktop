@@ -9,7 +9,7 @@
 export const PLUGIN_ID = 'dsh-tauri-pet'
 
 /** 桌宠会话增量 SSE 流路径（Rust 按 `http://127.0.0.1:<DSH_WEB_PORT>` + 此路径订阅）。 */
-export const SESSION_STREAM_PATH = '/api/desktop/dsh-tauri-pet/session/stream'
+export const SESSION_STREAM_PATH = '/api/tauri/pet/session/stream'
 
 /** SSE 重连间隔提示（毫秒）。 */
 export const SSE_RETRY_MS = 1000

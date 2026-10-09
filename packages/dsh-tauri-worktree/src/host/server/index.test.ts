@@ -14,7 +14,7 @@ import { resetTestDshHome, testDshHome } from '../../../../.test/test-utils'
 import { resetRuntime } from '../config/runtime'
 import { ledger } from '../service/ledger'
 
-const P = '/api/desktop/dsh-tauri-worktree'
+const P = '/api/tauri/worktree'
 
 vi.mock('dsh-tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('dsh-tauri')>()

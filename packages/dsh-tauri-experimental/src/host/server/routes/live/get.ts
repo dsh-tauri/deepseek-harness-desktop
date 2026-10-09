@@ -1,5 +1,5 @@
 /**
- * GET /api/desktop/dsh-tauri-experimental/live — 运行中实时读数（客户端提示条轮询）。
+ * GET /api/tauri/experimental/live — 运行中实时读数（客户端提示条轮询）。
  *
  * 宿主侧读数由 capture 编排器定时刷新到内存，本路由只读缓存值：
  * 客户端轮询频率因此与 git 调用频率解耦（大仓库不会因为轮询而反复跑 git）。

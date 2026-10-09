@@ -7,7 +7,7 @@ import { server } from '.'
 import { handleSessionEvent } from '../events/session-event'
 import { clearTurnEndFacts } from '../service/turn-end'
 
-const path = '/api/desktop/dsh-tauri-notification/turn-end'
+const path = '/api/tauri/notification/turn-end'
 const disposers: Array<() => void> = []
 
 afterEach(() => {

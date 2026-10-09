@@ -1,4 +1,4 @@
-export type GetApiDesktopDshTauriSchedulerTasksResponse = {
+export type GetApiTauriSchedulerTasksResponse = {
   tasks: {
     id: string;
     name: string;
@@ -20,8 +20,8 @@ export type GetApiDesktopDshTauriSchedulerTasksResponse = {
     waiting?: undefined | false | true;
   }[];
 };
-export type GetApiDesktopDshTauriSchedulerTasksQuerySearch = undefined | string;
-export type PostApiDesktopDshTauriSchedulerTasksResponse = {
+export type GetApiTauriSchedulerTasksQuerySearch = undefined | string;
+export type PostApiTauriSchedulerTasksResponse = {
   ok?: undefined | false | true;
   task?:
     | undefined
@@ -47,7 +47,7 @@ export type PostApiDesktopDshTauriSchedulerTasksResponse = {
       };
   error?: undefined | string;
 };
-export type PutApiDesktopDshTauriSchedulerTasksResponse = {
+export type PutApiTauriSchedulerTasksResponse = {
   ok?: undefined | false | true;
   task?:
     | undefined
@@ -73,8 +73,8 @@ export type PutApiDesktopDshTauriSchedulerTasksResponse = {
       };
   error?: undefined | string;
 };
-export type DeleteApiDesktopDshTauriSchedulerTasksResponse = { ok?: undefined | false | true; error?: undefined | string };
-export type PostApiDesktopDshTauriSchedulerTasksToggleResponse = {
+export type DeleteApiTauriSchedulerTasksResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type PostApiTauriSchedulerTasksToggleResponse = {
   ok?: undefined | false | true;
   task?:
     | undefined
@@ -100,11 +100,11 @@ export type PostApiDesktopDshTauriSchedulerTasksToggleResponse = {
       };
   error?: undefined | string;
 };
-export type PostApiDesktopDshTauriSchedulerTasksRunResponse = { ok?: undefined | false | true; error?: undefined | string };
-export type GetApiDesktopDshTauriSchedulerHistoryResponse = { runs: { id: string; taskId: string; taskName: string; trigger: "schedule" | "manual"; status: "queued" | "running" | "succeeded" | "failed" | "interrupted" | "skipped" | "cancelled"; scheduledFor: string; startedAt: string; finishedAt?: undefined | string; sessionId?: undefined | string; error?: undefined | string }[] };
-export type GetApiDesktopDshTauriSchedulerHistoryQueryTaskId = undefined | string;
-export type DeleteApiDesktopDshTauriSchedulerHistoryResponse = { ok?: undefined | false | true; error?: undefined | string };
-export type GetApiDesktopDshTauriSchedulerOptionsResponse = {
+export type PostApiTauriSchedulerTasksRunResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type GetApiTauriSchedulerHistoryResponse = { runs: { id: string; taskId: string; taskName: string; trigger: "schedule" | "manual"; status: "queued" | "running" | "succeeded" | "failed" | "interrupted" | "skipped" | "cancelled"; scheduledFor: string; startedAt: string; finishedAt?: undefined | string; sessionId?: undefined | string; error?: undefined | string }[] };
+export type GetApiTauriSchedulerHistoryQueryTaskId = undefined | string;
+export type DeleteApiTauriSchedulerHistoryResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type GetApiTauriSchedulerOptionsResponse = {
   workspaces: { id: string; path: string; title: string }[];
   permissions: { value: string; name: string; description?: undefined | string }[];
   defaultPermission: string;
@@ -112,9 +112,9 @@ export type GetApiDesktopDshTauriSchedulerOptionsResponse = {
   failures: { provider: string; providerLabel: string; message: string }[];
   defaultModel: null | { provider: string; providerLabel: string; model: string; label: string; description?: undefined | string; reasoning?: undefined | { efforts: { id: string; name: string; description?: undefined | string }[]; defaultEffort?: undefined | string } };
 };
-export type PostApiDesktopDshTauriSchedulerRunsRecoverResponse = { ok?: undefined | false | true; error?: undefined | string };
+export type PostApiTauriSchedulerRunsRecoverResponse = { ok?: undefined | false | true; error?: undefined | string };
 
-export interface PostApiDesktopDshTauriSchedulerTasksBody {
+export interface PostApiTauriSchedulerTasksBody {
   name: string;
   schedule: { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string };
   prompt: string;
@@ -126,7 +126,7 @@ export interface PostApiDesktopDshTauriSchedulerTasksBody {
   reasoningEffort?: undefined | string;
   enabled?: undefined | false | true;
 }
-export interface PutApiDesktopDshTauriSchedulerTasksBody {
+export interface PutApiTauriSchedulerTasksBody {
   id: string;
   name?: undefined | string;
   schedule?: undefined | { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string };
@@ -139,22 +139,22 @@ export interface PutApiDesktopDshTauriSchedulerTasksBody {
   reasoningEffort?: undefined | string;
   enabled?: undefined | false | true;
 }
-export interface DeleteApiDesktopDshTauriSchedulerTasksBody {
+export interface DeleteApiTauriSchedulerTasksBody {
   id: string;
 }
-export interface PostApiDesktopDshTauriSchedulerTasksToggleBody {
+export interface PostApiTauriSchedulerTasksToggleBody {
   id: string;
   enabled: false | true;
 }
-export interface PostApiDesktopDshTauriSchedulerTasksRunBody {
+export interface PostApiTauriSchedulerTasksRunBody {
   id: string;
 }
-export interface DeleteApiDesktopDshTauriSchedulerHistoryBody {
+export interface DeleteApiTauriSchedulerHistoryBody {
   id: string;
 }
-export interface GetApiDesktopDshTauriSchedulerTasksQuery {
-  search?: GetApiDesktopDshTauriSchedulerTasksQuerySearch;
+export interface GetApiTauriSchedulerTasksQuery {
+  search?: GetApiTauriSchedulerTasksQuerySearch;
 }
-export interface GetApiDesktopDshTauriSchedulerHistoryQuery {
-  taskId?: GetApiDesktopDshTauriSchedulerHistoryQueryTaskId;
+export interface GetApiTauriSchedulerHistoryQuery {
+  taskId?: GetApiTauriSchedulerHistoryQueryTaskId;
 }

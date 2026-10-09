@@ -58,15 +58,15 @@ beforeEach(() => {
   invoke.mockReset().mockImplementation(async (command: string, args: { method: string, payload: { machineId: string, sinceSeq?: number } }) => {
     expect(command).toBe('remote')
     switch (args.method) {
-      case 'GET /api/desktop/dsh-tauri-ssh/machines':
+      case 'GET /api/tauri/ssh/machines':
         if (listError !== undefined)
           throw listError
         return { enabled, items: rows, discovered: [] }
-      case 'GET /api/desktop/dsh-tauri-ssh/machines/events':
+      case 'GET /api/tauri/ssh/machines/events':
         return { items: eventItems.filter(item => item.seq >= (args.payload.sinceSeq ?? 0)) }
-      case 'POST /api/desktop/dsh-tauri-ssh/machines/connect':
+      case 'POST /api/tauri/ssh/machines/connect':
         return connect(args.payload.machineId)
-      case 'POST /api/desktop/dsh-tauri-ssh/machines/disconnect':
+      case 'POST /api/tauri/ssh/machines/disconnect':
         return disconnect(args.payload.machineId)
       default:
         throw new Error(`Unexpected method: ${args.method}`)
@@ -138,7 +138,7 @@ describe('useRemote 查询、降级与启动寻址', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(6000)
     })
-    const lists = invoke.mock.calls.filter(call => call[1].method === 'GET /api/desktop/dsh-tauri-ssh/machines')
+    const lists = invoke.mock.calls.filter(call => call[1].method === 'GET /api/tauri/ssh/machines')
     expect(lists).toHaveLength(4)
     unmount()
     await act(async () => {
@@ -335,7 +335,7 @@ describe('useRemote 切换和连接进度', () => {
       await client.refetchQueries({ queryKey: queryKeys.remoteEvents })
     })
     await waitFor(() => expect(result.current.connectLog).toEqual(['ssh ok', 'download', 'started']))
-    expect(invoke).toHaveBeenCalledWith('remote', { method: 'GET /api/desktop/dsh-tauri-ssh/machines/events', payload: { machineId: 'm1', sinceSeq: 2 } })
+    expect(invoke).toHaveBeenCalledWith('remote', { method: 'GET /api/tauri/ssh/machines/events', payload: { machineId: 'm1', sinceSeq: 2 } })
     rows = [machineOf({ state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
     await act(async () => {
       release({ tunnelBaseUrl: 'http://127.0.0.1:4001' })

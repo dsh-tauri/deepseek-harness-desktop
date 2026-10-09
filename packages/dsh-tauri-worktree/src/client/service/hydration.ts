@@ -1,4 +1,4 @@
-import type { GetApiDesktopDshTauriWorktreeBindingsResponse, GetApiDesktopDshTauriWorktreeStatusResponse as WorktreeStatus } from '../apis/index.type'
+import type { GetApiTauriWorktreeBindingsResponse, GetApiTauriWorktreeStatusResponse as WorktreeStatus } from '../apis/index.type'
 import type { WorktreeSessionState } from '../store/modules/worktree.types'
 import type {
   BindingsProjection,
@@ -121,7 +121,7 @@ export function isWorktree(sessionId: string): boolean {
   return sessionStateOf(store.worktree.$state, sessionId).mode === 'worktree'
 }
 
-export function projectBinding(binding: GetApiDesktopDshTauriWorktreeBindingsResponse['bindings'][number]): Partial<WorktreeSessionState> {
+export function projectBinding(binding: GetApiTauriWorktreeBindingsResponse['bindings'][number]): Partial<WorktreeSessionState> {
   return {
     mode: 'worktree',
     phase: 'created',
@@ -135,7 +135,7 @@ export function projectBinding(binding: GetApiDesktopDshTauriWorktreeBindingsRes
   }
 }
 
-export function projectJob(job: GetApiDesktopDshTauriWorktreeBindingsResponse['jobs'][number]): Partial<WorktreeSessionState> {
+export function projectJob(job: GetApiTauriWorktreeBindingsResponse['jobs'][number]): Partial<WorktreeSessionState> {
   return {
     mode: 'worktree',
     phase: job.state === 'deleting' ? 'deleting' : 'error',

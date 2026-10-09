@@ -24,11 +24,11 @@ function fixture(): ApiPipeline.Config {
 import { defineWebServer } from 'dsh-h3'
 import { defineEventHandler, getQuery, readBody } from 'h3'
 export const server = defineWebServer((app) => {
-  app.get('/api/desktop/dsh-tauri-extension/items', defineEventHandler((event) => {
+  app.get('/api/tauri/extension/items', defineEventHandler((event) => {
     const query = getQuery<{ id: string; mode?: 'a' | 'b' }>(event)
     return { id: query.id, count: 1 }
   }))
-  app.post('/api/desktop/dsh-tauri-extension/items', defineEventHandler(async (event) => {
+  app.post('/api/tauri/extension/items', defineEventHandler(async (event) => {
     const body = await readBody<{ name: string; count?: number }>(event)
     if (!body) throw new Error('Missing body')
     return { name: body.name, count: body.count ?? 0 }
@@ -58,8 +58,8 @@ describe('upstream H3 API generation', () => {
     expect(code).not.toContain('from "ofetch"')
     expect(code).toContain('export function getItems(')
     expect(code).toContain('export function postItems(')
-    expect(code).toContain('"/api/desktop/dsh-tauri-extension/items", { method: "get", params, ...options }')
-    expect(code).toContain('"/api/desktop/dsh-tauri-extension/items", { method: "post", body, ...options }')
+    expect(code).toContain('"/api/tauri/extension/items", { method: "get", params, ...options }')
+    expect(code).toContain('"/api/tauri/extension/items", { method: "post", body, ...options }')
     expect(types).toContain('name: string')
     expect(types).toContain('count?: undefined | number')
     expect(types).toContain('id: string')

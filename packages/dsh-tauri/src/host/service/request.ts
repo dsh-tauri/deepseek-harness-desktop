@@ -27,7 +27,7 @@ export const guard: Middleware = async (event, next) => {
       event.res.status = 403
       return { error: 'Change operation is limited to local machine (127.0.0.1) calls only' }
     }
-    if (req.headers.origin && URL.parse(req.headers.origin)?.host !== req.headers.host) {
+    if (req.headers.origin !== undefined && URL.parse(req.headers.origin)?.host !== req.headers.host) {
       event.res.status = 403
       return { error: 'cross-origin-request' }
     }
@@ -35,7 +35,8 @@ export const guard: Middleware = async (event, next) => {
 
   try {
     return await next()
-  } catch (error) {
+  }
+  catch (error) {
     ctx.logger?.error(`[dsh-tauri] Routing processing failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
     throw error
   }

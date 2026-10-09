@@ -1,24 +1,24 @@
-export type PostApiDesktopDshTauriModelConfigOpenResponse = { ok?: undefined | false | true; path?: undefined | string; opened?: undefined | "file" | "directory"; error?: undefined | string };
-export type PostApiDesktopDshTauriModelConfigOpenQueryDry = undefined | string;
-export type GetApiDesktopDshTauriModelEndpointModelsResponse = { ok?: undefined | false | true; url?: undefined | string; models?: undefined | { id: string; name?: undefined | string; contextWindow?: undefined | number; maxTokens?: undefined | number }[]; error?: undefined | string };
-export type GetApiDesktopDshTauriModelEndpointModelsQueryNs = undefined | string;
-export type GetApiDesktopDshTauriModelEndpointModelsQueryProfilePath = undefined | string;
-export type GetApiDesktopDshTauriModelEndpointModelsQueryBaseURL = undefined | string;
-export type GetApiDesktopDshTauriModelEndpointModelsQueryApiKey = undefined | string;
-export type GetApiDesktopDshTauriModelEndpointModelsQueryHeaders = undefined | string;
-export type GetApiDesktopDshTauriModelPresetsResponse = { ok?: undefined | false | true; source?: undefined | string; fetchedAt?: undefined | string; stale?: undefined | false | true; count?: undefined | number; presets?: undefined | { [key: string]: number[] }; error?: undefined | string };
-export type GetApiDesktopDshTauriModelPresetsQueryForce = undefined | string;
+export type PostApiTauriModelConfigOpenResponse = { ok?: undefined | false | true; path?: undefined | string; opened?: undefined | "file" | "directory"; error?: undefined | string };
+export type PostApiTauriModelConfigOpenQueryDry = undefined | string;
+export type GetApiTauriModelEndpointModelsResponse = { ok?: undefined | false | true; url?: undefined | string; models?: undefined | { id: string; name?: undefined | string; contextWindow?: undefined | number; maxTokens?: undefined | number }[]; error?: undefined | string };
+export type GetApiTauriModelEndpointModelsQueryNs = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryProfilePath = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryBaseURL = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryApiKey = undefined | string;
+export type GetApiTauriModelEndpointModelsQueryHeaders = undefined | string;
+export type GetApiTauriModelPresetsResponse = { ok?: undefined | false | true; source?: undefined | string; fetchedAt?: undefined | string; stale?: undefined | false | true; count?: undefined | number; presets?: undefined | { [key: string]: number[] }; error?: undefined | string };
+export type GetApiTauriModelPresetsQueryForce = undefined | string;
 
-export interface PostApiDesktopDshTauriModelConfigOpenQuery {
-  dry?: PostApiDesktopDshTauriModelConfigOpenQueryDry;
+export interface PostApiTauriModelConfigOpenQuery {
+  dry?: PostApiTauriModelConfigOpenQueryDry;
 }
-export interface GetApiDesktopDshTauriModelEndpointModelsQuery {
-  ns?: GetApiDesktopDshTauriModelEndpointModelsQueryNs;
-  profilePath?: GetApiDesktopDshTauriModelEndpointModelsQueryProfilePath;
-  baseURL?: GetApiDesktopDshTauriModelEndpointModelsQueryBaseURL;
-  apiKey?: GetApiDesktopDshTauriModelEndpointModelsQueryApiKey;
-  headers?: GetApiDesktopDshTauriModelEndpointModelsQueryHeaders;
+export interface GetApiTauriModelEndpointModelsQuery {
+  ns?: GetApiTauriModelEndpointModelsQueryNs;
+  profilePath?: GetApiTauriModelEndpointModelsQueryProfilePath;
+  baseURL?: GetApiTauriModelEndpointModelsQueryBaseURL;
+  apiKey?: GetApiTauriModelEndpointModelsQueryApiKey;
+  headers?: GetApiTauriModelEndpointModelsQueryHeaders;
 }
-export interface GetApiDesktopDshTauriModelPresetsQuery {
-  force?: GetApiDesktopDshTauriModelPresetsQueryForce;
+export interface GetApiTauriModelPresetsQuery {
+  force?: GetApiTauriModelPresetsQueryForce;
 }

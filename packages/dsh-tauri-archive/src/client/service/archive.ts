@@ -1,4 +1,4 @@
-import type { GetApiDesktopDshTauriArchiveSessionArchiveResponse as ArchivedListPayload } from '../apis/index.type'
+import type { GetApiTauriArchiveSessionArchiveResponse as ArchivedListPayload } from '../apis/index.type'
 import type { ActionOutcome, Resync } from './archive.types'
 import { uniq } from 'dsh-tauri/client'
 import {

@@ -1,29 +1,29 @@
-export type GetApiDesktopDshTauriArchiveSessionArchiveResponse = { archivedSessionIds: string[]; meta: { [key: string]: { createdAt?: undefined | number; cwd?: undefined | string; title?: undefined | string } } };
-export type PostApiDesktopDshTauriArchiveSessionArchiveResponse = { archivedSessionIds: string[]; meta: { [key: string]: { createdAt?: undefined | number; cwd?: undefined | string; title?: undefined | string } } } | { ok: false; error: string };
-export type DeleteApiDesktopDshTauriArchiveSessionArchiveResponse = { ok: true } | { ok: false; error: string };
-export type PostApiDesktopDshTauriArchiveSessionArchiveClearResponse = { ok: true };
-export type DeleteApiDesktopDshTauriArchiveSessionArchiveClearResponse = { ok: true };
-export type PostApiDesktopDshTauriArchiveSessionWorkspaceArchiveResponse = { archivedSessionIds: string[]; meta: { [key: string]: { createdAt?: undefined | number; cwd?: undefined | string; title?: undefined | string } } } | { ok: false; error: string };
-export type DeleteApiDesktopDshTauriArchiveSessionWorkspaceArchiveResponse = { ok: true } | { ok: false; error: string };
-export type PostApiDesktopDshTauriArchiveSessionArchiveRestoreResponse = { ok: true } | { ok: false; error: string };
-export type PostApiDesktopDshTauriArchiveSessionOpenPathResponse = { ok: false | true; error?: undefined | string };
+export type GetApiTauriArchiveSessionArchiveResponse = { archivedSessionIds: string[]; meta: { [key: string]: { createdAt?: undefined | number; cwd?: undefined | string; title?: undefined | string } } };
+export type PostApiTauriArchiveSessionArchiveResponse = { archivedSessionIds: string[]; meta: { [key: string]: { createdAt?: undefined | number; cwd?: undefined | string; title?: undefined | string } } } | { ok: false; error: string };
+export type DeleteApiTauriArchiveSessionArchiveResponse = { ok: true } | { ok: false; error: string };
+export type PostApiTauriArchiveSessionArchiveClearResponse = { ok: true };
+export type DeleteApiTauriArchiveSessionArchiveClearResponse = { ok: true };
+export type PostApiTauriArchiveSessionWorkspaceArchiveResponse = { archivedSessionIds: string[]; meta: { [key: string]: { createdAt?: undefined | number; cwd?: undefined | string; title?: undefined | string } } } | { ok: false; error: string };
+export type DeleteApiTauriArchiveSessionWorkspaceArchiveResponse = { ok: true } | { ok: false; error: string };
+export type PostApiTauriArchiveSessionArchiveRestoreResponse = { ok: true } | { ok: false; error: string };
+export type PostApiTauriArchiveSessionOpenPathResponse = { ok: false | true; error?: undefined | string };
 
-export interface PostApiDesktopDshTauriArchiveSessionArchiveBody {
+export interface PostApiTauriArchiveSessionArchiveBody {
   sessionId: string;
 }
-export interface DeleteApiDesktopDshTauriArchiveSessionArchiveBody {
+export interface DeleteApiTauriArchiveSessionArchiveBody {
   sessionId: string;
 }
-export interface PostApiDesktopDshTauriArchiveSessionWorkspaceArchiveBody {
+export interface PostApiTauriArchiveSessionWorkspaceArchiveBody {
   workspaceId?: undefined | string;
   sessionIds: string[];
 }
-export interface DeleteApiDesktopDshTauriArchiveSessionWorkspaceArchiveBody {
+export interface DeleteApiTauriArchiveSessionWorkspaceArchiveBody {
   sessionIds: string[];
 }
-export interface PostApiDesktopDshTauriArchiveSessionArchiveRestoreBody {
+export interface PostApiTauriArchiveSessionArchiveRestoreBody {
   sessionId: string;
 }
-export interface PostApiDesktopDshTauriArchiveSessionOpenPathBody {
+export interface PostApiTauriArchiveSessionOpenPathBody {
   sessionId: string;
 }

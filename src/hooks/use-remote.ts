@@ -1,4 +1,4 @@
-import type { GetApiDesktopDshTauriSshMachinesResponse } from '@/apis/remote.types'
+import type { GetApiTauriSshMachinesResponse } from '@/apis/remote.types'
 import { useEventListener, useUnmount, useWatch } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -6,7 +6,7 @@ import { useRef, useState } from 'react'
 import { getMachines, getMachinesEvents, postMachinesConnect, postMachinesDisconnect } from '@/apis/remote'
 import { queryKeys } from '@/config/query-keys'
 
-type SshMachineListItem = NonNullable<GetApiDesktopDshTauriSshMachinesResponse['items']>[number]
+type SshMachineListItem = NonNullable<GetApiTauriSshMachinesResponse['items']>[number]
 type SshConnectionState = NonNullable<SshMachineListItem['state']>
 type SshProgress = NonNullable<SshMachineListItem['progress']>
 type SshProgressPhase = SshProgress['phase']

@@ -9,11 +9,11 @@ import { ofetch } from "dsh-tauri/client";
 import type { FetchOptions } from "dsh-tauri/client";
 
 /** @method post */
-export function postOpenUrl(body: Types.PostApiDesktopDshTauriRightclickOpenUrlBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriRightclickOpenUrlResponse>("/api/desktop/dsh-tauri-rightclick/open/url", { method: "post", body, ...options });
+export function postOpenUrl(body: Types.PostApiTauriRightclickOpenUrlBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRightclickOpenUrlResponse>("/api/tauri/rightclick/open/url", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postOpenPath(body: Types.PostApiDesktopDshTauriRightclickOpenPathBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriRightclickOpenPathResponse>("/api/desktop/dsh-tauri-rightclick/open/path", { method: "post", body, ...options });
+export function postOpenPath(body: Types.PostApiTauriRightclickOpenPathBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRightclickOpenPathResponse>("/api/tauri/rightclick/open/path", { method: "post", body, ...options });
 }

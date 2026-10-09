@@ -108,7 +108,7 @@ $$\text{client/index.ts} \longrightarrow \begin{bmatrix} \text{register/} \\ \te
 ### 5. API 层 (`apis/`)
 
 * **唯一允许发请求的层**。JSON 请求使用 `dsh-tauri/client` 导出的 `ofetch`（与既有 `fetch` 为同一 JSON 实例，不是流式传输）；严禁使用 `axios` 或 `window.fetch`。
-* `apis/index.ts` 与 `apis/index.type.ts` 由根目录 `genapi.config.ts` 使用 `dsh-h3/genapi` 从 `host/server/index.ts` 生成，修改服务契约后运行 `pnpm genapi`，禁止手改生成结果或恢复 `genapi.pipeline.ts`。
+* `apis/index.ts` 与 `apis/index.type.ts` 由根目录 `genapi.config.ts` 使用 `dsh-h3/genapi` 从 `host/server/index.ts` 生成，修改服务契约后运行 `pnpm genapi`，禁止手改生成结果或恢复 `genapi.pipeline.ts`。插件路径统一为 `/api/tauri/<插件短名>`（如 `/api/tauri/ssh/machines`），生成类型与消费方按新路径同步，不建立旧 URL 或 DTO 名别名。
 * 请求函数名使用 `HTTP动词 + 路径领域名词`，通过根配置的 transform/patch 保持必要的既有操作名；body/query 必须传入生成函数对应参数，不能误当请求 options。业务类型可从生成响应的成功分支派生，保留真实错误联合，不复制另一套 DTO。
 * 保持现有 JSON 传输：插件生成文件使用 `dsh-tauri/client` 的 `ofetch` 与 type-only `FetchOptions`；桌面壳 SSH 的 `src/apis/remote.ts` 使用 `./http` 的 invoke 适配，不改用浏览器原生 fetch。
 

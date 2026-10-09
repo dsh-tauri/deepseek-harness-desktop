@@ -9,16 +9,16 @@ import { ofetch } from "dsh-tauri/client";
 import type { FetchOptions } from "dsh-tauri/client";
 
 /** @method post */
-export function postConfigOpen(params?: Types.PostApiDesktopDshTauriModelConfigOpenQuery, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriModelConfigOpenResponse>("/api/desktop/dsh-tauri-model/config/open", { method: "post", params, ...options });
+export function postConfigOpen(params?: Types.PostApiTauriModelConfigOpenQuery, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriModelConfigOpenResponse>("/api/tauri/model/config/open", { method: "post", params, ...options });
 }
 
 /** @method get */
-export function getEndpointModels(params?: Types.GetApiDesktopDshTauriModelEndpointModelsQuery, options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriModelEndpointModelsResponse>("/api/desktop/dsh-tauri-model/endpoint/models", { method: "get", params, ...options });
+export function getEndpointModels(params?: Types.GetApiTauriModelEndpointModelsQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriModelEndpointModelsResponse>("/api/tauri/model/endpoint/models", { method: "get", params, ...options });
 }
 
 /** @method get */
-export function getPresets(params?: Types.GetApiDesktopDshTauriModelPresetsQuery, options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriModelPresetsResponse>("/api/desktop/dsh-tauri-model/presets", { method: "get", params, ...options });
+export function getPresets(params?: Types.GetApiTauriModelPresetsQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriModelPresetsResponse>("/api/tauri/model/presets", { method: "get", params, ...options });
 }

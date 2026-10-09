@@ -17,7 +17,7 @@ vi.mock('dsh-tauri', async (importOriginal) => {
   return { ...actual, DSH_HOME: home }
 })
 
-const P = '/api/desktop/dsh-tauri-archive'
+const P = '/api/tauri/archive'
 
 const routeKey = (kind: string, path: string): string => `${kind}\u0000${path}`
 

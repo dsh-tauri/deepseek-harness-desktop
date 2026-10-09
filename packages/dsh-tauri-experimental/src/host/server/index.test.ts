@@ -36,7 +36,7 @@ vi.mock('../service/workspace', () => ({
   },
 }))
 
-const P = '/api/desktop/dsh-tauri-experimental'
+const P = '/api/tauri/experimental'
 
 const routeKey = (kind: string, path: string): string => `${kind}\u0000${path}`
 

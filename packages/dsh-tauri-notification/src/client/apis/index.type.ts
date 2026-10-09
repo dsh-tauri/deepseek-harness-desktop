@@ -1,6 +1,6 @@
-export type GetApiDesktopDshTauriNotificationTurnEndResponse = { reason?: undefined | string; turn?: undefined | number };
-export type GetApiDesktopDshTauriNotificationTurnEndQuerySessionId = undefined | string;
+export type GetApiTauriNotificationTurnEndResponse = { reason?: undefined | string; turn?: undefined | number };
+export type GetApiTauriNotificationTurnEndQuerySessionId = undefined | string;
 
-export interface GetApiDesktopDshTauriNotificationTurnEndQuery {
-  sessionId?: GetApiDesktopDshTauriNotificationTurnEndQuerySessionId;
+export interface GetApiTauriNotificationTurnEndQuery {
+  sessionId?: GetApiTauriNotificationTurnEndQuerySessionId;
 }

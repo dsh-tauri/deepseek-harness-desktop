@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * S5 整体验收·数据面全旅程驱动脚本（无头，直驱 /api/desktop/dsh-tauri-ssh REST 面）。
+ * S5 整体验收·数据面全旅程驱动脚本（无头，直驱 /api/tauri/ssh REST 面）。
  *
  * 旅程（对应 S5 Spec 验收标准 2 的可自动化子集）：
  *   POST /machines（dev 真机，含 color/tintBorder/startCommand）
@@ -45,7 +45,7 @@ const remotePort = Number(argOf('remote-port', '3082'))
 const startCommand = argOf('start-command', '')
 const outPath = argOf('out', '')
 const machineId = randomUUID()
-const api = `${base}/api/desktop/dsh-tauri-ssh`
+const api = `${base}/api/tauri/ssh`
 let cookie = argOf('cookie', '')
 
 const lines = []
@@ -118,7 +118,7 @@ async function main() {
 
   const settings = await request('GET', '/settings')
   if (settings.enabled !== true)
-    throw new Error('dsh-tauri-ssh 未启用：先 POST /api/desktop/dsh-tauri-ssh/settings {"enabled":true}')
+    throw new Error('dsh-tauri-ssh 未启用：先 POST /api/tauri/ssh/settings {"enabled":true}')
 
   log(`# S5 SSH 数据面全旅程 — ${new Date().toISOString()}`)
   log(`base=${base} host=${host} user=${user} sshPort=${sshPort} remotePort=${remotePort}`)

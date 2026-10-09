@@ -1,5 +1,5 @@
 /**
- * GET /api/desktop/dsh-tauri-experimental/summary — 某会话的 turn 变更摘要（客户端变更读数的数据面）。
+ * GET /api/tauri/experimental/summary — 某会话的 turn 变更摘要（客户端变更读数的数据面）。
  *
  * 以**当前**资格为准（cwd 可能在会话中途切换），账本里的旧结论只作为兜底。
  * 200 时返回 SummaryPayload；参数/会话不成立时返回 `{ error }` 文案。

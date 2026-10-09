@@ -6,7 +6,7 @@ import { createServer } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { server } from '.'
 
-const P = '/api/desktop/dsh-tauri-rightclick'
+const P = '/api/tauri/rightclick'
 
 const routeKey = (kind: string, path: string): string => `${kind}\u0000${path}`
 

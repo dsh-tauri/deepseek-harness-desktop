@@ -24,11 +24,11 @@ import {
   SETTINGS_TRIGGER,
 } from '../support/browser'
 
-/** 与 `packages/dsh-tauri-ui/src/host/routes/index.ts:6` 的会话恢复路由对齐。 */
-const RESUME_PATH = '/api/desktop/dsh-tauri-ui/session/resume'
+/** 与 `packages/dsh-tauri-ui/src/host/server/index.ts:6` 的会话恢复路由对齐。 */
+const RESUME_PATH = '/api/tauri/ui/session/resume'
 
-/** 未分组目录解析路由（`packages/dsh-tauri-ui/src/host/routes/ungrouped/get.ts`）。 */
-const UNGROUPED_PATH = '/api/desktop/dsh-tauri-ui/ungrouped'
+/** 未分组目录解析路由（`packages/dsh-tauri-ui/src/host/server/ungrouped/get.ts`）。 */
+const UNGROUPED_PATH = '/api/tauri/ui/ungrouped'
 
 /** `/api/**` 要求浏览器会话；Cookie 由编排在根路径用一次性 token 换得。 */
 function headers(): Record<string, string> {

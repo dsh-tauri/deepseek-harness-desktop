@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { describe, expect, inject, it } from 'vitest'
 
 /** 与 `packages/dsh-tauri-extension/src/shared/constants.ts` 的 PLUGIN_ID 对齐。 */
-const ROUTE_PREFIX = '/api/desktop/dsh-tauri-extension'
+const ROUTE_PREFIX = '/api/tauri/extension'
 
 interface ErrorBody {
   error?: string

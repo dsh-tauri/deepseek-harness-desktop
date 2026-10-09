@@ -1,6 +1,6 @@
 import type { ExtensionRouteDeps } from './routes/index.types'
 import { defineWebServer } from 'dsh-h3'
-import { desktopRequestGuard } from 'dsh-tauri'
+import { guard } from 'dsh-tauri'
 import restart from './routes/host/restart/post'
 import importApply from './routes/import/apply/post'
 import importScan from './routes/import/scan/get'
@@ -22,28 +22,28 @@ import skills from './routes/skills/get'
 import skillsRefresh from './routes/skills/refresh/post'
 
 export const server = defineWebServer<ExtensionRouteDeps>((app) => {
-  app.use(desktopRequestGuard)
-  app.get('/api/desktop/dsh-tauri-extension/skills', skills)
-  app.post('/api/desktop/dsh-tauri-extension/skills/refresh', skillsRefresh)
-  app.get('/api/desktop/dsh-tauri-extension/skill', skill)
-  app.post('/api/desktop/dsh-tauri-extension/skill', skillSave)
-  app.delete('/api/desktop/dsh-tauri-extension/skill', skillDelete)
-  app.post('/api/desktop/dsh-tauri-extension/skill/policy', skillPolicy)
-  app.post('/api/desktop/dsh-tauri-extension/open/dir', openDir)
+  app.use(guard)
+  app.get('/api/tauri/extension/skills', skills)
+  app.post('/api/tauri/extension/skills/refresh', skillsRefresh)
+  app.get('/api/tauri/extension/skill', skill)
+  app.post('/api/tauri/extension/skill', skillSave)
+  app.delete('/api/tauri/extension/skill', skillDelete)
+  app.post('/api/tauri/extension/skill/policy', skillPolicy)
+  app.post('/api/tauri/extension/open/dir', openDir)
 
-  app.get('/api/desktop/dsh-tauri-extension/mcp', mcp)
-  app.post('/api/desktop/dsh-tauri-extension/mcp', mcpSave)
-  app.delete('/api/desktop/dsh-tauri-extension/mcp', mcpRemove)
-  app.post('/api/desktop/dsh-tauri-extension/mcp/toggle', mcpToggle)
-  app.post('/api/desktop/dsh-tauri-extension/mcp/check', mcpCheck)
-  app.post('/api/desktop/dsh-tauri-extension/mcp/copy', mcpCopy)
+  app.get('/api/tauri/extension/mcp', mcp)
+  app.post('/api/tauri/extension/mcp', mcpSave)
+  app.delete('/api/tauri/extension/mcp', mcpRemove)
+  app.post('/api/tauri/extension/mcp/toggle', mcpToggle)
+  app.post('/api/tauri/extension/mcp/check', mcpCheck)
+  app.post('/api/tauri/extension/mcp/copy', mcpCopy)
 
-  app.get('/api/desktop/dsh-tauri-extension/import/scan', importScan)
-  app.post('/api/desktop/dsh-tauri-extension/import/apply', importApply)
+  app.get('/api/tauri/extension/import/scan', importScan)
+  app.post('/api/tauri/extension/import/apply', importApply)
 
-  app.get('/api/desktop/dsh-tauri-extension/roots', roots)
-  app.post('/api/desktop/dsh-tauri-extension/roots', rootsAdd)
-  app.delete('/api/desktop/dsh-tauri-extension/roots', rootsRemove)
+  app.get('/api/tauri/extension/roots', roots)
+  app.post('/api/tauri/extension/roots', rootsAdd)
+  app.delete('/api/tauri/extension/roots', rootsRemove)
 
-  app.post('/api/desktop/dsh-tauri-extension/host/restart', restart)
+  app.post('/api/tauri/extension/host/restart', restart)
 })

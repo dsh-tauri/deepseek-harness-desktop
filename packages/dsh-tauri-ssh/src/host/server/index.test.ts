@@ -9,7 +9,7 @@ import { sync } from '../service/sync'
 import { MachineId, SshError } from '../types/index'
 import { server } from './index'
 
-const BASE = '/api/desktop/dsh-tauri-ssh'
+const BASE = '/api/tauri/ssh'
 
 const PATHS = [
   `${BASE}/settings`,

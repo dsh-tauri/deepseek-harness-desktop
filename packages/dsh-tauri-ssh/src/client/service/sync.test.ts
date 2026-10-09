@@ -4,7 +4,7 @@ import { store } from '../store/index'
 import { answer, replies, resetWire, sent } from '../test-utils/client-mock'
 import * as service from './sync'
 
-const baseURL = '/api/desktop/dsh-tauri-ssh'
+const baseURL = '/api/tauri/ssh'
 
 vi.mock('dsh-tauri/client', async () => (await import('../test-utils/client-mock')).clientMock)
 

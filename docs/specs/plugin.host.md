@@ -32,7 +32,7 @@ $$\text{apply.ts (装配)} \longrightarrow \begin{bmatrix} \text{server/routes/}
 <br>`constants.ts`: 静态常量与配置，严禁硬编码 Magic Number/String；只登记**两个及以上模块**消费的常量（单一消费方的常量归属见 [plugin.baisc.md](./plugin.baisc.md) 的《通用协议：常量归属》），`config/` 下不允许出现 `*.types.ts`。 |
 | **`types/`** | 类型定义 | 导出领域模型、DTO、输入输出接口（纯类型定义）。单一模块专属的类型与所属模块**同目录同名**，命名为 `<module>.types.ts`（如 `service/worktree.types.ts`）；此目录仅保留被多个模块共享的类型（如 `index.ts`）——跨模块共享的**宿主面类型**（`SessionHost` / `PanelExtensionHost` 等）统一放 `types/index.ts`。 |
 | **`storage/`** | 持久化实例 | `index.ts` 纯粹导出持久化驱动实例，不包含任何业务读写逻辑。 |
-| **`server/`** | HTTP 服务层 *(可选)* | `index.ts` 使用 `dsh-h3` 的 `defineWebServer` 声明服务，`routes/` 保存 H3 handler。handler 文件按 URL 层级与方法落位（如 `server/routes/session/open/path/post.ts`），不根据文件名自动注册路由；URL 与方法以 `server/index.ts` 的显式注册为唯一依据，仅做协议解析、DTO 校验与 Service 调用。入口以 `app.post('/api/desktop/<plugin-id>/session/open/path', handler)` 等直接注册完整字面量，禁止路径常量、拼接与自造路由宏。 |
+| **`server/`** | HTTP 服务层 *(可选)* | `index.ts` 使用 `dsh-h3` 的 `defineWebServer` 声明服务，`routes/` 保存 H3 handler。handler 文件按 URL 层级与方法落位（如 `server/routes/session/open/path/post.ts`），不根据文件名自动注册路由；URL 与方法以 `server/index.ts` 的显式注册为唯一依据，仅做协议解析、DTO 校验与 Service 调用。入口以 `app.post('/api/tauri/<插件短名>/session/open/path', handler)` 等直接注册完整字面量，禁止路径常量、拼接与自造路由宏。 |
 | **`tools/`** | Agent 工具层 *(可选)* | 单工具单文件，包含声明、JSON Schema 与 execute 编排。 |
 | **`prompts/`** | 系统提示词层 *(可选)* | 拆分为常驻提示词 (`*-section.ts`) 与动态单次上下文注入 (`*-context.ts`)。 |
 | **`events/`** | 事件监听层 *(可选)* | 宿主生命周期事件处理（如 `turn/end`、工具前置拦截等）。 |
@@ -109,6 +109,7 @@ export function apply(ctx: HostContext): void {
 **5. 服务与路由形态 (`server/index.ts`、`server/routes/`)**
 
 * **原生服务入口**：`export const server = defineWebServer<Options>((app) => { ... })`，无配置时省略泛型。共享安全检查在入口统一 `app.use(guard)`，业务 handler 不重复鉴权。精确路由不经过官方 `/api` 前缀闸门；桌面 `gate` 放行登录 401 不代表取消 Host/Origin 的 403。
+* **统一命名空间**：插件 API 使用 `/api/tauri/<插件短名>`，例如 `dsh-tauri-rightclick` 对应 `/api/tauri/rightclick`；包名与注册标识不变。根资源不强加末尾斜杠，不保留旧路径别名。服务注册、生成客户端、Rust 桥接白名单与 SSE 订阅必须同步。
 * **默认 RESTful 资源化**：URL 只描述资源，动作由 HTTP 方法承担。文件按方法命名（`get.ts`、`post.ts`、`put.ts`、`delete.ts`），同一资源的多个方法在 `server/index.ts` 使用 `app.get/post/put/delete` 分别注册；不恢复 `defineRoutes` 或原共享 routes 实现。
 * **方法与请求体契约**：沿用 H3/dsh-h3 原生方法处理，GET 包含 HEAD，未注册 OPTIONS 时返回 405；不恢复 `desktopPreflight` 或固定 `MAX_REQUEST_BODY_BYTES`。业务输入仍必须校验。
 * **动作端点例外**：无法表达为资源状态迁移的操作，允许 `POST /<资源>/<动作>`（`/tasks/toggle`、`/tasks/run`、`/skills/refresh`、`/import/apply`、`/mcp/check`、`/restart` 等）。动作名必须是动词性领域词，且不得与标准方法语义重复；能用方法表达的写入一律不许写成动作端点。

@@ -10,65 +10,65 @@ import type { FetchOptions } from "./http";
 
 /** @method get */
 export function getSettings(options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriSshSettingsResponse>("/api/desktop/dsh-tauri-ssh/settings", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriSshSettingsResponse>("/api/tauri/ssh/settings", { method: "get", ...options });
 }
 
 /** @method post */
-export function postSettings(body: Types.PostApiDesktopDshTauriSshSettingsBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriSshSettingsResponse>("/api/desktop/dsh-tauri-ssh/settings", { method: "post", body, ...options });
+export function postSettings(body: Types.PostApiTauriSshSettingsBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriSshSettingsResponse>("/api/tauri/ssh/settings", { method: "post", body, ...options });
 }
 
 /** @method get */
 export function getSessionRole(options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriSshSessionRoleResponse>("/api/desktop/dsh-tauri-ssh/session/role", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriSshSessionRoleResponse>("/api/tauri/ssh/session/role", { method: "get", ...options });
 }
 
 /** @method get */
 export function getMachines(options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriSshMachinesResponse>("/api/desktop/dsh-tauri-ssh/machines", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriSshMachinesResponse>("/api/tauri/ssh/machines", { method: "get", ...options });
 }
 
 /** @method post */
-export function postMachines(body: Types.PostApiDesktopDshTauriSshMachinesBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriSshMachinesResponse>("/api/desktop/dsh-tauri-ssh/machines", { method: "post", body, ...options });
+export function postMachines(body: Types.PostApiTauriSshMachinesBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriSshMachinesResponse>("/api/tauri/ssh/machines", { method: "post", body, ...options });
 }
 
 /** @method delete */
-export function deleteMachines(body: Types.DeleteApiDesktopDshTauriSshMachinesBody, options?: FetchOptions) {
-  return ofetch<Types.DeleteApiDesktopDshTauriSshMachinesResponse>("/api/desktop/dsh-tauri-ssh/machines", { method: "delete", body, ...options });
+export function deleteMachines(body: Types.DeleteApiTauriSshMachinesBody, options?: FetchOptions) {
+  return ofetch<Types.DeleteApiTauriSshMachinesResponse>("/api/tauri/ssh/machines", { method: "delete", body, ...options });
 }
 
 /** @method post */
-export function postMachinesTest(body: Types.PostApiDesktopDshTauriSshMachinesTestBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriSshMachinesTestResponse>("/api/desktop/dsh-tauri-ssh/machines/test", { method: "post", body, ...options });
+export function postMachinesTest(body: Types.PostApiTauriSshMachinesTestBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriSshMachinesTestResponse>("/api/tauri/ssh/machines/test", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postMachinesConnect(body: Types.PostApiDesktopDshTauriSshMachinesConnectBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriSshMachinesConnectResponse>("/api/desktop/dsh-tauri-ssh/machines/connect", { method: "post", body, ...options });
+export function postMachinesConnect(body: Types.PostApiTauriSshMachinesConnectBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriSshMachinesConnectResponse>("/api/tauri/ssh/machines/connect", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postMachinesDisconnect(body: Types.PostApiDesktopDshTauriSshMachinesDisconnectBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriSshMachinesDisconnectResponse>("/api/desktop/dsh-tauri-ssh/machines/disconnect", { method: "post", body, ...options });
+export function postMachinesDisconnect(body: Types.PostApiTauriSshMachinesDisconnectBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriSshMachinesDisconnectResponse>("/api/tauri/ssh/machines/disconnect", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postMachinesInstall(body: Types.PostApiDesktopDshTauriSshMachinesInstallBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriSshMachinesInstallResponse>("/api/desktop/dsh-tauri-ssh/machines/install", { method: "post", body, ...options });
+export function postMachinesInstall(body: Types.PostApiTauriSshMachinesInstallBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriSshMachinesInstallResponse>("/api/tauri/ssh/machines/install", { method: "post", body, ...options });
 }
 
 /** @method get */
-export function getMachinesEvents(params?: Types.GetApiDesktopDshTauriSshMachinesEventsQuery, options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriSshMachinesEventsResponse>("/api/desktop/dsh-tauri-ssh/machines/events", { method: "get", params, ...options });
+export function getMachinesEvents(params?: Types.GetApiTauriSshMachinesEventsQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriSshMachinesEventsResponse>("/api/tauri/ssh/machines/events", { method: "get", params, ...options });
 }
 
 /** @method get */
 export function getSyncPreview(options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriSshSyncPreviewResponse>("/api/desktop/dsh-tauri-ssh/sync/preview", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriSshSyncPreviewResponse>("/api/tauri/ssh/sync/preview", { method: "get", ...options });
 }
 
 /** @method post */
-export function postSyncApply(body: Types.PostApiDesktopDshTauriSshSyncApplyBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiDesktopDshTauriSshSyncApplyResponse>("/api/desktop/dsh-tauri-ssh/sync/apply", { method: "post", body, ...options });
+export function postSyncApply(body: Types.PostApiTauriSshSyncApplyBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriSshSyncApplyResponse>("/api/tauri/ssh/sync/apply", { method: "post", body, ...options });
 }

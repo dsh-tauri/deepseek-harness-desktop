@@ -1,9 +1,9 @@
-export type PostApiDesktopDshTauriRightclickOpenUrlResponse = { ok: false | true; error?: undefined | string };
-export type PostApiDesktopDshTauriRightclickOpenPathResponse = { ok: false | true; error?: undefined | string };
+export type PostApiTauriRightclickOpenUrlResponse = { ok: false | true; error?: undefined | string };
+export type PostApiTauriRightclickOpenPathResponse = { ok: false | true; error?: undefined | string };
 
-export interface PostApiDesktopDshTauriRightclickOpenUrlBody {
+export interface PostApiTauriRightclickOpenUrlBody {
   url?: undefined | string;
 }
-export interface PostApiDesktopDshTauriRightclickOpenPathBody {
+export interface PostApiTauriRightclickOpenPathBody {
   path?: undefined | string;
 }

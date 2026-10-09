@@ -6,7 +6,7 @@ import { sessionStream } from '../../../../service/session-stream'
 const SSE_KEEPALIVE_COMMENT = 'keepalive'
 
 /**
- * GET /api/desktop/dsh-tauri-pet/session/stream — 桌宠会话增量 SSE 流。
+ * GET /api/tauri/pet/session/stream — 桌宠会话增量 SSE 流。
  *
  * 帧格式与 Rust 消费端（`src-tauri/src/bridge/pet.rs`）逐字对齐：
  *   - 数据帧 `data: {"action":…,"payload":…}\n\n`；

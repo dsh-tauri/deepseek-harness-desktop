@@ -11,12 +11,12 @@
 import { describe, expect, inject, it } from 'vitest'
 
 /** 与 `packages/dsh-tauri-archive/src/host/server/index.ts` 的常量对齐。 */
-const SESSION_ARCHIVE_PATH = '/api/desktop/dsh-tauri-archive/session/archive'
-const SESSION_WORKSPACE_ARCHIVE_PATH = '/api/desktop/dsh-tauri-archive/session/workspace/archive'
+const SESSION_ARCHIVE_PATH = '/api/tauri/archive/session/archive'
+const SESSION_WORKSPACE_ARCHIVE_PATH = '/api/tauri/archive/session/workspace/archive'
 
 const ARCHIVE_CLEAR_PATH = `${SESSION_ARCHIVE_PATH}/clear`
 const ARCHIVE_RESTORE_PATH = `${SESSION_ARCHIVE_PATH}/restore`
-const OPEN_PATH_PATH = '/api/desktop/dsh-tauri-archive/session/open/path'
+const OPEN_PATH_PATH = '/api/tauri/archive/session/open/path'
 
 interface ArchivedListPayload {
   archivedSessionIds: string[]

@@ -9,6 +9,6 @@ import { ofetch } from "dsh-tauri/client";
 import type { FetchOptions } from "dsh-tauri/client";
 
 /** @method get */
-export function getTurnEnd(params?: Types.GetApiDesktopDshTauriNotificationTurnEndQuery, options?: FetchOptions) {
-  return ofetch<Types.GetApiDesktopDshTauriNotificationTurnEndResponse>("/api/desktop/dsh-tauri-notification/turn-end", { method: "get", params, ...options });
+export function getTurnEnd(params?: Types.GetApiTauriNotificationTurnEndQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriNotificationTurnEndResponse>("/api/tauri/notification/turn-end", { method: "get", params, ...options });
 }

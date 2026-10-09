@@ -160,13 +160,13 @@ describe('编排骨架', () => {
 })
 
 /** 只声明 GET 的代表路由（`packages/dsh-tauri-pet/src/host/server/index.ts`）。 */
-const GET_ONLY_PATH = '/api/desktop/dsh-tauri-pet/session/stream'
+const GET_ONLY_PATH = '/api/tauri/pet/session/stream'
 
 /** 只声明 POST 的代表路由（`packages/dsh-tauri-rightclick/src/host/server/index.ts`）。 */
-const POST_ONLY_PATH = '/api/desktop/dsh-tauri-rightclick/open/url'
+const POST_ONLY_PATH = '/api/tauri/rightclick/open/url'
 
 /** 仓库内不存在的插件 id，用于证明「路由缺失」而非「鉴权失败」或「会话缺失」。 */
-const UNMOUNTED_PATH = '/api/desktop/dsh-tauri-unmounted-probe/ping'
+const UNMOUNTED_PATH = '/api/tauri/unmounted-probe/ping'
 
 describe('共享路由契约', () => {
   /** 复用 globalSetup 的共享宿主；`also` 默认已覆盖 GET 与 POST 两个代表路由。 */

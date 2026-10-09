@@ -97,7 +97,7 @@ describe('desktop H3 request boundary', () => {
 
   it('rejects cross-origin writes and malformed origins, allows same-origin and headless writes', async () => {
     const { base } = await activate()
-    for (const origin of ['http://evil.example', 'null', 'not-a-url']) {
+    for (const origin of ['http://evil.example', 'null', 'not-a-url', '']) {
       const response = await fetch(`${base}/api/demo`, { method: 'POST', headers: { origin } })
       expect(response.status).toBe(403)
       expect(await response.json()).toEqual({ error: 'cross-origin-request' })
@@ -112,7 +112,7 @@ describe('desktop H3 request boundary', () => {
     Object.defineProperty(event, 'runtime', { value: { node: { req: request } } })
     event.context.__host_instance = { context: {}, options: undefined }
     const next = vi.fn()
-    expect(await guard(event, next)).toEqual({ error: '变更操作仅限本机（127.0.0.1）调用' })
+    expect(await guard(event, next)).toEqual({ error: 'Change operation is limited to local machine (127.0.0.1) calls only' })
     expect(event.res.status).toBe(403)
     expect(next).not.toHaveBeenCalled()
   })

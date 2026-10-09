@@ -1,8 +1,8 @@
 import { defineWebServer } from 'dsh-h3'
-import { desktopRequestGuard } from 'dsh-tauri'
+import { guard } from 'dsh-tauri'
 import turnEnd from './routes/turn-end/get'
 
 export const server = defineWebServer((app) => {
-  app.use(desktopRequestGuard)
-  app.get('/api/desktop/dsh-tauri-notification/turn-end', turnEnd)
+  app.use(guard)
+  app.get('/api/tauri/notification/turn-end', turnEnd)
 })

@@ -13,8 +13,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, inject, it } from 'vitest'
 
-const OPEN_URL_PATH = '/api/desktop/dsh-tauri-rightclick/open/url'
-const OPEN_PATH_PATH = '/api/desktop/dsh-tauri-rightclick/open/path'
+const OPEN_URL_PATH = '/api/tauri/rightclick/open/url'
+const OPEN_PATH_PATH = '/api/tauri/rightclick/open/path'
 
 interface OperationResult {
   ok?: boolean

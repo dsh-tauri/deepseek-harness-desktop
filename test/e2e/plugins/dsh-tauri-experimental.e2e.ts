@@ -17,8 +17,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { launchDshBrowser, newDshPage } from '../support/browser'
 
-const SUMMARY_PATH = '/api/desktop/dsh-tauri-experimental/summary'
-const LIVE_PATH = '/api/desktop/dsh-tauri-experimental/live'
+const SUMMARY_PATH = '/api/tauri/experimental/summary'
+const LIVE_PATH = '/api/tauri/experimental/live'
 
 /** 插件自有数据目录（`$DSH_HOME/<feature>`，账本与私有快照仓都在其下）。 */
 const FEATURE_DIR = 'dsh-tauri-experimental'
