@@ -223,8 +223,11 @@ rem Re-entry guard: DSH_PNPM, or the first pnpm found on PATH, may itself be a s
 rem that resolves back through PATH into this file; forwarding twice would exec the
 rem two shims into each other forever and the installer child would never exit.
 rem Armed once here, before either forward, and checked on entry: a re-entered shim
-rem goes straight to the bundled pnpm.
-if "%DSH_PNPM_SHIM_GUARD%"=="1" goto :after_user
+rem goes straight to the bundled pnpm. That escape hatch only exists while the bundle
+rem does, so a missing bundle keeps user resolution alive; otherwise a nested pnpm
+rem call -- a `pnpm run` script invoking pnpm again -- would inherit this variable
+rem from the caller and be told pnpm is not installed.
+if "%DSH_PNPM_SHIM_GUARD%"=="1" if exist "%PNPM_BIN%" goto :after_user
 set "DSH_PNPM_SHIM_GUARD=1"
 
 rem Use the exact user pnpm discovered by the desktop app.
@@ -322,17 +325,27 @@ if (-not $systemGitWorks -and $gitDir -and (Test-Path -LiteralPath (Join-Path $g
     $env:PATH = $gitDir + ';' + $env:PATH
 }}
 
-$useBundled = $env:DSH_PREFER_BUNDLED_PNPM -eq '1' -and (Test-Path -LiteralPath $pnpmBin -PathType Leaf)
+$hasBundled = Test-Path -LiteralPath $pnpmBin -PathType Leaf
+$useBundled = $env:DSH_PREFER_BUNDLED_PNPM -eq '1' -and $hasBundled
 
 # Re-entry guard: DSH_PNPM, or the first pnpm found on PATH, may itself be a shim
 # that resolves back through PATH into this file; forwarding twice would exec the
 # two shims into each other forever and the installer child would never exit.
-# Once forwarded, skip user resolution and use the bundled pnpm.
-if (-not $useBundled -and $env:DSH_PNPM_SHIM_GUARD -ne '1') {{
+# The guard only short-circuits user resolution while the bundled pnpm exists: with
+# no bundle it cannot end a forwarding chain either, and honouring it would break
+# legitimate nested calls (`pnpm run` scripts invoking pnpm again) by reporting an
+# installed pnpm as missing.
+if (-not $useBundled -and -not ($hasBundled -and $env:DSH_PNPM_SHIM_GUARD -eq '1')) {{
+    # The guard must not outlive this call: `$env:` writes are process-wide, so a
+    # forwarded pnpm would leave DSH_PNPM_SHIM_GUARD set in the caller's shell and
+    # send every later pnpm call straight to the bundled one. The cmd shim is
+    # immune through `setlocal`; PowerShell has no equivalent.
+    $guardBefore = $env:DSH_PNPM_SHIM_GUARD
+
     # Use the exact user pnpm discovered by the desktop app.
     if ($env:DSH_PNPM -and (Test-Path -LiteralPath $env:DSH_PNPM -PathType Leaf)) {{
         $env:DSH_PNPM_SHIM_GUARD = '1'
-        & $env:DSH_PNPM @args
+        try {{ & $env:DSH_PNPM @args }} finally {{ $env:DSH_PNPM_SHIM_GUARD = $guardBefore }}
         exit $LASTEXITCODE
     }}
 
@@ -343,7 +356,7 @@ if (-not $useBundled -and $env:DSH_PNPM_SHIM_GUARD -ne '1') {{
         Select-Object -First 1
     if ($userPnpm) {{
         $env:DSH_PNPM_SHIM_GUARD = '1'
-        & $userPnpm.Source @args
+        try {{ & $userPnpm.Source @args }} finally {{ $env:DSH_PNPM_SHIM_GUARD = $guardBefore }}
         exit $LASTEXITCODE
     }}
 }}
@@ -389,8 +402,10 @@ fi
 # that resolves back through PATH into this file (mise shims exec whatever `pnpm`
 # PATH resolves to). Forwarding twice would then exec the two shims into each
 # other forever, so the installer child never exits and the app hangs with no
-# output at all. Once forwarded, skip user resolution and use the bundled pnpm.
-if [ -z "$USE_BUNDLED" ] && [ "$DSH_PNPM_SHIM_GUARD" != "1" ]; then
+# output at all. Once forwarded, skip user resolution and use the bundled pnpm --
+# but only while that bundle exists: without it the guard cannot end the chain, and
+# it would break nested `pnpm run` scripts by claiming pnpm is not installed.
+if [ -z "$USE_BUNDLED" ] && ! {{ [ "$DSH_PNPM_SHIM_GUARD" = "1" ] && [ -f "$PNPM_BIN" ]; }}; then
   # Use the exact user pnpm discovered by the desktop app unless bundled was requested.
   if [ -n "$DSH_PNPM" ] && [ -x "$DSH_PNPM" ]; then
     DSH_PNPM_SHIM_GUARD=1
@@ -687,6 +702,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 回归：脚本内嵌套的 pnpm（`pnpm run` 再调 pnpm）会继承上一跳置位的重入
+    /// 保护变量。捆绑版缺失时保护无法终止转发链，只有回退用户 pnpm 才对——
+    /// 否则 `pnpm dev:desktop` 里的 `pnpm dev:plugins` 直接报 pnpm not found。
+    #[cfg(windows)]
+    #[test]
+    fn pnpm_cmd_shim_keeps_user_fallback_when_guard_set_without_bundle() {
+        let dir = temp_dir("pnpm-guard-no-bundle");
+        let selected = dir.join("selected pnpm.cmd");
+        std::fs::write(
+            &selected,
+            "@echo off\r\necho SELECTED_PNPM %*\r\nexit /b 37\r\n",
+        )
+        .unwrap();
+        let selected = dunce::canonicalize(&selected).unwrap();
+        let shim = dir.join("pnpm.cmd");
+        std::fs::write(
+            &shim,
+            build_pnpm_cmd_shim(&shim_paths_for(&dir.join("app"))),
+        )
+        .unwrap();
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let system32 = PathBuf::from(&system_root).join("System32");
+        let output = std::process::Command::new(system32.join("cmd.exe"))
+            .args(["/d", "/c"])
+            .arg(&shim)
+            .arg("probe-guard")
+            .env("PATH", &system32)
+            .env("SystemRoot", system_root)
+            .env("DSH_PNPM", &selected)
+            .env("DSH_PNPM_SHIM_GUARD", "1")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(37));
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("SELECTED_PNPM probe-guard"),
+            "unexpected stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// 两个变量同时存在且捆绑文件可用时，显式的捆绑策略必须优先。
     #[cfg(windows)]
     #[test]
@@ -808,6 +864,82 @@ mod tests {
         );
         assert!(stdout.contains("BUNDLED"), "unexpected stdout: {stdout:?}");
         assert!(!stdout.contains("SELECTED"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 回归：ps1 侧同样禁止在捆绑版缺失时按重入保护直落捆绑版。
+    #[cfg(windows)]
+    #[test]
+    fn pnpm_ps1_shim_keeps_user_fallback_when_guard_set_without_bundle() {
+        let dir = temp_dir("pnpm-ps1-guard-no-bundle");
+        let selected = dir.join("selected pnpm.cmd");
+        std::fs::write(&selected, "@echo off\r\necho SELECTED:%*\r\nexit /b 37\r\n").unwrap();
+        let shim = dir.join("pnpm.ps1");
+        std::fs::write(
+            &shim,
+            build_pnpm_ps1_shim(&shim_paths_for(&dir.join("app"))),
+        )
+        .unwrap();
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let powershell =
+            PathBuf::from(&system_root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let output = std::process::Command::new(powershell)
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&shim)
+            .arg("probe-guard")
+            .env("DSH_PNPM", &selected)
+            .env("DSH_PNPM_SHIM_GUARD", "1")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(37));
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("SELECTED:probe-guard"),
+            "unexpected stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 回归：`$env:` 写入是进程级的，转发后必须还原重入保护——否则同一次
+    /// PowerShell 会话里后续每个 pnpm 都直落捆绑版，捆绑缺失时误报未安装。
+    #[cfg(windows)]
+    #[test]
+    fn pnpm_ps1_shim_restores_reentry_guard_after_forwarding() {
+        let dir = temp_dir("pnpm-ps1-guard-restore");
+        let target = dir.join("target.cmd");
+        std::fs::write(&target, "@echo off\r\nexit /b 0\r\n").unwrap();
+        let shim = dir.join("pnpm.ps1");
+        std::fs::write(
+            &shim,
+            build_pnpm_ps1_shim(&shim_paths_for(&dir.join("app"))),
+        )
+        .unwrap();
+        let driver = dir.join("driver.ps1");
+        std::fs::write(
+            &driver,
+            format!(
+                "& '{}' probe\n'GUARD=[' + $env:DSH_PNPM_SHIM_GUARD + ']'\nexit 0\n",
+                shim.display()
+            ),
+        )
+        .unwrap();
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let powershell =
+            PathBuf::from(&system_root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let run = |guard: Option<&str>| {
+            let mut command = std::process::Command::new(&powershell);
+            command
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(&driver)
+                .env("DSH_PNPM", &target)
+                .env_remove("DSH_PNPM_SHIM_GUARD");
+            if let Some(guard) = guard {
+                command.env("DSH_PNPM_SHIM_GUARD", guard);
+            }
+            String::from_utf8_lossy(&command.output().unwrap().stdout).into_owned()
+        };
+        assert!(run(None).contains("GUARD=[]"), "guard not dropped");
+        assert!(run(Some("0")).contains("GUARD=[0]"), "guard not restored");
         let _ = std::fs::remove_dir_all(dir);
     }
 
