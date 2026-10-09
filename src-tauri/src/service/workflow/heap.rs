@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use crate::config::HARNESS_HEAP_MAX_MB;
+use crate::config::{HARNESS_HEAP_MAX_MB, HARNESS_HEAP_MIN_MB};
 
 const AUTO_HEAP_MIN_MB: u64 = 2048;
 
@@ -210,7 +210,12 @@ pub(crate) fn effective_heap_limit_mb(configured: Option<u32>) -> Option<u32> {
 /// 意义——此时错误页才是正确的归宿。翻倍而不是加固定值，是为了让「自动值刚好不够」
 /// 与「用户填得太小」两种情形都能一次跨过去。
 pub(super) fn next_heap_limit_mb(current: u32) -> Option<u32> {
-    let next = current.saturating_mul(2).min(HARNESS_HEAP_MAX_MB);
+    // 下限也要钳：设置归一化只接受 HARNESS_HEAP_MIN_MB..=MAX，而 `current` 可能是
+    // NODE_OPTIONS 里继承来的小值（实测 256 会翻成 512）。写回一个被归一化拒绝的值，
+    // 重启后子进程仍拿旧上限，于是同一场景再崩一次、再走一遍恢复，来回空转。
+    let next = current
+        .saturating_mul(2)
+        .clamp(HARNESS_HEAP_MIN_MB, HARNESS_HEAP_MAX_MB);
     (next > current).then_some(next)
 }
 
@@ -267,6 +272,10 @@ mod tests {
     #[test]
     fn recovery_doubles_the_effective_limit_and_stops_at_the_cap() {
         assert_eq!(next_heap_limit_mb(1600), Some(3200));
+        // 继承来的小上限：翻倍后必须落进设置可写区间，否则写回会被归一化拒绝。
+        assert_eq!(next_heap_limit_mb(256), Some(HARNESS_HEAP_MIN_MB));
+        assert_eq!(next_heap_limit_mb(600), Some(1200));
+        assert_eq!(next_heap_limit_mb(300), Some(HARNESS_HEAP_MIN_MB));
         assert_eq!(next_heap_limit_mb(8192), Some(16384));
         assert_eq!(next_heap_limit_mb(AUTO_HEAP_MAX_MB as u32), Some(HARNESS_HEAP_MAX_MB));
         // 已经顶到用户可填的最大值：再抬没有意义，调用方应落到错误页

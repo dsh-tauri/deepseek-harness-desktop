@@ -253,11 +253,19 @@ export const harness = defineStore({
       })
       if (limitMb === null || exitToken !== bootToken)
         return
+      // 查询期间用户可能已经点了别的动作（`openBrowser` 之类不推 bootToken，只占忙态）：
+      // 这时写设置再 restart() 会被 restart 自己挡回来，用户只看到一条「已抬高上限」
+      // 的通知却没有重启，等于报了个假结果。复核一次再动手。
+      if (this.busyAction !== null)
+        return
       try {
         await setting.update({ harnessMaxHeapMb: limitMb })
         // 写设置是异步的，期间用户可能已经点了「停止」：shutdown 会推进 bootToken，
         // 此时再重启就是把用户刚停掉的服务又拉起来。
         if (exitToken !== bootToken)
+          return
+        // 写入也是异步的：这里再复核一次忙态，避免通知发出后 restart 空转。
+        if (this.busyAction !== null)
           return
         notifyHeapRecovery(limitMb)
         await this.restart()

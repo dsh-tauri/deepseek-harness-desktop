@@ -34,7 +34,11 @@ function deferred() {
 }
 
 /** 记录每次 invoke，并按命令给出一条「能跑完一轮 boot」的应答 */
-function stubRuntime(recoveryLimitMb: number | null, onUpdateConfig?: () => Promise<void>) {
+function stubRuntime(
+  recoveryLimitMb: number | null,
+  onUpdateConfig?: () => Promise<void>,
+  onQueryLimit?: () => Promise<void>,
+) {
   let healthChecks = 0
   invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'proxy_health_check') {
@@ -55,6 +59,7 @@ function stubRuntime(recoveryLimitMb: number | null, onUpdateConfig?: () => Prom
       return 16384
     }
     if (command === 'get_heap_recovery_limit_mb') {
+      await onQueryLimit?.()
       return recoveryLimitMb
     }
     if (command === 'update_app_config') {
@@ -150,6 +155,26 @@ describe('harness heap OOM recovery', () => {
     expect(harness.status).toBe('error')
     expect(harness.heapOomHint).toContain('16384 MB')
     expect(harness.heapOomHint).toContain('8234')
+  })
+
+  it('does not claim a recovery when another busy action takes over while the limit is queried', async () => {
+    const entered = deferred()
+    const gate = deferred()
+    stubRuntime(16384, undefined, async () => {
+      entered.resolve()
+      await gate.promise
+    })
+
+    const exit = harness.handleProcessExit({ pid: 42, exitCode: 134 })
+    await entered.promise
+    // `openBrowser` 这类动作不推 bootToken，只占忙态：写设置再 restart 会被挡回来，
+    // 用户却已经看到「已抬高上限」的通知，等于报了个假结果。
+    harness.busyAction = 'openBrowser'
+    gate.resolve()
+    await exit
+
+    expect(callsOf('update_app_config')).toHaveLength(0)
+    expect(callsOf('launch_harness')).toHaveLength(0)
   })
 
   it('does not relaunch the service when the user stops it while the new limit is being written', async () => {
