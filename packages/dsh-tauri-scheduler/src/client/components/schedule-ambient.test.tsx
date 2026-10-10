@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { SessionListState } from 'dsh-tauri/client'
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react'
+import { Alarm, Clock, Icon } from 'dsh-tauri-ui/client'
 import { defineStore, useStore } from 'dsh-tauri/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { requestTaskDeletion } from '../service/deletion'
@@ -150,7 +151,15 @@ describe('ambient shared catalog surfaces', () => {
     expect(loadScheduler).not.toHaveBeenCalled()
   })
 
-  it('marks scheduled execution sessions from the public durable catalog without run history and preserves reminder facts', async () => {
+  it('marks scheduled execution sessions with Clock and active reminders with Alarm without losing durable origin or reminder facts', async () => {
+    const glyphs = render(
+      <>
+        <Icon as={Alarm} />
+        <Icon as={Clock} />
+      </>,
+    )
+    const [alarm, clock] = Array.from(glyphs.container.querySelectorAll('svg'), icon => icon.innerHTML)
+    expect(alarm).not.toBe(clock)
     const sessions = defineStore({ state: () => ({
       ids: ['execution', 'plain'],
       byId: {
@@ -170,6 +179,7 @@ describe('ambient shared catalog surfaces', () => {
       </div>,
     )
     expect(view.getByText('ambient.mark.origin.aria').textContent).toBe('ambient.mark.origin.aria')
+    expect(view.container.querySelector('[data-session-schedule-mark] svg')!.innerHTML).toBe(clock)
     expect(view.container.querySelectorAll('[data-session-schedule-mark]')).toHaveLength(1)
     expect(view.queryByRole('region')).toBeNull()
     await click(view.getByText('ambient.mark.origin.aria'))
@@ -178,10 +188,16 @@ describe('ambient shared catalog surfaces', () => {
     await patchCatalog({ tasks: [ambientTask('reminder', { sessionId: 'execution', nextRunAt: '2026-10-10T09:05:00Z' })], runs: [], loading: true, error: 'History unavailable' })
     expect(view.container.querySelectorAll('[data-session-schedule-mark]')).toHaveLength(1)
     expect(view.getByText('ambient.mark.aria:1').textContent).toBe('ambient.mark.aria:1')
+    expect(view.container.querySelector('[data-session-schedule-mark] svg')!.innerHTML).toBe(alarm)
+    expect(view.container.querySelector('[data-session-schedule-mark] svg')!.getAttribute('width')).toBe('16')
     expect(within(view.getByRole('region', { name: 'ambient.list.aria' })).getByText('Task reminder').textContent).toBe('Task reminder')
-    await patchCatalog({ tasks: [], loading: false, error: '' })
+    await patchCatalog({ tasks: [ambientTask('reminder', { sessionId: 'execution', enabled: false })], loading: false, error: '' })
+    expect(view.container.querySelector('[data-session-schedule-mark] svg')!.innerHTML).toBe(clock)
     expect(view.getByText('ambient.mark.origin.aria').textContent).toBe('ambient.mark.origin.aria')
     expect(view.queryByRole('region')).toBeNull()
+    await patchCatalog({ tasks: [] })
+    expect(view.container.querySelector('[data-session-schedule-mark] svg')!.innerHTML).toBe(clock)
+    expect(view.getByText('ambient.mark.origin.aria').textContent).toBe('ambient.mark.origin.aria')
 
     view.rerender(<SessionScheduleMark {...props} sessionId="plain" />)
     expect(view.container.childElementCount).toBe(0)
