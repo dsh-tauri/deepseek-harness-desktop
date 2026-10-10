@@ -62,6 +62,19 @@ async function rejectPage(response: ReturnType<typeof deferred<HistoryPage>>, er
 }
 
 describe('deliveryHistory rendering and request contract', () => {
+  it('keeps the normal timeline to one time and instruction instead of duplicate delivery metadata', async () => {
+    vi.mocked(loadTaskHistory).mockResolvedValueOnce(pageFixture([deliveryFixture('compact')]))
+    const view = await renderHistory()
+    const row = view.getByRole('listitem')
+    expect(row.querySelectorAll('time')).toHaveLength(1)
+    expect(within(row).getByText('Prompt compact')).not.toBeNull()
+    expect(view.queryByText('delivery.this-session · triggerSchedule')).toBeNull()
+    expect(row.textContent).not.toContain('history.scheduled')
+    expect(row.textContent).not.toContain('history.delivered')
+    expect(row.textContent).not.toContain('history.open')
+    expect(view.queryByRole('button', { name: 'refresh' })).toBeNull()
+  })
+
   it('accepts its first page after StrictMode effect replay', async () => {
     const response = deferred<HistoryPage>()
     vi.mocked(loadTaskHistory).mockImplementation(() => response.promise)
@@ -83,18 +96,13 @@ describe('deliveryHistory rendering and request contract', () => {
     await resolvePage(response, pageFixture([deliveryFixture('reminder'), runFixture('run')]))
     const records = view.getAllByRole('listitem')
     expect(records).toHaveLength(2)
-    expect(within(records[0]!).getByText('delivery.this-session · triggerSchedule').textContent).toBe('delivery.this-session · triggerSchedule')
     expect(within(records[0]!).getByText('Prompt reminder').textContent).toBe('Prompt reminder')
-    expect(within(records[1]!).getByText('delivery.new-session · triggerManual').textContent).toBe('delivery.new-session · triggerManual')
     expect(within(records[1]!).getByText('Prompt run').textContent).toBe('Prompt run')
-    expect(within(records[1]!).getByText('failed').textContent).toBe('failed')
     expect(within(records[1]!).getByText('Run failed').textContent).toBe('Run failed')
-    const format = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' })
-    expect(within(records[0]!).getByText(`history.scheduled: ${format.format(new Date('2030-01-02T01:00:00.000Z'))}`).textContent).toContain('history.scheduled: ')
-    expect(within(records[0]!).getByText(`history.delivered: ${format.format(new Date('2030-01-02T01:00:02.000Z'))}`).textContent).toContain('history.delivered: ')
-    expect(within(records[1]!).getByText(`history.scheduled: ${format.format(new Date('2030-01-02T02:00:00.000Z'))}`).textContent).toContain('history.scheduled: ')
-    expect(within(records[1]!).getByText(`startedAt: ${format.format(new Date('2030-01-02T02:00:03.000Z'))}`).textContent).toContain('startedAt: ')
-    expect(within(records[1]!).getByText(`history.finished: ${format.format(new Date('2030-01-02T02:00:07.000Z'))}`).textContent).toContain('history.finished: ')
+    const format = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })
+    expect(records.map(record => record.querySelector('time')!.dateTime)).toEqual(['2030-01-02T01:00:00.000Z', '2030-01-02T02:00:00.000Z'])
+    expect(records.map(record => record.querySelector('time')!.textContent)).toEqual(['2030-01-02T01:00:00.000Z', '2030-01-02T02:00:00.000Z'].map(at => format.format(new Date(at))))
+    expect(records.map(record => record.querySelectorAll('time').length)).toEqual([1, 1])
     expect(view.queryByText('loading')).toBeNull()
   })
 
@@ -112,8 +120,8 @@ describe('deliveryHistory rendering and request contract', () => {
   it('falls back to the original timestamp when the configured timezone cannot be formatted', async () => {
     vi.mocked(loadTaskHistory).mockResolvedValueOnce(pageFixture([deliveryFixture('reminder')]))
     const view = await renderHistory({ timeZone: 'Invalid/Timezone' })
-    expect(view.getByText('history.scheduled: 2030-01-02T01:00:00.000Z').textContent).toBe('history.scheduled: 2030-01-02T01:00:00.000Z')
-    expect(view.getByText('history.delivered: 2030-01-02T01:00:02.000Z').textContent).toBe('history.delivered: 2030-01-02T01:00:02.000Z')
+    expect(view.container.querySelector('time')!.textContent).toBe('2030-01-02T01:00:00.000Z')
+    expect(view.container.querySelectorAll('time')).toHaveLength(1)
   })
 
   it.each([
@@ -275,7 +283,9 @@ describe('deliveryHistory request lifetime isolation', () => {
       .mockImplementationOnce(() => fresh.promise)
     const view = await renderHistory()
     await click(view, 'history.more')
-    await click(view, 'refresh')
+    await act(async () => {
+      view.rerender(<DeliveryHistory {...view.props} refreshKey="fresh-receipt" />)
+    })
     await resolvePage(fresh, pageFixture([deliveryFixture('fresh-first')]))
     await resolvePage(older, pageFixture([deliveryFixture('stale-older')], { nextBefore: 'stale-cursor' }))
     expect(view.getAllByRole('listitem')).toHaveLength(1)

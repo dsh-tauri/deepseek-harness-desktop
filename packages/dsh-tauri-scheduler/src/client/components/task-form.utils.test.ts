@@ -228,6 +228,21 @@ describe('taskFormInput', () => {
 })
 
 describe('datetime form conversion', () => {
+  it('reads and writes an absolute task instant in the chosen zone instead of the device zone', () => {
+    expect(localDateTime('2030-05-06T07:08:09.000Z', 'Asia/Tokyo')).toBe('2030-05-06T16:08:09')
+    expect(absoluteDateTime('2030-05-06T16:08:09', 'Asia/Tokyo')).toBe('2030-05-06T07:08:09.000Z')
+    expect(localDateTime('2030-05-06T07:08:09.125Z', 'Asia/Tokyo')).toBe('2030-05-06T16:08:09.125')
+    expect(absoluteDateTime('2030-05-06T16:08:09.125', 'Asia/Tokyo')).toBe('2030-05-06T07:08:09.125Z')
+  })
+
+  it('rejects skipped wall time and chooses only the earlier repeated instant', () => {
+    expect(absoluteDateTime('2030-03-10T02:30:00', 'America/New_York')).toBe('')
+    expect(absoluteDateTime('2030-11-03T01:30:00', 'America/New_York')).toBe('2030-11-03T05:30:00.000Z')
+    expect(absoluteDateTime('2030-02-30T12:00:00', 'UTC')).toBe('')
+    expect(absoluteDateTime('2030-05-06T07:08:09', 'Invalid/Zone')).toBe('')
+    expect(absoluteDateTime('0050-05-06T07:08:09', 'UTC')).toBe('0050-05-06T07:08:09.000Z')
+  })
+
   it('shows local datetime components with seconds for an absolute instant', () => {
     const instant = new Date(2030, 4, 6, 7, 8, 9).toISOString()
     expect(localDateTime(instant)).toBe('2030-05-06T07:08:09')

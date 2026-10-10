@@ -1,4 +1,6 @@
+import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RegisterEffect } from 'dsh-tauri/client'
+import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ScheduleCatalogAction } from '../components/schedule-catalog-action'
 import { ScheduleDeletionOverlay } from '../components/schedule-deletion-overlay'
@@ -117,6 +119,23 @@ afterEach(() => {
 })
 
 describe('ambient public registration lifecycle', () => {
+  it('keeps its deletion overlay alongside the official native schedule entry without stealing its id', () => {
+    const core = new SlotCore()
+    const root = core.register({ name: 'root', children: { 'shell.overlay': { kind: 'list', scope: 'root' } } }, (props: PropsRenderSlots<'shell.overlay'>) => props.renderSlot('shell.overlay', {}))
+    cleanups.push(root)
+    const native = core.register({ name: 'shell.overlay', id: 'schedule.delete-toast' }, () => null)
+    cleanups.push(native)
+    const slots = {
+      spec: core.specDynamic.bind(core),
+      inject: (name: string, setup: () => () => void) => core.specDynamic(name) ? setup() : () => {},
+      register: core.register.bind(core),
+    }
+    const dispose = mount({ slots })
+    expect(core.entriesOfSlot('shell.overlay').map(entry => entry.options.id)).toEqual(['schedule.delete-toast', 'dsh-tauri-scheduler.delete-toast'])
+    dispose()
+    expect(core.entriesOfSlot('shell.overlay').map(entry => entry.options.id)).toEqual(['schedule.delete-toast'])
+  })
+
   it('registers exact public entries and the state-only turn definition', () => {
     const host = runtime()
     mount(host.context)
@@ -126,7 +145,7 @@ describe('ambient public registration lifecycle', () => {
       ['conversation.session.header.utilities', 'schedule-catalog', -5, 'dsh-tauri-scheduler', ScheduleCatalogAction],
       ['sidebar.session.row.leading', 'schedule-mark', 10, 'dsh-tauri-scheduler', SessionScheduleMark],
       ['sidebar.session.row.hover', 'schedule-tasks', 10, 'dsh-tauri-scheduler', SessionScheduleHover],
-      ['shell.overlay', 'schedule.delete-toast', undefined, 'dsh-tauri-scheduler', ScheduleDeletionOverlay],
+      ['shell.overlay', 'dsh-tauri-scheduler.delete-toast', undefined, 'dsh-tauri-scheduler', ScheduleDeletionOverlay],
     ])
     expect(console.warn).not.toHaveBeenCalled()
     host.active.get('schedule-created')!.entry.inject!('owner').openTaskDetail!('created-task')
@@ -177,7 +196,7 @@ describe('ambient public registration lifecycle', () => {
     expect(host.active.has('schedule-created')).toBe(false)
     expect(host.active.has('schedule-tasks')).toBe(false)
     expect(host.active.has('schedule-catalog')).toBe(true)
-    expect(host.active.has('schedule.delete-toast')).toBe(true)
+    expect(host.active.has('dsh-tauri-scheduler.delete-toast')).toBe(true)
     expect(console.warn).toHaveBeenCalledWith('[scheduler ambient] uiConversation.events.register unavailable; created turn cards disabled.')
     expect(console.warn).toHaveBeenCalledWith('[scheduler ambient] Public seat sidebar.session.row.hover incompatible; expected list/root.')
   })

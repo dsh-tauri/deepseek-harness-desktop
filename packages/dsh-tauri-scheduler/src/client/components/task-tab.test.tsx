@@ -41,8 +41,13 @@ vi.mock('./task-form', () => ({
     observed.form(props)
     return (
       <section aria-label="form projection">
-        <button type="button" disabled={props.disabled} onClick={() => props.onSaved(taskFixture({ id: 'saved-task', sessionId: 'session-b' }))}>save projection</button>
-        <button type="button" onClick={props.onClose}>close projection</button>
+        {props.feedback}
+        <div hidden={props.view === 'records'}>
+          <button type="button" disabled={props.disabled} onClick={() => props.onSaved(taskFixture({ id: 'saved-task', sessionId: 'session-b' }))}>save projection</button>
+          <button type="button" onClick={props.onClose}>close projection</button>
+          {props.recommendations}
+        </div>
+        {props.history}
       </section>
     )
   },
@@ -163,7 +168,10 @@ function lastForm(): FormProps {
   return observed.form.mock.lastCall![0]
 }
 
-function lastHistory(): HistoryProps {
+async function lastHistory(view: Awaited<ReturnType<typeof renderTab>>): Promise<HistoryProps> {
+  await act(async () => {
+    fireEvent.click(view.getByRole('tab', { name: 'detail.records' }))
+  })
   expect(observed.history).toHaveBeenCalled()
   return observed.history.mock.lastCall![0]
 }
@@ -215,7 +223,7 @@ describe('taskTab fresh reads and retained editing snapshot', () => {
     expect(lastForm().task).toEqual(cached)
     expect(view.getByRole('heading', { name: 'Task A' }).textContent).toBe('Task A')
     expect(view.queryByText('Fresh task name')).toBeNull()
-    expect(lastHistory()).toMatchObject({ taskId: 'task-a', refreshKey: '2030-01-03T12:00:00.000Z', timeZone: 'Asia/Shanghai' })
+    expect(await lastHistory(view)).toMatchObject({ taskId: 'task-a', refreshKey: '2030-01-03T12:00:00.000Z', timeZone: 'Asia/Shanghai' })
   })
 
   it('does not treat a pre-mount successful catalog read as the required fresh missing answer', async () => {
@@ -313,7 +321,7 @@ describe('taskTab fresh reads and retained editing snapshot', () => {
     expect(view.getByRole('heading', { name: 'Task A' }).textContent).toBe('Task A')
     expect(lastForm().task).toEqual(cached)
     expect(lastForm().disabled).toBe(true)
-    expect(lastHistory().taskId).toBe('task-a')
+    expect((await lastHistory(view)).taskId).toBe('task-a')
     expect(bindings.read('session-a', tab)).toBeUndefined()
   })
 
@@ -343,7 +351,7 @@ describe('taskTab navigation and draft binding', () => {
     bindings.write('session-a', tab, { id: 'task-b', sessionId: 'session-b' })
     const view = await renderTab(tab, bindings)
     expect(lastForm().task?.id).toBe('task-a')
-    expect(lastHistory().taskId).toBe('task-a')
+    expect((await lastHistory(view)).taskId).toBe('task-a')
     expect(bindings.read('session-a', tab)).toEqual({ id: 'task-a', sessionId: 'session-a' })
     expect(view.getByRole('heading', { name: 'Task A' }).textContent).toBe('Task A')
   })
@@ -372,7 +380,7 @@ describe('taskTab navigation and draft binding', () => {
     expect(view.getByRole('heading', { name: 'Task B' }).textContent).toBe('Task B')
     expect(lastForm().task).toEqual(second)
     expect(lastForm().task).not.toBe(second)
-    expect(lastHistory().taskId).toBe('task-b')
+    expect((await lastHistory(view)).taskId).toBe('task-b')
     expect(view.taskBindings.read('session-a', next)).toEqual({ id: 'task-b', sessionId: undefined })
     expect(getOptions).toHaveBeenCalledTimes(2)
   })
@@ -411,7 +419,7 @@ describe('taskTab navigation and draft binding', () => {
     vi.mocked(getOptions).mockRejectedValueOnce(new Error('Options read failed'))
     const view = await renderTab()
     expect(view.getByRole('alert').textContent).toBe('Options read failed')
-    expect(lastHistory().taskId).toBe('task-a')
+    expect((await lastHistory(view)).taskId).toBe('task-a')
     expect(observed.form).not.toHaveBeenCalled()
     expect(view.taskBindings.read('session-a', view.tab)).toEqual({ id: 'task-a', sessionId: undefined })
     expect(view.tab.actions.close).not.toHaveBeenCalled()
@@ -449,7 +457,10 @@ describe('taskTab deletion feedback and live session feeds', () => {
     const view = await renderTab()
     expect(view.tab.actions.close).not.toHaveBeenCalled()
     await act(async () => {
-      fireEvent.click(view.getByRole('button', { name: 'delete' }))
+      fireEvent.click(view.getByRole('button', { name: 'detail.more' }))
+    })
+    await act(async () => {
+      fireEvent.click(view.getByRole('menuitem', { name: 'delete' }))
     })
     expect(store.deletion.pendingTask).toEqual(task)
     expect(view.tab.actions.close).not.toHaveBeenCalled()
@@ -479,23 +490,26 @@ describe('taskTab deletion feedback and live session feeds', () => {
   })
 
   it('updates inherited session availability from real subscription feeds without a catalog reload', async () => {
-    const task = taskFixture({ delivery: 'this-session', sessionId: 'session-a', workspaceId: undefined, permission: undefined, provider: undefined, model: undefined, reasoningEffort: undefined })
+    const task = taskFixture({ delivery: 'this-session', sessionId: 'session-b', workspaceId: undefined, permission: undefined, provider: undefined, model: undefined, reasoningEffort: undefined })
     vi.mocked(getTasks).mockResolvedValue(tasksReply([task]))
-    const view = await renderTab()
+    const view = await renderTab(tabFixture({ params: { id: 'task-a', sessionId: 'session-b' }, revision: 1 }))
+    await act(async () => {
+      view.sessions.publish(sessionsFixture({ ids: ['session-b' as SessionId], byId: { ['session-b' as SessionId]: { ...sessionsFixture().byId['session-a' as SessionId], id: 'session-b' as SessionId } } }))
+    })
     const link = view.getByRole('button', { name: 'session.link: Session A' }) as HTMLButtonElement
     expect(link.disabled).toBe(false)
     vi.mocked(view.props.openHistorySession).mockResolvedValueOnce({ ok: false, error: 'Session open failed' })
     await act(async () => {
       fireEvent.click(link)
     })
-    expect(view.props.openHistorySession).toHaveBeenCalledExactlyOnceWith('session-a')
+    expect(view.props.openHistorySession).toHaveBeenCalledExactlyOnceWith('session-b')
     expect(view.getByRole('alert').textContent).toBe('Session open failed')
     await act(async () => {
-      view.workspaces.publish(workspacesFixture({ archivedSessionIds: ['session-a' as SessionId] }))
+      view.workspaces.publish(workspacesFixture({ archivedSessionIds: ['session-b' as SessionId] }))
     })
     expect((view.getByRole('button', { name: 'session.link: Session A' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(lastForm().workspaces.archivedSessionIds).toEqual(['session-a'])
-    expect(lastHistory().workspaces.archivedSessionIds).toEqual(['session-a'])
+    expect(lastForm().workspaces.archivedSessionIds).toEqual(['session-b'])
+    expect((await lastHistory(view)).workspaces.archivedSessionIds).toEqual(['session-b'])
     expect(getTasks).toHaveBeenCalledTimes(1)
     expect(getHistory).toHaveBeenCalledExactlyOnceWith({ limit: 100 })
   })

@@ -6,9 +6,12 @@ import { ScheduleDeletionOverlay } from '../components/schedule-deletion-overlay
 import { ScheduleTurnCard } from '../components/schedule-turn-card'
 import { SessionScheduleHover } from '../components/session-schedule-hover'
 import { SessionScheduleMark } from '../components/session-schedule-mark'
+import { PLUGIN_ID } from '../constants'
 import { locale } from '../locales'
 import { scheduleTurnDefinition } from '../service/schedule-turn'
 import { store } from '../store'
+
+const DELETION_OVERLAY_ID = `${PLUGIN_ID}.delete-toast`
 
 interface AmbientSlotSpec {
   readonly kind: string
@@ -114,5 +117,5 @@ export const ambientFeature = defineRegister<ClientContext>((controller, ctx, ad
   }, 'session', ScheduleCatalogAction)
   registerSeat({ name: 'sidebar.session.row.leading', id: 'schedule-mark', order: 10, locale: locale.NS }, 'root', SessionScheduleMark)
   registerSeat({ name: 'sidebar.session.row.hover', id: 'schedule-tasks', order: 10, locale: locale.NS }, 'root', SessionScheduleHover)
-  registerSeat({ name: 'shell.overlay', id: 'schedule.delete-toast', locale: locale.NS }, 'root', ScheduleDeletionOverlay)
+  registerSeat({ name: 'shell.overlay', id: DELETION_OVERLAY_ID, locale: locale.NS }, 'root', ScheduleDeletionOverlay)
 })

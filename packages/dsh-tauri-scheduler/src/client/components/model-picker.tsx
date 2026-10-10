@@ -3,7 +3,7 @@ import type { ReactElement } from 'react'
 import type { Translate } from '../locales/index.types'
 import type { ModelCatalogFailure, ModelOption } from '../types'
 import { ChevronDown, Chip, Icon, Menu } from 'dsh-tauri-ui/client'
-import { groupBy, useEventListener } from 'dsh-tauri/client'
+import { groupBy, useEventListener, useWatchImmediate } from 'dsh-tauri/client'
 import { useState } from 'react'
 
 type Pane = 'root' | 'model' | 'effort'
@@ -33,6 +33,7 @@ export function ModelPicker({
   modelKey,
   reasoningEffort,
   onSelection,
+  disabled,
 }: {
   readonly t: Translate
   readonly models: readonly ModelOption[]
@@ -40,9 +41,14 @@ export function ModelPicker({
   readonly modelKey: string
   readonly reasoningEffort: string
   readonly onSelection: (modelKey: string, reasoningEffort: string) => void
+  readonly disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<Pane>('root')
+  useWatchImmediate(disabled, () => {
+    if (disabled)
+      setOpen(false)
+  })
   const selected = models.find(item => `${item.provider}::${item.model}` === modelKey)
   const reasoning = selected?.reasoning
   const effectiveEffort = reasoningEffort === 'none'
@@ -123,6 +129,8 @@ export function ModelPicker({
       : undefined
 
   const onSelect = (id: string): void => {
+    if (disabled)
+      return
     if (id === 'pane:model') {
       setPane('model')
       return
@@ -141,7 +149,7 @@ export function ModelPicker({
 
   return (
     <Menu
-      open={open}
+      open={open && !disabled}
       autoFocus
       portal
       side="top"
@@ -155,8 +163,9 @@ export function ModelPicker({
       }}
       anchor={(
         <Chip
+          disabled={disabled}
           variant="composerTrigger"
-          open={open}
+          open={open && !disabled}
           aria-label={selected === undefined
             ? t('trigger.selectAria')
             : effortLabel === undefined

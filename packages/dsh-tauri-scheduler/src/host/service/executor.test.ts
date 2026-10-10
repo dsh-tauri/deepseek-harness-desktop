@@ -1,12 +1,25 @@
+import type { TurnEndReason, UserMessage } from '@deepseek-ai/dsh-session'
 import type { HostContext, SchedulerRun, SchedulerTask } from '../types'
 import type { SetupAgentLike } from '../utils/agent-runtime.types'
 import type { SessionEventLike } from './executor.utils'
 import { mkdir } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { Context } from '@deepseek-ai/cordis'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { SessionId, SessionLogOffset, SessionStore } from '@deepseek-ai/dsh-session'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { apply } from '../apply'
 import { resetWriteQueue } from '../config/runtime'
+import { registerSessionOrigin } from '../events/session-origin'
 import { server } from '../server'
 import { executor } from './executor'
 import { runs } from './runs'
+import { scheduler } from './scheduler'
+
+const localRequire = createRequire(import.meta.url)
+const platformRequire = createRequire(localRequire.resolve('@deepseek-ai/dsh-api-session-controller'))
+const { SessionProjectionRegistry } = platformRequire('@deepseek-ai/dsh-session-projection')
+const schemaModule = platformRequire('zod')
 
 vi.mock('node:fs/promises', async importOriginal => ({
   ...await importOriginal<typeof import('node:fs/promises')>(),
@@ -31,6 +44,7 @@ const taskFixture: SchedulerTask = {
 }
 
 const disposers: Array<() => void> = []
+const contexts: Context[] = []
 const records = new Map<string, SchedulerRun>()
 
 interface AgentInput {
@@ -41,7 +55,7 @@ interface AgentInput {
 }
 
 interface RunControl {
-  session: { id: string, seq: number, snapshotEvents: ReturnType<typeof vi.fn> }
+  session: { id: string, seq: number, snapshotEvents: () => readonly SessionEventLike[] }
   agentContext: object
   followup: ReturnType<typeof vi.fn>
   cancel: ReturnType<typeof vi.fn>
@@ -49,7 +63,7 @@ interface RunControl {
   failConvergence: (error: unknown) => void
 }
 
-function installHost() {
+function installHost(nativeSessions?: SessionStore) {
   const controls: RunControl[] = []
   const listeners = new Set<(target: unknown, event: SessionEventLike) => void>()
   const stopWatch = vi.fn()
@@ -61,7 +75,7 @@ function installHost() {
   const workspace = { path: '/tmp/ws', status: vi.fn(async () => 'ok'), attachSession: vi.fn(async () => {}) }
   const getWorkspace = vi.fn((id: string) => id === 'ws-1' ? workspace : undefined)
   const runtime = {
-    createUserMessage: vi.fn((input: unknown) => ({ runtime: 'host', input })),
+    createUserMessage: vi.fn<(input: Parameters<typeof createUserMessage>[0]) => unknown>(input => ({ runtime: 'host', input })),
     installModelSelection: vi.fn<(agentCtx: unknown, selection: unknown) => () => void>(() => () => {}),
     setApprovalPolicy: vi.fn(),
   }
@@ -76,7 +90,9 @@ function installHost() {
   }
   const create = vi.fn(async (input: AgentInput) => {
     const events: SessionEventLike[] = []
-    const session = { id: input.sessionId, seq: 0, snapshotEvents: vi.fn(() => events) }
+    const nativeSession = nativeSessions?.create(SessionId(input.sessionId), { meta: input.meta })
+    const memorySession = { id: input.sessionId, seq: 0, snapshotEvents: vi.fn(() => events) }
+    const session = nativeSession ?? memorySession
     const agentContext = Object.defineProperty({}, 'agent', {
       get(): never {
         throw new Error('cannot get property "agent" without inject')
@@ -92,19 +108,29 @@ function installHost() {
       events.push(event)
       for (const listener of listeners) listener(session, event)
     }
-    const followup = vi.fn(() => {
-      session.seq += 1
-      emit({ seq: session.seq, type: 'turn/start', data: {} })
+    const followup = vi.fn((message: UserMessage) => {
+      if (nativeSession) {
+        emit(nativeSession.append('turn/start', { turn: 0 }))
+        emit(nativeSession.append('user/message', message, { surfaceOp: 'append' }))
+        return
+      }
+      memorySession.seq += 1
+      emit({ seq: memorySession.seq, type: 'turn/start', data: {} })
     })
     const cancel = vi.fn()
     controls.push({
-      session,
+      session: session as RunControl['session'],
       agentContext,
       followup,
       cancel,
       converge: (reason = { kind: 'completed' }) => {
-        session.seq += 1
-        emit({ seq: session.seq, type: 'turn/end', data: { reason } })
+        if (nativeSession) {
+          emit(nativeSession.append('turn/end', { turn: 0, reason: reason as TurnEndReason }))
+        }
+        else {
+          memorySession.seq += 1
+          emit({ seq: memorySession.seq, type: 'turn/end', data: { reason } })
+        }
         releaseIdle()
       },
       failConvergence: rejectIdle,
@@ -149,8 +175,10 @@ beforeEach(() => {
   })
 })
 
-afterEach(() => {
+afterEach(async () => {
   disposers.splice(0).forEach(dispose => dispose())
+  for (const context of contexts.splice(0))
+    await context.fiber.dispose()
   resetWriteQueue()
   vi.useRealTimers()
   vi.unstubAllEnvs()
@@ -158,6 +186,98 @@ afterEach(() => {
 })
 
 describe('executor.run', () => {
+  it.each(['schedule', 'manual'] as const)('keeps %s execution origin in native session projections after replay and outside run history', async (trigger) => {
+    const context = new Context()
+    contexts.push(context)
+    const sessions = new SessionStore(context)
+    const projections = new SessionProjectionRegistry(context)
+    const stopOrigin = await registerSessionOrigin({
+      loader: { import: async () => schemaModule },
+      sessionProjections: projections,
+    })
+    const host = installHost(sessions)
+    host.runtime.createUserMessage.mockImplementation(createUserMessage)
+    const pending = executor.run(taskFixture, trigger, '2025-12-31T23:30:00.000Z')
+    await vi.advanceTimersByTimeAsync(0)
+    const control = host.controls[0]!
+    control.converge()
+    await expect(pending).resolves.toMatchObject({ ok: true, sessionId: control.session.id })
+
+    const session = sessions.get(SessionId(control.session.id))!
+    expect(session.header.origin).toBeUndefined()
+    expect(projections.snapshot(session).values).toMatchObject({ 'dsh-tauri-scheduler.origin': true })
+    const events = session.snapshotEvents()
+    const checkpoint = projections.checkpoint(session)
+    records.clear()
+    expect(projections.viewCheckpoint(checkpoint)).toMatchObject({ 'dsh-tauri-scheduler.origin': true })
+    expect(projections.restore({}, events, SessionLogOffset(0), session.header, SessionLogOffset(0)).snapshot.values).toMatchObject({ 'dsh-tauri-scheduler.origin': true })
+
+    const reminder = sessions.create(SessionId(`reminder-${trigger}`))
+    reminder.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'this-session reminder' }], source: { kind: 'schedule' } }), { surfaceOp: 'append' })
+    expect(projections.snapshot(reminder).values).toMatchObject({ 'dsh-tauri-scheduler.origin': false })
+    const fork = sessions.create(SessionId(`fork-${trigger}`), { seed: events, inheritedEventCount: SessionLogOffset(events.length), meta: { parentSession: session.id, isSeeded: true } })
+    expect(projections.snapshot(fork).values).toMatchObject({ 'dsh-tauri-scheduler.origin': false })
+    stopOrigin()
+    expect(projections.snapshot(session).values).not.toHaveProperty('dsh-tauri-scheduler.origin')
+  })
+
+  it('registers origin before starting the scheduler and owns late optional capability lifecycle', async () => {
+    const context = new Context()
+    contexts.push(context)
+    const register = vi.fn(() => vi.fn())
+    const start = vi.spyOn(scheduler, 'start').mockImplementation(() => {
+      expect(register).toHaveBeenCalledTimes(1)
+      return async () => {}
+    })
+    context.accessor('loader', { get: () => ({ import: vi.fn(async () => schemaModule) }) })
+    await context.plugin({ name: 'origin-host', apply(ctx) {
+      ctx.provide('tools', { register: vi.fn() })
+      ctx.provide('webServer', { register: () => () => {} })
+      ctx.provide('sessionProjections', { register })
+    } })
+    const mounted = await context.plugin({ name: 'scheduler-origin', inject: ['tools', 'webServer'], apply })
+    expect(start).toHaveBeenCalledTimes(1)
+    await mounted.dispose()
+    expect(register.mock.results[0]!.value).toHaveBeenCalledTimes(1)
+
+    const late = new Context()
+    contexts.push(late)
+    const stopOrigin = vi.fn()
+    const registerLate = vi.fn(() => stopOrigin)
+    const stopRuntime = vi.fn(async () => {})
+    start.mockImplementation(() => stopRuntime)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    late.accessor('loader', { get: () => ({ import: vi.fn(async () => schemaModule) }) })
+    await late.plugin({ name: 'late-origin-host', apply(ctx) {
+      ctx.provide('tools', { register: vi.fn() })
+      ctx.provide('webServer', { register: () => () => {} })
+    } })
+    const waiting = await late.plugin({ name: 'scheduler-late-origin', inject: ['tools', 'webServer'], apply })
+    expect(console.warn).toHaveBeenCalledWith('[scheduler origin] Public session projection unavailable; source marks disabled until declared.')
+    expect(start).toHaveBeenCalledTimes(2)
+    const provider = await late.plugin({ name: 'late-projections', apply(ctx) {
+      ctx.provide('sessionProjections', { register: registerLate })
+    } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(registerLate).toHaveBeenCalledTimes(1)
+    await provider.dispose()
+    expect(stopOrigin).toHaveBeenCalledTimes(1)
+    expect(stopRuntime).not.toHaveBeenCalled()
+    await waiting.dispose()
+    expect(stopRuntime).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails safe when native origin projection registration is unavailable', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const register = vi.fn()
+    const dispose = await registerSessionOrigin({ loader: { import: vi.fn(async () => {
+      throw new Error('schema unavailable')
+    }) }, sessionProjections: { register } })
+    expect(register).not.toHaveBeenCalled()
+    expect(console.warn).toHaveBeenCalledWith('[scheduler origin] Public session projection unavailable; source marks disabled.', expect.objectContaining({ message: 'schema unavailable' }))
+    expect(() => dispose()).not.toThrow()
+  })
+
   it('定时运行保存实际到期时间，startedAt 使用启动时间', async () => {
     const host = installHost()
     const pending = executor.run(taskFixture, 'schedule', '2025-12-31T23:30:00.000Z')

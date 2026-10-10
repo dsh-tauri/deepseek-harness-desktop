@@ -4,6 +4,7 @@ import type { SCHEDULE_KINDS } from '../../shared/constants'
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     schedule: { kind: 'schedule' } & ContextFormed
+    scheduler: { kind: 'scheduler', taskId: string, runId: string, scheduledFor: string }
   }
 }
 

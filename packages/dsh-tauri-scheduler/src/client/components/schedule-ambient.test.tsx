@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
+import type { SessionListState } from 'dsh-tauri/client'
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react'
+import { defineStore, useStore } from 'dsh-tauri/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { requestTaskDeletion } from '../service/deletion'
 import { deleteTask, loadScheduler } from '../service/scheduler'
@@ -86,6 +88,8 @@ describe('ambient shared catalog surfaces', () => {
     await click(trigger)
     const menu = within(document.body).getByRole('menu')
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(trigger.querySelector('svg')!.getAttribute('width')).toBe('16')
+    expect(trigger.querySelector('span[aria-hidden="true"]')).toBeNull()
     expect(within(menu).getAllByRole('menuitem').map(item => item.getAttribute('aria-label'))).toEqual([
       'ambient.open:Task overdue',
       'delete Task overdue',
@@ -99,6 +103,23 @@ describe('ambient shared catalog surfaces', () => {
     })
     expect(within(document.body).queryByRole('menu')).toBeNull()
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(loadScheduler).not.toHaveBeenCalled()
+  })
+
+  it('updates an opened catalog deadline without refetching and stops its clock when closed', async () => {
+    store.scheduler.$patch({ tasks: [ambientTask('soon', { nextRunAt: '2026-10-10T09:00:02Z' }), ambientTask('later', { nextRunAt: '2026-10-10T10:00:00Z' })] })
+    const view = render(<ScheduleCatalogAction sessionId="owner" openTaskDetail={vi.fn()} t={ambientTranslate} />)
+    await click(view.getByRole('button', { name: 'ambient.trigger.other:2' }))
+    const menu = within(document.body).getByRole('menu')
+    expect(within(menu).queryByText('ambient.overdue')).toBeNull()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(within(menu).getByText('ambient.overdue')).not.toBeNull()
+    await act(async () => {
+      fireEvent.keyDown(menu, { key: 'Escape' })
+    })
+    expect(vi.getTimerCount()).toBe(0)
     expect(loadScheduler).not.toHaveBeenCalled()
   })
 
@@ -126,6 +147,48 @@ describe('ambient shared catalog surfaces', () => {
     expect(activate).not.toHaveBeenCalled()
     await patchCatalog({ tasks: [] })
     expect(view.queryByText('ambient.mark.aria:1')).toBeNull()
+    expect(loadScheduler).not.toHaveBeenCalled()
+  })
+
+  it('marks scheduled execution sessions from the public durable catalog without run history and preserves reminder facts', async () => {
+    const sessions = defineStore({ state: () => ({
+      ids: ['execution', 'plain'],
+      byId: {
+        execution: { projectionValues: { 'dsh-tauri-scheduler.origin': true } },
+        plain: { projectionValues: { 'dsh-tauri-scheduler.origin': false } },
+      },
+    }) })
+    function useSessions<Selected>(selector: (snapshot: SessionListState) => Selected): Selected {
+      return selector(useStore(sessions) as unknown as SessionListState)
+    }
+    const props = { sessionId: 'execution', t: ambientTranslate, useSessions }
+    const activate = vi.fn()
+    const view = render(
+      <div onClick={activate}>
+        <SessionScheduleMark {...props} />
+        <SessionScheduleHover sessionId="execution" t={ambientTranslate} />
+      </div>,
+    )
+    expect(view.getByText('ambient.mark.origin.aria').textContent).toBe('ambient.mark.origin.aria')
+    expect(view.container.querySelectorAll('[data-session-schedule-mark]')).toHaveLength(1)
+    expect(view.queryByRole('region')).toBeNull()
+    await click(view.getByText('ambient.mark.origin.aria'))
+    expect(activate).not.toHaveBeenCalled()
+
+    await patchCatalog({ tasks: [ambientTask('reminder', { sessionId: 'execution', nextRunAt: '2026-10-10T09:05:00Z' })], runs: [], loading: true, error: 'History unavailable' })
+    expect(view.container.querySelectorAll('[data-session-schedule-mark]')).toHaveLength(1)
+    expect(view.getByText('ambient.mark.aria:1').textContent).toBe('ambient.mark.aria:1')
+    expect(within(view.getByRole('region', { name: 'ambient.list.aria' })).getByText('Task reminder').textContent).toBe('Task reminder')
+    await patchCatalog({ tasks: [], loading: false, error: '' })
+    expect(view.getByText('ambient.mark.origin.aria').textContent).toBe('ambient.mark.origin.aria')
+    expect(view.queryByRole('region')).toBeNull()
+
+    view.rerender(<SessionScheduleMark {...props} sessionId="plain" />)
+    expect(view.container.childElementCount).toBe(0)
+    await act(async () => {
+      sessions.$patch({ ids: ['plain'], byId: { execution: { projectionValues: { 'dsh-tauri-scheduler.origin': false } }, plain: { projectionValues: { 'dsh-tauri-scheduler.origin': true } } } })
+    })
+    expect(view.getByText('ambient.mark.origin.aria').textContent).toBe('ambient.mark.origin.aria')
     expect(loadScheduler).not.toHaveBeenCalled()
   })
 

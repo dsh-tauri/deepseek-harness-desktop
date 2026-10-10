@@ -13,7 +13,7 @@ export function TaskTabTitle({ sessionId, useTabInfo, taskBindings, t }: PropsRu
   const task = params && !params.draft ? tasks.find(item => item.id === params.id) : undefined
   return (
     <>
-      <Icon as={Clock} size={16} />
+      <Icon as={Clock} size={16} className="shrink-0 text-secondary" />
       <span>{params?.draft ? t('createDialogTitle') : task?.name ?? t('editDialogTitle')}</span>
     </>
   )

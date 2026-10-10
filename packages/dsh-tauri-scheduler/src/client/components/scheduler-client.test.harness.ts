@@ -12,9 +12,11 @@ export function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-export const translate: Translate = (key, params) => key === 'history.pruned'
-  ? `${key}:days=${params?.days};records=${params?.records}`
-  : key
+export const translate: Translate = (key, params) => key === 'picker.locale'
+  ? 'en-US'
+  : key === 'history.pruned'
+    ? `${key}:days=${params?.days};records=${params?.records}`
+    : key
 
 export function optionsFixture(overrides: Partial<SchedulerOptions> = {}): SchedulerOptions {
   return {

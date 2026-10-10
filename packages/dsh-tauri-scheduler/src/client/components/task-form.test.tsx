@@ -1,7 +1,7 @@
 import type { SessionId } from 'dsh-tauri/client'
 // @vitest-environment jsdom
 import type { ComponentProps } from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTask, updateTask } from '../service/scheduler'
@@ -55,11 +55,99 @@ async function select(label: string, option: string): Promise<void> {
     fireEvent.click(screen.getByRole('button', { name: label }))
   })
   await act(async () => {
-    fireEvent.click(screen.getByText(option, { exact: true }))
+    fireEvent.click(screen.getByRole('menuitem', { name: option }))
   })
 }
 
+describe('taskForm official detail layout', () => {
+  it('places the editable name and compact instruction before the run-time rows with a separate save footer', () => {
+    const view = renderForm()
+    const name = view.getByLabelText('taskName')
+    const instruction = view.getByPlaceholderText('schedulePromptPlaceholder')
+    const runtime = view.getByRole('region', { name: 'detail.runtime' })
+    expect(name.classList.contains('text-[20px]')).toBe(true)
+    expect(instruction.classList.contains('min-h-[112px]')).toBe(true)
+    expect(instruction.classList.contains('max-h-[160px]')).toBe(true)
+    expect(instruction.compareDocumentPosition(runtime) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    const footer = view.getByRole('button', { name: 'save' }).closest('footer')!
+    expect(footer).not.toBeNull()
+    expect(runtime.parentElement?.contains(footer)).toBe(false)
+    expect(footer.textContent).toContain('detail.unsaved')
+  })
+
+  it('keeps an unsaved rule and its independent resources when changing to records and back', async () => {
+    const view = renderForm({ id: 'task-detail', history: <p>Saved history</p> })
+    fireEvent.change(view.getByLabelText('taskName'), { target: { value: 'Unsaved rule' } })
+    view.rerender(<TaskForm {...view.props} view="records" history={<p>Saved history</p>} />)
+    expect(view.getByRole('tabpanel').textContent).toContain('Saved history')
+    expect(view.queryByRole('textbox', { name: 'taskName' })).toBeNull()
+    view.rerender(<TaskForm {...view.props} view="rule" />)
+    expect((view.getByLabelText('taskName') as HTMLInputElement).value).toBe('Unsaved rule')
+    await submit(view)
+    expect(vi.mocked(createTask).mock.calls[0]![0]).toMatchObject({ name: 'Unsaved rule', workspaceId: 'workspace-a', permission: 'workspace-write', provider: 'provider-a', model: 'model-a', reasoningEffort: 'high' })
+  })
+})
+
 describe('taskForm schedule editing', () => {
+  it('keeps the exact saved schedule when selecting the already selected repeat kind', async () => {
+    const schedule = { kind: 'custom', everyDays: 4, time: '16:45', anchor: '2030-05-01T05:06:07.000Z', timeZone: 'Pacific/Auckland' } as const
+    const view = renderForm({ task: taskFixture({ schedule }) })
+    await select('schedule', 'scheduleCustom')
+    fireEvent.change(view.getByLabelText('taskName'), { target: { value: 'Only rename' } })
+    await submit(view)
+    expect(vi.mocked(updateTask).mock.calls[0]![1].schedule).toEqual(schedule)
+  })
+
+  it('preserves one-shot milliseconds when editing the date but drops them only when editing the clock', async () => {
+    const task = taskFixture({ schedule: { kind: 'once', at: '2030-05-06T07:08:09.125Z', timeZone: 'Asia/Tokyo' } })
+    const view = renderForm({ task })
+    fireEvent.change(view.getByLabelText('picker.date'), { target: { value: '2030-05-07' } })
+    await submit(view)
+    expect(vi.mocked(updateTask).mock.calls[0]![1].schedule).toEqual({ kind: 'once', at: '2030-05-07T07:08:09.125Z', timeZone: 'Asia/Tokyo' })
+    fireEvent.change(view.getByLabelText('scheduleTime'), { target: { value: '16:09:10' } })
+    await submit(view)
+    expect(vi.mocked(updateTask).mock.calls[1]![1].schedule).toEqual({ kind: 'once', at: '2030-05-07T07:09:10.000Z', timeZone: 'Asia/Tokyo' })
+  })
+
+  it('does not move a later DST-fold instant when reselecting the current date or zone', async () => {
+    const schedule = { kind: 'once', at: '2030-11-03T06:30:00.125Z', timeZone: 'America/New_York' } as const
+    const view = renderForm({ task: taskFixture({ schedule }) })
+    fireEvent.change(view.getByLabelText('picker.date'), { target: { value: '2030-11-03' } })
+    await act(async () => {
+      fireEvent.click(view.getByRole('button', { name: 'timeZone' }))
+    })
+    fireEvent.change(view.getByRole('searchbox', { name: 'picker.zoneSearch' }), { target: { value: 'America/New_York' } })
+    await act(async () => {
+      fireEvent.click(within(view.getByRole('menu')).getByTitle('America/New_York'))
+    })
+    fireEvent.change(view.getByLabelText('taskName'), { target: { value: 'No timing changes' } })
+    await submit(view)
+    expect(vi.mocked(updateTask).mock.calls[0]![1].schedule).toEqual(schedule)
+  })
+
+  it('updates runtime status from a fresh record without replacing an unsaved rule or its expected record', async () => {
+    const original = taskFixture()
+    const view = renderForm({ task: original })
+    fireEvent.change(view.getByLabelText('taskName'), { target: { value: 'Unsaved' } })
+    view.rerender(<TaskForm {...view.props} currentTask={{ ...original, enabled: false }} />)
+    expect(view.getByText('paused').textContent).toBe('paused')
+    expect((view.getByLabelText('taskName') as HTMLInputElement).value).toBe('Unsaved')
+    await submit(view)
+    expect(vi.mocked(updateTask).mock.calls[0]![2]).toEqual(original)
+  })
+
+  it('closes a portal control before a disabled or saving form can accept later selections', async () => {
+    const view = renderForm()
+    await act(async () => {
+      fireEvent.click(view.getByRole('button', { name: 'schedule' }))
+    })
+    expect(view.getByRole('menu')).not.toBeNull()
+    view.rerender(<TaskForm {...view.props} disabled />)
+    expect(view.queryByRole('menu')).toBeNull()
+    expect((view.getByRole('button', { name: 'timeZone' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByRole('button', { name: 'schedule' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('preserves a custom schedule anchor when editing its days and wall time', async () => {
     const view = renderForm({ task: taskFixture({ schedule: { kind: 'custom', everyDays: 4, time: '16:45', anchor: '2030-05-01T05:06:07.000Z', timeZone: 'Pacific/Auckland' } }) })
     fireEvent.change(view.getByRole('spinbutton', { name: 'scheduleEveryDays' }), { target: { value: '6' } })
@@ -72,7 +160,13 @@ describe('taskForm schedule editing', () => {
   it('preserves an interval anchor when editing its minutes and timezone', async () => {
     const view = renderForm({ task: taskFixture({ schedule: { kind: 'interval', everyMinutes: 17, anchor: '2030-05-01T05:06:07.000Z', timeZone: 'America/New_York' } }) })
     fireEvent.change(view.getByRole('spinbutton', { name: 'scheduleEveryMinutes' }), { target: { value: '23' } })
-    fireEvent.change(view.getByLabelText('timeZone'), { target: { value: 'Europe/Berlin' } })
+    await act(async () => {
+      fireEvent.click(view.getByRole('button', { name: 'timeZone' }))
+    })
+    fireEvent.change(view.getByRole('searchbox', { name: 'picker.zoneSearch' }), { target: { value: 'Europe/Berlin' } })
+    await act(async () => {
+      fireEvent.click(view.getByTitle('Europe/Berlin'))
+    })
     await submit(view)
     expect(vi.mocked(updateTask).mock.calls[0]![1].schedule).toEqual({ kind: 'interval', everyMinutes: 23, anchor: '2030-05-01T05:06:07.000Z', timeZone: 'Europe/Berlin' })
   })
@@ -80,6 +174,7 @@ describe('taskForm schedule editing', () => {
   it('retains all selected weekdays during unrelated edits and changes only the toggled days', async () => {
     const view = renderForm({ task: taskFixture() })
     expect((view.getByRole('checkbox', { name: 'dayMon' }) as HTMLInputElement).checked).toBe(true)
+    expect(view.getByRole('checkbox', { name: 'dayMon' }).classList.contains('w-[12px]')).toBe(true)
     expect((view.getByRole('checkbox', { name: 'dayWed' }) as HTMLInputElement).checked).toBe(true)
     expect((view.getByRole('checkbox', { name: 'dayFri' }) as HTMLInputElement).checked).toBe(true)
     fireEvent.change(view.getByLabelText('taskName'), { target: { value: 'Renamed weekly task' } })
@@ -268,7 +363,7 @@ describe('taskForm submission lifetime', () => {
     expect((view.getByLabelText('taskName') as HTMLInputElement).value).toBe('Unsaved task')
     expect((view.getByPlaceholderText('schedulePromptPlaceholder') as HTMLTextAreaElement).value).toBe('Unsaved multiline\ninstruction')
     expect((view.getByRole('spinbutton', { name: 'scheduleEveryDays' }) as HTMLInputElement).value).toBe('7')
-    expect((view.getByLabelText('timeZone') as HTMLInputElement).value).toBe('Pacific/Auckland')
+    expect(view.getByRole('button', { name: 'timeZone' }).title).toBe('Pacific/Auckland')
     expect(view.props.onSaved).not.toHaveBeenCalled()
     await submit(view)
     expect(createTask).toHaveBeenCalledTimes(2)
@@ -327,7 +422,9 @@ describe('taskForm submission lifetime', () => {
 
   it('never submits a form disabled by an inactive task owner', async () => {
     const view = renderForm({ task: taskFixture({ status: 'inactive', enabled: false }), disabled: true })
-    expect((view.getByRole('button', { name: 'save' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(view.queryByRole('button', { name: 'save' })).toBeNull()
+    expect(view.queryByRole('textbox', { name: 'taskName' })).toBeNull()
+    expect(view.getByText('task.inactive').textContent).toBe('task.inactive')
     await submit(view)
     expect(updateTask).not.toHaveBeenCalled()
     expect(view.props.onSaved).not.toHaveBeenCalled()

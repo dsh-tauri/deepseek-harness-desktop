@@ -2,7 +2,7 @@ import type { MenuEntry } from 'dsh-tauri-ui/client'
 import type { ReactElement } from 'react'
 import type { LocaleKey, Translate } from '../locales/index.types'
 import type { TaskView } from '../types'
-import { Action, ArrowUpRight, Card, CirclePause, CirclePlay, Comments, EllipsisVertical, Icon, Menu, Tag, Text, Toast, TrashBin, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
+import { Action, Card, CirclePause, CirclePlay, EllipsisVertical, Icon, Menu, Tag, Text, Toast, TrashBin, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
 import { cn } from 'dsh-tauri/client'
 import { useRef, useState } from 'react'
 import { requestTaskDeletion } from '../service/deletion'
@@ -66,11 +66,11 @@ export function TaskCard({ task, t, describe, nextRun, paused, onEdit }: TaskCar
           }}
         />
       </div>
-      <div style={{ flex: 1 }}>
-        <Card.Title className="flex items-center gap-[8px] text-[13px] leading-[18px]" title={task.name}>
-          <span title={t(`delivery.${task.delivery}`)} aria-label={t(`delivery.${task.delivery}`)}><Icon size={14} as={task.delivery === 'this-session' ? Comments : ArrowUpRight} /></span>
-          {task.name}
-        </Card.Title>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-[6px] min-w-0">
+          <Card.Title className="min-w-0 text-[13px] leading-[18px]" title={task.name}>{task.name}</Card.Title>
+          {task.delivery === 'this-session' ? <Tag variant="status" className="box-border shrink-0">{t('task.session')}</Tag> : null}
+        </div>
         <div className="flex items-center gap-[10px] min-w-0">
           <Card.Description className="flex-1 min-w-0 text-[12px] line-clamp-none truncate">
             {describe}
