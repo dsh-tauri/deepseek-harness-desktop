@@ -256,10 +256,8 @@ class CodexSession implements NativeSession {
       await transport.close(true)
       this.catalogProcesses.delete(transport)
     }
-    catch (error) {
-      if (failure && error !== failure)
-        throw new AggregateError([failure, error], failure.message)
-      throw error
+    catch {
+      // A reader that will not exit stays owned for honest disposal; it is never a catalog failure.
     }
     finally {
       signal.removeEventListener('abort', aborted)
@@ -402,7 +400,14 @@ class CodexSession implements NativeSession {
     }
     finally {
       this.requests.failAll(error)
-      await Promise.all([this.transport.close(), ...[...this.catalogProcesses].map(transport => transport.close())])
+      for (const transport of [this.transport, ...this.catalogProcesses]) {
+        try {
+          await transport.close()
+        }
+        catch {
+          // Termination is best effort: a stuck child must never fail plugin startup or teardown.
+        }
+      }
     }
   }
 

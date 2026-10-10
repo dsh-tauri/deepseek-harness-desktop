@@ -297,52 +297,37 @@ describe('codex native app-server contract', () => {
     expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
   })
 
-  it('does not retain a catalog when its reader cannot close', async () => {
-    let closeFails = true
+  it('keeps the session usable when a reader close is interrupted', async () => {
+    let hold = true
     const { fixture, catalogs } = codexProcess({ config: { model: 'chosen', model_reasoning_effort: 'low' }, models: [modelInfo('chosen')], intercept: (frame, child) => {
-      if (frame.method === 'model/list' && closeFails) {
+      if (frame.method === 'model/list' && hold)
         child.stdin.end.mockImplementationOnce(() => {})
-        child.kill.mockImplementation(() => true)
-      }
       return false
     } })
     const session = await open()
-    vi.useFakeTimers()
     const listed = session.models!(new AbortController().signal)
-    const rejected = expect(listed).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
-    await vi.advanceTimersByTimeAsync(4500)
-    await rejected
+    await vi.waitFor(() => expect(catalogs[0]?.stdin.end).toHaveBeenCalledOnce(), { timeout: 20_000 })
+    hold = false
     catalogs[0]!.exit(0)
-    closeFails = false
+    expect((await listed).defaultModel).toBe('chosen')
     const started = fixture.next(frame => frame.method === 'turn/start')
     const submitted = session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: 'low' })
     expect((await Promise.race([started, submitted]))?.params).toMatchObject({ model: 'chosen', effort: 'low' })
     completed(fixture)
     await submitted
-    expect(catalogs).toHaveLength(2)
+    await session.dispose()
     expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
-    await expect(session.dispose()).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
-    sessions.splice(sessions.indexOf(session), 1)
   })
 
-  it('retains ownership of a catalog reader that has not exited after termination', async () => {
-    const { fixture, catalogs } = codexProcess({ intercept: (frame, child) => {
-      if (frame.method === 'model/list') {
-        child.stdin.end.mockImplementationOnce(() => {})
-        child.kill.mockImplementation(() => true)
-      }
-      return false
-    } })
+  it('disposal survives a thread that refuses to terminate', async () => {
+    const { fixture } = codexProcess()
     const session = await open()
+    fixture.stdin.end.mockImplementationOnce(() => {})
+    fixture.kill.mockImplementation(() => true)
     vi.useFakeTimers()
-    const listed = session.models!(new AbortController().signal)
-    const rejected = expect(listed).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
-    await vi.advanceTimersByTimeAsync(4500)
-    await rejected
     const disposing = session.dispose()
-    sessions.splice(sessions.indexOf(session), 1)
-    await expect(disposing).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
-    catalogs[0]!.exit(0)
+    await vi.advanceTimersByTimeAsync(20_000)
+    await disposing
     expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
   })
 

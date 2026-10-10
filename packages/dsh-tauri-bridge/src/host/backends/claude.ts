@@ -321,7 +321,12 @@ class ClaudeSession implements NativeSession {
     this.withdrawApprovals(error)
     this.requests.failAll(error)
     this.active?.result.reject(error)
-    await this.transport.close(this.active === undefined)
+    try {
+      await this.transport.close(this.active === undefined)
+    }
+    catch {
+      // Termination is best effort: a stuck child must never fail plugin startup or teardown.
+    }
   }
 
   private control(request: Record<string, unknown>, signal?: AbortSignal, timeoutMs?: number): Promise<unknown> {

@@ -397,7 +397,12 @@ async function close(sessionId: string, owner?: Agent): Promise<void> {
     await pending.task.catch(() => undefined)
   const entry = runtime.sessions.get(sessionId)
   if (entry) {
-    await entry.session.dispose()
+    try {
+      await entry.session.dispose()
+    }
+    catch (error) {
+      getServerContext<HostContext>(server).logger?.warn?.('dsh-tauri-bridge: native process termination failed', error)
+    }
     if (runtime.sessions.get(sessionId) === entry)
       runtime.sessions.delete(sessionId)
     if (runtime.claims.get(keyOf(entry.binding)) === sessionId)
