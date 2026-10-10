@@ -48,11 +48,18 @@ export async function loadNativeModels(scope: NativeModelScope): Promise<NativeM
     if (current()) {
       const latest = nativeModel.$state.entries[scope.sessionId]!
       nativeModel.update(scope.sessionId, scope.scope, {
-        directory: { ...latest.directory, status: 'error', error: reason instanceof Error ? reason.message : String(reason) },
+        directory: { ...latest.directory, status: 'error', error: unreadableNativeRecord(reason) },
       })
     }
     return undefined
   }
+}
+
+function unreadableNativeRecord(reason: unknown): string {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  return /BRIDGE_NATIVE_TURN|No conversation found/.test(message)
+    ? 'BRIDGE_SESSION_UNRECOVERABLE: 原生会话记录已不存在，请新建会话。'
+    : message
 }
 
 export async function selectNativeModel(input: NativeModelScope & {

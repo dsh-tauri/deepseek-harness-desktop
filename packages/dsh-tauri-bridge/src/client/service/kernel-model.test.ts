@@ -140,6 +140,15 @@ describe('native model actions', () => {
     expect(nativeModel.$state.entries['session-a']?.directory).toMatchObject({ status: 'ready', error: null })
   })
 
+  it('a missing native conversation reports an actionable message instead of the raw server failure', async () => {
+    const scope = open()
+    vi.mocked(getModels).mockRejectedValueOnce(new Error('请求失败 (500): BRIDGE_NATIVE_TURN'))
+    await loadNativeModels(scope)
+    expect(nativeModel.$state.entries['session-a']?.directory).toMatchObject({ status: 'error', error: 'BRIDGE_SESSION_UNRECOVERABLE: 原生会话记录已不存在，请新建会话。', current: { provider: 'bridge/codex', model: 'gpt-5.4' } })
+    await loadNativeModels(scope)
+    expect(nativeModel.$state.entries['session-a']?.directory).toMatchObject({ status: 'ready', error: null })
+  })
+
   it('catalog backend mismatch remains an error rather than making another kernel selectable', async () => {
     const scope = open()
     vi.mocked(getModels).mockResolvedValue({ ...CATALOG, backend: 'claude' })

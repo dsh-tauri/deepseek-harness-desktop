@@ -567,6 +567,17 @@ describe('independent native worktree session setup', () => {
     expect(identity.resolve(parent.agent)).toEqual({ backend: 'codex', nativeSessionId: 'worktree-parent-codex', sessionId: parent.agent.id })
   }, 10_000)
 
+  it('reports a native conversation that no longer exists instead of opening a replacement', async () => {
+    const { handle, connection } = await conversation()
+    await session.remove(handle.agent.id, handle.agent)
+    expect(connection.dispose).toHaveBeenCalledOnce()
+    vi.mocked(createCodexSession).mockRejectedValueOnce(new Error('["No conversation found with session ID: gone-native"]'))
+    await expect(session.connect(handle.agent, new AbortController().signal)).rejects.toThrow('BRIDGE_SESSION_UNRECOVERABLE: 原生会话记录已不存在，请新建会话。')
+    expect(createCodexSession).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createCodexSession).mock.calls[1]![2]).toBe('worktree-parent-codex')
+    expect(runtime.sessions.size).toBe(0)
+  }, 10_000)
+
   it('rolls back a rejected native fork without reusing or restoring the parent native session', async () => {
     const { handle: parent, connection: original } = await conversation()
     const prefix = parent.agent.session.snapshotEvents()

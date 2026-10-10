@@ -183,8 +183,15 @@ export const session = defineService({
 
   async connect(agent: Agent, signal: AbortSignal): Promise<NativeSession> {
     const binding = identity.resolve(agent)
-    const entry = await open(agent, binding.backend, binding.nativeSessionId, signal)
-    return entry.session
+    try {
+      const entry = await open(agent, binding.backend, binding.nativeSessionId, signal)
+      return entry.session
+    }
+    catch (error) {
+      if (/BRIDGE_NATIVE_TURN|No conversation found/.test(error instanceof Error ? error.message : String(error)))
+        throw new Error('BRIDGE_SESSION_UNRECOVERABLE: 原生会话记录已不存在，请新建会话。')
+      throw error
+    }
   },
 
   validateComposition(agent: Agent): void {
