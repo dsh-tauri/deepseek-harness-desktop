@@ -1,6 +1,5 @@
 import type { Agent, AgentSetupCommit } from '@deepseek-ai/dsh-agent'
 import type { NativeSessionBridge } from 'dsh-tauri'
-import type { Binding, PendingHandoff } from '../types'
 import { resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { MessageId } from '@deepseek-ai/dsh-llm'
@@ -92,7 +91,76 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('handoff API', () => {
+  it('exposes only inheritance and checkout services after desktop agent tools are removed', () => {
+    expect(Object.keys(handoff).sort()).toEqual(['checkout', 'handback', 'inherit'])
+  })
+})
+
 describe('handoff.inherit', () => {
+  it.each(['codex', 'claude'] as const)('preserves the official %s fork binding without injecting a desktop handoff message', async (backend) => {
+    const packageId: string = 'dsh-session-current'
+    const kernel = await import(packageId) as typeof import('@deepseek-ai/dsh-session') & {
+      appendPluginRecord: (value: Session, type: 'plugin:dsh-tauri-bridge/kernel', data: { backend: 'codex' | 'claude', nativeSessionId: string, sessionId: string }) => number
+    }
+    const context = new Context()
+    try {
+      const sessions = new kernel.SessionStore(context)
+      const source = kernel.Session.create(kernel.SessionId('session-source'))
+      source.append('user/message', { id: MessageId('message-source'), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'source human conversation' }] }, { surfaceOp: 'append' })
+      kernel.appendPluginRecord(source, 'plugin:dsh-tauri-bridge/kernel', { backend, nativeSessionId: `native-source-${backend}`, sessionId: 'session-source' })
+      const prefix = source.snapshotEvents()
+      const followup = vi.fn()
+      const commit = vi.fn()
+      const sourceOptions = { provider: 'dsh-tauri-bridge', model: backend }
+      let target: Agent | undefined
+      const bridge: NativeSessionBridge = {
+        create: vi.fn(async (_source, createChild) => createChild()),
+        prepare: vi.fn(async (forkSource, agent, signal) => {
+          expect(forkSource).toBe(source)
+          expect(agent.session.header).toMatchObject({ cwd: resolve('worktrees/w1'), parentSession: 'session-source', isSeeded: true })
+          expect(agent.session.inheritedEventCount).toBe(2)
+          expect(agent.options).toEqual({ provider: 'dsh-tauri-bridge', model: backend })
+          expect(signal.aborted).toBe(false)
+          expect(kernel.appendPluginRecord(agent.session, 'plugin:dsh-tauri-bridge/kernel', { backend, nativeSessionId: `native-child-${backend}`, sessionId: 'session-target' })).toBe(3)
+          return { commit }
+        }),
+      }
+      const { created } = setup({
+        getAgent: id => id === 'session-source' ? { session: source, ctx: {}, options: sourceOptions } : undefined,
+        bridge,
+        create: async (options) => {
+          const session = sessions.prepare(kernel.SessionId(options.sessionId), options)
+          target = { id: session.id, session, ctx: context, options: { ...options.agentOptions }, followup } as unknown as Agent
+          const prepared = await options.setup(context, target)
+          prepared.commit()
+          return { agent: target }
+        },
+      })
+
+      expect(await handoff.inherit('session-source', 'session-target', resolve('worktrees/w1'))).toEqual({ ok: true, targetSessionId: 'session-target', seedLength: 2 })
+      expect(created).toHaveLength(1)
+      expect(created[0].seed).toEqual(prefix)
+      expect(created[0].agentOptions).toBe(sourceOptions)
+      expect(bridge.create).toHaveBeenCalledExactlyOnceWith(source, expect.any(Function))
+      expect(bridge.prepare).toHaveBeenCalledExactlyOnceWith(source, target, expect.any(AbortSignal))
+      expect(commit).toHaveBeenCalledTimes(1)
+      expect(target!.session.snapshotEvents().slice(2)).toEqual([
+        { seq: 2, time: expect.any(Number), type: 'session/end-seed', data: { inherited: true } },
+        { seq: 3, time: expect.any(Number), type: 'plugin:dsh-tauri-bridge/kernel', ignorable: true, data: { backend, nativeSessionId: `native-child-${backend}`, sessionId: 'session-target' } },
+      ])
+      expect(target!.session.deriveMessages().map(({ role, content }) => ({ role, content }))).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'source human conversation' }] },
+      ])
+      expect(source.snapshotEvents()).toEqual(prefix)
+      expect(followup).not.toHaveBeenCalled()
+      expect(pendingWorktreeTitles.size).toBe(0)
+    }
+    finally {
+      await context.fiber.dispose()
+    }
+  })
+
   it('composes the source preset without returning its id as an agent setup commit', async () => {
     const sourceContext = { preset: 'source' }
     const targetContext = { preset: 'target' }
@@ -664,6 +732,60 @@ describe('handoff.inherit', () => {
   })
 })
 
+describe('handoff.checkout', () => {
+  it('rejects removal when native handback preparation fails without publishing or queuing desktop followup', async () => {
+    const context = new Context()
+    try {
+      const sessions = new SessionStore(context)
+      const source = Session.create(SessionId('session-source'))
+      source.append('turn/start', { turn: 0 })
+      const followup = vi.fn()
+      const attachSession = vi.fn()
+      const save = vi.spyOn(checkoutContext, 'save')
+      let published: Agent | undefined
+      setup({
+        session: source,
+        workspace: { attachSession },
+        bridge: {
+          create: async (_source, createChild) => createChild(),
+          prepare: async () => {
+            throw new Error('BRIDGE_FORK_UNAVAILABLE: The native CLI cannot fork')
+          },
+        },
+        create: async (options) => {
+          const session = sessions.prepare(SessionId(options.sessionId), options)
+          const agent = { id: session.id, session, ctx: context, followup } as unknown as Agent
+          const prepared = await options.setup(context, agent)
+          prepared.commit()
+          published = agent
+          return { agent }
+        },
+      })
+      const checkout = vi.spyOn(worktree, 'checkout').mockImplementation(async (_input, options) => {
+        const result = await options!.beforeRemove!({ branch: 'feature-child', projectPath: resolve('local-project'), worktreePath: resolve('worktrees/w1') })
+        expect(result).toEqual({ ok: false, error: 'BRIDGE_FORK_UNAVAILABLE: The native CLI cannot fork' })
+        return result.ok
+          ? { ok: true, branch: 'feature-child', projectPath: resolve('local-project'), worktreePath: resolve('worktrees/w1') }
+          : { ok: false, error: `Failed to create the local handback session; the worktree was preserved: ${result.error}` }
+      })
+
+      expect(await handoff.checkout('session-source', 'hash/w1', 'feature-child', true)).toEqual({
+        ok: false,
+        error: 'Failed to create the local handback session; the worktree was preserved: BRIDGE_FORK_UNAVAILABLE: The native CLI cannot fork',
+      })
+      expect(checkout).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-source', worktree_hash_dirname: 'hash/w1', branch_name: 'feature-child' }, { carryStaged: true, beforeRemove: expect.any(Function) })
+      expect(published).toBeUndefined()
+      expect(attachSession).not.toHaveBeenCalled()
+      expect(save).not.toHaveBeenCalled()
+      expect(followup).not.toHaveBeenCalled()
+      expect(pendingWorktreeTitles.size).toBe(0)
+    }
+    finally {
+      await context.fiber.dispose()
+    }
+  })
+})
+
 describe('handoff.handback', () => {
   it('publishes the prepared native child before attaching it and saving checkout context', async () => {
     const context = new Context()
@@ -717,187 +839,5 @@ describe('handoff.handback', () => {
     finally {
       await context.fiber.dispose()
     }
-  })
-})
-
-describe('handoff.complete', () => {
-  it('removes an unpublished worktree child after native preparation fails and never queues followup', async () => {
-    const context = new Context()
-    try {
-      const sessions = new SessionStore(context)
-      const source = Session.create(SessionId('session-source'))
-      source.append('turn/start', { turn: 0 })
-      const remove = vi.spyOn(worktree, 'remove').mockResolvedValue({ ok: true, worktreePath: 'C:/worktrees/w1' })
-      const followup = vi.fn()
-      const attachSession = vi.fn()
-      const error = vi.fn()
-      let published: Agent | undefined
-      disposers.push(server({
-        agents: {
-          get: () => published,
-          create: async (options: any) => {
-            const session = sessions.prepare(SessionId(options.sessionId), options)
-            const agent = { session, ctx: context, followup } as unknown as Agent
-            const prepared = await options.setup(context, agent)
-            prepared?.commit()
-            published = agent
-            return { agent }
-          },
-        },
-        get: (key: string) => key === 'nativeSessionBridge'
-          ? {
-              create: async (_source: unknown, createChild: () => Promise<unknown>) => createChild(),
-              prepare: async () => {
-                throw new Error('BRIDGE_FORK_UNAVAILABLE: The native CLI cannot fork')
-              },
-            }
-          : undefined,
-        workspaceRegistry: { resolveByPath: async () => ({ attachSession }) },
-        logger: { error },
-        webServer: { register: () => () => {} },
-      } as never))
-      await handoff.complete({ sourceAgent: { session: source, ctx: context, options: {} }, targetSessionId: 'session-target', binding: { worktreePath: resolve('worktrees/w1'), projectPath: resolve('project') } as Binding })
-      expect(remove).toHaveBeenCalledExactlyOnceWith('session-target')
-      expect(followup).not.toHaveBeenCalled()
-      expect(attachSession).not.toHaveBeenCalled()
-      expect(published).toBeUndefined()
-      expect(error).toHaveBeenCalledExactlyOnceWith('create_worktree handoff failed for session-target: BRIDGE_FORK_UNAVAILABLE: The native CLI cannot fork')
-      expect(pendingWorktreeTitles.size).toBe(0)
-    }
-    finally {
-      await context.fiber.dispose()
-    }
-  })
-
-  it('retains a published child and worktree when workspace attachment fails after preparation', async () => {
-    const context = new Context()
-    try {
-      const sessions = new SessionStore(context)
-      const source = Session.create(SessionId('session-source'))
-      source.append('turn/start', { turn: 0 })
-      const remove = vi.spyOn(worktree, 'remove').mockResolvedValue({ ok: true, worktreePath: 'C:/worktrees/w1' })
-      const followup = vi.fn()
-      const commit = vi.fn()
-      const error = vi.fn()
-      let published: Agent | undefined
-      disposers.push(server({
-        agents: {
-          get: () => published,
-          create: async (options: any) => {
-            const session = sessions.prepare(SessionId(options.sessionId), options)
-            const agent = { session, ctx: context, followup } as unknown as Agent
-            const prepared = await options.setup(context, agent)
-            prepared.commit()
-            published = agent
-            return { agent }
-          },
-        },
-        get: (key: string) => key === 'nativeSessionBridge'
-          ? { create: async (_source: unknown, createChild: () => Promise<unknown>) => createChild(), prepare: async () => ({ commit }) }
-          : undefined,
-        workspaceRegistry: {
-          resolveByPath: async () => ({
-            attachSession: async () => {
-              throw new Error('workspace attachment failed')
-            },
-          }),
-        },
-        logger: { error },
-        webServer: { register: () => () => {} },
-      } as never))
-      await handoff.complete({ sourceAgent: { session: source, ctx: context, options: {} }, targetSessionId: 'session-target', binding: { worktreePath: resolve('worktrees/w1'), projectPath: resolve('project') } as Binding })
-      expect(commit).toHaveBeenCalledTimes(1)
-      expect(published?.session.id).toBe('session-target')
-      expect(remove).not.toHaveBeenCalled()
-      expect(followup).not.toHaveBeenCalled()
-      expect(error).toHaveBeenCalledExactlyOnceWith('create_worktree handoff failed for session-target: workspace attachment failed')
-      expect(pendingWorktreeTitles.size).toBe(0)
-    }
-    finally {
-      await context.fiber.dispose()
-    }
-  })
-
-  it('uses the pending source agent even when it is no longer registered', async () => {
-    const followup = vi.fn()
-    const create = vi.fn(async (_options: any) => ({ agent: { followup } }))
-    const sourceContext = { preset: 'source' }
-    const composeFrom = vi.fn(() => 'composed')
-    const composedPreset = vi.fn(() => 'composed')
-    const attachSession = vi.fn(async () => {})
-    disposers.push(server({
-      agents: { get: () => undefined, create },
-      get: (key: string) => key === 'agentPresets' ? { composedPreset, composeFrom } : undefined,
-      workspaceRegistry: { resolveByPath: async () => ({ attachSession }) },
-      webServer: { register: () => () => {} },
-    } as never))
-    await handoff.complete({
-      sourceAgent: { ...(sourceAgent() as object), ctx: sourceContext, options: { model: 'inherited' } },
-      targetSessionId: 'session-target',
-      binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding,
-    })
-    expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      sessionId: 'session-target',
-      seed: conversationEvents,
-      meta: expect.objectContaining({ cwd: 'C:/worktrees/w1', agentPreset: 'composed' }),
-      agentOptions: { model: 'inherited' },
-    }))
-    expect(composedPreset).toHaveBeenCalledWith(sourceContext)
-    const targetContext = { preset: 'target' }
-    expect(await create.mock.calls[0]![0].setup(targetContext)).toBeUndefined()
-    expect(composeFrom).toHaveBeenCalledExactlyOnceWith(targetContext, sourceContext)
-    expect(attachSession).toHaveBeenCalledWith('session-target')
-    expect(followup).toHaveBeenCalledTimes(1)
-  })
-
-  it('hands the inherited log to the worktree agent', async () => {
-    const followup = vi.fn()
-    const { created } = setup({ create: async () => ({ agent: { followup } }) })
-    const pending: PendingHandoff = {
-      sourceAgent: sourceAgent(),
-      targetSessionId: 'session-target',
-      binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding,
-    }
-
-    await handoff.complete(pending)
-
-    expect(created[0]).toMatchObject({
-      sessionId: 'session-target',
-      seed: conversationEvents,
-      inheritedEventCount: conversationEvents.length,
-      meta: {
-        cwd: 'C:/worktrees/w1',
-        parentSession: 'session-source',
-        isSeeded: true,
-        agentPreset: 'default',
-      },
-    })
-    expect(pendingWorktreeTitles.size).toBe(0)
-    expect(followup).toHaveBeenCalledTimes(1)
-    const followupMessage = followup.mock.calls[0][0]
-    expect(followupMessage).toMatchObject({
-      id: expect.stringMatching(/^message-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
-      role: 'user',
-      source: { kind: 'user' },
-    })
-    const text = followupMessage.content.map((block: any) => block.text).join('')
-    expect(text).toContain('is_worktree: true')
-    expect(text).toContain('Worktree path: C:/worktrees/w1')
-    expect(text).toContain('Project path: C:/project')
-    expect(text).toContain('The task has moved to this isolated worktree session.')
-  })
-
-  it('空会话直接调用工具时同样登记显式标题', async () => {
-    const followup = vi.fn()
-    setup({ create: async () => ({ agent: { followup } }) })
-    const pending: PendingHandoff = {
-      sourceAgent: sourceAgent(emptyEvents),
-      targetSessionId: 'session-target',
-      binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding,
-    }
-
-    await handoff.complete(pending)
-
-    expect([...pendingWorktreeTitles]).toEqual(['session-target'])
   })
 })

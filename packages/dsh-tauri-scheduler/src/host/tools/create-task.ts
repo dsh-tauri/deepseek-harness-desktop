@@ -8,7 +8,9 @@ const outputSchema = {
     ok: { type: 'boolean' },
     taskId: { type: 'string' },
     nextRunAt: nullableText,
+    task: { type: 'object', additionalProperties: true },
     error: { type: 'string' },
+    code: { type: 'string' },
   },
   required: ['ok'],
 }
@@ -19,10 +21,14 @@ export function createTaskTool(): any {
     description:
       'Create a scheduled task that runs a prompt automatically on a schedule. '
       + 'Use when the user asks to set up a daily, weekly, workday, or interval automation '
-      + '(e.g. "write a daily report every weekday at 9am"). The task runs in a fresh session.',
+      + '(e.g. "write a daily report every weekday at 9am"). Explicitly choose delivery: '
+      + 'this-session queues a reminder in the originating session using its existing resources; '
+      + 'new-session starts a separate agent run with its own workspace/permission/model. Do not impersonate another session.',
     parameters: {
       type: 'object',
       properties: {
+        delivery: { type: 'string', enum: ['this-session', 'new-session'], description: 'Required explicit delivery mode.' },
+        sessionId: { type: 'string', description: 'this-session only; omit to bind to the owning current initiator.' },
         name: { type: 'string', description: 'Task name, e.g. "Daily report".' },
         prompt: { type: 'string', description: 'The task instruction run in the scheduled session.' },
         schedule: scheduleParameters,
@@ -32,16 +38,16 @@ export function createTaskTool(): any {
         model: { type: 'string', description: 'Optional pinned model id (pair with provider).' },
         reasoningEffort: { type: 'string', description: 'Optional pinned reasoning effort id for the selected model.' },
       },
-      required: ['name', 'prompt', 'schedule'],
+      required: ['delivery', 'name', 'prompt', 'schedule'],
     },
     output: {
       schema: outputSchema,
-      render: (_args: unknown, value: any) => value.ok
-        ? textBlock(`✅ 定时任务已创建：${value.taskId}（下次运行 ${value.nextRunAt ?? '待计算'}）`)
-        : textBlock(`❌ 创建定时任务失败：${value.error}`),
+      render: (_args: unknown, value: unknown) => textBlock(JSON.stringify(value)),
     },
     async execute(args: any) {
       const result = await task.create({
+        delivery: args.delivery,
+        sessionId: args.sessionId,
         name: String(args.name ?? ''),
         prompt: String(args.prompt ?? ''),
         schedule: args.schedule,
@@ -52,8 +58,8 @@ export function createTaskTool(): any {
         reasoningEffort: args.reasoningEffort === undefined ? undefined : String(args.reasoningEffort),
       })
       if (!result.ok)
-        return { ok: false, error: result.error }
-      return { ok: true, taskId: result.task.id, nextRunAt: result.task.nextRunAt ?? null }
+        return result
+      return { ok: true, taskId: result.task.id, nextRunAt: result.task.nextRunAt ?? null, task: result.task }
     },
   }
 }

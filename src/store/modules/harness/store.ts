@@ -37,11 +37,13 @@ import { runtimeExitMessageKey, shouldAcceptRuntimeExit } from './runtime'
 import {
   attachStartupDiagnostics,
   checkHealthViaProxy,
+  consumePortConflictRestart,
   generateTimestampedUrl,
   internalPluginReason,
   notifyPatchEntryStrip,
   notifyPatchQuarantine,
   pollHarnessReadiness,
+  resetPortConflictRestarts,
   startupError,
 } from './utils'
 
@@ -225,11 +227,18 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
-      this.fail(message)
 
       const error = await attachStartupDiagnostics(new Error(message), true)
       if (exitToken !== bootToken)
         return
+      // 端口被占用而崩：重启换一个端口即可自愈，不该停在错误页等用户点重试。
+      if (consumePortConflictRestart(error.logLines ?? [])) {
+        console.warn('[Harness] port in use; restarting to pick another port')
+        await this.boot()
+        return
+      }
+
+      this.fail(message)
       await recovery.reviewStartupRecovery(
         error.logLines ?? error.logs ?? [],
         () => exitToken === bootToken,
@@ -428,6 +437,7 @@ export const harness = defineStore({
 
       this.serviceUrl = readyInfo.service_url
       this.iframeSrc = generateTimestampedUrl(readyInfo.service_url)
+      resetPortConflictRestarts()
       this.serviceHealthy = true
       this.serviceRunning = true
       this.status = 'ready'

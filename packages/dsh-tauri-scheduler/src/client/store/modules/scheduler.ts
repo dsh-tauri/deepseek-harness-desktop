@@ -11,6 +11,7 @@ export const scheduler = defineStore({
     error: '',
     refreshedAt: 0,
     loadToken: 0,
+    successfulReadToken: 0,
     readAt: 0,
     readIds: [],
   }),

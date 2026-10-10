@@ -68,7 +68,16 @@ jobs:
       # dsh-tauri-ui 的构建会重新生成并压缩已提交的 Tailwind 产物。若源码新增/删除了
       # utility 却漏提产物，运行时只会静默缺样式；显式检查工作树可在合并前阻断漂移。
       - name: Verify generated Tailwind CSS is current
+        id: tailwind_check
         run: git diff --exit-code -- packages/dsh-tauri-ui/src/client/styles/index.ts
+
+      - name: Upload regenerated Tailwind CSS on drift
+        if: failure() && steps.tailwind_check.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: generated-tailwind-css
+          path: packages/dsh-tauri-ui/src/client/styles/index.ts
+          if-no-files-found: error
 
       - name: Type check package exports
         run: pnpm exec tsc --noEmit
@@ -130,7 +139,7 @@ jobs:
       - name: Plugin L2 test (legacy core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts
+        run: node node_modules/vitest/vitest.mjs run --project plugin --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts --exclude test/e2e/plugins/dsh-tauri-scheduler.e2e.ts --exclude test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts
 
       - name: Mobile settings composition (legacy core)
         env:
@@ -154,7 +163,25 @@ jobs:
       - name: Host and migrated plugin contracts (current core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-scheduler.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts
+        run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts
+
+      - name: Unified scheduler host and right-sidebar contracts (current core)
+        id: scheduler_contracts
+        env:
+          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
+          DSH_SCHEDULER_DIAGNOSTICS_DIR: ${{ runner.temp }}/scheduler-diagnostics
+        run: |
+          for seed in 987 988 989 990 991; do
+            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-scheduler.e2e.ts test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts || exit $?
+          done
+
+      - name: Upload scheduler contract failure diagnostics
+        if: failure() && steps.scheduler_contracts.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: scheduler-contract-diagnostics
+          path: ${{ runner.temp }}/scheduler-diagnostics
+          if-no-files-found: error
 
   # 桌面端 L3 E2E（vitest + WebdriverIO）：
   # 驱动真实 Tauri 窗口，只能在 Windows 上跑（embedded WebDriver + WebView2）。
@@ -288,11 +315,13 @@ jobs:
       # 与下面的「Check startup regression stability」同形：`for` 必须以 `done` 收尾，
       # 且必须显式声明 working-directory —— 否则 cargo 会在仓库根目录执行、
       # 找不到 workspace（Cargo.toml 在 src-tauri/ 下）。
-      - name: Check plugin update cache stability
+      - name: Check plugin recovery and update cache stability
         shell: bash
         run: |
           for iteration in 1 2 3 4 5; do
             cargo test --all-features --locked service::plugin::update::tests:: -- --test-threads=1 || exit 1
+            cargo test --all-features --locked service::plugin::internal:: -- --test-threads=1 || exit 1
+            cargo test --all-features --locked service::plugin::install::diagnose:: -- --test-threads=1 || exit 1
           done
         working-directory: src-tauri
 

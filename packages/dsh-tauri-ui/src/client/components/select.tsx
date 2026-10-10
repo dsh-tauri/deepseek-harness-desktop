@@ -2,6 +2,7 @@
 import type { ButtonHTMLAttributes, ReactElement, ReactNode } from 'react'
 import type { ChipVariant } from './chip'
 import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useWatchImmediate } from 'dsh-tauri/client'
 import { useState } from 'react'
 import { Chip } from './chip'
 import { Icon } from './icon'
@@ -36,15 +37,22 @@ export function Select({
   chevron,
   label,
   onClick,
+  disabled,
   ...rest
 }: SelectProps): ReactElement {
   const [open, setOpen] = useState(false)
+  useWatchImmediate(disabled, () => {
+    if (disabled)
+      setOpen(false)
+  })
   const selected = options.find(option => option.value === value)
   return (
     <Menu
-      open={open}
+      open={open && !disabled}
       onClose={() => setOpen(false)}
       onSelect={(id) => {
+        if (disabled)
+          return
         setOpen(false)
         onChange(id)
       }}
@@ -55,7 +63,8 @@ export function Select({
       anchor={(
         <Chip
           variant={variant}
-          open={open}
+          disabled={disabled}
+          open={open && !disabled}
           aria-label={label}
           aria-haspopup="menu"
           aria-expanded={open}

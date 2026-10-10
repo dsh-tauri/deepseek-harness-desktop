@@ -1,7 +1,6 @@
 import { get, isString } from 'lodash-es'
-import { injectedCheckoutContexts, pendingHandoffs } from '../config/runtime'
+import { injectedCheckoutContexts } from '../config/runtime'
 import { checkoutContext } from '../service/checkout-context'
-import { handoff } from '../service/handoff'
 import { worktreeTitle } from '../service/title'
 import { worktree } from '../service/worktree'
 
@@ -18,12 +17,6 @@ export function handleSessionEvent(session: any, event: any): void {
     return
 
   void worktree.recover()
-
-  const handoffPending = pendingHandoffs.get(sessionId)
-  if (handoffPending) {
-    pendingHandoffs.delete(sessionId)
-    void handoff.complete(handoffPending)
-  }
 
   if (injectedCheckoutContexts.delete(sessionId))
     void checkoutContext.remove(sessionId)

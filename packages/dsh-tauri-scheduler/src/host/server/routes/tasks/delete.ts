@@ -13,7 +13,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<ActionResult>>(as
   const result = await task.remove(id)
   if (!result.ok) {
     event.res.status = 400
-    return { error: result.error }
+    return { ok: false, error: result.error, code: result.code }
   }
   return { ok: true }
 })

@@ -35,22 +35,25 @@ interface ExecuteOutcome {
 }
 
 export const executor = defineService({
-  async run(task: SchedulerTask, trigger: RunTrigger): Promise<ExecuteOutcome> {
+  async run(task: SchedulerTask, trigger: RunTrigger, scheduledFor?: string): Promise<ExecuteOutcome> {
     const ctx = getServerContext<HostContext>(server)
     const runId = `run-${randomUUID()}`
-    const scheduledFor = new Date().toISOString()
+    const startedAt = new Date().toISOString()
+    const dueAt = trigger === 'manual' ? startedAt : scheduledFor ?? task.nextRunAt ?? startedAt
     const sessionId = `task-${randomUUID()}`
+    const prompt = task.prompt
 
     await runs.save({
       id: runId,
       taskId: task.id,
       taskName: task.name,
+      prompt,
       trigger,
       status: 'running',
-      scheduledFor,
-      startedAt: scheduledFor,
+      scheduledFor: dueAt,
+      startedAt,
       sessionId,
-    })
+    }, structuredClone(task))
 
     let watched: SessionEventWatch | undefined
     try {
@@ -91,8 +94,8 @@ export const executor = defineService({
         const firstSeq = handle.agent.session.seq
         watched = watchSessionEvents(ctx, handle.agent.session, firstSeq)
         handle.agent.followup(runtime.createUserMessage({
-          content: [{ type: 'text', text: task.prompt }],
-          source: { kind: 'scheduler', taskId: task.id, runId, scheduledFor },
+          content: [{ type: 'text', text: prompt }],
+          source: { kind: 'scheduler', taskId: task.id, runId, scheduledFor: dueAt },
         }))
 
         const started = await waitForTurnStart(handle.agent.session, firstSeq)
@@ -113,7 +116,9 @@ export const executor = defineService({
           result = { status: 'failed', error: { code: 'cancel_convergence_timeout', message: '定时任务取消后未能在安全时限内停止。' } }
         }
         else {
-          await (ctx.sessions as { flush: (session: unknown) => Promise<unknown> }).flush(handle.agent.session)
+          const flushed = await (ctx.sessions as { flush: (session: unknown) => Promise<unknown> }).flush(handle.agent.session)
+          if (flushed === false)
+            throw new Error('定时任务会话日志保存失败。')
           const outcome = summarizeCollectedRun(watched?.events ?? [], handle.agent.session, firstSeq)
 
           const decision = decideRunOutcome({ started, timedOut, reason: outcome.reason })
@@ -254,10 +259,10 @@ async function settle(id: string, status: RunStatus, outcome: ExecuteOutcome): P
   })
 }
 
-function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    return Promise.race([
+    return await Promise.race([
       promise.then(() => true, () => false),
       new Promise<false>((resolve) => { timer = setTimeout(resolve, timeoutMs, false) }),
     ])

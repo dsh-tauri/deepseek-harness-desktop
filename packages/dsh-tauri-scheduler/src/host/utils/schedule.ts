@@ -1,12 +1,24 @@
-import type { SchedulerSchedule, Weekday } from '../types'
-import { parseCronExpression } from 'cron-schedule'
-import { inRange, isArray, isEmpty, isFinite, isInteger, isNil, isNumber, isObject, isString, sortBy, uniq } from 'lodash-es'
+import type { SchedulerSchedule as Schedule, Weekday } from '../types'
+import { inRange, isArray, isEmpty, isFinite, isInteger, isNil, isNumber, isObject, isString } from 'lodash-es'
 import { WEEKDAYS } from '../../shared/constants'
 
 const MINUTE_MS = 60 * 1000
-const DAY_MS = 24 * 60 * MINUTE_MS
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+const MAX_EPOCH = 8_640_000_000_000_000
 const MAX_EVERY_MINUTES = 525_600
 const MAX_EVERY_DAYS = 366
+const MAX_CALENDAR_ATTEMPTS = 400
+const WEEKDAY_NUMBER: Record<Weekday, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 0 }
+
+type CalendarSchedule = Exclude<Schedule, { kind: 'once' | 'interval' }>
+
+const isInstant = (value: unknown): boolean => isString(value) && isFinite(new Date(value).getTime())
+const isTimeValue = (value: unknown): boolean => isString(value) && parseTimeToMinutes(value) !== undefined
+const isMinuteValue = (value: unknown): boolean => isNumber(value) && isInteger(value) && inRange(value, 0, 60)
+const isFiniteInRange = (value: unknown, end: number): boolean => isNumber(value) && isFinite(value) && inRange(value, 1, end)
+const isIntegerInRange = (value: unknown, end: number): boolean => isNumber(value) && isInteger(value) && inRange(value, 1, end)
+const isEpoch = (value: number): boolean => Number.isSafeInteger(value) && isFinite(new Date(value).getTime())
 
 export function parseTimeToMinutes(time: string): number | undefined {
   const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim())
@@ -17,73 +29,43 @@ export function parseTimeToMinutes(time: string): number | undefined {
   return inRange(hours, 0, 24) && inRange(minutes, 0, 60) ? hours * 60 + minutes : undefined
 }
 
-const WEEKDAY_TO_CRON_DAY: Record<Weekday, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 0 }
-type TimeSchedule = Extract<SchedulerSchedule, { kind: 'daily' | 'workdays' | 'weekly' | 'monthly' }>
-
-const isInstant = (value: unknown): boolean => isString(value) && isFinite(new Date(value).getTime())
-const isTimeValue = (value: unknown): boolean => isString(value) && parseTimeToMinutes(value) !== undefined
-const isMinuteValue = (value: unknown): boolean => isNumber(value) && isInteger(value) && inRange(value, 0, 60)
-const isFiniteInRange = (value: unknown, end: number): boolean => isNumber(value) && isFinite(value) && inRange(value, 1, end)
-const isIntegerInRange = (value: unknown, end: number): boolean => isNumber(value) && isInteger(value) && inRange(value, 1, end)
-
-function toCronExpression(schedule: TimeSchedule): string | undefined {
-  const minutes = parseTimeToMinutes(schedule.time)
-  if (minutes === undefined)
+export function nextOccurrence(schedule: Schedule, from: number): number | undefined {
+  if (!isEpoch(from) || !validateSchedule(schedule))
     return undefined
-  const hour = Math.floor(minutes / 60)
-  const minute = minutes % 60
-  if (schedule.kind === 'daily')
-    return `${minute} ${hour} * * *`
-  if (schedule.kind === 'workdays')
-    return `${minute} ${hour} * * 1-5`
-  if (schedule.kind === 'monthly')
-    return `${minute} ${hour} ${schedule.day} * *`
-  const days = sortBy(uniq(schedule.weekdays.map(day => WEEKDAY_TO_CRON_DAY[day])))
-  return isEmpty(days) ? undefined : `${minute} ${hour} * * ${days.join(',')}`
-}
-
-function anchoredOccurrence(anchor: string, step: number, from: number): number | undefined {
-  const base = new Date(anchor).getTime()
-  if (!isFinite(base) || step <= 0)
-    return undefined
-  const index = Math.max(0, Math.floor((from - base) / step) + 1)
-  return base + index * step
-}
-
-export function nextOccurrence(schedule: SchedulerSchedule, from: number): number | undefined {
   switch (schedule.kind) {
     case 'once': {
       const at = new Date(schedule.at).getTime()
-      return isFinite(at) && at > from ? at : undefined
+      return at > from ? at : undefined
     }
-    case 'hourly': {
-      if (!isMinuteValue(schedule.minute))
-        return undefined
-      const next = new Date(from + MINUTE_MS)
-      next.setMinutes(schedule.minute, 0, 0)
-      if (next.getTime() <= from)
-        next.setHours(next.getHours() + 1)
-      return next.getTime()
+    case 'interval': {
+      const step = schedule.everyMinutes * MINUTE_MS
+      const base = isNil(schedule.anchor) ? from : new Date(schedule.anchor).getTime()
+      const next = from < base ? base : from + step - intervalRemainder(from, base, step)
+      return isFinite(next) && Math.abs(next) <= MAX_EPOCH && next > from ? next : undefined
     }
-    case 'interval':
-      if (!isFiniteInRange(schedule.everyMinutes, MAX_EVERY_MINUTES + 1))
-        return undefined
-      return schedule.anchor ? anchoredOccurrence(schedule.anchor, schedule.everyMinutes * MINUTE_MS, from) : from + schedule.everyMinutes * MINUTE_MS
-    case 'custom':
-      if (!isIntegerInRange(schedule.everyDays, MAX_EVERY_DAYS + 1) || !isTimeValue(schedule.time))
-        return undefined
-      return anchoredOccurrence(schedule.anchor, schedule.everyDays * DAY_MS, from)
-    case 'daily': case 'workdays': case 'weekly': case 'monthly': {
-      const expression = toCronExpression(schedule)
-      return expression === undefined ? undefined : parseCronExpression(expression).getNextDate(new Date(from)).getTime()
-    }
+    default:
+      return calendarOccurrence(schedule, from, 1)
   }
 }
 
-export function validateSchedule(schedule: unknown): schedule is SchedulerSchedule {
-  if (!isObject(schedule))
+export function latestDueOccurrence(schedule: Schedule, nextRunAt: number, now: number): number | undefined {
+  if (!isEpoch(nextRunAt) || !isEpoch(now) || nextRunAt > now || !validateSchedule(schedule))
+    return undefined
+  if (schedule.kind === 'once')
+    return nextRunAt
+  if (schedule.kind === 'interval') {
+    const step = schedule.everyMinutes * MINUTE_MS
+    return now - intervalRemainder(now, nextRunAt, step)
+  }
+  return Math.max(nextRunAt, calendarOccurrence(schedule, now, -1) ?? nextRunAt)
+}
+
+export function validateSchedule(schedule: unknown): schedule is Schedule {
+  if (!isObject(schedule) || isArray(schedule))
     return false
-  const value = schedule as Partial<SchedulerSchedule>
+  const value = schedule as Partial<Schedule>
+  if (calendarFormatter(value.timeZone) === undefined)
+    return false
   switch (value.kind) {
     case 'once':
       return isInstant(value.at)
@@ -111,4 +93,109 @@ export function localTimeZone(): string {
   catch {
     return 'UTC'
   }
+}
+
+function intervalRemainder(epoch: number, base: number, step: number): number {
+  return ((epoch % step - base % step) % step + step) % step
+}
+
+function calendarFormatter(timeZone: unknown): Intl.DateTimeFormat | undefined {
+  if (timeZone !== undefined && (!isString(timeZone) || timeZone === '' || timeZone.trim() !== timeZone))
+    return undefined
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      calendar: 'gregory',
+      numberingSystem: 'latn',
+      era: 'short',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    })
+  }
+  catch {
+    return undefined
+  }
+}
+
+function calendarEpoch(year: number, month: number, day: number, minutes = 0, seconds = 0): number {
+  const date = new Date(0)
+  date.setUTCFullYear(year, month, day)
+  date.setUTCHours(0, minutes, seconds, 0)
+  return date.getTime()
+}
+
+function zonedEpoch(formatter: Intl.DateTimeFormat, epoch: number): number {
+  const parts = Object.fromEntries(formatter.formatToParts(epoch).map(part => [part.type, part.value]))
+  const year = parts.era === 'BC' ? 1 - Number(parts.year) : Number(parts.year)
+  return calendarEpoch(year, Number(parts.month) - 1, Number(parts.day), Number(parts.hour) * 60 + Number(parts.minute), Number(parts.second))
+}
+
+function localInstant(formatter: Intl.DateTimeFormat, local: number): number | undefined {
+  const offsets = new Set<number>()
+  for (const delta of [-DAY_MS, 0, DAY_MS]) {
+    const sample = local + delta
+    if (isEpoch(sample))
+      offsets.add(zonedEpoch(formatter, sample) - sample)
+  }
+  let earliest: number | undefined
+  // issue #987: gaps fail the wall-clock round trip; overlaps use only their earlier instant.
+  for (const offset of offsets) {
+    const target = local - offset
+    if (isEpoch(target) && zonedEpoch(formatter, target) === local && (earliest === undefined || target < earliest))
+      earliest = target
+  }
+  return earliest
+}
+
+function calendarOccurrence(schedule: CalendarSchedule, from: number, direction: 1 | -1): number | undefined {
+  const formatter = calendarFormatter(schedule.timeZone)
+  if (formatter === undefined)
+    return undefined
+  const minutes = schedule.kind === 'hourly' ? schedule.minute : parseTimeToMinutes(schedule.time)
+  if (minutes === undefined)
+    return undefined
+  let cursor = Math.max(-MAX_EPOCH, Math.min(MAX_EPOCH, Math.floor(from / DAY_MS) * DAY_MS - direction * DAY_MS))
+  let step = schedule.kind === 'hourly' ? HOUR_MS : DAY_MS
+  let anchor: number | undefined
+  if (schedule.kind === 'custom') {
+    anchor = new Date(schedule.anchor).getTime()
+    const anchorDay = Math.floor(zonedEpoch(formatter, anchor) / DAY_MS) * DAY_MS
+    step = schedule.everyDays * DAY_MS
+    const index = direction === 1 ? Math.max(0, Math.ceil((cursor - anchorDay) / step)) : Math.floor((cursor - anchorDay) / step)
+    if (index < 0)
+      return undefined
+    cursor = anchorDay + index * step
+  }
+  if (schedule.kind === 'monthly') {
+    const date = new Date(cursor)
+    cursor = calendarEpoch(date.getUTCFullYear(), date.getUTCMonth(), 1)
+  }
+  for (let attempt = 0; attempt < MAX_CALENDAR_ATTEMPTS && isEpoch(cursor); attempt++) {
+    const date = new Date(cursor)
+    const weekday = date.getUTCDay()
+    const local = schedule.kind === 'monthly'
+      ? calendarEpoch(date.getUTCFullYear(), date.getUTCMonth(), schedule.day, minutes)
+      : cursor + minutes * MINUTE_MS
+    const matches = schedule.kind === 'workdays'
+      ? inRange(weekday, 1, 6)
+      : schedule.kind === 'weekly'
+        ? schedule.weekdays.some(day => WEEKDAY_NUMBER[day] === weekday)
+        : schedule.kind === 'monthly'
+          ? new Date(local).getUTCMonth() === date.getUTCMonth()
+          : true
+    if (matches) {
+      const target = localInstant(formatter, local)
+      if (target !== undefined && (anchor === undefined || target >= anchor) && (direction === 1 ? target > from : target <= from))
+        return target
+    }
+    cursor = schedule.kind === 'monthly'
+      ? calendarEpoch(date.getUTCFullYear(), date.getUTCMonth() + direction, 1)
+      : cursor + direction * step
+  }
+  return undefined
 }

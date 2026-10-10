@@ -5,7 +5,7 @@ import type { PatchEntryStripReport, PatchQuarantineReport } from '@/types/plugi
 import { promiseTimeout } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import i18next from 'i18next'
-import { containsHeapOomError, containsInotifyLimitError, heapPeakFromLogs, pickErrorLines } from '@/components/logs.utils'
+import { containsHeapOomError, containsInotifyLimitError, containsPortInUseError, heapPeakFromLogs, pickErrorLines } from '@/components/logs.utils'
 import { toast } from '@/utils/toast'
 import {
   HEALTH_PROBE_FAST_RETRY_INTERVAL,
@@ -356,4 +356,28 @@ export function internalPluginReason(
     case 'cancelled':
       return translate('status.internal_cancelled')
   }
+}
+
+/** 端口冲突自愈的最大连续重启次数：超过则交回错误页，避免端口被反复抢占时无限重启。 */
+const PORT_CONFLICT_RESTART_LIMIT = 3
+let portConflictRestarts = 0
+
+/** 每次成功就绪都要把预算清零，否则一次偶发冲突会永久抬高后续上限。 */
+export function resetPortConflictRestarts(): void {
+  portConflictRestarts = 0
+}
+
+/**
+ * 本次崩溃是否应由「端口被占用」自愈：日志里确有 EADDRINUSE，且预算未用尽。
+ *
+ * 预算耗尽返回 false，让用户看到真实错误页——那种情况下端口是被外部进程长期占死，
+ * 重启多少次都不会成功。
+ */
+export function consumePortConflictRestart(lines: readonly string[]): boolean {
+  if (!containsPortInUseError(lines))
+    return false
+  if (portConflictRestarts >= PORT_CONFLICT_RESTART_LIMIT)
+    return false
+  portConflictRestarts += 1
+  return true
 }

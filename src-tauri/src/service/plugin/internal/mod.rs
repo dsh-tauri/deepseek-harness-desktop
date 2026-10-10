@@ -900,12 +900,11 @@ async fn ensure_inner(
     // 收尾回读清单，缺项就用同一套物化路径写回（幂等）——否则 `bundle_ok` 每轮判
     // 需重装、每轮又被打回原形。
     if let Some(missing) = presets_missing_from_manifest(&profile, &need) {
-        match materialize_internal_links(app_handle, &profile, &need) {
-            Ok(()) => log::warn!(
-                "INTERNAL_PLUGIN_MANIFEST_RECOVERED: re-registered internal plugins dropped by install: {missing:?}"
-            ),
-            Err(error) => log::error!("INTERNAL_PLUGIN_MANIFEST_RECOVER_FAILED: {error}"),
-        }
+        materialize_internal_links(app_handle, &profile, &need)
+            .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_RECOVER_FAILED: {error}"))?;
+        log::warn!(
+            "INTERNAL_PLUGIN_MANIFEST_RECOVERED: re-registered internal plugins dropped by install: {missing:?}"
+        );
     }
 
     Ok(())
@@ -917,11 +916,15 @@ fn presets_missing_from_manifest(
     profile: &Path,
     need: &[(String, String, PathBuf)],
 ) -> Option<Vec<String>> {
-    let raw = std::fs::read_to_string(profile.join("package.json")).ok()?;
-    let manifest: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let dependencies = manifest.get("dependencies");
+    let manifest = std::fs::read_to_string(profile.join("package.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    let dependencies = manifest
+        .as_ref()
+        .and_then(|value| value.get("dependencies"));
     let bundles = manifest
-        .pointer("/dsh/profile/bundles")
+        .as_ref()
+        .and_then(|value| value.pointer("/dsh/profile/bundles"))
         .and_then(|value| value.as_array());
     let missing: Vec<String> = need
         .iter()
@@ -1144,6 +1147,54 @@ fn is_legacy_profile_fallback_target(target: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn post_install_manifest_check_rejects_missing_or_unreadable_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let need = need_entries(&["dsh-tauri", "dsh-tauri-ui"]);
+        let expected = Some(vec!["dsh-tauri".to_string(), "dsh-tauri-ui".to_string()]);
+        assert_eq!(presets_missing_from_manifest(root.path(), &need), expected);
+        std::fs::create_dir(root.path().join("package.json")).unwrap();
+        assert_eq!(presets_missing_from_manifest(root.path(), &need), expected);
+    }
+
+    #[test]
+    fn post_install_manifest_check_rejects_truncated_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("package.json"),
+            br#"{"dependencies":{"dsh-tauri":"#,
+        )
+        .unwrap();
+        assert_eq!(
+            presets_missing_from_manifest(root.path(), &need_entries(&["dsh-tauri"])),
+            Some(vec!["dsh-tauri".to_string()])
+        );
+    }
+
+    #[test]
+    fn post_install_manifest_check_requires_dependency_and_bundle_registration() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("package.json"), serde_json::json!({
+            "dependencies": {"dsh-tauri": "link:/resources/dsh-tauri", "dsh-tauri-ui": "link:/resources/dsh-tauri-ui"},
+            "dsh": {"profile": {"bundles": ["dsh-tauri", "dsh-tauri-pet", "community-plugin"]}}
+        }).to_string()).unwrap();
+        assert_eq!(
+            presets_missing_from_manifest(
+                root.path(),
+                &need_entries(&["dsh-tauri", "dsh-tauri-ui", "dsh-tauri-pet"])
+            ),
+            Some(vec![
+                "dsh-tauri-ui".to_string(),
+                "dsh-tauri-pet".to_string()
+            ])
+        );
+        assert_eq!(
+            presets_missing_from_manifest(root.path(), &need_entries(&["dsh-tauri"])),
+            None
+        );
+        assert_eq!(presets_missing_from_manifest(root.path(), &[]), None);
+    }
 
     /// 构造本轮待装列表 `(id, 包名, 入口)`：入口与 `ensure_inner` 一致地落在
     /// `<profile>/node_modules/<包名>`，用报告里的真实 profile 路径。

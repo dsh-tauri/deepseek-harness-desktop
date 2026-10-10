@@ -12,7 +12,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<TaskActionResult>
   const result = await task.create(body)
   if (!result.ok) {
     event.res.status = 400
-    return { error: result.error }
+    return { ok: false, error: result.error, code: result.code }
   }
   return { ok: true, task: result.task }
 })
