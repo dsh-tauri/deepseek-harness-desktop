@@ -9,16 +9,11 @@ import { worktreeSectionProvider } from './prompts/worktree-section'
 import { server } from './server'
 import { workspace } from './service/workspace'
 import { worktree } from './service/worktree'
-import { checkoutWorktreeTool } from './tools/checkout-worktree'
-import { createWorktreeTool } from './tools/create-worktree'
 
 const RECOVER_INTERVAL_MS = 5 * 60_000
 
 export function apply(ctx: HostContext): void {
   ctx.effect(() => server(ctx), 'plugin: routes')
-
-  ctx.tools.register(createWorktreeTool())
-  ctx.tools.register(checkoutWorktreeTool())
 
   ctx.on('session/event', handleSessionEvent)
   ctx.on('tools/execute', handleToolsExecute)

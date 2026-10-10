@@ -1,11 +1,10 @@
-import type { CheckoutInfo, HostContext, OperationResult, PendingHandoff } from '../types'
+import type { CheckoutInfo, HostContext, OperationResult } from '../types'
 import { randomUUID } from 'node:crypto'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { get } from 'lodash-es'
 import { pendingWorktreeTitles } from '../config/runtime'
 import { server } from '../server'
-import { worktreeHandoffText } from '../utils/worktree-facts'
 import { checkoutContext } from './checkout-context'
 import { sessionContext } from './session-context'
 import { worktree } from './worktree'
@@ -70,36 +69,6 @@ export const handoff = defineService({
     if (!checkout.ok)
       return checkout
     return { ok: true, branch: checkout.branch, projectPath: checkout.projectPath, targetSessionId }
-  },
-
-  async complete(pending: PendingHandoff): Promise<void> {
-    const ctx = getServerContext<HostContext>(server)
-    const { sourceAgent, targetSessionId, binding } = pending
-    const sourceSession = sourceAgent.session
-    try {
-      const seed = sessionEvents(sourceSession)
-      const handle = await createAgent(sourceSession, sourceAgent, targetSessionId, binding.worktreePath, seed)
-      const workspace = await ctx.workspaceRegistry.resolveByPath(binding.projectPath)
-      if (workspace)
-        await workspace.attachSession(targetSessionId)
-      if (!hasInheritedConversation(seed))
-        pendingWorktreeTitles.add(targetSessionId)
-      handle.agent.followup({
-        id: `message-${randomUUID()}`,
-        role: 'user',
-        content: [{
-          type: 'text',
-          text: worktreeHandoffText(binding),
-        }],
-        source: { kind: 'user' },
-      })
-    }
-    catch (error) {
-      if (!ctx.agents.get(targetSessionId))
-        await worktree.remove(targetSessionId)
-      const message = get(error, 'message', String(error))
-      ctx.logger?.error?.(`create_worktree handoff failed for ${targetSessionId}: ${message}`)
-    }
   },
 })
 
