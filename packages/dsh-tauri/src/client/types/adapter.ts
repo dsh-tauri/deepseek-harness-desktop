@@ -34,6 +34,12 @@ export interface AdapterListProjection<TSnapshot = unknown> {
   getSnapshot: () => TSnapshot
 }
 
+export interface AdapterSessionCreateOptions {
+  workspaceId?: AdapterWorkspaceId
+  cwd?: string
+  sessionId?: AdapterSessionId
+}
+
 /** 已适配的 `ctx.sessions` 面；成员按能力可选，缺失即视为不可用。 */
 export interface AdapterSessions extends AdapterRuntimeObject {
   /** `useSessions` 标准 feed（跨版本同形）。 */
@@ -46,6 +52,8 @@ export interface AdapterSessions extends AdapterRuntimeObject {
   provideInfo?: (sessionId: AdapterSessionId) => unknown
   /** 稳定会话 binding（legacy 的 `provideInfo` 兼容投影依赖它）。 */
   binding?: (sessionId: AdapterSessionId) => unknown
+  create?: (options?: AdapterSessionCreateOptions) => Promise<AdapterSessionId>
+  refreshProjections?: (sessionId: AdapterSessionId) => Promise<void>
   refresh?: () => unknown
   open?: (sessionId: AdapterSessionId) => unknown
   fork?: (...args: unknown[]) => unknown
@@ -150,6 +158,9 @@ export interface AdapterMigrationFailure {
 export type AdapterCapability
   = | 'sessions.list'
     | 'sessions.provideInfo'
+    | 'sessions.create'
+    | 'sessions.refresh'
+    | 'sessions.refreshProjections'
     | 'workspaces.list'
     | 'workspaces.create'
     | 'navigation.startSession'

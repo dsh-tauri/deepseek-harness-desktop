@@ -22,11 +22,12 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-agent-preset-registry@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-agent-preset@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-agent@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-agent-loop@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-api-session-controller@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-api-workspace-controller@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-app-boot@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-atomic-write@0.2.1-alpha.1'
-  - '@deepseek-ai/dsh-brand@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-brand@0.2.1-alpha.1 || 0.2.1-alpha.2'
   - '@deepseek-ai/dsh-client-connection@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-client-locale@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-client-store@0.2.1-alpha.1'
@@ -35,26 +36,29 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-client-ui-primitives@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-client-ui-renderer@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-client-ui-settings@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-client-ui-session@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-client-ui-slots@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-client-ui-theme@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-client-ui-workspace@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-config-editor@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-credentials@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-deque@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-launch-environment@0.2.1-alpha.1'
-  - '@deepseek-ai/dsh-llm@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-llm@0.2.1-alpha.1 || 0.2.1-alpha.2'
   - '@deepseek-ai/dsh-native-command@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-package-manifest@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-permission-presets@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-ptc-runtime@0.2.1-alpha.1'
-  - '@deepseek-ai/dsh-session@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-session@0.2.1-alpha.1 || 0.2.1-alpha.2'
   - '@deepseek-ai/dsh-skill-filesystem@0.2.1-alpha.1'
   - '@deepseek-ai/dsh-storage-domain@0.2.1-alpha.1'
-  - '@deepseek-ai/dsh-timeout@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-timeout@0.2.1-alpha.1 || 0.2.1-alpha.2'
   - '@deepseek-ai/dsh-tools@0.2.1-alpha.1'
-  - '@deepseek-ai/dsh-typert-protocol@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-typert-protocol@0.2.1-alpha.1 || 0.2.1-alpha.2'
   - '@deepseek-ai/dsh-user-approval@0.2.1-alpha.1'
-  - '@deepseek-ai/dsh-util-crypto@0.2.1-alpha.1'
-  - '@deepseek-ai/dsh-util-values@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-util-code-language@0.2.1-alpha.1'
+  - '@deepseek-ai/dsh-util-crypto@0.2.1-alpha.1 || 0.2.1-alpha.2'
+  - '@deepseek-ai/dsh-util-values@0.2.1-alpha.1 || 0.2.1-alpha.2'
   - '@deepseek-ai/dsh-workspace@0.2.1-alpha.1'
   - '@deepseek-ai/schemastery@3.18.5-alpha.1'
   - '@deepseek-ai/dsh-api-gateway@0.2.1-alpha.1'
@@ -139,6 +143,7 @@ catalogs:
     '@deepseek-ai/cordis-plugin-loader': 1.0.6-alpha.1
     '@deepseek-ai/dsh-agent': 0.2.1-alpha.1
     '@deepseek-ai/dsh-agent-default-model': 0.2.1-alpha.1
+    '@deepseek-ai/dsh-agent-loop': 0.2.1-alpha.1
     '@deepseek-ai/dsh-agent-preset': 0.2.1-alpha.1
     '@deepseek-ai/dsh-agent-preset-registry': 0.2.1-alpha.1
     '@deepseek-ai/dsh-api-session-controller': 0.2.1-alpha.1
@@ -150,16 +155,22 @@ catalogs:
     '@deepseek-ai/dsh-client-ui-layout': 0.2.1-alpha.1
     '@deepseek-ai/dsh-client-ui-primitives': 0.2.1-alpha.1
     '@deepseek-ai/dsh-client-ui-renderer': 0.2.1-alpha.1
+    '@deepseek-ai/dsh-client-ui-session': 0.2.1-alpha.1
     '@deepseek-ai/dsh-client-ui-settings': 0.2.1-alpha.1
     '@deepseek-ai/dsh-client-ui-slots': 0.2.1-alpha.1
     '@deepseek-ai/dsh-client-ui-theme': 0.2.1-alpha.1
+    '@deepseek-ai/dsh-client-ui-workspace': 0.2.1-alpha.1
     '@deepseek-ai/dsh-host-webserver': 0.2.1-alpha.1
     '@deepseek-ai/dsh-llm': 0.2.1-alpha.1
     '@deepseek-ai/dsh-permission-presets': 0.2.1-alpha.1
     '@deepseek-ai/dsh-session': 0.2.1-alpha.1
+    '@deepseek-ai/dsh-session-persistence': 0.2.1-alpha.1
+    '@deepseek-ai/dsh-session-projection': 0.2.1-alpha.1
     '@deepseek-ai/dsh-skill-filesystem': 0.2.1-alpha.1
     '@deepseek-ai/dsh-tools': 0.2.1-alpha.1
     '@deepseek-ai/dsh-user-approval': 0.2.1-alpha.1
+    '@deepseek-ai/dsh-user-questions': 0.2.1-alpha.1
+    '@deepseek-ai/dsh-util-code-language': 0.2.1-alpha.1
     '@deepseek-ai/dsh-util-values': 0.2.1-alpha.1
     '@deepseek-ai/dsh-workspace': 0.2.1-alpha.1
   lint:
@@ -191,15 +202,23 @@ catalogs:
     '@tauri-apps/cli': ^2.11.4
     '@tauri-apps/plugin-http': ^2.6.0
   testing:
+    '@shikijs/langs': 4.3.1
     '@testing-library/dom': ^10.4.0
     '@testing-library/react': ^16.3.0
     '@vitest/coverage-v8': ^4.1.11
     '@wdio/tauri-service': ^1.4.0
+    anser: 2.3.5
+    diff: 9.0.0
+    dsh-session-current: npm:@deepseek-ai/dsh-session@0.2.1-alpha.2
+    immer: 10.1.1
     jsdom: ^26.1.0
     playwright: ^1.63.0
+    shiki: 4.3.1
+    simple-icons: 16.31.0
     vitest: ^4.1.11
     webdriverio: ^9.31.9
     yaml: ^2.9.0
+    zustand: 4.4.7
   types:
     '@types/lodash-es': ^4.17.12
     '@types/node': ^22.10.0
@@ -224,4 +243,5 @@ catalogs:
     ssh2: ^1.17.0
     unstorage: ^1.17.5
 
+    zod: ^4.4.3
 trustPolicyIgnoreAfter: 525600

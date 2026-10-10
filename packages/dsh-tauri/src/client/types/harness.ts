@@ -24,7 +24,10 @@ export type {
   ISessions,
   SessionBinding,
   SessionListState,
+  SessionProjectionMap,
+  SessionProjectionSnapshot,
   SessionSummary,
+  UseProjection,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 export type {
   IWorkspaces,

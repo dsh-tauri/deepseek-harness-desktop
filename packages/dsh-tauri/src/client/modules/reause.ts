@@ -13,4 +13,5 @@
  * 具名清单只保留真正被消耗的 hook，其余被 tree-shake（941KB → 70KB）。
  * 新增 hook 在此登记即可（dts 同步收窄，漏登记时插件侧直接类型报错）。
  */
-export { noop, useEventListener, useMount, useResizeObserver, useTimeoutPoll, useUnmount, useWatchImmediate } from '@reause/core'
+export { noop, useAsyncState, useEventListener, useMount, useResizeObserver, useTimeoutPoll, useUnmount, useWatchImmediate } from '@reause/core'
+export { If } from 'react-if-lite'

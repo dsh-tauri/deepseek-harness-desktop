@@ -835,6 +835,9 @@ export function defineAdapter(ctx: unknown, options: DefineAdapterOptions = {}):
   const capabilityChecks: Record<AdapterCapability, () => boolean> = {
     'sessions.list': () => typeof sessions.list?.getSnapshot === 'function',
     'sessions.provideInfo': () => typeof sessions.provideInfo === 'function',
+    'sessions.create': () => typeof sessions.create === 'function',
+    'sessions.refresh': () => typeof sessions.refresh === 'function',
+    'sessions.refreshProjections': () => typeof sessions.refreshProjections === 'function',
     'workspaces.list': () => typeof workspaces.list?.getSnapshot === 'function',
     'workspaces.create': () => typeof workspaces.create === 'function',
     'navigation.startSession': () => surfaceStartSession(surface) !== undefined,

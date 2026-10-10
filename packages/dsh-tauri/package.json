@@ -71,6 +71,7 @@
     "date-fns": "catalog:utils",
     "dsh-tauri-tsdown": "workspace:*",
     "lodash-es": "catalog:utils",
+    "react-if-lite": "catalog:runtime",
     "tailwind-variants": "catalog:runtime",
     "tsdown": "catalog:cli",
     "valtio": "catalog:",

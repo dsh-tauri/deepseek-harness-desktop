@@ -14,6 +14,7 @@ const plugins = [
   'dsh-tauri-notification',
   'dsh-tauri-worktree',
   'dsh-tauri-ssh',
+  'dsh-tauri-bridge',
 ]
 
 export default defineConfig({
@@ -36,7 +37,7 @@ export default defineConfig({
   ),
   meta: { import: { http: 'dsh-tauri/client' } },
   transform: {
-    operation: name => name.replace(/ApiTauri(?:Extension|Scheduler|Rightclick|Archive|Experimental|Model|Ui|Notification|Worktree|Ssh)/, ''),
+    operation: name => name.replace(/ApiTauri(?:Extension|Scheduler|Rightclick|Archive|Experimental|Model|Ui|Notification|Worktree|Ssh|Bridge)/, ''),
   },
   patch: { operations: { post: 'postWorktree', delete: 'deleteWorktree' } },
   servers: [

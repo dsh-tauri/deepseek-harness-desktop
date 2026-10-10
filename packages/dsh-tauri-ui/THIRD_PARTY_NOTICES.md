@@ -35,6 +35,38 @@ Derived (upstream → this package):
 - License: MIT — Copyright (c) 2026 dsh-chat-content-visibility-auto contributors
 - Not vendored, not installed: the external client plugin stays out of this repo's manifests. Its converged windowing rule — `content-visibility: auto` + `contain-intrinsic-size: auto 320px` on `[data-chat-flow] > [data-chat-anchor-key]` — is reimplemented on this repo's own `css-render` stack in `src/client/styles/global.cssr.ts`, keyed off the official chat DOM contract (`ChatView` column `[data-chat-flow]` → node rows `[data-chat-anchor-key]`).
 
+## lobehub/lobe-icons
+
+- Repository: <https://github.com/lobehub/lobe-icons>
+- Revision: `c385b2b8d1f9e19aa86e628d4e23c91ee1111a47`
+- Sources: `src/OpenAI/components/Mono.tsx`, `src/Claude/components/Mono.tsx`
+- Derived: monochrome SVG paths adapted into `src/client/components/brand-icons.tsx`; no icon runtime is installed or bundled.
+- License: MIT — Copyright (c) 2023 LobeHub
+
+```text
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
 
 - The official primitives re-exports receive the StateDot restart fix without a local fork. InlineEditor is additive; no existing primitive export used here is removed.

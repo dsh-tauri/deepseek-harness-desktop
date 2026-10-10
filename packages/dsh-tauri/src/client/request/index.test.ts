@@ -25,6 +25,11 @@ beforeAll(async () => {
         res.writeHead(500, { 'content-type': 'text/plain' })
         res.end('oops')
       }
+      else if (req.url?.startsWith('/status/')) {
+        const status = Number(req.url.slice('/status/'.length))
+        res.writeHead(status, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: `failure-${status}` }))
+      }
       else if (req.url === '/echo' && req.method === 'POST') {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ got: body }))
@@ -57,6 +62,21 @@ describe('dsh-tauri fetch', () => {
 
   it('falls back to status text when the body carries no error field', async () => {
     await expect(fetch(`${base}/oops`)).rejects.toThrow('请求失败 (500): oops')
+  })
+
+  it.each([401, 403, 404, 500])('retains HTTP status %s without changing readable errors', async (status) => {
+    await expect(fetch(`${base}/status/${status}`)).rejects.toMatchObject({
+      status,
+      message: `请求失败 (${status}): failure-${status}`,
+    })
+  })
+
+  it('does not invent an HTTP status for errors without a response', async () => {
+    const reason = new Error('offline 404')
+    await expect(fetch(`${base}/ok`, { onRequest: () => {
+      throw reason
+    } })).rejects.toBe(reason)
+    expect(reason).not.toHaveProperty('status')
   })
 
   it('posts JSON objects with content-type handled by ofetch', async () => {

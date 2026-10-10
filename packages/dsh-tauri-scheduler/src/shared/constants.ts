@@ -1,4 +1,4 @@
-import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import type {} from '@deepseek-ai/dsh-session-projection/types'
 
 /**
  * shared/constants.ts — 跨 host/client 的稳定协议常量（dsh-tauri-scheduler）。
@@ -12,7 +12,7 @@ export const PLUGIN_ID = 'dsh-tauri-scheduler'
 
 export const SESSION_SCHEDULE_ORIGIN_PROJECTION = 'dsh-tauri-scheduler.origin'
 
-declare module '@deepseek-ai/dsh-api-session-controller/client' {
+declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
     [SESSION_SCHEDULE_ORIGIN_PROJECTION]: boolean
   }

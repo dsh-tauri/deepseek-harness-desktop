@@ -62,6 +62,7 @@ function createCtx(options: CtxOptions = {}) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.mocked(getUngrouped).mockImplementation(async () => ({ cwd: UNGROUPED_CWD }))
 })
 

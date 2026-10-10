@@ -685,6 +685,46 @@ describe('defineAdapter — 0.1.6-alpha.2 会话面投影', () => {
   })
 })
 
+describe('defineAdapter — official session APIs', () => {
+  it('create and catalog refresh capabilities bind only existing official methods', async () => {
+    const owner = {
+      create: vi.fn(function (this: object, input?: unknown) {
+        expect(this).toBe(owner)
+        expect(input).toEqual({ cwd: '/project' })
+        return Promise.resolve('official-session')
+      }),
+      refresh: vi.fn(function (this: object) {
+        expect(this).toBe(owner)
+        return Promise.resolve()
+      }),
+    }
+    const adapter = defineAdapter(makeContext({ sessions: owner }))
+    expect(adapter.has('sessions.create')).toBe(true)
+    expect(adapter.has('sessions.refresh')).toBe(true)
+    await expect(adapter.sessions.create?.({ cwd: '/project' })).resolves.toBe('official-session')
+    await adapter.sessions.refresh?.()
+    expect(owner.refresh).toHaveBeenCalledOnce()
+    const unavailable = defineAdapter(makeContext({ sessions: {} }))
+    expect(unavailable.has('sessions.create')).toBe(false)
+    expect(unavailable.has('sessions.refresh')).toBe(false)
+  })
+
+  it('projection refresh capability binds only the official existing method', async () => {
+    const owner = {
+      refreshProjections: vi.fn(function (this: object, id: string) {
+        expect(this).toBe(owner)
+        expect(id).toBe('session-a')
+        return Promise.resolve()
+      }),
+    }
+    const adapter = defineAdapter(makeContext({ sessions: owner }))
+    expect(adapter.has('sessions.refreshProjections')).toBe(true)
+    await adapter.sessions.refreshProjections?.('session-a')
+    expect(owner.refreshProjections).toHaveBeenCalledOnce()
+    expect(defineAdapter(makeContext({ sessions: {} })).has('sessions.refreshProjections')).toBe(false)
+  })
+})
+
 describe('defineAdapter — sessionList 投影', () => {
   it('sessionList：过滤非字符串 id、只带字符串 current，subscribe 转发到核心列表', () => {
     const list = makeLiveList<{ ids: unknown[], current?: unknown }>({ ids: ['s1', 7, 's2', null], current: 's2' })
