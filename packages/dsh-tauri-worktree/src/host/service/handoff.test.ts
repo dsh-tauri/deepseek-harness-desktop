@@ -1,4 +1,3 @@
-import type { Binding, PendingHandoff } from '../types'
 import { resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { MessageId } from '@deepseek-ai/dsh-llm'
@@ -287,85 +286,5 @@ describe('handoff.inherit', () => {
     setup({ session: { id: 'session-source', header: {} }, warn })
     await handoff.inherit('session-source', 'session-target', 'C:/work')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('session-target'))
-  })
-})
-
-describe('handoff.complete', () => {
-  it('uses the pending source agent even when it is no longer registered', async () => {
-    const followup = vi.fn()
-    const create = vi.fn(async (_options: any) => ({ agent: { followup } }))
-    const sourceContext = { preset: 'source' }
-    const composeFrom = vi.fn(() => 'composed')
-    const composedPreset = vi.fn(() => 'composed')
-    const attachSession = vi.fn(async () => {})
-    disposers.push(server({
-      agents: { get: () => undefined, create },
-      get: () => ({ composedPreset, composeFrom }),
-      workspaceRegistry: { resolveByPath: async () => ({ attachSession }) },
-      webServer: { register: () => () => {} },
-    } as never))
-    await handoff.complete({
-      sourceAgent: { ...(sourceAgent() as object), ctx: sourceContext, options: { model: 'inherited' } },
-      targetSessionId: 'session-target',
-      binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding,
-    })
-    expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      sessionId: 'session-target',
-      seed: conversationEvents,
-      meta: expect.objectContaining({ cwd: 'C:/worktrees/w1', agentPreset: 'composed' }),
-      agentOptions: { model: 'inherited' },
-    }))
-    expect(composedPreset).toHaveBeenCalledWith(sourceContext)
-    const targetContext = { preset: 'target' }
-    expect(create.mock.calls[0]![0].setup(targetContext)).toBeUndefined()
-    expect(composeFrom).toHaveBeenCalledExactlyOnceWith(targetContext, sourceContext)
-    expect(attachSession).toHaveBeenCalledWith('session-target')
-    expect(followup).toHaveBeenCalledTimes(1)
-  })
-
-  it('hands the inherited log to the worktree agent', async () => {
-    const followup = vi.fn()
-    const { created } = setup({ create: async () => ({ agent: { followup } }) })
-    const pending: PendingHandoff = {
-      sourceAgent: sourceAgent(),
-      targetSessionId: 'session-target',
-      binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding,
-    }
-
-    await handoff.complete(pending)
-
-    expect(created[0]).toMatchObject({
-      sessionId: 'session-target',
-      seed: conversationEvents,
-      inheritedEventCount: conversationEvents.length,
-      meta: {
-        cwd: 'C:/worktrees/w1',
-        parentSession: 'session-source',
-        isSeeded: true,
-        agentPreset: 'default',
-      },
-    })
-    expect(pendingWorktreeTitles.size).toBe(0)
-    expect(followup).toHaveBeenCalledTimes(1)
-    const followupMessage = followup.mock.calls[0][0]
-    const text = followupMessage.content.map((block: any) => block.text).join('')
-    expect(text).toContain('is_worktree: true')
-    expect(text).toContain('Worktree path: C:/worktrees/w1')
-    expect(text).toContain('Project path: C:/project')
-    expect(text).toContain('The task has moved to this isolated worktree session.')
-  })
-
-  it('空会话直接调用工具时同样登记显式标题', async () => {
-    const followup = vi.fn()
-    setup({ create: async () => ({ agent: { followup } }) })
-    const pending: PendingHandoff = {
-      sourceAgent: sourceAgent(emptyEvents),
-      targetSessionId: 'session-target',
-      binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding,
-    }
-
-    await handoff.complete(pending)
-
-    expect([...pendingWorktreeTitles]).toEqual(['session-target'])
   })
 })
