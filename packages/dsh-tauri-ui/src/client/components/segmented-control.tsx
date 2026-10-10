@@ -1,3 +1,4 @@
+import type { VariantProps } from 'dsh-tauri/client'
 import type { ReactElement } from 'react'
 import { tv } from 'dsh-tauri/client'
 import { useRef } from 'react'
@@ -16,19 +17,32 @@ export interface SegmentedControlProps {
   disabled?: boolean
   options: readonly SegmentedControlOption[]
   onChange: (next: string) => void
+  variant?: NonNullable<VariantProps<typeof segmentedControl>['variant']>
 }
 
 const segmentedControl = tv({
   slots: {
-    base: 'box-border inline-flex items-center gap-[2px] p-[2px] border-none rounded-[10px] bg-module-platform',
-    option: 'box-border inline-flex items-center justify-center gap-[6px] min-h-[28px] px-[12px] border-none rounded-[8px] bg-transparent text-secondary cursor-pointer [font-family:inherit] text-[13px] leading-[20px] whitespace-nowrap hover:not-disabled:bg-hover hover:not-disabled:text-primary focus-visible:shadow-focus-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+    base: 'box-border inline-flex items-center border-none',
+    option: 'box-border inline-flex items-center justify-center border-none bg-transparent cursor-pointer [font-family:inherit] text-[13px] whitespace-nowrap focus-visible:shadow-focus-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
   },
   variants: {
-    selected: {
-      true: { option: 'bg-layer-1 text-primary font-medium shadow-[inset_0_0_0_0.5px_var(--dsw-alias-border-l3)] hover:not-disabled:bg-layer-1 hover:not-disabled:text-primary' },
-      false: {},
+    variant: {
+      segmented: {
+        base: 'gap-[2px] p-[2px] rounded-[10px] bg-module-platform',
+        option: 'gap-[6px] min-h-[28px] px-[12px] rounded-[8px] text-secondary leading-[20px] hover:not-disabled:bg-hover hover:not-disabled:text-primary',
+      },
+      underline: {
+        base: 'flex-1 min-w-0 gap-[36px] self-end overflow-x-auto pb-px mb-[-1px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        option: 'relative shrink-0 px-0 pt-0 pb-[9px] text-tertiary leading-[16px] font-medium after:absolute after:inset-x-0 after:bottom-[-1px] after:h-[2px] after:rounded-[2px] after:content-[\'\']',
+      },
     },
+    selected: { true: {}, false: {} },
   },
+  compoundVariants: [
+    { variant: 'segmented', selected: true, class: { option: 'bg-layer-1 text-primary font-medium shadow-[inset_0_0_0_0.5px_var(--dsw-alias-border-l3)] hover:not-disabled:bg-layer-1 hover:not-disabled:text-primary' } },
+    { variant: 'underline', selected: true, class: { option: 'text-business after:bg-business' } },
+  ],
+  defaultVariants: { variant: 'segmented' },
 })
 
 const FORWARD_KEYS = ['ArrowRight', 'ArrowDown']
@@ -58,9 +72,9 @@ export function stepSegment<T extends { disabled?: boolean }>(
   return undefined
 }
 
-export function SegmentedControl({ id, label, value, disabled, options, onChange }: SegmentedControlProps): ReactElement {
+export function SegmentedControl({ id, label, value, disabled, options, onChange, variant }: SegmentedControlProps): ReactElement {
   const buttonsRef = useRef<(HTMLButtonElement | null)[]>([])
-  const styles = segmentedControl()
+  const styles = segmentedControl({ variant })
   const tabbed = id !== undefined
   const selected = options.findIndex(option => option.value === value)
 
@@ -103,7 +117,7 @@ export function SegmentedControl({ id, label, value, disabled, options, onChange
             type="button"
             id={segmentId(index)}
             role={tabbed ? 'tab' : undefined}
-            className={segmentedControl({ selected: active }).option()}
+            className={segmentedControl({ variant, selected: active }).option()}
             aria-selected={tabbed ? active : undefined}
             aria-controls={tabbed && id !== undefined ? `${id}-${option.value}-panel` : undefined}
             aria-pressed={tabbed ? undefined : active}

@@ -61,9 +61,9 @@ export const Chip = forwardRef<HTMLButtonElement, ChipProps>((
 ): ReactElement => {
   // 官方 PermissionRow.selector 不包 icon/label/badge，其余两个 variant 按 PermissionSelect/AgentPresetSeat 包裹。
   const wraps = variant !== 'selector'
-  const styles = chip({ variant, hasIcon: wraps && icon != null, className })
+  const styles = chip({ variant, hasIcon: wraps && icon != null })
   return (
-    <button type="button" className={styles.base()} {...rest} ref={ref}>
+    <button type="button" className={styles.base({ className })} {...rest} ref={ref}>
       {wraps && icon != null ? <span className={styles.icon()} aria-hidden>{icon}</span> : icon}
       {wraps && children != null ? <span className={styles.label()}>{children}</span> : children}
       {wraps && badge != null ? <span className={styles.badge()} aria-hidden>{badge}</span> : badge}

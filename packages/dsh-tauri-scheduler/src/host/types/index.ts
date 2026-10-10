@@ -1,4 +1,18 @@
+import type { ContextFormed, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SCHEDULE_KINDS } from '../../shared/constants'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    schedule: { kind: 'schedule' } & ContextFormed
+    scheduler: { kind: 'scheduler', taskId: string, runId: string, scheduledFor: string }
+  }
+}
+
+declare module '@deepseek-ai/dsh-workspace' {
+  interface SessionActivityKindMap {
+    schedule: true
+  }
+}
 
 export type HostContext = any
 
@@ -75,8 +89,15 @@ export type SchedulerScheduleInput
     | { kind: 'monthly', day: number, time: string, timeZone?: string }
     | { kind: 'custom', everyDays: number, anchor?: string, time: string, timeZone?: string }
 
+export type TaskDelivery = 'this-session' | 'new-session'
+
+export type TaskStatus = 'active' | 'inactive'
+
 export interface SchedulerTask {
   id: string
+  delivery: TaskDelivery
+  status: TaskStatus
+  sessionId?: string
   name: string
   schedule: SchedulerSchedule
   prompt: string
@@ -93,7 +114,6 @@ export interface SchedulerTask {
   updatedAt: string
   lastRunAt?: string
   nextRunAt?: string
-  /** 派生视图字段：已到点但受并发上限压住未启动；不落盘，读取路径每次重算。 */
   waiting?: boolean
 }
 
@@ -101,6 +121,7 @@ export interface SchedulerRun {
   id: string
   taskId: string
   taskName: string
+  prompt?: string
   trigger: RunTrigger
   status: RunStatus
   scheduledFor: string
@@ -111,6 +132,8 @@ export interface SchedulerRun {
 }
 
 export interface TaskInput {
+  delivery: TaskDelivery
+  sessionId?: string
   name: string
   schedule: SchedulerScheduleInput
   prompt: string
@@ -121,6 +144,58 @@ export interface TaskInput {
   model?: string
   reasoningEffort?: string
   enabled?: boolean
+}
+
+export interface DeliveryRecord {
+  id: string
+  taskId: string
+  taskName: string
+  delivery: 'this-session'
+  occurrence: string
+  trigger: RunTrigger
+  sessionId: string
+  scheduledAt: string
+  deliveredAt: string
+  messageId: string
+  prompt: string
+}
+
+export type HistoryRecord = DeliveryRecord | (SchedulerRun & {
+  delivery: 'new-session'
+  occurrence: string
+})
+
+export interface HistoryPage {
+  records: HistoryRecord[]
+  runs: SchedulerRun[]
+  nextBefore?: string
+  earlierRecordsUnavailable: boolean
+  earlierRecordsPruned: boolean
+  retention: { days: number, records: number }
+}
+
+export interface HistoryQuery {
+  taskId?: string
+  limit: number
+  before?: string
+}
+
+export interface OccurrenceJournal {
+  id: string
+  task: SchedulerTask
+  trigger: RunTrigger
+  scheduledAt: string
+  completedAt?: string
+  run?: SchedulerRun
+}
+
+export interface PendingDelivery {
+  task: SchedulerTask
+  trigger: RunTrigger
+  scheduledAt: string
+  nextRunAt?: string
+  deliveredAt: string
+  message: UserMessage
 }
 
 export interface PermissionOption {
@@ -166,4 +241,4 @@ export interface SchedulerOptions {
 
 export type OperationResult<T extends object = object>
   = | ({ ok: true } & T)
-    | { ok: false, error: string }
+    | { ok: false, error: string, code?: string }

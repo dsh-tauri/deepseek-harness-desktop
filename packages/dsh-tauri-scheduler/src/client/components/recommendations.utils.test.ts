@@ -18,6 +18,8 @@ function task(overrides: Partial<TaskView>): TaskView {
     name: '任务',
     schedule: { kind: 'workdays', time: '08:00', timeZone: 'Asia/Shanghai' },
     prompt: '任务指令',
+    delivery: 'new-session',
+    status: 'active',
     enabled: false,
     createdAt: '',
     updatedAt: '',

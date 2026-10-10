@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   decideRunOutcome,
   describeFailure,
@@ -18,6 +18,11 @@ const runEvents = [
 ]
 
 const failureReason = { kind: 'error', error: { code: 'llm_error', message: 'boom' } }
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('decideRunOutcome', () => {
   it('超时优先判失败（即使 turn 已启动）', () => {
@@ -69,25 +74,39 @@ describe('describeFailure', () => {
 })
 
 describe('waitForTurnStart', () => {
-  it('seq 增长即返回 true', async () => {
-    const session = { seq: 7 }
-    setTimeout(() => {
-      session.seq = 8
-    }, 15)
-    await expect(waitForTurnStart(session, 7, 500)).resolves.toBe(true)
+  it('seq 已增长时立即返回 true，不分配轮询 timer', async () => {
+    vi.useFakeTimers()
+    await expect(waitForTurnStart({ seq: 8 }, 7, 50)).resolves.toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('始终没启动时在窗口后返回 false', async () => {
+  it('等待期间 seq 增长时在下一轮询返回 true 并释放 timer', async () => {
     vi.useFakeTimers()
-    try {
-      const session = { seq: 7 }
-      const pending = waitForTurnStart(session, 7, 50)
-      await vi.advanceTimersByTimeAsync(80)
-      await expect(pending).resolves.toBe(false)
-    }
-    finally {
-      vi.useRealTimers()
-    }
+    const session = { seq: 7 }
+    const pending = waitForTurnStart(session, 7, 50)
+    await vi.advanceTimersByTimeAsync(10)
+    session.seq = 8
+    await vi.advanceTimersByTimeAsync(10)
+    await expect(pending).resolves.toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('始终没启动时到截止时间返回 false，之前仍保持等待', async () => {
+    vi.useFakeTimers()
+    const pending = waitForTurnStart({ seq: 7 }, 7, 50)
+    const settled = vi.fn()
+    void pending.then(settled)
+    await vi.advanceTimersByTimeAsync(49)
+    expect(settled).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(pending).resolves.toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('启动窗口为 0 时不启动轮询，立即返回 false', async () => {
+    vi.useFakeTimers()
+    await expect(waitForTurnStart({ seq: 7 }, 7, 0)).resolves.toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 

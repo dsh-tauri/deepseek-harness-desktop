@@ -1,5 +1,4 @@
-import { useStore } from 'dsh-tauri/client'
-import { useEffect } from 'react'
+import { useStore, useWatchImmediate } from 'dsh-tauri/client'
 import { store } from '../store'
 import { applyPrefillToComposer } from './prefill-bridge.utils'
 
@@ -10,7 +9,7 @@ interface PrefillBridgeProps {
 export function PrefillBridge({ inputActions }: PrefillBridgeProps): null {
   const { pending } = useStore(store.prefill)
 
-  useEffect(() => {
+  useWatchImmediate([pending, inputActions], () => {
     if (pending === '')
       return
     if (inputActions !== undefined) {
@@ -20,7 +19,7 @@ export function PrefillBridge({ inputActions }: PrefillBridgeProps): null {
     }
     if (applyPrefillToComposer(pending))
       store.prefill.clear()
-  }, [pending, inputActions])
+  })
 
   return null
 }

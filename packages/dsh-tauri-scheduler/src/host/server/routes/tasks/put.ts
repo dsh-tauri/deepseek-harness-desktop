@@ -6,14 +6,19 @@ import { task } from '../../../service/task'
 export default defineEventHandler<EventHandlerRequest, Promise<TaskActionResult>>(async (event) => {
   const body = await readBody<TaskUpdateBody>(event)
   const id = typeof body?.id === 'string' ? body.id : ''
-  if (id.length === 0) {
+  if (!body || id.length === 0) {
     event.res.status = 400
     return { error: '缺少任务 id' }
   }
-  const result = await task.update(id, body ?? {})
+  if (!body.expected || typeof body.expected !== 'object' || Array.isArray(body.expected)) {
+    event.res.status = 400
+    return { ok: false, error: '缺少完整 expected 任务记录', code: 'task_expected_required' }
+  }
+  const { id: _id, expected, ...patch } = body
+  const result = await task.update(id, patch, expected)
   if (!result.ok) {
     event.res.status = 400
-    return { error: result.error }
+    return { ok: false, error: result.error, code: result.code }
   }
   return { ok: true, task: result.task }
 })

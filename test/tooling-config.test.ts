@@ -30,8 +30,14 @@ describe('tooling configuration contracts', () => {
     const source = path.join(root, 'src')
     expect(vite.resolve.alias).toContainEqual({ find: '@', replacement: source })
     expect(rootConfig.resolve?.alias).toEqual({ '@': source })
+    const rendererDependency = path.join(root, 'test/setup/primitives-optional-deps.ts')
+    const rendererAliases = Object.fromEntries([
+      ...'simple-icons anser shiki/core shiki/engine/javascript @deepseek-ai/dsh-util-code-language'.split(' '),
+      ...'typescript shellscript json python ruby go rust java c cpp csharp kotlin swift php yaml toml ini markdown mdx html css scss less sql xml lua bat powershell fish dotenv log csv diff http rst latex bibtex asciidoc r julia dart scala clojure erlang elixir haskell fsharp vb perl verilog system-verilog graphql proto hcl nix vue svelte make cmake groovy'.split(' ').map(language => `@shikijs/langs/${language}`),
+    ].map(name => [name, rendererDependency]))
     expect(unitConfig.resolve?.alias).toEqual({
       '@': source,
+      ...rendererAliases,
       'dsh-tauri/client': path.join(root, 'packages/dsh-tauri/src/client/index.ts'),
       'dsh-tauri': path.join(root, 'packages/dsh-tauri/src/index.ts'),
       'dsh-tauri-ui/client': path.join(root, 'packages/dsh-tauri-ui/src/client/index.ts'),
@@ -45,6 +51,7 @@ describe('tooling configuration contracts', () => {
   it('each project retains its distinct setup, scheduling and timeout envelope', () => {
     expect(unitConfig.test).toEqual({
       name: 'unit',
+      server: { deps: { inline: ['@deepseek-ai/dsh-client-ui-primitives'] } },
       include: ['packages/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}', 'test/**/*.test.ts', 'src/**/*.test.{ts,tsx}'],
       exclude: [
         '**/node_modules/**',
