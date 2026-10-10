@@ -108,16 +108,38 @@ describe('bounded this-session platform operations', () => {
     expect(await history.pending()).toEqual([])
   })
 
-  it('preserves rejected-flush failure without a receipt and accepts the same identity on explicit retry', async () => {
+  it('automatically retries rejected persistence on the next tick without duplicating the admitted identity', async () => {
     host.flush.mockRejectedValueOnce(new Error('isolated platform persistence failure'))
-    expect(await scheduler.trigger(target.id)).toEqual({ ok: false, error: 'isolated platform persistence failure', code: 'delivery_failed' })
-    const pending = await expectRetainedPending(NOW, 'manual')
-    expect(runtime.failed.has(target.id)).toBe(true)
-    expect(vi.getTimerCount()).toBe(0)
-    expect(await scheduler.trigger(target.id)).toEqual({ ok: true })
+    await scheduler.tick()
+    const pending = await expectRetainedPending(DUE, 'schedule')
+    await scheduler.tick()
+    expect(host.flush).toHaveBeenCalledTimes(2)
     expect(host.followup).toHaveBeenCalledTimes(1)
     expect(await history.query({ taskId: target.id, limit: 20 })).toMatchObject({ ok: true, records: [{ messageId: pending.message.id }] })
+    expect(await history.pending()).toEqual([])
+    expect(await task.get(target.id)).toMatchObject({ status: 'inactive' })
     expect(runtime.failed.has(target.id)).toBe(false)
+  })
+
+  it('automatically retries unavailable session inspection on the next tick', async () => {
+    host.inspect.mockRejectedValueOnce(new Error('temporary session read failure'))
+    await scheduler.tick()
+    expect(host.followup).not.toHaveBeenCalled()
+    await expectNoReceipt()
+    await scheduler.tick()
+    expect(host.followup).toHaveBeenCalledTimes(1)
+    expect(await task.get(target.id)).toMatchObject({ status: 'inactive' })
+    expect(runtime.failed.has(target.id)).toBe(false)
+  })
+
+  it('does not automatically retry a confirmed missing target', async () => {
+    host.inspect.mockRejectedValueOnce(Object.assign(new Error('session missing'), { code: 'session/not-found' }))
+    await scheduler.tick()
+    await scheduler.tick()
+    expect(host.inspect).toHaveBeenCalledTimes(1)
+    expect(host.followup).not.toHaveBeenCalled()
+    expect(runtime.failed.has(target.id)).toBe(true)
+    await expectNoReceipt()
   })
 
   it('fails a hung resolve at 10 seconds, releases the queue, and never follows up a late restored Agent', async () => {

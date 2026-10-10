@@ -147,13 +147,13 @@ async function acceptDelivery(target: SchedulerTask, trigger: RunTrigger, schedu
   try {
     const result = await trackAccepted(accepted)
     if (!result.ok && result.code !== 'delivery_pending' && result.code !== 'delivery_not_due') {
-      runtime.failed.add(target.id)
+      if (['session_archived', 'session_not_found', 'session/not-found', 'session_mismatch', 'task_invalid'].includes(result.code ?? ''))
+        runtime.failed.add(target.id)
       warn('this-session delivery failed', result.error)
     }
     return result
   }
   catch (error) {
-    runtime.failed.add(target.id)
     warn('this-session delivery failed', error)
     return { ok: false, error: error instanceof Error ? error.message : String(error), code: 'delivery_failed' }
   }
