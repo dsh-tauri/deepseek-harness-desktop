@@ -83,9 +83,8 @@ describe('mobile conversation layout', () => {
       'position': 'absolute',
       'inset': '0',
       'z-index': '1',
-      'transform': 'translate3d(var(--dsh-mobile-sidebar-offset), 0, 0)',
-      '--dsh-mobile-sidebar-radius': 'clamp(0px, calc(var(--dsh-mobile-sidebar-offset) / 10), 24px)',
-      'border-radius': 'var(--dsh-mobile-sidebar-radius) 0 0 var(--dsh-mobile-sidebar-radius)',
+      'transform': 'translate3d(0, 0, 0)',
+      'border-radius': '0',
       'corner-shape': 'round',
       'background-color': 'Canvas',
       'background-image': 'linear-gradient(var(--dsw-alias-bg-base, Canvas), var(--dsw-alias-bg-base, Canvas))',
@@ -95,7 +94,9 @@ describe('mobile conversation layout', () => {
       // 终端模式外观会在折叠标记下隐藏侧栏，抽屉接管时用更高特异度还原可见性。
       visibility: 'visible',
     })
-    expect(declarations('html[data-dsh-mobile-sidebar-open] [class$="_centerCol"], html[data-dsh-mobile-sidebar-dragging] [class$="_centerCol"]')).toMatchObject({
+    expect(declarations('html[data-dsh-mobile-sidebar-open] [class$="_centerCol"]')).toMatchObject({
+      'transform': 'translate3d(var(--dsh-mobile-sidebar-width), 0, 0)',
+      'border-radius': '24px 0 0 24px',
       'box-shadow': 'var(--dsw-shadow-lv3)',
     })
     expect(declarations('[data-dsh-mobile-sidebar-shade]').background).toBe('transparent')
@@ -115,6 +116,41 @@ describe('mobile conversation layout', () => {
         'box-shadow': 'none',
       })
     }
+  })
+
+  it('removes tap focus boxes while keeping a visible keyboard focus ring', () => {
+    for (const selector of ['[data-dsh-mobile-sidebar-toggle]', '[data-dsh-mobile-new-session]']) {
+      expect(declarations(selector)).toMatchObject({
+        'outline': 'none',
+        '-webkit-tap-highlight-color': 'transparent',
+      })
+    }
+    expect(declarations('[data-dsh-mobile-sidebar-toggle]:focus-visible, [data-dsh-mobile-new-session]:focus-visible')).toMatchObject({
+      'outline': 'var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))',
+      'outline-offset': '4px',
+    })
+  })
+
+  it('keeps click transitions on the center and shade without drag-only overrides', () => {
+    const css = root.toString()
+    expect(css).not.toContain('data-dsh-mobile-sidebar-dragging')
+    expect(declarations('html[data-dsh-mobile-sidebar] [class$="_centerCol"]').transition).toContain('transform 240ms cubic-bezier(.2, .8, .2, 1)')
+    expect(declarations('[data-dsh-mobile-sidebar-shade]').transition).toContain('transform 240ms cubic-bezier(.2, .8, .2, 1)')
+    const reducedMotion = root.nodes[0]
+    expect(reducedMotion?.type).toBe('atrule')
+    if (reducedMotion?.type !== 'atrule')
+      throw new Error('Missing mobile media query')
+    const rules = reducedMotion.nodes?.filter(node => node.type === 'atrule' && node.name === 'media' && node.params === '(prefers-reduced-motion: reduce)')
+    expect(rules).toHaveLength(1)
+    expect(rules?.[0]?.toString()).toContain('transition: none !important')
+  })
+
+  it('uses native safe-area ownership for the topbar and shade with browser inset fallbacks', () => {
+    expect(declarations('[data-dsh-mobile-topbar]')).toMatchObject({
+      height: 'calc(52px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px)))',
+      padding: 'calc(14px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px))) 16px 14px',
+    })
+    expect(declarations('[data-dsh-mobile-sidebar-shade]').inset).toBe('calc(52px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px))) 0 0')
   })
 
   it('renders the mobile sidebar icon at 20px inside the touch media query', () => {

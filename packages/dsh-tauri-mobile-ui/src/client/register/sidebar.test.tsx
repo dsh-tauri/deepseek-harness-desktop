@@ -103,11 +103,11 @@ function renderOverlay(overlay: HTMLElement): void {
   render(<Component />, { container: overlay })
 }
 
-function touch(target: Element, type: string, x: number, y: number, time: number, count = 1, cancelable = true): Event {
-  const event = new Event(type, { bubbles: true, cancelable })
+function touch(target: Element, type: string, x: number, y: number, time: number): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true })
   const point = { identifier: 1, clientX: x, clientY: y }
   Object.defineProperties(event, {
-    touches: { value: type === 'touchend' || type === 'touchcancel' ? [] : Array.from({ length: count }, (_, index) => ({ ...point, identifier: index + 1 })) },
+    touches: { value: type === 'touchend' || type === 'touchcancel' ? [] : [point] },
     changedTouches: { value: [point] },
     timeStamp: { value: time },
   })
@@ -115,14 +115,14 @@ function touch(target: Element, type: string, x: number, y: number, time: number
   return event
 }
 
-function pointer(target: Element, type: string, x: number, y: number, time: number, pointerType = 'mouse', buttons = type === 'pointerup' ? 0 : 1): Event {
+function pointer(target: Element, type: string, x: number, y: number, time: number): Event {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperties(event, {
     pointerId: { value: 7 },
-    pointerType: { value: pointerType },
+    pointerType: { value: 'mouse' },
     isPrimary: { value: true },
     button: { value: 0 },
-    buttons: { value: buttons },
+    buttons: { value: type === 'pointerup' ? 0 : 1 },
     clientX: { value: x },
     clientY: { value: y },
     timeStamp: { value: time },
@@ -165,7 +165,6 @@ beforeEach(() => {
   cleanup()
   document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
   document.documentElement.removeAttribute('data-dsh-mobile-sidebar-open')
-  document.documentElement.removeAttribute('data-dsh-mobile-sidebar-dragging')
   document.body.innerHTML = ''
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390, writable: true })
   Object.defineProperty(window, 'matchMedia', {
@@ -238,7 +237,7 @@ describe('registerMobileSidebar', () => {
     expect(main.getAttribute('aria-hidden')).toBe('true')
     expect(main.inert).toBe(true)
     expect(center.inert).toBe(false)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('319px')
+    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-width')).toBe('319px')
     expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-shadow')).toBe('')
     expect(mocks.invokeParent).toHaveBeenCalledWith({ type: 'dsh://sidebar:collapsed', collapsed: false })
 
@@ -258,192 +257,31 @@ describe('registerMobileSidebar', () => {
     expect(mocks.sessionListeners.size).toBe(0)
   })
 
-  it('closes with a touch swipe on the real shell-overlay shade', () => {
-    const { overlay } = setupFrame()
+  it.each(['touch', 'pointer'])('leaves %s swipes to content without opening or closing the sidebar', (source) => {
+    const { sidebar, main, overlay } = setupFrame()
+    const row = document.createElement('button')
+    row.textContent = 'Existing session'
+    const select = vi.fn()
+    row.addEventListener('click', select)
+    sidebar.append(row)
     register()
     renderOverlay(overlay)
+    const send = source === 'touch' ? touch : pointer
+    send(main, source === 'touch' ? 'touchstart' : 'pointerdown', 100, 200, 100)
+    expect(send(main, `${source}move`, 300, 202, 300).defaultPrevented).toBe(false)
+    send(main, source === 'touch' ? 'touchend' : 'pointerup', 320, 202, 400)
+    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
+    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-width')).toBe('319px')
     fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }))
-    const shade = overlay.querySelector<HTMLElement>('[data-dsh-mobile-sidebar-shade]')!
-
-    touch(shade, 'touchstart', 365, 220, 100)
-    const move = touch(shade, 'touchmove', 175, 222, 200)
-    expect(move.defaultPrevented).toBe(true)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('129px')
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(true)
-    touch(shade, 'touchend', 145, 222, 240)
-
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('0px')
-    expect(mocks.invokeParent).toHaveBeenLastCalledWith({ type: 'dsh://sidebar:collapsed', collapsed: true })
-  })
-
-  it('opens by swiping main content instead of requiring a screen-edge start', () => {
-    const { main, overlay } = setupFrame()
-    register()
-    renderOverlay(overlay)
-    const content = main.querySelector<HTMLElement>('[data-conversation-scroll]')!
-
-    touch(content, 'touchstart', 140, 300, 100)
-    const move = touch(content, 'touchmove', 300, 302, 300)
-    expect(move.defaultPrevented).toBe(true)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('160px')
-    touch(content, 'touchend', 320, 302, 400)
-
+    send(row, source === 'touch' ? 'touchstart' : 'pointerdown', 220, 200, 500)
+    expect(send(row, `${source}move`, 20, 202, 700).defaultPrevented).toBe(false)
+    send(row, source === 'touch' ? 'touchend' : 'pointerup', 20, 202, 800)
     expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(true)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('319px')
-  })
-
-  it.each(['shade', 'center', 'frame'])('suppresses a swipe compatibility click retargeted to the %s without swallowing unrelated controls', (surface) => {
-    const { main, center, overlay } = setupFrame()
-    register()
-    renderOverlay(overlay)
-    const content = main.querySelector<HTMLElement>('[data-conversation-scroll]')!
-    const shade = overlay.querySelector<HTMLElement>('[data-dsh-mobile-sidebar-shade]')!
-    const frame = overlay.parentElement!
-    const target = surface === 'shade' ? shade : surface === 'center' ? center : frame
-    const onRetarget = vi.fn()
-    target.addEventListener('click', onRetarget)
-    touch(content, 'touchstart', 140, 300, 100)
-    touch(content, 'touchmove', 300, 302, 300)
-    touch(content, 'touchend', 330, 302, 400)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(true)
-    fireEvent.click(target)
-    expect(onRetarget).not.toHaveBeenCalled()
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(true)
-    fireEvent.click(shade)
+    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-width')).toBe('319px')
+    fireEvent.click(row)
+    expect(select).toHaveBeenCalledTimes(1)
+    fireEvent.click(overlay.querySelector('[data-dsh-mobile-sidebar-shade]')!)
     expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-    touch(content, 'touchstart', 140, 300, 500)
-    touch(content, 'touchmove', 300, 302, 700)
-    touch(content, 'touchend', 330, 302, 800)
-    fireEvent.click(document.querySelector('[data-dsh-mobile-sidebar-toggle]')!)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-  })
-
-  it('keeps vertical scrolls, editable targets, and other overlays outside the drawer gesture', () => {
-    const { main, overlay } = setupFrame()
-    register()
-    renderOverlay(overlay)
-    const input = document.createElement('textarea')
-    main.append(input)
-    const otherOverlay = document.createElement('div')
-    overlay.append(otherOverlay)
-    for (const target of [input, otherOverlay]) {
-      touch(target, 'touchstart', 10, 300, 100)
-      expect(touch(target, 'touchmove', 250, 302, 300).defaultPrevented).toBe(false)
-      touch(target, 'touchend', 250, 302, 400)
-      expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('0px')
-    }
-    touch(main, 'touchstart', 10, 300, 100)
-    expect(touch(main, 'touchmove', 15, 380, 300).defaultPrevented).toBe(false)
-    touch(main, 'touchend', 15, 380, 400)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-  })
-
-  it('supports mouse/pen pointers on mobile without double-processing touch pointer streams', () => {
-    const { main, overlay } = setupFrame()
-    register()
-    renderOverlay(overlay)
-    pointer(main, 'pointerdown', 100, 200, 100, 'touch')
-    expect(pointer(main, 'pointermove', 300, 200, 200, 'touch').defaultPrevented).toBe(false)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('0px')
-    pointer(main, 'pointerdown', 100, 200, 100)
-    expect(pointer(main, 'pointermove', 300, 200, 200).defaultPrevented).toBe(true)
-    touch(main, 'touchstart', 10, 200, 200)
-    touch(main, 'touchmove', 20, 200, 220)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('200px')
-    pointer(main, 'pointerup', 320, 200, 240)
-    const shade = overlay.querySelector<HTMLElement>('[data-dsh-mobile-sidebar-shade]')!
-    pointer(shade, 'pointerdown', 360, 200, 300, 'pen')
-    expect(pointer(shade, 'pointermove', 140, 200, 400, 'pen').defaultPrevented).toBe(true)
-    pointer(shade, 'pointerup', 120, 200, 450, 'pen')
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-  })
-
-  it.each(['release', 'lost', 'buttons', 'dispose'])('captures only a claimed mouse drag and releases it on %s', (reason) => {
-    const { main, overlay } = setupFrame()
-    const frame = overlay.parentElement!
-    const capture = vi.fn()
-    const release = vi.fn()
-    let captured = false
-    Object.defineProperties(frame, {
-      setPointerCapture: { value: (id: number) => {
-        captured = true
-        capture(id)
-      } },
-      hasPointerCapture: { value: () => captured },
-      releasePointerCapture: { value: (id: number) => {
-        captured = false
-        release(id)
-      } },
-    })
-    const { dispose } = register()
-    renderOverlay(overlay)
-    pointer(main, 'pointerdown', 100, 200, 100)
-    expect(capture).not.toHaveBeenCalled()
-    expect(pointer(main, 'pointermove', 105, 200, 130).defaultPrevented).toBe(false)
-    expect(capture).not.toHaveBeenCalled()
-    pointer(main, 'pointermove', 200, 200, 300)
-    expect(capture).toHaveBeenCalledWith(7)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(true)
-    if (reason === 'release') {
-      pointer(frame, 'pointerup', 200, 200, 500)
-    }
-    else if (reason === 'lost') {
-      captured = false
-      pointer(frame, 'lostpointercapture', 200, 200, 500)
-    }
-    else if (reason === 'buttons') {
-      expect(pointer(frame, 'pointermove', 300, 200, 500, 'mouse', 0).defaultPrevented).toBe(false)
-    }
-    else {
-      act(() => dispose())
-    }
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(false)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-    if (reason === 'dispose') {
-      expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('')
-    }
-    else {
-      expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('0px')
-    }
-    const released = release.mock.calls.length
-    if (reason === 'lost') {
-      expect(released).toBe(0)
-    }
-    else {
-      expect(released).toBe(1)
-      expect(release).toHaveBeenCalledWith(7)
-    }
-    if (reason !== 'dispose') {
-      pointer(main, 'pointerdown', 100, 200, 600)
-      pointer(main, 'pointermove', 300, 200, 900)
-      pointer(frame, 'pointerup', 300, 200, 1200)
-      expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(true)
-    }
-  })
-
-  it.each(['content', 'main', 'frame'])('cancels a claimed touch gesture when its %s is detached at the same viewport width', async (part) => {
-    const { main, overlay } = setupFrame()
-    register()
-    renderOverlay(overlay)
-    const content = main.querySelector<HTMLElement>('[data-conversation-scroll]')!
-    touch(content, 'touchstart', 100, 200, 100)
-    touch(content, 'touchmove', 260, 200, 300)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(true)
-    const original = part === 'content' ? content : part === 'main' ? main : overlay.parentElement!
-    await act(async () => {
-      const replacement = original.cloneNode(true) as HTMLElement
-      if (part === 'frame')
-        replacement.querySelector('[data-dsh-mobile-navbar-host]')?.remove()
-      original.replaceWith(replacement)
-    })
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(false)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('0px')
-    const replacement = document.querySelector('[data-conversation-scroll]')!
-    touch(replacement, 'touchstart', 100, 200, 400)
-    touch(replacement, 'touchmove', 300, 200, 700)
-    touch(replacement, 'touchend', 300, 200, 1000)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(true)
   })
 
   it('never toggles core preferences to refresh mobile ownership across the desktop breakpoint', async () => {
@@ -465,71 +303,6 @@ describe('registerMobileSidebar', () => {
     expect(toggleSidebar).not.toHaveBeenCalled()
     expect(desktopWidth).toBe(350)
     expect(narrowExpanded).toBe(false)
-  })
-
-  it.each(['cancel', 'multitouch', 'noncancelable', 'resize'])('cancels an in-progress swipe on %s', (reason) => {
-    const { main, overlay } = setupFrame()
-    register()
-    renderOverlay(overlay)
-    touch(main, 'touchstart', 100, 200, 100)
-    touch(main, 'touchmove', 260, 200, 200)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(true)
-    if (reason === 'cancel')
-      touch(main, 'touchcancel', 300, 200, 300)
-    else if (reason === 'multitouch')
-      touch(main, 'touchmove', 300, 200, 300, 2)
-    else if (reason === 'noncancelable')
-      touch(main, 'touchmove', 300, 200, 300, 1, false)
-    else
-      fireEvent(window, new Event('resize'))
-    touch(main, 'touchend', 360, 200, 400)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(false)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-    expect(document.documentElement.style.getPropertyValue('--dsh-mobile-sidebar-offset')).toBe('0px')
-  })
-
-  it('preserves horizontal scrollers, selected text, and navbar controls', () => {
-    const { main, overlay } = setupFrame()
-    register()
-    renderOverlay(overlay)
-    const code = document.createElement('pre')
-    code.style.overflowX = 'auto'
-    Object.defineProperties(code, { scrollWidth: { value: 500 }, clientWidth: { value: 100 } })
-    main.append(code)
-    const toggle = screen.getByRole('button', { name: 'Open sidebar' })
-    for (const target of [code, toggle]) {
-      touch(target, 'touchstart', 100, 200, 100)
-      expect(touch(target, 'touchmove', 300, 200, 200).defaultPrevented).toBe(false)
-      touch(target, 'touchend', 320, 200, 300)
-    }
-    const selection = window.getSelection()!
-    vi.spyOn(selection, 'isCollapsed', 'get').mockReturnValue(false)
-    touch(main, 'touchstart', 100, 200, 100)
-    expect(touch(main, 'touchmove', 300, 200, 200).defaultPrevented).toBe(false)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-  })
-
-  it.each([140, 220])('suppresses the swipe-origin click after ending at x=%i and still allows unrelated controls', (endX) => {
-    const { sidebar, overlay } = setupFrame()
-    const row = document.createElement('button')
-    row.textContent = 'Existing session'
-    sidebar.append(row)
-    const onRow = vi.fn()
-    row.addEventListener('click', onRow)
-    register()
-    renderOverlay(overlay)
-    fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }))
-    touch(row, 'touchstart', 220, 200, 100)
-    touch(row, 'touchmove', 140, 200, 300)
-    touch(row, 'touchmove', endX, 200, 400)
-    touch(row, 'touchend', endX, 200, 600)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(true)
-    fireEvent.click(row)
-    expect(onRow).not.toHaveBeenCalled()
-    fireEvent.click(document.querySelector('[data-dsh-mobile-sidebar-toggle]')!)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
-    fireEvent.click(row)
-    expect(onRow).toHaveBeenCalledTimes(1)
   })
 
   it('reconciles delayed/replaced frames and restores all owned DOM state on unload', async () => {
@@ -565,16 +338,15 @@ describe('registerMobileSidebar', () => {
     root.style.removeProperty('--dsh-mobile-sidebar-width')
   })
 
-  it('hands the layout back at the desktop breakpoint without leftover navigation or gesture', () => {
+  it('hands the layout back at the desktop breakpoint without leftover navigation', () => {
     const { main, overlay } = setupFrame()
     const { dispose } = register()
     renderOverlay(overlay)
-    touch(main, 'touchstart', 100, 200, 100)
-    touch(main, 'touchmove', 260, 200, 200)
+    fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }))
     window.innerWidth = 1200
     fireEvent(window, new Event('resize'))
     expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar')).toBe(false)
-    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-dragging')).toBe(false)
+    expect(document.documentElement.hasAttribute('data-dsh-mobile-sidebar-open')).toBe(false)
     expect(document.querySelector('[data-dsh-mobile-navbar-host]')).toBeNull()
     expect(main.inert).toBe(false)
     dispose()

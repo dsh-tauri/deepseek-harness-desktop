@@ -1,0 +1,15 @@
+name: Build Android Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-android-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-apk:
+    uses: ./.github/workflows/build-android.yml

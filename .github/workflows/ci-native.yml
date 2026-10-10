@@ -1,0 +1,35 @@
+name: Native CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, native]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native typecheck and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check native subproject
+        run: pnpm run typecheck:native
+
+      - name: Native unit test
+        run: pnpm run test:native

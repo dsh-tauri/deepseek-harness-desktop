@@ -75,13 +75,19 @@ describe('mobile settings layout contract', () => {
       'min-height': '0',
       'border-radius': '0',
       'box-shadow': 'none',
-      'padding': 'env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px)',
+      'padding': 'var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px)) var(--dsh-mobile-safe-area-inset-right, env(safe-area-inset-right, 0px)) var(--dsh-mobile-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) var(--dsh-mobile-safe-area-inset-left, env(safe-area-inset-left, 0px))',
       'color-scheme': 'light',
       'background-color': 'Canvas',
       'background-image': 'linear-gradient(var(--dsw-alias-bg-layer-2, Canvas), var(--dsw-alias-bg-layer-2, Canvas))',
       'overflow': 'hidden',
     })
     expect(declarations(`body[data-ds-dark-theme] ${panel}`)).toEqual({ 'color-scheme': 'dark' })
+  })
+
+  it('honors native padded edges while retaining browser safe-area fallbacks', () => {
+    expect(declarations(panel).padding).toBe('var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px)) var(--dsh-mobile-safe-area-inset-right, env(safe-area-inset-right, 0px)) var(--dsh-mobile-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) var(--dsh-mobile-safe-area-inset-left, env(safe-area-inset-left, 0px))')
+    expect(declarations(`${panel} [data-dsh-mobile-settings-close]`).top).toBe('calc(6px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px)))')
+    expect(declarations(`${panel} [data-dsh-mobile-settings-controls]`).top).toBe('var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px))')
   })
 
   it('gives the menu a full-height list with wrapping 52px touch targets', () => {
@@ -153,16 +159,16 @@ describe('mobile settings layout contract', () => {
       'position': 'absolute',
       'height': '52px',
       'grid-template-columns': '40px minmax(0, 1fr)',
-      'left': 'calc(12px + env(safe-area-inset-left, 0px))',
-      'right': 'calc(64px + env(safe-area-inset-right, 0px))',
+      'left': 'calc(12px + var(--dsh-mobile-safe-area-inset-left, env(safe-area-inset-left, 0px)))',
+      'right': 'calc(64px + var(--dsh-mobile-safe-area-inset-right, env(safe-area-inset-right, 0px)))',
     })
   })
 
   it('keeps the native close button reachable above both views with visible keyboard focus', () => {
     expect(declarations(`${panel} [data-dsh-mobile-settings-close]`)).toMatchObject({
       'position': 'absolute',
-      'top': 'calc(6px + env(safe-area-inset-top, 0px))',
-      'right': 'calc(12px + env(safe-area-inset-right, 0px))',
+      'top': 'calc(6px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px)))',
+      'right': 'calc(12px + var(--dsh-mobile-safe-area-inset-right, env(safe-area-inset-right, 0px)))',
       'display': 'flex',
       'width': '40px',
       'height': '40px',

@@ -112,6 +112,15 @@ brew install dsh-tauri/desktop/deepseek-harness
 - Leave empty to inherit system/environment settings. Saved changes apply to new requests; retry failed downloads afterward.
 - SOCKS5H resolves destination names through the proxy; loopback connections stay direct.
 
+## Mobile support
+
+The same repository also maintains the **DSH Bridge** mobile app (Expo / React Native): it discovers a DSH host on the local network and hosts the Harness web UI in a full-screen WebView. The source lives in `src-native/`.
+
+- Android APKs are downloadable from the [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases) page as `Deepseek.Harness.Android_x.x.x.apk`, and the version follows the desktop app.
+- **iOS is not published yet**: only the Android build and release pipeline exists.
+- The mobile app is maintained **only while no official mobile service exists**, as a stopgap.
+- Development commands (`pnpm dev:native`, `pnpm android`, `pnpm test:native`, `pnpm typecheck:native`, …) plus the discovery, connection, persistence and release conventions are documented in the [mobile specification](docs/specs/native.md).
+
 ## Runtime
 
 Windows startup failures show a native dialog with the underlying error. For `STARTUP_LOW_INTEGRITY`:

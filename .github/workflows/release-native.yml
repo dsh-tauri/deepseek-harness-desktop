@@ -1,0 +1,326 @@
+name: Release Android APK (Native)
+
+# 桌面端发布完成后，用**同一个 release 提交**构建 Android APK，并把资产
+# `Deepseek.Harness.Android_<expo.version>.apk` 上传到该 release。iOS 不发布。
+#
+# 触发方式与 release-bundle.yml 保持一致：release.yml 只由 tag push / release/* PR 合并 /
+# 手动触发启动，没有任何分支触发路径，因此 workflow_run 不设 branches 过滤（设了反而会
+# 漏掉 tag push 与 PR 合并两条正式发布路径），只保留 types: [completed]，conclusion 与
+# 「触发运行来自本仓库」两条判断放在 job 级。
+#
+# 签名 secret（与 dsh-bridge-mobile 同名，需在本仓库 Settings → Secrets 配置）：
+#   ANDROID_KEYSTORE_BASE64   keystore 的 Base64
+#   ANDROID_KEYSTORE_PASSWORD keystore 密码
+#   ANDROID_KEY_ALIAS         签名 key alias
+#   ANDROID_KEY_PASSWORD      签名 key 密码
+# 四项全有 → 正式 key 签名；四项全无 → 开发证书 + 警告（不改变 release 的 draft/prerelease
+# 状态，那是 release.yml finalize 的职责）；部分配置 → 直接失败。
+on:
+  workflow_run:
+    workflows: ['Build & Release']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 目标 release tag（例如 v0.21.0）；必须从该 tag 的提交触发
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-native-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Android Release
+    # workflow_run 会为 release.yml 的每一次结束触发（含失败/取消/整轮所有 job 被跳过）；
+    # 被跳过的 job 报告 success，所以还必须要求触发运行来自本仓库。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.release.outputs.should_build }}
+      tag: ${{ steps.release.outputs.tag }}
+      source_ref: ${{ steps.release.outputs.source_ref }}
+    steps:
+      - name: Checkout triggering commit
+        uses: actions/checkout@v7
+        with:
+          # 只用它推导 tag：真正的构建源是按 tag 推导出的发布提交（见下一步）。
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # 桌面端 release 的 tag 恒为 v<package.json version>（scripts/release-identity.mjs）。
+          pkg_version="$(node --input-type=commonjs -p "require('./package.json').version")"
+          manual=false
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            manual=true
+          fi
+          tag="$TAG_INPUT"
+
+          emit() {
+            echo "should_build=$1" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "source_ref=$2" >> "$GITHUB_OUTPUT"
+          }
+          skip() {
+            emit false ''
+            echo "::warning::$1"
+            exit 0
+          }
+          # 手动指定了 tag 说明用户有明确目标，静默跳过会让人以为构建成功。
+          fail() {
+            if [ "$manual" = true ]; then
+              echo "::error::$1"
+              exit 1
+            fi
+            skip "$1; skipping the Android APK build"
+          }
+
+          # release.yml 的手动触发是试跑：它发的是 test-<ref>-<run> 预发布，tag 不指向本次构建的提交。
+          if [ "$TRIGGER_EVENT" = "workflow_dispatch" ]; then
+            fail "the triggering Build & Release run is a manual test release, whose tag does not point at the commit it built"
+          fi
+
+          if [ -z "$tag" ] && [[ "$RUN_HEAD_BRANCH" == v* ]]; then
+            tag="$RUN_HEAD_BRANCH"
+          fi
+          if [ -z "$tag" ]; then
+            tag="v$pkg_version"
+          fi
+
+          gh release view "$tag" >/dev/null 2>&1 \
+            || fail "release $tag does not exist"
+
+          # 构建源必须是 tag 指向的提交：合并 release/* PR 时 tag 建在 merge commit 上，
+          # 而 workflow_run 的 head_sha 只是 PR 分支的 head，两者不是同一个提交。
+          tag_commit="$(git rev-parse --verify --quiet "${tag}^{commit}" || true)"
+          if [ -z "$tag_commit" ]; then
+            fail "cannot resolve tag $tag locally"
+          fi
+          if [ "$manual" = true ] && [ "$(git rev-parse HEAD)" != "$tag_commit" ]; then
+            fail "tag $tag points at $tag_commit but this run is dispatched from $(git rev-parse HEAD); dispatch this workflow from the $tag ref"
+          fi
+          # 迁移 native 之前的 tag 没有 app.json / expo 配置，构建它只会产出错误的版本号。
+          if ! git cat-file -e "${tag_commit}:app.json" 2>/dev/null; then
+            fail "tag $tag points at $tag_commit, which predates the native Android pipeline"
+          fi
+
+          echo "android release target: $tag from $tag_commit"
+          emit true "$tag_commit"
+
+  build:
+    name: Build Android APK
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      signing: ${{ steps.signing.outputs.mode }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 资产名里的版本号取自 release 提交的 app.json expo.version；桌面端 tag 由
+      # package.json 决定，两者不一致就会发出与 release 版本不符的资产，必须失败。
+      - name: Read native version
+        id: meta
+        run: |
+          set -euo pipefail
+          version="$(node --input-type=commonjs -p "require('./app.json').expo.version")"
+          pkg="$(node --input-type=commonjs -p "require('./package.json').version")"
+          if [ "$version" != "$pkg" ]; then
+            echo "::error::app.json expo.version ($version) != package.json version ($pkg); 请让 native 版本跟随桌面端版本（bump 流程需同步 app.json）"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "native version: $version"
+
+      - name: Typecheck native sources
+        run: pnpm run typecheck:native
+
+      - name: Test native sources
+        run: pnpm run test:native
+
+      - name: Determine signing mode
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          present=0
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            if [[ -n "$value" ]]; then present=$((present + 1)); fi
+          done
+          if [[ "$present" -eq 0 ]]; then
+            echo 'mode=debug' >> "$GITHUB_OUTPUT"
+            echo '::warning::ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD 均未配置，发布资产将使用 Android 开发证书。'
+          elif [[ "$present" -eq 4 ]]; then
+            echo 'mode=release' >> "$GITHUB_OUTPUT"
+          else
+            echo '::error::Android 签名 secret 必须四项全配或全不配；当前配置不完整。'
+            exit 1
+          fi
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: '12266719'
+
+      - name: Install Android build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+
+      - name: Generate Android project
+        env:
+          CI: '1'
+        run: pnpm run prebuild:native
+
+      - name: Build release APK
+        env:
+          CI: '1'
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64
+
+      # 发布资产名固定为 Deepseek.Harness.Android_<expo.version>.apk；同时校验 16 KB
+      # 页对齐、签名、APK 内的标准版本号，以及 app.config.js 注入的第三方声明。
+      - name: Sign and verify APK
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          source='android/app/build/outputs/apk/release/app-release.apk'
+          mkdir -p release
+          destination="release/Deepseek.Harness.Android_${VERSION}.apk"
+          "$tools/zipalign" -c -P 16 4 "$source"
+          if [[ "$SIGNING_MODE" == 'release' ]]; then
+            keystore="$RUNNER_TEMP/dsh-bridge-release.keystore"
+            trap 'rm -f -- "$keystore"' EXIT
+            umask 077
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+            "$tools/apksigner" sign \
+              --ks "$keystore" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass env:KEYSTORE_PASSWORD \
+              --key-pass env:KEY_PASSWORD \
+              --out "$destination" "$source"
+          else
+            cp "$source" "$destination"
+          fi
+          "$tools/apksigner" verify --verbose --print-certs "$destination"
+          # 先落文件再读取：`aapt dump badging | head` 会让 aapt 收到 SIGPIPE，pipefail 下误报失败。
+          "$tools/aapt" dump badging "$destination" > "$RUNNER_TEMP/badging.txt"
+          head -n 5 "$RUNNER_TEMP/badging.txt"
+          grep -q "versionName='${VERSION}'" "$RUNNER_TEMP/badging.txt" \
+            || { echo "::error::APK versionName 与 app.json expo.version ${VERSION} 不一致"; exit 1; }
+          APK_PATH="$destination" node --input-type=commonjs -e '
+            const fs = require("node:fs");
+            const { execFileSync } = require("node:child_process");
+            const apk = process.env.APK_PATH;
+            const config = JSON.parse(execFileSync("unzip", ["-p", apk, "assets/app.config"], { encoding: "utf8" }));
+            const notice = fs.readFileSync("THIRD_PARTY_NOTICES.md", "utf8");
+            if (config.extra?.thirdPartyNotices !== notice) throw new Error("APK is missing the complete third-party notices");
+            console.log("APK embeds the complete third-party notices.");
+          '
+          cp THIRD_PARTY_NOTICES.md release/THIRD_PARTY_NOTICES.md
+          (cd release && sha256sum ./*.apk ./THIRD_PARTY_NOTICES.md > SHA256SUMS.txt)
+          find release -type f -print | sort
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-apk-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish APK Asset
+    needs: [prepare, build]
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 写权限只给真正上传资产的这一步。
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: android-apk-release
+          path: release
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # publish 未 checkout，gh 无法从 .git 推断仓库，需显式指定。
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SIGNING_MODE: ${{ needs.build.outputs.signing }}
+        run: |
+          set -euo pipefail
+          apk="release/Deepseek.Harness.Android_${VERSION}.apk"
+          [ -f "$apk" ] || { echo "::error::$apk was not downloaded"; exit 1; }
+          # 只上传，不新建/不改写 release：release.yml 的 finalize 是 Release 的单一 writer。
+          gh release upload "$RELEASE_TAG" "$apk" release/SHA256SUMS.txt release/THIRD_PARTY_NOTICES.md --clobber
+          {
+            echo "### Android APK asset"
+            echo
+            echo "- asset: \`Deepseek.Harness.Android_${VERSION}.apk\`"
+            echo "- signing: \`${SIGNING_MODE}\`"
+            echo "- iOS: 未发布"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$SIGNING_MODE" == 'debug' ]]; then
+            echo '> [!WARNING]' >> "$GITHUB_STEP_SUMMARY"
+            echo '> 该 APK 使用 Android 开发证书，仅供评估，不能用于生产分发；配置四个 ANDROID_* 签名 secret 后重跑本 workflow 可覆盖为正式签名。' >> "$GITHUB_STEP_SUMMARY"
+          fi

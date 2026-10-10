@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feat/mobile-sidebar]
+    branches: [main, native, feat/mobile-sidebar]
 
 permissions:
   contents: read

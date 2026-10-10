@@ -26,6 +26,9 @@ export default antfu({
     // 插件 Tailwind 产物：由 packages/dsh-tauri-ui/scripts/taiwindcss.ts 生成，转义后的选择器与体积
     // 都不适合本仓 lint 规约
     'packages/dsh-tauri-ui/src/client/styles/index.ts',
+    // uniwind 产物：由 withUniwindConfig 的 dtsFile 生成（4 空格缩进 + 顶部「勿手改」声明），
+    // 每次 metro 启动都会重写，手改会被覆盖，故不参与本仓 lint 规约
+    'src-native/uniwind-types.d.ts',
   ],
 }, {
   // 插件包是库包而非应用壳：client 侧文件按 host/client 双面设计，

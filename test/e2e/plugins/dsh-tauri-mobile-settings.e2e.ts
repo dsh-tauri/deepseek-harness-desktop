@@ -44,6 +44,65 @@ async function openPhoneSettings(width: number, height: number) {
 }
 
 describe('mobile settings official host composition', () => {
+  it('animates real touch toggles without tap outlines and honors reduced motion', async () => {
+    const app = await newDshPage(browser, {
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+      ready: '[data-dsh-mobile-sidebar-toggle]',
+    })
+    try {
+      await app.page.emulateMedia({ reducedMotion: 'no-preference' })
+      const toggle = app.frame.locator('[data-dsh-mobile-sidebar-toggle]')
+      const plus = app.frame.locator('[data-dsh-mobile-new-session]')
+      const center = app.frame.locator('[class$="_centerCol"]')
+      const shade = app.frame.locator('[data-dsh-mobile-sidebar-shade]')
+      await app.frame.locator('[class$="_centerCol"], [data-dsh-mobile-sidebar-shade]').evaluateAll((elements) => {
+        for (const element of elements) {
+          element.setAttribute('data-e2e-transform-count', '0')
+          element.addEventListener('transitionrun', (event) => {
+            if (event.target === element && (event as TransitionEvent).propertyName === 'transform')
+              element.setAttribute('data-e2e-transform-count', String(Number(element.getAttribute('data-e2e-transform-count')) + 1))
+          })
+        }
+      })
+      await toggle.tap()
+      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true')
+      await expect.poll(() => center.getAttribute('data-e2e-transform-count'), { message: '点击展开必须真正启动主面板位移动效' }).toBe('1')
+      await expect.poll(() => shade.getAttribute('data-e2e-transform-count'), { message: '遮罩必须跟随主面板过渡' }).toBe('1')
+      await expect.poll(async () => Math.round((await center.boundingBox())!.x)).toBe(319)
+      await shade.tap()
+      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false')
+      await expect.poll(() => center.getAttribute('data-e2e-transform-count'), { message: '点击关闭也必须保留位移动效' }).toBe('2')
+      await expect.poll(async () => Math.round((await center.boundingBox())!.x)).toBe(0)
+      expect(await toggle.evaluate(element => ({
+        outline: getComputedStyle(element).outlineStyle,
+        tap: getComputedStyle(element).getPropertyValue('-webkit-tap-highlight-color'),
+        keyboardFocus: element.matches(':focus-visible'),
+      })), '触摸后恢复焦点不能留下浏览器默认框').toEqual({ outline: 'none', tap: 'rgba(0, 0, 0, 0)', keyboardFocus: false })
+      await plus.tap()
+      expect(await plus.evaluate(element => getComputedStyle(element).outlineStyle), '新会话图标触摸后也不能留下默认框').toBe('none')
+      await app.page.keyboard.press('Shift+Tab')
+      await toggle.focus()
+      expect(await toggle.evaluate(element => element.matches(':focus-visible')), '键盘导航仍须有可见焦点').toBe(true)
+      expect(await toggle.evaluate(element => getComputedStyle(element).outlineStyle)).toBe('solid')
+
+      await app.page.emulateMedia({ reducedMotion: 'reduce' })
+      await toggle.tap()
+      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true')
+      expect(Math.round((await center.boundingBox())!.x), '减少动态效果时应直接到达展开位置').toBe(319)
+      expect(await center.getAttribute('data-e2e-transform-count'), '系统减少动态效果时不得强行动画').toBe('2')
+      await shade.tap()
+      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false')
+      expect(Math.round((await center.boundingBox())!.x)).toBe(0)
+      expectNoSyntheticFallbacks(app)
+      expect(app.errors).toEqual([])
+    }
+    finally {
+      await app.close()
+    }
+  })
+
   it.each([{ width: 320, height: 568 }, { width: 430, height: 943 }, { width: 767, height: 800 }])('keeps the official section mounted through categories at $width pixels', async ({ width, height }) => {
     const { app, dialog } = await openPhoneSettings(width, height)
     try {

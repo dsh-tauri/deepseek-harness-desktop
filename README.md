@@ -111,6 +111,15 @@ brew install dsh-tauri/desktop/deepseek-harness
 - 留空沿用系统/环境代理；保存后对新请求生效，可重试失败的下载。
 - SOCKS5H 通过代理解析目标域名；本机回环连接始终直连。
 
+## 移动端支持
+
+同一仓库内维护移动端 **DSH Bridge**（Expo / React Native）：在局域网发现 DSH 主机，并以全屏 WebView 承载 Harness 网页，源码位于 `src-native/`。
+
+- Android APK 可在 [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases) 页面下载，资产名形如 `Deepseek.Harness.Android_x.x.x.apk`，版本跟随桌面端。
+- **iOS 尚未发布**，当前只有 Android 构建与发版流程。
+- 该移动端**仅在官方未推出移动端服务期间维护**，属于过渡方案。
+- 开发命令（`pnpm dev:native`、`pnpm android`、`pnpm test:native`、`pnpm typecheck:native` 等）与发现、连接、持久化、发版约定见[移动端规范](docs/specs/native.md)。
+
 ## 运行方式
 
 Windows 启动失败时会通过原生对话框显示具体错误。若出现 `STARTUP_LOW_INTEGRITY`：
