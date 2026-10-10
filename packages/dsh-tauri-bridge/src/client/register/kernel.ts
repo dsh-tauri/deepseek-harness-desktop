@@ -117,7 +117,6 @@ export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) =
     const opened = adapter.openSession(sessionId)
     if (opened.status !== 'opened')
       throw new Error(opened.reason)
-    kernelStore.select(backend)
   }
 
   const nativeModels = registerNativeModels(controller, adapter)

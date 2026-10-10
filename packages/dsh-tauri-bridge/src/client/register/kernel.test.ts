@@ -140,7 +140,7 @@ function fixture(options: { hero?: boolean, sidebar?: boolean, hover?: boolean, 
 }
 
 beforeEach(() => {
-  kernelStore.$patch({ selected: undefined, phase: 'idle', backends: [], error: null })
+  kernelStore.$patch({ phase: 'idle', backends: [], error: null })
   vi.mocked(getBackends).mockReset().mockResolvedValue(BACKENDS)
   vi.mocked(postSessions).mockReset().mockResolvedValue({ sessionId: 'new-session' })
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -149,7 +149,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const dispose of disposers.splice(0))
     dispose()
-  kernelStore.$patch({ selected: undefined, phase: 'idle', backends: [], error: null })
+  kernelStore.$patch({ phase: 'idle', backends: [], error: null })
   vi.restoreAllMocks()
   vi.useRealTimers()
   vi.unstubAllGlobals()
@@ -222,7 +222,7 @@ describe('kernel registration and lifecycle', () => {
     expect(postSessions).not.toHaveBeenCalled()
   })
 
-  it('explicit native selection opens a fresh verified session through the official navigator and remembers only the picker choice', async () => {
+  it('explicit native selection opens a fresh verified session through the official navigator without remembering the choice', async () => {
     const feature = fixture()
     await vi.waitFor(() => expect(kernelStore.$state.phase).toBe('ready'))
     await feature.hero().createSession('codex', { workspaceId: 'workspace-a' }, 'coding')
@@ -231,21 +231,19 @@ describe('kernel registration and lifecycle', () => {
     expect(feature.openSession).toHaveBeenCalledWith('new-session')
     expect(feature.officialCreate).not.toHaveBeenCalled()
     expect(feature.uiWorkspace.startSession).not.toHaveBeenCalled()
-    expect(kernelStore.$state.selected).toBe('codex')
+    expect(kernelStore.$state).not.toHaveProperty('selected')
   })
 
   it('explicit DeepSeek selection creates fresh rather than rebinding or reusing the current native session', async () => {
     const feature = fixture()
     await vi.waitFor(() => expect(kernelStore.$state.phase).toBe('ready'))
-    kernelStore.select('codex')
     await feature.hero().createSession('dsh', { cwd: '/ungrouped' })
     expect(feature.officialCreate).toHaveBeenCalledWith({ cwd: '/ungrouped' })
     expect(postSessions).not.toHaveBeenCalled()
     expect(feature.openSession).toHaveBeenCalledWith('official-new')
-    expect(kernelStore.$state.selected).toBeUndefined()
   })
 
-  it('navigation cancellation leaves a completed creation unopened and does not save its picker choice', async () => {
+  it('navigation cancellation leaves a completed creation unopened', async () => {
     const feature = fixture()
     await vi.waitFor(() => expect(kernelStore.$state.phase).toBe('ready'))
     const pending = deferred<{ sessionId: string }>()
@@ -255,10 +253,9 @@ describe('kernel registration and lifecycle', () => {
     pending.resolve({ sessionId: 'new-session' })
     await task
     expect(feature.openSession).not.toHaveBeenCalled()
-    expect(kernelStore.$state.selected).toBeUndefined()
   })
 
-  it('plugin disposal during an HTTP create prevents refresh, official opening, and preference writes', async () => {
+  it('plugin disposal during an HTTP create prevents refresh and official opening', async () => {
     const feature = fixture()
     await vi.waitFor(() => expect(kernelStore.$state.phase).toBe('ready'))
     const pending = deferred<{ sessionId: string }>()
@@ -270,7 +267,6 @@ describe('kernel registration and lifecycle', () => {
     expect(feature.sessions.refresh).not.toHaveBeenCalled()
     expect(feature.refreshProjections).not.toHaveBeenCalled()
     expect(feature.openSession).not.toHaveBeenCalled()
-    expect(kernelStore.$state.selected).toBeUndefined()
   })
 
   it('recovers when the startup route is registered after two 404 responses', async () => {

@@ -7,7 +7,7 @@ import { useRef, useState } from 'react'
 import { locale } from '../locales'
 import { backendFromIdentity, isBackendAvailable, isForkedIdentity } from '../service/kernel-identity'
 import { kernelContentAvailable } from '../service/kernel-version'
-import { kernelStore, rememberedKernel } from '../store/modules/kernel-store'
+import { kernelStore } from '../store/modules/kernel-store'
 import { KernelIcon } from './kernel-icon'
 
 const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude' }
@@ -52,15 +52,16 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   if (store.phase === 'ready' && !kernelContentAvailable(store.backends))
     return null
 
-  const remembered = props.sessionId === undefined || identity === null
-  const backend = remembered ? rememberedKernel(store.selected) : backendFromIdentity(identity)
+  const awaiting = props.sessionId !== undefined && identity === undefined
+  const bound = backendFromIdentity(identity)
+  const backend = bound === 'codex' || bound === 'claude' ? bound : undefined
   const roster = new Map(store.backends.map(item => [item.id, item]))
   const workspaceBySession = new Map(workspaces.flatMap(workspace => workspace.sessionIds.map(id => [id, workspace.workspaceId] as const)))
   const workspaceId = props.sessionId === undefined ? undefined : workspaceBySession.get(props.sessionId)
   const busy = isLoading || store.phase === 'loading'
   const capable = props.canCreate()
-  const clearable = (backend === 'codex' || backend === 'claude') && !busy && capable
-  const disabled = busy || !capable || (!remembered && backend === undefined)
+  const clearable = backend !== undefined && !busy && capable
+  const disabled = busy || !capable || awaiting
   const items = CHOICES.map((id) => {
     const hint = backendHint(roster.get(id))
     return {
@@ -99,9 +100,8 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   }
 
   function clear(): void {
-    kernelStore.select(undefined)
     setExpanded(false)
-    if (remembered || isLoading || store.phase !== 'ready' || !capable)
+    if (isLoading || store.phase !== 'ready' || !capable)
       return
     const preset = summary?.projectionValues?.agentPreset
     void executeImmediate('dsh', workspaceId === undefined
@@ -129,7 +129,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
               title={title}
               onClick={() => setExpanded(current => !current)}
             >
-              {backend === undefined ? remembered ? locale.text('kernel.select') : locale.text('kernel.pending') : LABELS[backend]}
+              {backend === undefined ? awaiting ? locale.text('kernel.pending') : locale.text('kernel.select') : LABELS[backend]}
             </Chip>
           )}
           items={items}

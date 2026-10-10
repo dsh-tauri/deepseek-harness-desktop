@@ -47,7 +47,6 @@ function sidebarProps(identity: KernelBinding | null | undefined): SessionKernel
 
 beforeEach(() => {
   kernelStore.$patch({
-    selected: undefined,
     phase: 'ready',
     error: null,
     backends: [
@@ -60,7 +59,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
-  kernelStore.$patch({ selected: undefined, backends: [], phase: 'idle', error: null })
+  kernelStore.$patch({ backends: [], phase: 'idle', error: null })
   vi.restoreAllMocks()
 })
 
@@ -78,15 +77,16 @@ describe('hero kernel picker', () => {
     expect(view.getByRole('menu').querySelectorAll('[aria-checked="true"]')).toHaveLength(0)
   })
 
-  it('reads a legacy persisted dsh choice as the unselected state', () => {
-    kernelStore.$patch({ selected: 'dsh' })
-    const view = render(<HeroKernel {...heroProps()} />)
-    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
+  it('a session without a native binding stays unselected instead of showing the official kernel', () => {
+    const view = render(<HeroKernel {...heroProps({ sessionId: 'session-a', identity: null })} />)
+    const chip = view.getByRole('button', { name: 'Kernel' })
+    expect(chip.textContent).toContain('Select kernel')
+    expect((chip as HTMLButtonElement).disabled).toBe(false)
+    expect(view.queryByRole('button', { name: 'Clear kernel selection' })).toBeNull()
   })
 
   it('shows the arrow by default and swaps it for the clear icon on hover', () => {
-    kernelStore.select('codex')
-    const view = render(<HeroKernel {...heroProps()} />)
+    const view = render(<HeroKernel {...heroProps({ sessionId: 'session-a', identity: IDENTITY })} />)
     const pill = view.container.querySelector('[data-bridge-kernel-pill]')
     const clear = view.getByRole('button', { name: 'Clear kernel selection' })
     expect(pill?.className).toContain('group')
@@ -96,21 +96,6 @@ describe('hero kernel picker', () => {
     expect(clearIcon?.className).toContain('group-hover:inline-flex')
     expect(clearIcon?.className).toContain('group-focus-visible:inline-flex')
     expect(clear.querySelectorAll('svg')).toHaveLength(2)
-  })
-
-  it('clears a remembered native kernel back to the unselected state without opening the menu', async () => {
-    kernelStore.select('codex')
-    const props = heroProps()
-    const view = render(<HeroKernel {...props} />)
-    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Codex')
-    const clear = view.getByRole('button', { name: 'Clear kernel selection' })
-    fireEvent.click(clear)
-    expect(kernelStore.$state.selected).toBeUndefined()
-    await act(async () => {})
-    expect(view.container.textContent).toContain('Select kernel')
-    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
-    expect(view.queryByRole('menu')).toBeNull()
-    expect(props.createSession).not.toHaveBeenCalled()
   })
 
   it('a bound native session returns to dsh through the clear affordance', async () => {
@@ -123,7 +108,6 @@ describe('hero kernel picker', () => {
     expect(pill.contains(clear)).toBe(true)
     fireEvent.click(clear)
     await vi.waitFor(() => expect(props.createSession).toHaveBeenCalledWith('dsh', { workspaceId: 'workspace-a' }, 'coding'))
-    expect(kernelStore.$state.selected).toBeUndefined()
     expect(view.queryByRole('menu')).toBeNull()
   })
 
@@ -144,8 +128,7 @@ describe('hero kernel picker', () => {
     expect(view.container.childElementCount).toBe(0)
   })
 
-  it('missing persisted identity remains pending and disabled instead of adopting a saved default', async () => {
-    kernelStore.select('claude')
+  it('an unread session identity stays pending and disabled until its projection arrives', async () => {
     const props = heroProps({ sessionId: 'session-a' })
     const view = render(<HeroKernel {...props} />)
     const chip = view.getByRole('button', { name: 'Kernel' }) as HTMLButtonElement
@@ -155,8 +138,7 @@ describe('hero kernel picker', () => {
     expect(props.createSession).not.toHaveBeenCalled()
   })
 
-  it('bound identity wins over the saved default and the Chip is inside the official Menu anchor', () => {
-    kernelStore.select('claude')
+  it('a bound identity is shown in the Chip inside the official Menu anchor', () => {
     const view = render(<HeroKernel {...heroProps({ sessionId: 'session-a', identity: IDENTITY })} />)
     const chip = view.getByRole('button', { name: 'Kernel' })
     expect(chip.textContent).toContain('Codex')
@@ -176,7 +158,6 @@ describe('hero kernel picker', () => {
     fireEvent.click(view.getByRole('menuitem', { name: 'Codex' }))
     await vi.waitFor(() => expect(props.createSession).toHaveBeenCalledWith('codex', { workspaceId: 'workspace-a' }, 'coding'))
     await vi.waitFor(() => expect(view.queryByRole('menu')).toBeNull())
-    expect(kernelStore.$state.selected).toBeUndefined()
   })
 
   it('ungrouped creation passes only cwd and uninstalled choices cannot create', async () => {
@@ -225,12 +206,11 @@ describe('hero kernel picker', () => {
     }
   })
 
-  it('the sessionless picker reads only the remembered selector choice', () => {
-    kernelStore.select('codex')
+  it('the sessionless picker starts unselected and reads no session projection', () => {
     const props = heroProps()
     const view = render(<HeroKernel {...props} />)
     const chip = view.getByRole('button', { name: 'Kernel' }) as HTMLButtonElement
-    expect(chip.textContent).toContain('Codex')
+    expect(chip.textContent).toContain('Select kernel')
     expect(chip.disabled).toBe(false)
     expect(props.ensureProjection).not.toHaveBeenCalled()
   })
@@ -243,7 +223,6 @@ describe('hero kernel picker', () => {
     fireEvent.click(view.getByRole('menuitem', { name: 'Codex' }))
     await vi.waitFor(() => expect(view.getByRole('alert').textContent).toContain('native create refused'))
     expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
-    expect(kernelStore.$state.selected).toBeUndefined()
   })
 
   it('busy creation disables further selection until it settles', async () => {
