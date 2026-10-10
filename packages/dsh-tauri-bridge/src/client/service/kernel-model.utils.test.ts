@@ -36,6 +36,26 @@ describe('native model directory view', () => {
     expect(directory.current).toEqual({ provider: 'bridge/codex', model: 'custom-provider/deepseek' })
   })
 
+  it('names the single default row after the native alias instead of a second native-default placeholder', () => {
+    const catalog: NativeModelDirectory = {
+      backend: 'claude',
+      current: { model: null, reasoningEffort: null },
+      defaultModel: 'default',
+      models: [
+        { id: 'default', name: 'Default (recommended)' },
+        { id: 'opus', name: 'Opus' },
+        { id: 'fable', name: 'Fable' },
+        { id: 'sonnet', name: 'Sonnet' },
+        { id: 'haiku', name: 'Haiku' },
+      ],
+    }
+    const directory = nativeModelDirectory('claude', { model: null, reasoningEffort: null }, catalog)
+    expect(directory.groups).toEqual([{ id: 'bridge/claude', name: 'Claude', models: catalog.models }])
+    expect(directory.current).toEqual({ provider: 'bridge/claude', model: 'default' })
+    expect(directory.groups[0]?.models.some(model => model.name === '原生默认' || model.id === '')).toBe(false)
+    expect(nativeModelOptions('claude', catalog, { provider: 'bridge/claude', model: 'default' })).toEqual({ model: null, reasoningEffort: null })
+  })
+
   it('an unread native default has one explicit default placeholder instead of treating the bridge route as a model', () => {
     const directory = nativeModelDirectory('codex', { model: null, reasoningEffort: null }, null)
     expect(directory.groups).toEqual([{ id: 'bridge/codex', name: 'Codex', models: [{ id: '', name: 'Native default' }] }])

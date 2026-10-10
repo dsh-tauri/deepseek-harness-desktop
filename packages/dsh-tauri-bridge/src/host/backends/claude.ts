@@ -143,7 +143,7 @@ class ClaudeSession implements NativeSession {
       this.checkIdentity(response)
       this.noteCapabilities(response)
       if (response.models !== undefined)
-        this.catalog = this.modelCatalog(response.models)
+        this.catalog = this.modelCatalog(response.models, this.startupModel)
       if (this.failure)
         throw this.failure
       if (!this.identityConfirmed) {
@@ -167,10 +167,11 @@ class ClaudeSession implements NativeSession {
     }
   }
 
-  private modelCatalog(values: unknown): NativeModelCatalog {
+  private modelCatalog(values: unknown, defaultModel: string | undefined): NativeModelCatalog {
     if (!Array.isArray(values))
       throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Claude initialization is missing supported models')
     const models = new Map<string, NativeModelInfo>()
+    const resolved = new Map<string, string>()
     for (const value of values) {
       const model = record(value)
       const id = stringField(model, 'value')
@@ -185,10 +186,14 @@ class ClaudeSession implements NativeSession {
         ...efforts.length > 0 ? { reasoning: { efforts } } : {},
       }
       models.set(id, info)
+      if (typeof model.resolvedModel === 'string' && model.resolvedModel !== '')
+        resolved.set(model.resolvedModel, id)
       if (models.size > 10_000)
         throw new NativeBridgeError('BRIDGE_PROTOCOL_LIMIT', 'Claude model listing exceeded its limit')
     }
-    return { models: [...models.values()], ...this.startupModel === undefined ? {} : { defaultModel: this.startupModel } }
+    const anchor = defaultModel ?? this.effectiveModel
+    const name = anchor === undefined ? 'default' : models.has(anchor) ? anchor : resolved.get(anchor) ?? 'default'
+    return { models: [...models.values()], ...models.has(name) ? { defaultModel: name } : {} }
   }
 
   async models(signal: AbortSignal): Promise<NativeModelCatalog> {
@@ -202,7 +207,7 @@ class ClaudeSession implements NativeSession {
       if (id && !models.some(model => model.id === id))
         models.push({ id, name: id })
     }
-    return { models, ...this.startupModel === undefined ? {} : { defaultModel: this.startupModel } }
+    return { ...this.catalog, models }
   }
 
   private async applyOptions(options: NativeTurnOptions, signal: AbortSignal): Promise<void> {

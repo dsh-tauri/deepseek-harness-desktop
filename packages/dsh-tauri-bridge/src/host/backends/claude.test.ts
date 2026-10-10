@@ -412,7 +412,7 @@ describe('claude native stream-json control contract', () => {
       { id: 'sonnet', name: 'Sonnet' },
       { id: 'haiku', name: 'Haiku' },
     ])
-    expect(catalog.defaultModel).toBeUndefined()
+    expect(catalog.defaultModel).toBe('default')
     expect(catalog.models.some(model => model.id.startsWith('claude-'))).toBe(false)
     expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
   })
@@ -526,7 +526,7 @@ describe('claude native stream-json control contract', () => {
       },
     })
     const session = await open(storedId)
-    expect((await session.models!(new AbortController().signal)).defaultModel).toBeUndefined()
+    expect((await session.models!(new AbortController().signal)).defaultModel).toBe('persisted-override')
     await expect(session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: 'high' })).rejects.toMatchObject({ code: 'BRIDGE_DEFAULT_UNAVAILABLE' })
     expect(fixture.frames).toHaveLength(1)
     expect(session.id).toBe(storedId)
@@ -579,7 +579,7 @@ describe('claude native stream-json control contract', () => {
     await expect(session.submit([user()], signal, { model: null, reasoningEffort: 'high' })).rejects.toMatchObject({ code: 'BRIDGE_DEFAULT_UNAVAILABLE' })
     expect(fixture.frames).toHaveLength(before)
     if (phase === 'after-reset')
-      expect((await session.models!(signal)).defaultModel).toBeUndefined()
+      expect((await session.models!(signal)).defaultModel).toBe('configured-startup')
     expect(usedModels).toEqual(phase === 'after-reset' ? ['chosen', cliDefault] : ['chosen'])
     await session.submit([user()], signal, { model: cliDefault, reasoningEffort: 'low' })
     expect(nativeModel).toBe(cliDefault)

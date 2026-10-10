@@ -246,6 +246,35 @@ describe('native model renderer public contract', () => {
     expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: null, reasoningEffort: 'high' })
   })
 
+  it('a Claude alias catalog shows exact native names with no second native-default row', async () => {
+    vi.mocked(getModels).mockResolvedValue({
+      backend: 'claude',
+      defaultModel: 'default',
+      current: { model: null, reasoningEffort: null },
+      models: [
+        { id: 'default', name: 'Default (recommended)' },
+        { id: 'opus', name: 'Opus' },
+        { id: 'fable', name: 'Fable' },
+        { id: 'sonnet', name: 'Sonnet' },
+        { id: 'haiku', name: 'Haiku' },
+      ],
+    })
+    const feature = fixture({ backend: 'claude', nativeSessionId: 'native-a', sessionId: 'session-a' })
+    const view = render(<ModelKernel {...feature.props} />)
+    await view.findByRole('button', { name: 'Default (recommended)' })
+    fireEvent.click(view.getByRole('button', { name: 'Default (recommended)' }))
+    await waitFor(() => expect(view.getAllByRole('button', { name: /^Model:/ }).map(button => button.textContent)).toEqual([
+      'Model: Default (recommended)',
+      'Model: Opus',
+      'Model: Fable',
+      'Model: Sonnet',
+      'Model: Haiku',
+    ]))
+    expect(view.queryByRole('button', { name: /原生默认|Native default|bridge\/claude/ })).toBeNull()
+    expect(nativeModel.$state.entries['session-a']!.current).toEqual({ model: null, reasoningEffort: null })
+    expect(postModels).not.toHaveBeenCalled()
+  })
+
   it('reading an existing fixed default preference never silently converts it to nullable delegation', async () => {
     vi.mocked(getModels).mockResolvedValue({ ...CATALOG, defaultReasoningEffort: 'high' })
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'gpt-5.4', reasoningEffort: null } })
