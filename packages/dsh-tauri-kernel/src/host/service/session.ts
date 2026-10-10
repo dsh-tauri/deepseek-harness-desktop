@@ -401,7 +401,7 @@ async function close(sessionId: string, owner?: Agent): Promise<void> {
       await entry.session.dispose()
     }
     catch (error) {
-      getServerContext<HostContext>(server).logger?.warn?.('dsh-tauri-bridge: native process termination failed', error)
+      getServerContext<HostContext>(server).logger?.warn?.('dsh-tauri-kernel: native process termination failed', error)
     }
     if (runtime.sessions.get(sessionId) === entry)
       runtime.sessions.delete(sessionId)

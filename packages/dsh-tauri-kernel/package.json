@@ -1,5 +1,5 @@
 {
-  "name": "dsh-tauri-bridge",
+  "name": "dsh-tauri-kernel",
   "type": "module",
   "version": "1.0.0",
   "description": "在官方会话界面中连接用户本机安装的 Codex 和 Claude 内核。",

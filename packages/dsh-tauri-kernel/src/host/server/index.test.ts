@@ -293,7 +293,7 @@ function select(base: string, agent: Agent, model: string | null, reasoningEffor
 }
 
 function modelEvents(official: Session) {
-  return official.snapshotEvents().filter(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')
+  return official.snapshotEvents().filter(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')
 }
 
 describe('exported bridge plugin HTTP dependency boundary', () => {
@@ -357,19 +357,19 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     const post = await select(base, agent, 'native/default', 'deep')
     expect(post.status).toBe(200)
     expect(await post.json()).toEqual({ model: 'native/default', reasoningEffort: 'deep' })
-    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } }])
-    expect(persistence.stored.get(agent.id)?.durable.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } })
+    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } }])
+    expect(persistence.stored.get(agent.id)?.durable.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } })
     const reset = await select(base, agent, null, null)
     expect(reset.status).toBe(200)
     expect(await reset.json()).toEqual({ model: null, reasoningEffort: null })
     expect(modelEvents(agent.session)).toEqual([
-      { seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } },
-      { seq: cursor + 1, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: null, reasoningEffort: null } },
+      { seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } },
+      { seq: cursor + 1, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: null, reasoningEffort: null } },
     ])
     expect(checkpointed).toEqual([agent.id, agent.id])
     expect(identity.resolve(agent)).toEqual(originalBinding)
     expect(agent.session.requestHeader()).toBeUndefined()
-    expect(agent.options).toMatchObject({ provider: 'dsh-tauri-bridge', model: 'codex' })
+    expect(agent.options).toMatchObject({ provider: 'dsh-tauri-kernel', model: 'codex' })
     expect(context.agentDefaultModel.currentSelection()).toEqual({ provider: 'global-provider', model: 'global-model', reasoningEffort: 'global-effort' })
     expect(llm.listProviders()).toEqual(providers)
     expect(connection.submit).not.toHaveBeenCalled()
@@ -397,13 +397,13 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     await entered.promise
     expect(settled).toBe(false)
     expect(modelEvents(agent.session)).toHaveLength(1)
-    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toBe(false)
+    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')).toBe(false)
     expect(connection.submit).not.toHaveBeenCalled()
     drain.resolve()
     const response = await request
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ model: 'native/default', reasoningEffort: 'deep' })
-    expect(persistence.stored.get(agent.id)?.durable.filter(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toEqual(modelEvents(agent.session))
+    expect(persistence.stored.get(agent.id)?.durable.filter(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')).toEqual(modelEvents(agent.session))
   }, 10_000)
 
   it('supports HEAD and rejects undeclared models verbs with the actual Allow set without touching native discovery', async () => {
@@ -497,7 +497,7 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     expect(modelEvents(agent.session)).toEqual([])
     expect(checkpointed).toEqual([])
     expect(agent.session.requestHeader()).toBeUndefined()
-    expect(agent.options).toMatchObject({ provider: 'dsh-tauri-bridge', model: 'codex' })
+    expect(agent.options).toMatchObject({ provider: 'dsh-tauri-kernel', model: 'codex' })
   }, 10_000)
 
   it('fails rather than pretending a native backend without models can accept model controls', async () => {
@@ -522,8 +522,8 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     const cursor = Number(agent.session.seq)
     const response = await select(base, agent, 'native/default', 'deep')
     expect(response.status).toBe(500)
-    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } }])
-    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toBe(false)
+    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'native/default', reasoningEffort: 'deep' } }])
+    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')).toBe(false)
     expect(checkpointed).toEqual([])
     expect(connection.submit).not.toHaveBeenCalled()
   }, 10_000)
@@ -538,14 +538,14 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     const response = await select(base, agent, 'native/default', 'deep')
     expect(response.status).toBe(500)
     expect(modelEvents(agent.session)).toHaveLength(1)
-    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toBe(false)
+    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')).toBe(false)
     expect(connection.submit).not.toHaveBeenCalled()
     persistence.barrier = async () => {}
     const retry = await select(base, agent, 'native/default', 'deep')
     expect(retry.status).toBe(200)
     expect(await retry.json()).toEqual({ model: 'native/default', reasoningEffort: 'deep' })
     expect(modelEvents(agent.session)).toHaveLength(1)
-    expect(persistence.stored.get(agent.id)?.durable.filter(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toEqual(modelEvents(agent.session))
+    expect(persistence.stored.get(agent.id)?.durable.filter(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')).toEqual(modelEvents(agent.session))
     expect(connection.submit).not.toHaveBeenCalled()
     expect(createCodexSession).toHaveBeenCalledOnce()
   }, 10_000)

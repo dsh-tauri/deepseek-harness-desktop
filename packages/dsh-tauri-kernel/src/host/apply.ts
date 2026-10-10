@@ -27,7 +27,7 @@ export function apply(ctx: HostContext, config: Config = {}): void {
     yield ctx.on('agent/turn-stopping', ({ agent, turn }) => session.finish(agent, turn), { global: true })
     yield ctx.on('session/event', adapter.end, { global: true })
     yield ctx.on('agent/disposed', ({ agent }) => {
-      void adapter.remove(agent).catch((error: unknown) => ctx.logger.warn('dsh-tauri-bridge: native session disposal failed', error))
+      void adapter.remove(agent).catch((error: unknown) => ctx.logger.warn('dsh-tauri-kernel: native session disposal failed', error))
     }, { global: true })
     yield ctx.effect(async function* () {
       yield await adapter.register()

@@ -834,6 +834,13 @@ mod tests {
     }
 
     #[test]
+    fn deprecated_manifest_lists_the_renamed_bridge() {
+        // dsh-tauri-bridge 改名为 dsh-tauri-kernel：老档案里的 link: 依赖与 bundle 引用
+        // 只能靠弃用名单兜底卸载（残留 bundle 会导致无法进入软件页面）。
+        assert!(shipped_deprecated_ids().contains("dsh-tauri-bridge"));
+    }
+
+    #[test]
     fn manifest_source_overrides_internal_field() {
         // 条目里的 `internal` 字段不参与判定：内部属性只由所在清单节决定
         let raw = r#"{"plugins":{

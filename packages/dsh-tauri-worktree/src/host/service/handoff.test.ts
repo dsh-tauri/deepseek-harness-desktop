@@ -101,18 +101,18 @@ describe('handoff.inherit', () => {
   it.each(['codex', 'claude'] as const)('preserves the official %s fork binding without injecting a desktop handoff message', async (backend) => {
     const packageId: string = 'dsh-session-current'
     const kernel = await import(packageId) as typeof import('@deepseek-ai/dsh-session') & {
-      appendPluginRecord: (value: Session, type: 'plugin:dsh-tauri-bridge/kernel', data: { backend: 'codex' | 'claude', nativeSessionId: string, sessionId: string }) => number
+      appendPluginRecord: (value: Session, type: 'plugin:dsh-tauri-kernel/kernel', data: { backend: 'codex' | 'claude', nativeSessionId: string, sessionId: string }) => number
     }
     const context = new Context()
     try {
       const sessions = new kernel.SessionStore(context)
       const source = kernel.Session.create(kernel.SessionId('session-source'))
       source.append('user/message', { id: MessageId('message-source'), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'source human conversation' }] }, { surfaceOp: 'append' })
-      kernel.appendPluginRecord(source, 'plugin:dsh-tauri-bridge/kernel', { backend, nativeSessionId: `native-source-${backend}`, sessionId: 'session-source' })
+      kernel.appendPluginRecord(source, 'plugin:dsh-tauri-kernel/kernel', { backend, nativeSessionId: `native-source-${backend}`, sessionId: 'session-source' })
       const prefix = source.snapshotEvents()
       const followup = vi.fn()
       const commit = vi.fn()
-      const sourceOptions = { provider: 'dsh-tauri-bridge', model: backend }
+      const sourceOptions = { provider: 'dsh-tauri-kernel', model: backend }
       let target: Agent | undefined
       const bridge: NativeSessionBridge = {
         create: vi.fn(async (_source, createChild) => createChild()),
@@ -120,9 +120,9 @@ describe('handoff.inherit', () => {
           expect(forkSource).toBe(source)
           expect(agent.session.header).toMatchObject({ cwd: resolve('worktrees/w1'), parentSession: 'session-source', isSeeded: true })
           expect(agent.session.inheritedEventCount).toBe(2)
-          expect(agent.options).toEqual({ provider: 'dsh-tauri-bridge', model: backend })
+          expect(agent.options).toEqual({ provider: 'dsh-tauri-kernel', model: backend })
           expect(signal.aborted).toBe(false)
-          expect(kernel.appendPluginRecord(agent.session, 'plugin:dsh-tauri-bridge/kernel', { backend, nativeSessionId: `native-child-${backend}`, sessionId: 'session-target' })).toBe(3)
+          expect(kernel.appendPluginRecord(agent.session, 'plugin:dsh-tauri-kernel/kernel', { backend, nativeSessionId: `native-child-${backend}`, sessionId: 'session-target' })).toBe(3)
           return { commit }
         }),
       }
@@ -147,7 +147,7 @@ describe('handoff.inherit', () => {
       expect(commit).toHaveBeenCalledTimes(1)
       expect(target!.session.snapshotEvents().slice(2)).toEqual([
         { seq: 2, time: expect.any(Number), type: 'session/end-seed', data: { inherited: true } },
-        { seq: 3, time: expect.any(Number), type: 'plugin:dsh-tauri-bridge/kernel', ignorable: true, data: { backend, nativeSessionId: `native-child-${backend}`, sessionId: 'session-target' } },
+        { seq: 3, time: expect.any(Number), type: 'plugin:dsh-tauri-kernel/kernel', ignorable: true, data: { backend, nativeSessionId: `native-child-${backend}`, sessionId: 'session-target' } },
       ])
       expect(target!.session.deriveMessages().map(({ role, content }) => ({ role, content }))).toEqual([
         { role: 'user', content: [{ type: 'text', text: 'source human conversation' }] },
@@ -432,7 +432,7 @@ describe('handoff.inherit', () => {
   })
 
   it('rejects a native request header after the bridge projection and capability were unloaded', async () => {
-    const session = { ...sessionOf(conversationEvents) as object, requestHeader: () => ({ config: { provider: 'dsh-tauri-bridge', model: 'claude' } }) }
+    const session = { ...sessionOf(conversationEvents) as object, requestHeader: () => ({ config: { provider: 'dsh-tauri-kernel', model: 'claude' } }) }
     const { created } = setup({ session })
     expect(await handoff.inherit('session-source', 'session-target', 'C:/work')).toEqual({ ok: false, error: 'BRIDGE_CORE_UNAVAILABLE: Native session inheritance requires the native session fork capability' })
     expect(created).toHaveLength(0)
@@ -441,7 +441,7 @@ describe('handoff.inherit', () => {
 
   it('rejects a native source selected before any binding or request was committed when its bridge capability is absent', async () => {
     const session = sessionOf(emptyEvents)
-    const { created } = setup({ getAgent: () => ({ session, ctx: {}, options: { provider: 'dsh-tauri-bridge', model: 'codex' } }) })
+    const { created } = setup({ getAgent: () => ({ session, ctx: {}, options: { provider: 'dsh-tauri-kernel', model: 'codex' } }) })
     expect(await handoff.inherit('session-source', 'session-target', 'C:/work')).toEqual({ ok: false, error: 'BRIDGE_CORE_UNAVAILABLE: Native session inheritance requires the native session fork capability' })
     expect(created).toHaveLength(0)
     expect(pendingWorktreeTitles.size).toBe(0)
@@ -452,7 +452,7 @@ describe('handoff.inherit', () => {
       throw new Error('A capability guard must not parse a native identity from raw history')
     })
     const marker = {
-      type: 'plugin:dsh-tauri-bridge/kernel',
+      type: 'plugin:dsh-tauri-kernel/kernel',
       seq: 2,
       time: 3,
       ignorable: true,
@@ -469,7 +469,7 @@ describe('handoff.inherit', () => {
   })
 
   it.each([
-    { type: 'plugin:dsh-tauri-bridge/kernel', seq: 2, time: 3, data: {} },
+    { type: 'plugin:dsh-tauri-kernel/kernel', seq: 2, time: 3, data: {} },
     { type: 'plugin:another/kernel', seq: 2, time: 3, data: {}, ignorable: true },
   ])('does not classify unrelated or non-ignorable records as a native capability marker: %j', async (marker) => {
     const session = sessionOf([...conversationEvents, marker])

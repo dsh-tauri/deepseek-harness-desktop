@@ -278,7 +278,7 @@ async function create(connection = native('model-native'), backend: 'codex' | 'c
 }
 
 function modelEvents(official: Session) {
-  return official.snapshotEvents().filter(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')
+  return official.snapshotEvents().filter(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')
 }
 
 function followup(agent: Agent, text: string) {
@@ -289,8 +289,8 @@ function followup(agent: Agent, text: string) {
 }
 
 function checkUnchangedRoute(agent: Agent, started = false) {
-  expect(agent.options).toMatchObject({ provider: 'dsh-tauri-bridge', model: 'codex' })
-  expect(agent.session.requestHeader()?.config).toEqual(started ? { provider: 'dsh-tauri-bridge', model: 'codex' } : undefined)
+  expect(agent.options).toMatchObject({ provider: 'dsh-tauri-kernel', model: 'codex' })
+  expect(agent.session.requestHeader()?.config).toEqual(started ? { provider: 'dsh-tauri-kernel', model: 'codex' } : undefined)
   expect(context.agentDefaultModel.currentSelection()).toEqual({ provider: 'global-provider', model: 'global-model', reasoningEffort: 'global-effort' })
 }
 
@@ -342,12 +342,12 @@ describe('official native model selection', () => {
     const binding = identity.resolve(agent)
     const providers = llm.listProviders()
     expect(await model.select(agent.id, selected)).toEqual({ model: 'vendor/reasoning-model', reasoningEffort: 'deep' })
-    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
+    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
     expect(model.resolve(agent)).toEqual({ model: 'vendor/reasoning-model', reasoningEffort: 'deep' })
     expect(projections.stateOf(agent.session, 'bridgeModel')).toEqual({ model: 'vendor/reasoning-model', reasoningEffort: 'deep' })
     expect(agent.session.seq).toBe(cursor + 1)
     expect(checkpoints).toEqual([agent.id])
-    expect(persisted.get(agent.id)?.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } })
+    expect(persisted.get(agent.id)?.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } })
     expect(identity.resolve(agent)).toEqual(binding)
     checkUnchangedRoute(agent)
     expect(llm.listProviders()).toEqual(providers)
@@ -467,7 +467,7 @@ describe('official native model selection', () => {
     stopCheckpoint()
     const cursor = Number(agent.session.seq)
     await expect(model.select(agent.id, selected)).rejects.toThrow('BRIDGE_MODEL_NOT_PERSISTED')
-    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
+    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
     expect(persisted.has(agent.id)).toBe(false)
     expect(checkpoints).toEqual([])
     expect(connection.submit).not.toHaveBeenCalled()
@@ -483,7 +483,7 @@ describe('official native model selection', () => {
     })
     const cursor = Number(agent.session.seq)
     await expect(model.select(agent.id, selected)).rejects.toBe(failure)
-    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
+    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
     expect(persisted.has(agent.id)).toBe(false)
     expect(connection.submit).not.toHaveBeenCalled()
     stopFailure()
@@ -492,7 +492,7 @@ describe('official native model selection', () => {
     expect(agent.session.seq).toBe(cursor + 1)
     expect(modelEvents(agent.session)).toHaveLength(1)
     expect(checkpoints).toEqual([agent.id])
-    expect(persisted.get(agent.id)?.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } })
+    expect(persisted.get(agent.id)?.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } })
     expect(connection.submit).not.toHaveBeenCalled()
   }, 10_000)
 
@@ -527,7 +527,7 @@ describe('official native model selection', () => {
     expect(idle).toBe(false)
     expect(connection.submit).not.toHaveBeenCalled()
     expect(runtime.exchanges.size).toBe(0)
-    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toBe(false)
+    expect(persistence.stored.get(agent.id)?.durable.some(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')).toBe(false)
     drain.resolve()
     expect(await selection).toEqual({ model: 'vendor/reasoning-model', reasoningEffort: 'deep' })
     await submitted.promise
@@ -560,11 +560,11 @@ describe('official native model selection', () => {
     expect(errors).toHaveLength(1)
     expect(errors[0]).toMatchObject({ name: 'LlmError', code: 'UNKNOWN', message: 'first native model durability checkpoint refused', failure: { code: 'UNKNOWN', message: 'first native model durability checkpoint refused' } })
     expect(runtime.exchanges.size).toBe(0)
-    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
+    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
     persistence.barrier = async () => {}
     expect(await model.select(agent.id, selected)).toEqual({ model: 'vendor/reasoning-model', reasoningEffort: 'deep' })
     expect(modelEvents(agent.session)).toHaveLength(1)
-    expect(persistence.stored.get(agent.id)?.durable.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } })
+    expect(persistence.stored.get(agent.id)?.durable.find(event => event.seq === cursor)).toEqual({ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } })
     await followup(agent, 'submit only after the saved choice is proven')
     expect(connection.submit).toHaveBeenCalledOnce()
     expect(connection.submit.mock.calls[0]![2]).toEqual({ model: 'vendor/reasoning-model', reasoningEffort: 'deep' })
@@ -583,7 +583,7 @@ describe('official native model selection', () => {
     await expect(model.select(agent.id, selected)).rejects.toThrow('BRIDGE_MODEL_NOT_PERSISTED')
     expect(observer).toHaveBeenCalledOnce()
     expect(observer.mock.calls[0]![0]).toBe(agent.session)
-    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-bridge/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
+    expect(modelEvents(agent.session)).toEqual([{ seq: cursor, time: now, type: 'plugin:dsh-tauri-kernel/model', ignorable: true, data: { model: 'vendor/reasoning-model', reasoningEffort: 'deep' } }])
     expect(persistence.stored.get(agent.id)?.events).toHaveLength(cursor)
     expect(persistence.stored.get(agent.id)?.durable).toHaveLength(cursor)
     expect(connection.submit).not.toHaveBeenCalled()
@@ -620,7 +620,7 @@ describe('official native model selection', () => {
     expect(vi.mocked(createCodexSession).mock.calls[1]![2]).toBe('remount-model-native')
     expect(vi.mocked(createCodexSession).mock.calls[1]![5]).toBeUndefined()
     expect(modelEvents(agent.session)).toEqual(before)
-    expect(persistence.stored.get(agent.id)?.durable.filter(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toEqual(before)
+    expect(persistence.stored.get(agent.id)?.durable.filter(event => (event.type as string) === 'plugin:dsh-tauri-kernel/model')).toEqual(before)
     expect(errors).toHaveLength(1)
     checkUnchangedRoute(agent, true)
   }, 10_000)
@@ -669,7 +669,7 @@ describe('official native model selection', () => {
     await session.remove(agent.id)
     const open = vi.spyOn(persistence, 'open')
     const createStored = vi.spyOn(persistence, 'create')
-    const restored = await agents.resume({ resumeSessionId: agent.id, agentOptions: { provider: 'dsh-tauri-bridge', model: 'codex' } })
+    const restored = await agents.resume({ resumeSessionId: agent.id, agentOptions: { provider: 'dsh-tauri-kernel', model: 'codex' } })
     const restoredWrite = persistence.writers.get(agent.id)!
     const close = vi.spyOn(restoredWrite, 'close')
     expect(open).toHaveBeenCalledExactlyOnceWith(agent.id, 'write', { signal: expect.any(AbortSignal) })

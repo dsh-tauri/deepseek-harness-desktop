@@ -14,7 +14,7 @@ const plugins = [
   'dsh-tauri-notification',
   'dsh-tauri-worktree',
   'dsh-tauri-ssh',
-  'dsh-tauri-bridge',
+  'dsh-tauri-kernel',
 ]
 
 export default defineConfig({
