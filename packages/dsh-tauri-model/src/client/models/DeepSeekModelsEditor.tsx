@@ -4,6 +4,7 @@ import { Plus } from 'dsh-tauri-ui/client'
 import { useState } from 'react'
 import { useModelRowKeys } from '../hooks/use-model-row-keys'
 import { ModelRow } from './ModelRow.tsx'
+import { swappedAt } from './order.tsx'
 import { modelStyles as styles } from './styles.ts'
 
 export type DeepSeekModelDraft = Record<string, unknown>
@@ -144,6 +145,35 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
     props.onChange(props.models.filter((_model, at) => at !== index))
   }
 
+  /** 与「删除」同一套搬家规则：位置键的缓冲、展开态都必须跟着行行走。 */
+  const move = (index: number, delta: number): void => {
+    const next = swappedAt(props.models, index, index + delta)
+    if (next === undefined)
+      return
+    const target = index + delta
+    const shift = (at: number): number => at === index ? target : at === target ? index : at
+    setEditing((current) => {
+      const moved = new Map<string, string>()
+      for (const [key, text] of current) {
+        const at = rowOf(key)
+        const field = key.slice(key.indexOf(':') + 1)
+        moved.set(`${String(shift(at))}:${field}`, text)
+      }
+      return moved
+    })
+    setExpanded((current) => {
+      const moved = new Set(current)
+      const movedFrom = moved.delete(index)
+      const movedTo = moved.delete(target)
+      if (movedFrom)
+        moved.add(target)
+      if (movedTo)
+        moved.add(index)
+      return moved
+    })
+    props.onChange(next)
+  }
+
   const reset = (): void => {
     setEditing(new Map())
     setExpanded(new Set())
@@ -226,6 +256,7 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
                   key={rowKeys[index]}
                   model={model}
                   position={index + 1}
+                  count={props.models.length}
                   inputField="inputModalities"
                   expanded={expanded.has(index)}
                   disabled={props.disabled}
@@ -241,6 +272,7 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
                   onChange={(next) => { props.onChange(props.models.map((row, at) => at === index ? next : row)) }}
                   onToggle={() => { toggle(index) }}
                   onRemove={() => { remove(index) }}
+                  {...props.disabled ? {} : { onMove: (delta: number) => { move(index, delta) } }}
                 />
               ))}
             </div>

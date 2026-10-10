@@ -11,7 +11,7 @@ vi.mock('@deepseek-ai/dsh-client-store', () => ({
     throw new Error('Unexpected store creation')
   },
 }))
-vi.mock('dsh-tauri-ui/client', () => ({ Plus: () => null }))
+vi.mock('dsh-tauri-ui/client', () => ({ ArrowDown: () => null, ArrowUp: () => null, Plus: () => null }))
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   Button: () => null,
   Modal: () => null,
