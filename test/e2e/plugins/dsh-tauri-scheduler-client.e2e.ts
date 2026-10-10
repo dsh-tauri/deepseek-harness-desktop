@@ -4,7 +4,8 @@ import type { DshPage } from '../support/browser'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { describe, expect, inject, it } from 'vitest'
 import { describePageState, dismissAppModals, expectNoSyntheticFallbacks, launchDshBrowser, newDshPage, SIDEBAR_PANELLIST } from '../support/browser'
@@ -15,6 +16,14 @@ const HISTORY_PATH = '/api/tauri/scheduler/history'
 const MAIN_SLOT = '[data-slot="main"]'
 const BODY_SLOT = '[data-slot="sidebar.right.pane.tab"]'
 const TITLE_SLOT = '[data-slot="sidebar.right.pane.tab.title"]'
+
+function scratchHome(): string {
+  const home = resolve(inject('dshHome'))
+  expect(dirname(home), '夹具只能写入系统临时目录的直接子目录').toBe(resolve(tmpdir()))
+  expect(basename(home), '夹具只能写入本轮编排创建的 dsh-e2e 隔离目录').toMatch(/^dsh-e2e-.+-[a-z0-9]+$/)
+  expect(inject('dshMounted'), '隔离宿主必须实际挂载被测 scheduler').toContain('dsh-tauri-scheduler')
+  return home
+}
 
 async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(`${inject('dshBaseUrl')}${path}`, {
@@ -424,8 +433,7 @@ describe('C 当前 core 的定时任务主面板内联详情', () => {
       const { SessionStore, SessionId } = coreRequire('@deepseek-ai/dsh-session')
       const { createUserMessage } = coreRequire('@deepseek-ai/dsh-llm')
       const { default: JsonlSessionPersistence } = coreRequire('@deepseek-ai/dsh-session-persistence-jsonl')
-      const home = resolve(inject('dshHome'))
-      expect(home, '原生会话夹具只允许写入本轮独立 scratch home').toMatch(/dsh-e2e-dsh-tauri-scheduler-/)
+      const home = scratchHome()
       const context = new Context()
       let sessionId: string
       try {
@@ -509,8 +517,7 @@ describe('C 当前 core 的定时任务主面板内联详情', () => {
       const created = await api<PostApiTauriSchedulerTasksResponse>(TASKS_PATH, 'POST', { name, prompt: '当前任务已编辑后的指令，不应替换历史。', delivery: 'new-session', enabled: false, schedule: { kind: 'daily', time: '13:17', timeZone: 'UTC' } } satisfies PostApiTauriSchedulerTasksBody)
       if (!created.ok || !created.task)
         throw new Error('历史夹具的暂停任务必须创建成功')
-      const home = resolve(inject('dshHome'))
-      expect(home, '历史夹具只允许写入本轮独立 scratch home').toMatch(/dsh-e2e-dsh-tauri-scheduler-/)
+      const home = scratchHome()
       const path = join(home, 'crons', 'history')
       const previous = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT')
