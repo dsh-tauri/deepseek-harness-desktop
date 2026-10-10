@@ -84,6 +84,20 @@ describe('hero kernel picker', () => {
     expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
   })
 
+  it('shows the arrow by default and swaps it for the clear icon on hover', () => {
+    kernelStore.select('codex')
+    const view = render(<HeroKernel {...heroProps()} />)
+    const pill = view.container.querySelector('[data-bridge-kernel-pill]')
+    const clear = view.getByRole('button', { name: 'Clear kernel selection' })
+    expect(pill?.className).toContain('group')
+    expect(pill?.querySelector('[data-bridge-kernel-chevron]')?.className).toContain('group-hover:hidden')
+    const clearIcon = pill?.querySelector('[data-bridge-kernel-clear-icon]')
+    expect(clearIcon?.className).toContain('hidden')
+    expect(clearIcon?.className).toContain('group-hover:inline-flex')
+    expect(clearIcon?.className).toContain('group-focus-visible:inline-flex')
+    expect(clear.querySelectorAll('svg')).toHaveLength(2)
+  })
+
   it('clears a remembered native kernel back to the unselected state without opening the menu', async () => {
     kernelStore.select('codex')
     const props = heroProps()

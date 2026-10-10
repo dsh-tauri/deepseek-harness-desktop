@@ -26,7 +26,7 @@ function backendHint(backend: BackendDetection | undefined): string | undefined 
 }
 
 function pillClass(disabled: boolean, expanded: boolean): string {
-  const base = 'inline-flex h-[28px] items-center rounded-sm whitespace-nowrap leading-none [&>span]:inline-flex [&>span]:h-full [&>span]:items-center'
+  const base = 'group inline-flex h-[28px] items-center rounded-sm whitespace-nowrap leading-none [&>span]:inline-flex [&>span]:h-full [&>span]:items-center'
   if (disabled)
     return `${base} text-[var(--dsw-alias-label-quaternary)]`
   return `${base} text-primary ${expanded ? 'bg-hover' : 'hover:bg-hover'}`
@@ -152,7 +152,12 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
               className="inline-flex shrink-0 cursor-pointer items-center self-stretch border-none bg-transparent pl-[4px] pr-[8px] text-[var(--dsw-alias-label-caption)] disabled:cursor-default [&_svg]:w-[11px] [&_svg]:h-[11px]"
               onClick={clear}
             >
-              <Xmark />
+              <span className="inline-flex group-hover:hidden group-focus-visible:hidden" data-bridge-kernel-chevron="">
+                <ChevronDown />
+              </span>
+              <span className="hidden group-hover:inline-flex group-focus-visible:inline-flex" data-bridge-kernel-clear-icon="">
+                <Xmark />
+              </span>
             </button>
           )}
         />
