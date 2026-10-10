@@ -1,8 +1,9 @@
 import type { SchedulerTask } from '../types'
 import { isNil } from 'lodash-es'
 
-export function isTaskDue(item: Pick<SchedulerTask, 'enabled' | 'nextRunAt'>, now: number): boolean {
-  return item.enabled && !isNil(item.nextRunAt) && new Date(item.nextRunAt).getTime() <= now
+export function isTaskDue(item: Pick<SchedulerTask, 'delivery' | 'status' | 'enabled' | 'nextRunAt'>, now: number): boolean {
+  return item.delivery === 'new-session' && item.status === 'active' && item.enabled
+    && Number.isFinite(now) && !isNil(item.nextRunAt) && new Date(item.nextRunAt).getTime() <= now
 }
 
 export function selectWaitingTaskIds(

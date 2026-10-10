@@ -285,7 +285,7 @@ jobs:
 
           day="${NIGHTLY_TAG#nightly-}"
           title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
-          args=(--draft --prerelease --to "$NIGHTLY_TAG" --name "$title")
+          args=(--prerelease --to "$NIGHTLY_TAG" --name "$title" --output "$RUNNER_TEMP/nightly_changelog.md")
           if [ -n "$from" ]; then
             args+=(--from "$from")
             echo "变更日志范围：$from..$NIGHTLY_TAG"
@@ -293,8 +293,7 @@ jobs:
             echo '::warning::找不到变更日志起点，按全部历史生成'
           fi
 
-          pnpm exec changelogithub "${args[@]}" || \
-            echo '::warning::changelogithub 生成变更日志失败，Release 只保留产物与提示'
+          pnpm exec changelogithub "${args[@]}"
 
       - name: Upload assets to the draft release
         run: |
@@ -320,15 +319,10 @@ jobs:
       - name: Compose release notes
         run: |
           set -euo pipefail
-          body="$(gh release view "$NIGHTLY_TAG" --json body -q .body)"
-
           {
-            # 说明固定排在最前：变更日志步骤会重写正文，这里按需补回。
-            if [ "$(printf '%s\n' "$body" | head -1)" != "$(printf '%s\n' "$NIGHTLY_DESCRIPTION" | head -1)" ]; then
-              printf '%s\n' "$NIGHTLY_DESCRIPTION"
-              echo
-            fi
-            printf '%s\n' "$body"
+            printf '%s\n' "$NIGHTLY_DESCRIPTION"
+            echo
+            cat "$RUNNER_TEMP/nightly_changelog.md"
             echo
             # 与正式版（release.yml 的 Append Artifacts section）保持同一份产物清单
             echo '### 📦 Artifacts'

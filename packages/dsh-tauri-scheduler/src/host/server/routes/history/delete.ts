@@ -1,7 +1,7 @@
 import type { EventHandlerRequest } from 'h3'
 import type { ActionResult, IdBody } from '../index.types'
 import { defineEventHandler, readBody } from 'h3'
-import { runs } from '../../../service/runs'
+import { history } from '../../../service/history'
 
 export default defineEventHandler<EventHandlerRequest, Promise<ActionResult>>(async (event) => {
   const body = await readBody<IdBody>(event)
@@ -10,7 +10,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<ActionResult>>(as
     event.res.status = 400
     return { error: '缺少执行记录 id' }
   }
-  if (!await runs.remove(id)) {
+  if (!await history.remove(id)) {
     event.res.status = 400
     return { error: '执行记录不存在' }
   }

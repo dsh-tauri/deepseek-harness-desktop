@@ -2,7 +2,7 @@
   "name": "dsh-tauri-scheduler",
   "type": "module",
   "version": "1.0.0",
-  "description": "DeepSeek Harness 桌面面板的定时任务：创建每日/间隔/工作日/每周自动化，按计划在全新会话中运行，并可查看运行历史。",
+  "description": "DeepSeek Harness 桌面定时任务：向当前会话投递提醒或启动新会话执行，统一管理计划、会话关联和投递历史。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",

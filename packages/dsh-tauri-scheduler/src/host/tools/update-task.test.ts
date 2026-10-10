@@ -10,6 +10,8 @@ vi.mock('../service/scheduler', () => ({ scheduler: { trigger: vi.fn() } }))
 
 const taskFixture: SchedulerTask = {
   id: 'task-1',
+  delivery: 'new-session',
+  status: 'active',
   name: 'nightly',
   schedule: { kind: 'interval', everyMinutes: 30, timeZone: 'UTC' },
   prompt: 'run the nightly job',
@@ -33,7 +35,9 @@ describe('scheduler_update', () => {
   it('task_id 是唯一必填参数，其余字段均可选', () => {
     expect(tool.parameters.required).toEqual(['task_id'])
     expect(Object.keys(tool.parameters.properties).sort()).toEqual([
+      'delivery',
       'enabled',
+      'expected',
       'model',
       'name',
       'permission',
@@ -42,6 +46,7 @@ describe('scheduler_update', () => {
       'reasoningEffort',
       'run_now',
       'schedule',
+      'sessionId',
       'task_id',
       'workspaceId',
     ])

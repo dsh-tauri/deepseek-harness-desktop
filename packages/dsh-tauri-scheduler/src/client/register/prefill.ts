@@ -11,13 +11,12 @@ import {
 import { store } from '../store'
 
 export const prefillFeature = defineRegister<ClientContext>((controller, ctx) => {
-  controller.add(ctx.slots.inject(CONVERSATION_INPUT_LEFT_SLOT as never, () => ctx.slots.register({
+  controller.add(ctx.slots.inject(CONVERSATION_INPUT_LEFT_SLOT, () => ctx.slots.register({
     name: CONVERSATION_INPUT_LEFT_SLOT,
     id: INPUT_PREFILL_ID,
     registrant: PLUGIN_ID,
     order: INPUT_PREFILL_ORDER,
     priority: INPUT_PREFILL_PRIORITY,
-    inject: (sessionId: string) => ({ sessionId }),
-  } as never, PrefillBridge)))
+  }, PrefillBridge)))
   controller.add(() => store.prefill.clear())
 })

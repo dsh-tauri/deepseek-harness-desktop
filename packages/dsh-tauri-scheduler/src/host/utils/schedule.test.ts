@@ -1,209 +1,343 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { nextOccurrence, parseTimeToMinutes, validateSchedule } from './schedule'
-
-// cron-schedule 无 timezone 形参：`timeZone` 字段只被校验、不被使用，计算走进程本地时区。
-// 因此每个用例前都把进程钉回 UTC（用例级改 TZ 的 DST 组必须能被下一个用例复位），
-// 期望值一律用 `Date.UTC` 基准，宿主时区不影响结果。
-const HOST_TZ = process.env.TZ
+import type { SchedulerSchedule as Schedule } from '../types'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { latestDueOccurrence, nextOccurrence, parseTimeToMinutes, validateSchedule } from './schedule'
 
 beforeEach(() => {
-  process.env.TZ = 'UTC'
+  vi.stubEnv('TZ', 'UTC')
 })
 
-afterAll(() => {
-  if (HOST_TZ === undefined)
-    delete process.env.TZ
-  else
-    process.env.TZ = HOST_TZ
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
+
+const timestamp = (value: string): number => Date.parse(value)
+
+const CALENDAR_CASES: Array<[Schedule, string, string]> = [
+  [{ kind: 'daily', time: '08:00', timeZone: 'UTC' }, '2026-01-01T07:00:00Z', '2026-01-01T08:00:00Z'],
+  [{ kind: 'daily', time: '08:00', timeZone: 'UTC' }, '2026-01-01T08:00:00Z', '2026-01-02T08:00:00Z'],
+  [{ kind: 'workdays', time: '08:00', timeZone: 'UTC' }, '2026-01-03T09:00:00Z', '2026-01-05T08:00:00Z'],
+  [{ kind: 'weekly', weekdays: ['MO', 'WE', 'MO'], time: '08:00', timeZone: 'UTC' }, '2026-01-01T09:00:00Z', '2026-01-05T08:00:00Z'],
+  [{ kind: 'monthly', day: 15, time: '08:00', timeZone: 'UTC' }, '2026-01-10T00:00:00Z', '2026-01-15T08:00:00Z'],
+  [{ kind: 'monthly', day: 15, time: '08:00', timeZone: 'UTC' }, '2026-01-20T00:00:00Z', '2026-02-15T08:00:00Z'],
+  [{ kind: 'monthly', day: 31, time: '08:00', timeZone: 'UTC' }, '2026-02-01T00:00:00Z', '2026-03-31T08:00:00Z'],
+  [{ kind: 'monthly', day: 29, time: '08:00', timeZone: 'UTC' }, '2028-02-01T00:00:00Z', '2028-02-29T08:00:00Z'],
+]
+
+const ZONED_CASES: Array<[Schedule, string, string]> = [
+  [{ kind: 'daily', time: '08:00', timeZone: 'Asia/Shanghai' }, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'],
+  [{ kind: 'daily', time: '08:00', timeZone: 'America/New_York' }, '2026-01-01T07:00:00Z', '2026-01-01T13:00:00Z'],
+  [{ kind: 'daily', time: '08:00', timeZone: 'Asia/Tokyo' }, '2026-01-01T01:00:00Z', '2026-01-01T23:00:00Z'],
+  [{ kind: 'hourly', minute: 30, timeZone: 'Asia/Kathmandu' }, '2026-01-01T04:55:00Z', '2026-01-01T05:45:00Z'],
+  [{ kind: 'workdays', time: '08:00', timeZone: 'Asia/Tokyo' }, '2026-01-04T22:30:00Z', '2026-01-04T23:00:00Z'],
+  [{ kind: 'weekly', weekdays: ['SU'], time: '22:00', timeZone: 'America/New_York' }, '2026-01-05T02:00:00Z', '2026-01-05T03:00:00Z'],
+  [{ kind: 'monthly', day: 1, time: '08:00', timeZone: 'Asia/Tokyo' }, '2026-01-31T16:00:00Z', '2026-01-31T23:00:00Z'],
+  [{ kind: 'custom', everyDays: 2, anchor: '2026-01-01T23:30:00Z', time: '09:00', timeZone: 'Asia/Tokyo' }, '2026-01-01T23:30:00Z', '2026-01-02T00:00:00Z'],
+]
+
+const DST_CASES: Array<[Schedule, string, string]> = [
+  [{ kind: 'daily', time: '08:00', timeZone: 'America/New_York' }, '2026-03-07T14:00:00Z', '2026-03-08T12:00:00Z'],
+  [{ kind: 'daily', time: '08:00', timeZone: 'America/New_York' }, '2026-10-31T13:00:00Z', '2026-11-01T13:00:00Z'],
+  [{ kind: 'daily', time: '02:30', timeZone: 'America/New_York' }, '2026-03-07T07:30:00Z', '2026-03-09T06:30:00Z'],
+  [{ kind: 'daily', time: '02:30', timeZone: 'America/New_York' }, '2026-03-08T05:00:00Z', '2026-03-09T06:30:00Z'],
+  [{ kind: 'daily', time: '01:30', timeZone: 'America/New_York' }, '2026-11-01T04:00:00Z', '2026-11-01T05:30:00Z'],
+  [{ kind: 'daily', time: '01:30', timeZone: 'America/New_York' }, '2026-11-01T05:30:00Z', '2026-11-02T06:30:00Z'],
+  [{ kind: 'daily', time: '01:30', timeZone: 'America/New_York' }, '2026-11-01T06:00:00Z', '2026-11-02T06:30:00Z'],
+  [{ kind: 'workdays', time: '08:00', timeZone: 'America/New_York' }, '2026-03-06T15:00:00Z', '2026-03-09T12:00:00Z'],
+  [{ kind: 'weekly', weekdays: ['SU'], time: '02:30', timeZone: 'America/New_York' }, '2026-03-01T07:30:00Z', '2026-03-15T06:30:00Z'],
+  [{ kind: 'monthly', day: 8, time: '02:30', timeZone: 'America/New_York' }, '2026-03-01T00:00:00Z', '2026-04-08T06:30:00Z'],
+  [{ kind: 'custom', everyDays: 1, anchor: '2026-03-07T05:00:00Z', time: '02:30', timeZone: 'America/New_York' }, '2026-03-07T07:30:00Z', '2026-03-09T06:30:00Z'],
+  [{ kind: 'custom', everyDays: 2, anchor: '2026-03-07T05:00:00Z', time: '08:00', timeZone: 'America/New_York' }, '2026-03-07T13:00:00Z', '2026-03-09T12:00:00Z'],
+  [{ kind: 'custom', everyDays: 1, anchor: '2026-10-31T04:00:00Z', time: '08:00', timeZone: 'America/New_York' }, '2026-10-31T12:00:00Z', '2026-11-01T13:00:00Z'],
+  [{ kind: 'hourly', minute: 30, timeZone: 'America/New_York' }, '2026-03-08T06:45:00Z', '2026-03-08T07:30:00Z'],
+  [{ kind: 'hourly', minute: 30, timeZone: 'America/New_York' }, '2026-11-01T05:40:00Z', '2026-11-01T07:30:00Z'],
+  [{ kind: 'hourly', minute: 30, timeZone: 'America/New_York' }, '2026-11-01T06:10:00Z', '2026-11-01T07:30:00Z'],
+  [{ kind: 'daily', time: '02:15', timeZone: 'Australia/Lord_Howe' }, '2026-10-03T15:00:00Z', '2026-10-04T15:15:00Z'],
+  [{ kind: 'daily', time: '01:45', timeZone: 'Australia/Lord_Howe' }, '2026-04-04T13:00:00Z', '2026-04-04T14:45:00Z'],
+  [{ kind: 'daily', time: '12:00', timeZone: 'Pacific/Apia' }, '2011-12-29T22:00:00Z', '2011-12-30T22:00:00Z'],
+  [{ kind: 'custom', everyDays: 2, anchor: '2011-12-29T10:00:00Z', time: '12:00', timeZone: 'Pacific/Apia' }, '2011-12-29T22:00:00Z', '2011-12-30T22:00:00Z'],
+]
+
+const INVALID_SCHEDULES = [
+  { kind: 'once', at: 'not-a-date', timeZone: 'UTC' },
+  { kind: 'hourly', minute: -1, timeZone: 'UTC' },
+  { kind: 'hourly', minute: 60, timeZone: 'UTC' },
+  { kind: 'hourly', minute: 1.5, timeZone: 'UTC' },
+  { kind: 'interval', everyMinutes: 0, timeZone: 'UTC' },
+  { kind: 'interval', everyMinutes: 1e9, timeZone: 'UTC' },
+  { kind: 'interval', everyMinutes: 30, anchor: 'bad', timeZone: 'UTC' },
+  { kind: 'daily', time: 'bad', timeZone: 'UTC' },
+  { kind: 'workdays', time: '24:00', timeZone: 'UTC' },
+  { kind: 'weekly', weekdays: [], time: '08:00', timeZone: 'UTC' },
+  { kind: 'weekly', weekdays: ['XX'], time: '08:00', timeZone: 'UTC' },
+  { kind: 'monthly', day: 0, time: '08:00', timeZone: 'UTC' },
+  { kind: 'monthly', day: 32, time: '08:00', timeZone: 'UTC' },
+  { kind: 'custom', everyDays: 0, anchor: '2026-01-01T00:00:00Z', time: '08:00', timeZone: 'UTC' },
+  { kind: 'custom', everyDays: 367, anchor: '2026-01-01T00:00:00Z', time: '08:00', timeZone: 'UTC' },
+  { kind: 'custom', everyDays: 1.5, anchor: '2026-01-01T00:00:00Z', time: '08:00', timeZone: 'UTC' },
+  { kind: 'custom', everyDays: 2, anchor: 'bad', time: '08:00', timeZone: 'UTC' },
+  { kind: 'custom', everyDays: 2, anchor: '2026-01-01T00:00:00Z', time: 'bad', timeZone: 'UTC' },
+  { kind: 'daily', time: '08:00', timeZone: 'Unknown/Zone' },
+]
 
 describe('parseTimeToMinutes', () => {
-  it('parses "HH:mm" into minutes since midnight', () => {
-    expect(parseTimeToMinutes('00:00')).toBe(0)
-    expect(parseTimeToMinutes('08:30')).toBe(510)
-    expect(parseTimeToMinutes('23:59')).toBe(1439)
+  it.each([
+    ['00:00', 0],
+    ['08:30', 510],
+    ['23:59', 1439],
+    [' 8:30 ', 510],
+  ])('parses %s into %i minutes since midnight', (input, expected) => {
+    expect(parseTimeToMinutes(input)).toBe(expected)
   })
 
-  it('rejects invalid formats and out-of-range values', () => {
-    expect(parseTimeToMinutes('')).toBeUndefined()
-    expect(parseTimeToMinutes('8')).toBeUndefined()
-    expect(parseTimeToMinutes('24:00')).toBeUndefined()
-    expect(parseTimeToMinutes('08:60')).toBeUndefined()
-    expect(parseTimeToMinutes('ab:cd')).toBeUndefined()
+  it.each(['', '8', '24:00', '08:60', 'ab:cd'])('rejects invalid clock input %s', (input) => {
+    expect(parseTimeToMinutes(input)).toBeUndefined()
   })
 })
 
 describe('nextOccurrence', () => {
-  it('interval returns from + everyMinutes', () => {
-    const from = Date.UTC(2026, 0, 1, 0, 0, 0)
-    const next = nextOccurrence({ kind: 'interval', everyMinutes: 30, timeZone: 'UTC' }, from)
-    expect(next).toBe(from + 30 * 60 * 1000)
+  it('starts an unanchored interval one full interval after from', () => {
+    expect(nextOccurrence({ kind: 'interval', everyMinutes: 30, timeZone: 'UTC' }, timestamp('2026-01-01T08:11:00Z')))
+      .toBe(timestamp('2026-01-01T08:41:00Z'))
   })
 
-  it('interval rejects oversized everyMinutes (would overflow Date)', () => {
-    expect(nextOccurrence({ kind: 'interval', everyMinutes: Number.MAX_SAFE_INTEGER, timeZone: 'UTC' }, Date.now())).toBeUndefined()
-    expect(nextOccurrence({ kind: 'interval', everyMinutes: 1e9, timeZone: 'UTC' }, Date.now())).toBeUndefined()
-    expect(validateSchedule({ kind: 'interval', everyMinutes: 1e9, timeZone: 'UTC' })).toBe(false)
+  it('treats a null optional interval anchor as unanchored input', () => {
+    const schedule = { kind: 'interval', everyMinutes: 30, anchor: null, timeZone: 'UTC' }
+    expect(nextOccurrence(schedule as unknown as Schedule, timestamp('2026-01-01T08:11:00Z')))
+      .toBe(timestamp('2026-01-01T08:41:00Z'))
   })
 
-  it('once returns the anchored instant only while it is still in the future', () => {
-    const at = '2026-03-01T12:30:00.000Z'
-    expect(nextOccurrence({ kind: 'once', at, timeZone: 'UTC' }, Date.UTC(2026, 2, 1, 12, 29, 59)))
-      .toBe(Date.UTC(2026, 2, 1, 12, 30, 0))
-    expect(nextOccurrence({ kind: 'once', at, timeZone: 'UTC' }, Date.UTC(2026, 2, 1, 12, 30, 0))).toBeUndefined()
-    expect(nextOccurrence({ kind: 'once', at, timeZone: 'UTC' }, Date.UTC(2027, 0, 1))).toBeUndefined()
-    expect(nextOccurrence({ kind: 'once', at: 'not-a-date', timeZone: 'UTC' }, Date.UTC(2026, 0, 1))).toBeUndefined()
+  it.each([
+    ['2025-12-31T00:00:00Z', '2026-01-01T00:00:00Z'],
+    ['2026-01-01T00:00:00Z', '2026-01-01T00:30:00Z'],
+    ['2026-01-01T00:46:00Z', '2026-01-01T01:00:00Z'],
+  ])('keeps interval anchor phase when from is %s', (from, expected) => {
+    expect(nextOccurrence({ kind: 'interval', everyMinutes: 30, anchor: '2026-01-01T00:00:00Z', timeZone: 'UTC' }, timestamp(from)))
+      .toBe(timestamp(expected))
   })
 
-  it('hourly lands on the next occurrence of that minute', () => {
-    expect(nextOccurrence({ kind: 'hourly', minute: 30, timeZone: 'UTC' }, Date.UTC(2026, 0, 1, 8, 10, 0)))
-      .toBe(Date.UTC(2026, 0, 1, 8, 30, 0))
-    expect(nextOccurrence({ kind: 'hourly', minute: 30, timeZone: 'UTC' }, Date.UTC(2026, 0, 1, 8, 45, 0)))
-      .toBe(Date.UTC(2026, 0, 1, 9, 30, 0))
-    expect(nextOccurrence({ kind: 'hourly', minute: 0, timeZone: 'UTC' }, Date.UTC(2026, 0, 1, 8, 0, 0)))
-      .toBe(Date.UTC(2026, 0, 1, 9, 0, 0))
+  it('returns a future instant for a valid interval with a sub-millisecond step fraction', () => {
+    const schedule: Schedule = { kind: 'interval', everyMinutes: 1.00001, timeZone: 'UTC' }
+    expect(validateSchedule(schedule)).toBe(true)
+    expect(nextOccurrence(schedule, timestamp('2026-01-01T00:00:00Z')))
+      .toBe(timestamp('2026-01-01T00:00:00Z') + 60_000.6)
   })
 
-  it('hourly rejects an out-of-range minute instead of returning a bogus instant', () => {
-    expect(nextOccurrence({ kind: 'hourly', minute: 60, timeZone: 'UTC' }, Date.UTC(2026, 0, 1, 8, 0, 0))).toBeUndefined()
-    expect(nextOccurrence({ kind: 'hourly', minute: -1, timeZone: 'UTC' }, Date.UTC(2026, 0, 1, 8, 0, 0))).toBeUndefined()
+  it('retains a supported fractional-minute interval and its millisecond anchor', () => {
+    expect(nextOccurrence({ kind: 'interval', everyMinutes: 1.5, anchor: '2026-01-01T00:00:00.123Z', timeZone: 'America/New_York' }, timestamp('2026-01-01T00:01:00Z')))
+      .toBe(timestamp('2026-01-01T00:01:30.123Z'))
   })
 
-  it('custom steps whole days from the anchor, strictly after `from`', () => {
-    const anchor = '2026-01-01T00:00:00.000Z'
-    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor, time: '08:00', timeZone: 'UTC' }, Date.UTC(2026, 0, 1, 9, 0, 0)))
-      .toBe(Date.UTC(2026, 0, 3, 0, 0, 0))
-    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor, time: '08:00', timeZone: 'UTC' }, Date.UTC(2026, 0, 3, 0, 0, 0)))
-      .toBe(Date.UTC(2026, 0, 5, 0, 0, 0))
-    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor, time: '08:00', timeZone: 'UTC' }, Date.UTC(2025, 11, 20, 0, 0, 0)))
-      .toBe(Date.UTC(2026, 0, 1, 0, 0, 0))
+  it('finds an anchored interval target without losing a millisecond across the full date range', () => {
+    expect(nextOccurrence({ kind: 'interval', everyMinutes: 1, anchor: '-271821-04-20T00:00:00.000Z', timeZone: 'UTC' }, 8_639_999_999_999_999))
+      .toBe(8_640_000_000_000_000)
   })
 
-  it('custom rejects invalid everyDays / anchor / time', () => {
-    const anchor = '2026-01-01T00:00:00.000Z'
-    expect(nextOccurrence({ kind: 'custom', everyDays: 0, anchor, time: '08:00', timeZone: 'UTC' }, Date.UTC(2026, 0, 1))).toBeUndefined()
-    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor: 'nope', time: '08:00', timeZone: 'UTC' }, Date.UTC(2026, 0, 1))).toBeUndefined()
-    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor, time: 'bad', timeZone: 'UTC' }, Date.UTC(2026, 0, 1))).toBeUndefined()
+  it('keeps once as an absolute instant regardless of its zone', () => {
+    const schedule: Schedule = { kind: 'once', at: '2026-03-01T12:30:00Z', timeZone: 'Asia/Tokyo' }
+    expect(nextOccurrence(schedule, timestamp('2026-03-01T12:29:59.999Z'))).toBe(timestamp('2026-03-01T12:30:00Z'))
+    expect(nextOccurrence(schedule, timestamp('2026-03-01T12:30:00Z'))).toBeUndefined()
+    expect(nextOccurrence(schedule, timestamp('2027-01-01T00:00:00Z'))).toBeUndefined()
   })
 
-  it('daily returns today at time when still in the future', () => {
-    const from = Date.UTC(2026, 0, 1, 7, 0, 0)
-    const next = nextOccurrence({ kind: 'daily', time: '08:00', timeZone: 'UTC' }, from)
-    expect(next).toBe(Date.UTC(2026, 0, 1, 8, 0, 0))
+  it.each([
+    [30, '2026-01-01T08:10:00Z', '2026-01-01T08:30:00Z'],
+    [30, '2026-01-01T08:45:00Z', '2026-01-01T09:30:00Z'],
+    [30, '2026-01-01T08:29:59.999Z', '2026-01-01T08:30:00Z'],
+    [0, '2026-01-01T08:00:00Z', '2026-01-01T09:00:00Z'],
+    [0, '2026-01-01T08:59:59.999Z', '2026-01-01T09:00:00Z'],
+  ])('selects the next local minute %i after %s', (minute, from, expected) => {
+    expect(nextOccurrence({ kind: 'hourly', minute, timeZone: 'UTC' }, timestamp(from))).toBe(timestamp(expected))
   })
 
-  it('daily rolls to tomorrow when the time already passed', () => {
-    const from = Date.UTC(2026, 0, 1, 9, 0, 0)
-    const next = nextOccurrence({ kind: 'daily', time: '08:00', timeZone: 'UTC' }, from)
-    expect(next).toBe(Date.UTC(2026, 0, 2, 8, 0, 0))
+  it.each(CALENDAR_CASES)('selects %j strictly after %s', (schedule, from, expected) => {
+    expect(nextOccurrence(schedule, timestamp(from))).toBe(timestamp(expected))
   })
 
-  it('workdays skips weekends', () => {
-    // 2026-01-03 是周六
-    const saturday = Date.UTC(2026, 0, 3, 9, 0, 0)
-    const next = nextOccurrence({ kind: 'workdays', time: '08:00', timeZone: 'UTC' }, saturday)
-    // 下一个工作日是周一 2026-01-05
-    expect(next).toBe(Date.UTC(2026, 0, 5, 8, 0, 0))
+  it.each(ZONED_CASES)('uses the rule zone for %j after %s despite the host zone', (schedule, from, expected) => {
+    vi.stubEnv('TZ', 'Pacific/Honolulu')
+    expect(nextOccurrence(schedule, timestamp(from))).toBe(timestamp(expected))
   })
 
-  it('weekly picks the next selected weekday', () => {
-    // 2026-01-01 是周四；选 MO/WE → 下一个选中的是周一 2026-01-05
-    const thursday = Date.UTC(2026, 0, 1, 9, 0, 0)
-    const next = nextOccurrence({ kind: 'weekly', weekdays: ['MO', 'WE'], time: '08:00', timeZone: 'UTC' }, thursday)
-    expect(next).toBe(Date.UTC(2026, 0, 5, 8, 0, 0))
+  it.each([
+    ['2025-12-20T00:00:00Z', '2026-01-01T08:00:00Z'],
+    ['2026-01-01T07:00:00Z', '2026-01-01T08:00:00Z'],
+    ['2026-01-01T09:00:00Z', '2026-01-03T08:00:00Z'],
+    ['2026-01-03T08:00:00Z', '2026-01-05T08:00:00Z'],
+  ])('applies custom time to anchor-aligned dates after %s', (from, expected) => {
+    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor: '2026-01-01T00:00:00Z', time: '08:00', timeZone: 'UTC' }, timestamp(from)))
+      .toBe(timestamp(expected))
   })
 
-  it('monthly lands on the requested day and skips short months', () => {
-    expect(nextOccurrence({ kind: 'monthly', day: 15, time: '08:00', timeZone: 'UTC' }, Date.UTC(2026, 0, 10, 0, 0, 0)))
-      .toBe(Date.UTC(2026, 0, 15, 8, 0, 0))
-    expect(nextOccurrence({ kind: 'monthly', day: 15, time: '08:00', timeZone: 'UTC' }, Date.UTC(2026, 0, 20, 0, 0, 0)))
-      .toBe(Date.UTC(2026, 1, 15, 8, 0, 0))
-    // 2026-02 没有 31 日 → 下一次是 03-31
-    expect(nextOccurrence({ kind: 'monthly', day: 31, time: '08:00', timeZone: 'UTC' }, Date.UTC(2026, 1, 1, 0, 0, 0)))
-      .toBe(Date.UTC(2026, 2, 31, 8, 0, 0))
+  it('includes an anchor-aligned custom time when the decision precedes the exact anchor instant', () => {
+    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor: '2026-01-01T08:00:00Z', time: '08:00', timeZone: 'UTC' }, timestamp('2026-01-01T07:59:59.999Z')))
+      .toBe(timestamp('2026-01-01T08:00:00Z'))
   })
 
-  it('returns undefined for invalid schedules', () => {
-    expect(nextOccurrence({ kind: 'interval', everyMinutes: 0, timeZone: 'UTC' }, Date.now())).toBeUndefined()
-    expect(nextOccurrence({ kind: 'daily', time: 'bad', timeZone: 'UTC' }, Date.now())).toBeUndefined()
-    expect(nextOccurrence({ kind: 'weekly', weekdays: [], time: '08:00', timeZone: 'UTC' }, Date.now())).toBeUndefined()
-    expect(nextOccurrence({ kind: 'workdays', time: '24:00', timeZone: 'UTC' }, Date.now())).toBeUndefined()
+  it('bases custom phase on the anchor local date even when it is behind the UTC date', () => {
+    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor: '2026-01-02T01:00:00Z', time: '18:00', timeZone: 'America/Los_Angeles' }, timestamp('2026-01-02T01:00:00Z')))
+      .toBe(timestamp('2026-01-02T02:00:00Z'))
   })
 
-  // monthly day 超出 cron 的 1-31 时会从 parseCronExpression 抛出，而不是按契约返回 undefined；
-  // store 侧经 validateSchedule 挡掉了该输入，故此处不断言该不可达行为。
+  it('never places the first custom occurrence before the anchor instant', () => {
+    expect(nextOccurrence({ kind: 'custom', everyDays: 2, anchor: '2026-01-01T10:00:00Z', time: '08:00', timeZone: 'UTC' }, timestamp('2025-12-20T00:00:00Z')))
+      .toBe(timestamp('2026-01-03T08:00:00Z'))
+  })
+
+  it('advances a maximal 366-day custom cadence without walking every intervening date', () => {
+    expect(nextOccurrence({ kind: 'custom', everyDays: 366, anchor: '2026-01-01T00:00:00Z', time: '08:00', timeZone: 'UTC' }, timestamp('2026-01-01T08:00:00Z')))
+      .toBe(timestamp('2027-01-02T08:00:00Z'))
+  })
+
+  it.each(DST_CASES)('keeps wall-clock and earlier-overlap semantics for %j after %s', (schedule, from, expected) => {
+    expect(nextOccurrence(schedule, timestamp(from))).toBe(timestamp(expected))
+  })
+
+  it('does not reinterpret calendar years below 100 as 1900-based years', () => {
+    expect(nextOccurrence({ kind: 'daily', time: '08:00', timeZone: 'UTC' }, timestamp('0099-12-31T09:00:00Z')))
+      .toBe(timestamp('0100-01-01T08:00:00Z'))
+  })
+
+  it.each(INVALID_SCHEDULES)('returns undefined instead of throwing for invalid rule %j', (schedule) => {
+    expect(nextOccurrence(schedule as Schedule, timestamp('2026-01-01T00:00:00Z'))).toBeUndefined()
+  })
+
+  it('selects a UTC daily target after the earliest representable decision', () => {
+    expect(nextOccurrence({ kind: 'daily', time: '08:00', timeZone: 'UTC' }, -8_640_000_000_000_000))
+      .toBe(-8_639_999_971_200_000)
+  })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER])('rejects unrepresentable from %s', (from) => {
+    expect(nextOccurrence({ kind: 'daily', time: '08:00', timeZone: 'UTC' }, from)).toBeUndefined()
+  })
+})
+
+describe('latestDueOccurrence', () => {
+  it('does not invent a due occurrence before the durable target', () => {
+    expect(latestDueOccurrence({ kind: 'daily', time: '08:00', timeZone: 'UTC' }, timestamp('2026-01-01T08:00:00Z'), timestamp('2026-01-01T07:59:59.999Z')))
+      .toBeUndefined()
+  })
+
+  it('retains the single one-shot target after a long missed gap', () => {
+    const schedule: Schedule = { kind: 'once', at: '2000-01-01T08:00:00Z', timeZone: 'Asia/Tokyo' }
+    const due = latestDueOccurrence(schedule, timestamp('2000-01-01T08:00:00Z'), timestamp('2099-12-31T23:59:59Z'))
+    expect(due).toBe(timestamp('2000-01-01T08:00:00Z'))
+    expect(nextOccurrence(schedule, timestamp('2000-01-01T08:00:00Z'))).toBeUndefined()
+  })
+
+  it('folds centuries of interval misses while preserving durable millisecond phase', () => {
+    expect(latestDueOccurrence({ kind: 'interval', everyMinutes: 5, timeZone: 'UTC' }, timestamp('1800-01-01T00:00:00.123Z'), timestamp('2026-01-01T00:17:34.456Z')))
+      .toBe(timestamp('2026-01-01T00:15:00.123Z'))
+  })
+
+  it('uses durable nextRunAt rather than a recomputed interval anchor', () => {
+    expect(latestDueOccurrence({ kind: 'interval', everyMinutes: 15, anchor: '2026-01-01T00:00:00Z', timeZone: 'UTC' }, timestamp('2026-01-01T00:02:17Z'), timestamp('2026-01-01T00:59:00Z')))
+      .toBe(timestamp('2026-01-01T00:47:17Z'))
+  })
+
+  it('folds fractional-minute misses from the committed millisecond target', () => {
+    expect(latestDueOccurrence({ kind: 'interval', everyMinutes: 1.5, timeZone: 'UTC' }, timestamp('2026-01-01T00:00:00.123Z'), timestamp('2026-01-01T00:05:00Z')))
+      .toBe(timestamp('2026-01-01T00:04:30.123Z'))
+  })
+
+  it('retains interval phase across the full date range without rounding the decision forward', () => {
+    expect(latestDueOccurrence({ kind: 'interval', everyMinutes: 1, timeZone: 'UTC' }, -8_640_000_000_000_000, 8_639_999_999_999_999))
+      .toBe(8_639_999_999_940_000)
+  })
+
+  it.each<[Schedule, string, string, string]>([
+    [{ kind: 'hourly', minute: 30, timeZone: 'Asia/Kathmandu' }, '1800-01-01T00:00:00Z', '2026-01-01T04:55:00Z', '2026-01-01T04:45:00Z'],
+    [{ kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' }, '1800-01-01T00:00:00Z', '2026-09-16T00:59:59Z', '2026-09-15T01:00:00Z'],
+    [{ kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' }, '1800-01-01T00:00:00Z', '2026-09-16T01:00:00Z', '2026-09-16T01:00:00Z'],
+    [{ kind: 'workdays', time: '09:00', timeZone: 'UTC' }, '1800-01-01T00:00:00Z', '2026-01-03T12:00:00Z', '2026-01-02T09:00:00Z'],
+    [{ kind: 'weekly', weekdays: ['MO', 'FR'], time: '09:00', timeZone: 'America/New_York' }, '1800-01-01T00:00:00Z', '2026-01-08T12:00:00Z', '2026-01-05T14:00:00Z'],
+    [{ kind: 'monthly', day: 31, time: '08:00', timeZone: 'Asia/Tokyo' }, '1800-01-01T00:00:00Z', '2026-03-01T02:00:00Z', '2026-01-30T23:00:00Z'],
+    [{ kind: 'custom', everyDays: 7, anchor: '2000-01-03T00:00:00Z', time: '08:00', timeZone: 'UTC' }, '2000-01-03T08:00:00Z', '2026-01-09T09:00:00Z', '2026-01-05T08:00:00Z'],
+    [{ kind: 'custom', everyDays: 2, anchor: '1970-01-01T06:00:00Z', time: '08:00', timeZone: 'UTC' }, '1970-01-01T08:00:00Z', '2026-01-01T09:00:00Z', '2026-01-01T08:00:00Z'],
+  ])('selects only the latest missed target for %j at %s', (schedule, nextRunAt, now, expected) => {
+    expect(latestDueOccurrence(schedule, timestamp(nextRunAt), timestamp(now))).toBe(timestamp(expected))
+  })
+
+  it.each<[Schedule, string, string, string]>([
+    [{ kind: 'daily', time: '02:30', timeZone: 'America/New_York' }, '2026-03-07T07:30:00Z', '2026-03-08T12:00:00Z', '2026-03-07T07:30:00Z'],
+    [{ kind: 'daily', time: '02:30', timeZone: 'America/New_York' }, '2026-03-07T07:30:00Z', '2026-03-09T07:00:00Z', '2026-03-09T06:30:00Z'],
+    [{ kind: 'daily', time: '01:30', timeZone: 'America/New_York' }, '2026-10-31T05:30:00Z', '2026-11-01T06:45:00Z', '2026-11-01T05:30:00Z'],
+    [{ kind: 'hourly', minute: 30, timeZone: 'America/New_York' }, '2026-10-31T04:30:00Z', '2026-11-01T06:15:00Z', '2026-11-01T05:30:00Z'],
+    [{ kind: 'custom', everyDays: 2, anchor: '2011-12-29T10:00:00Z', time: '12:00', timeZone: 'Pacific/Apia' }, '2011-12-29T22:00:00Z', '2011-12-30T23:00:00Z', '2011-12-30T22:00:00Z'],
+    [{ kind: 'daily', time: '12:00', timeZone: 'America/Anchorage' }, '1867-10-17T21:59:36Z', '1867-10-19T06:00:00Z', '1867-10-18T21:59:36Z'],
+  ])('folds missed DST/date-line targets for %j at %s', (schedule, nextRunAt, now, expected) => {
+    expect(latestDueOccurrence(schedule, timestamp(nextRunAt), timestamp(now))).toBe(timestamp(expected))
+  })
+
+  it('honors a committed later-overlap target instead of rewinding it under current rules', () => {
+    expect(latestDueOccurrence({ kind: 'daily', time: '01:30', timeZone: 'US/Eastern' }, timestamp('2026-11-01T06:30:00Z'), timestamp('2026-11-01T06:45:00Z')))
+      .toBe(timestamp('2026-11-01T06:30:00Z'))
+  })
+
+  it('retains the committed custom target when the next phase has not arrived', () => {
+    expect(latestDueOccurrence({ kind: 'custom', everyDays: 366, anchor: '2026-01-01T00:00:00Z', time: '08:00', timeZone: 'UTC' }, timestamp('2026-01-01T08:00:00Z'), timestamp('2026-12-31T23:00:00Z')))
+      .toBe(timestamp('2026-01-01T08:00:00Z'))
+  })
+
+  it('finds the UTC calendar target at the final representable decision', () => {
+    expect(latestDueOccurrence({ kind: 'daily', time: '08:00', timeZone: 'UTC' }, timestamp('2000-01-01T08:00:00Z'), 8_640_000_000_000_000))
+      .toBe(8_639_999_942_400_000)
+  })
+
+  it('bounds calendar projection work independently of the missed history length', () => {
+    const projection = vi.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts')
+    expect(latestDueOccurrence({ kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' }, timestamp('0001-01-01T00:00:00Z'), timestamp('9999-12-31T02:00:00Z')))
+      .toBe(timestamp('9999-12-31T01:00:00Z'))
+    expect(projection.mock.calls.length).toBeLessThan(100)
+  })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER])('rejects an unrepresentable durable target or decision %s', (invalid) => {
+    const schedule: Schedule = { kind: 'daily', time: '08:00', timeZone: 'UTC' }
+    expect(latestDueOccurrence(schedule, invalid, timestamp('2026-01-01T09:00:00Z'))).toBeUndefined()
+    expect(latestDueOccurrence(schedule, timestamp('2026-01-01T08:00:00Z'), invalid)).toBeUndefined()
+  })
+
+  it('rejects an invalid recurrence instead of replaying its durable target', () => {
+    expect(latestDueOccurrence({ kind: 'interval', everyMinutes: 0, timeZone: 'UTC' }, timestamp('2026-01-01T00:00:00Z'), timestamp('2026-01-02T00:00:00Z')))
+      .toBeUndefined()
+  })
 })
 
 describe('validateSchedule', () => {
-  it('accepts all four valid kinds', () => {
-    expect(validateSchedule({ kind: 'daily', time: '08:00', timeZone: 'UTC' })).toBe(true)
-    expect(validateSchedule({ kind: 'interval', everyMinutes: 30, timeZone: 'UTC' })).toBe(true)
-    expect(validateSchedule({ kind: 'workdays', time: '09:30', timeZone: 'UTC' })).toBe(true)
-    expect(validateSchedule({ kind: 'weekly', weekdays: ['MO', 'FR'], time: '10:00', timeZone: 'UTC' })).toBe(true)
+  it.each<Schedule>([
+    { kind: 'once', at: '2026-01-01T08:00:00Z', timeZone: 'UTC' },
+    { kind: 'hourly', minute: 0, timeZone: 'UTC' },
+    { kind: 'hourly', minute: 59, timeZone: 'UTC' },
+    { kind: 'daily', time: '08:00', timeZone: 'UTC' },
+    { kind: 'interval', everyMinutes: 30, timeZone: 'UTC' },
+    { kind: 'interval', everyMinutes: 1.5, anchor: '2026-01-01T00:00:00Z', timeZone: 'UTC' },
+    { kind: 'workdays', time: '09:30', timeZone: 'UTC' },
+    { kind: 'weekly', weekdays: ['MO', 'FR'], time: '10:00', timeZone: 'UTC' },
+    { kind: 'monthly', day: 31, time: '08:00', timeZone: 'UTC' },
+    { kind: 'custom', everyDays: 366, anchor: '2026-01-01T00:00:00Z', time: '08:00', timeZone: 'UTC' },
+  ])('accepts a valid %j schedule', (schedule) => {
+    expect(validateSchedule(schedule)).toBe(true)
   })
 
-  it('accepts the once / hourly / monthly / custom kinds', () => {
-    expect(validateSchedule({ kind: 'once', at: '2026-01-01T08:00:00.000Z', timeZone: 'UTC' })).toBe(true)
-    expect(validateSchedule({ kind: 'hourly', minute: 0, timeZone: 'UTC' })).toBe(true)
-    expect(validateSchedule({ kind: 'hourly', minute: 59, timeZone: 'UTC' })).toBe(true)
-    expect(validateSchedule({ kind: 'monthly', day: 31, time: '08:00', timeZone: 'UTC' })).toBe(true)
-    expect(validateSchedule({ kind: 'custom', everyDays: 7, anchor: '2026-01-01T00:00:00.000Z', time: '08:00', timeZone: 'UTC' })).toBe(true)
+  it('allows an omitted input zone before host normalization', () => {
+    expect(validateSchedule({ kind: 'daily', time: '08:00' })).toBe(true)
   })
 
-  it('rejects invalid shapes', () => {
-    expect(validateSchedule({ kind: 'daily', time: '25:00' })).toBe(false)
-    expect(validateSchedule({ kind: 'interval', everyMinutes: -1 })).toBe(false)
-    expect(validateSchedule({ kind: 'weekly', weekdays: ['XX'], time: '08:00' })).toBe(false)
-    expect(validateSchedule(null)).toBe(false)
-    expect(validateSchedule('nope')).toBe(false)
+  it('accepts a recognized IANA alias without rewriting the schedule', () => {
+    const schedule = { kind: 'daily', time: '08:00', timeZone: 'US/Eastern' }
+    expect(validateSchedule(schedule)).toBe(true)
+    expect(schedule.timeZone).toBe('US/Eastern')
   })
 
-  it('rejects out-of-range fields per kind', () => {
-    expect(validateSchedule({ kind: 'once', at: 'not-a-date' })).toBe(false)
-    expect(validateSchedule({ kind: 'once', at: 1735689600000 })).toBe(false)
-    expect(validateSchedule({ kind: 'hourly', minute: 60 })).toBe(false)
-    expect(validateSchedule({ kind: 'hourly', minute: 1.5 })).toBe(false)
-    expect(validateSchedule({ kind: 'monthly', day: 32, time: '08:00' })).toBe(false)
-    expect(validateSchedule({ kind: 'monthly', day: 0, time: '08:00' })).toBe(false)
-    expect(validateSchedule({ kind: 'custom', everyDays: 0, anchor: '2026-01-01T00:00:00.000Z', time: '08:00' })).toBe(false)
-    expect(validateSchedule({ kind: 'custom', everyDays: 7, anchor: 'nope', time: '08:00' })).toBe(false)
-    expect(validateSchedule({ kind: 'custom', everyDays: 7, anchor: '2026-01-01T00:00:00.000Z', time: 'bad' })).toBe(false)
-    expect(validateSchedule({ kind: 'unknown' })).toBe(false)
-    expect(validateSchedule([])).toBe(false)
-  })
-})
-
-describe('nextOccurrence across DST (America/New_York)', () => {
-  // 本组需要非 UTC 的进程时区：顶层 `beforeEach` 先把 TZ 钉到 UTC，描述块级 hook 在其后执行，
-  // 这里再覆盖一次即可；用例结束后由下一个用例的顶层 `beforeEach` 复位，故无需自行还原。
-  beforeEach(() => {
-    process.env.TZ = 'America/New_York'
+  it.each(INVALID_SCHEDULES)('rejects invalid rule %j', (schedule) => {
+    expect(validateSchedule(schedule)).toBe(false)
   })
 
-  it('daily keeps the same wall-clock time across spring-forward', () => {
-    // 2026-03-08 02:00 EST → 03:00 EDT（春季前拨，当天只有 23 小时）。
-    // 从 03-07 09:00 之后找 08:00 → 应为 03-08 08:00 EDT。
-    const from = new Date(2026, 2, 7, 9, 0, 0).getTime()
-    const next = nextOccurrence({ kind: 'daily', time: '08:00', timeZone: 'America/New_York' }, from)
-    const expected = new Date(2026, 2, 8, 8, 0, 0).getTime()
-    expect(next).toBe(expected)
-    // 与「日历日 +1」一致：加 24h 毫秒会得到 23 小时的钟面错位。
-    expect(new Date(next as number).getHours()).toBe(8)
+  it.each([null, 'nope', [], { kind: 'unknown' }, { kind: 'once', at: 1735689600000 }])('rejects invalid shape %j', (value) => {
+    expect(validateSchedule(value)).toBe(false)
   })
 
-  it('daily keeps the same wall-clock time across fall-back', () => {
-    // 2026-11-01 02:00 EDT → 01:00 EST（秋季回拨，当天 25 小时）。
-    const from = new Date(2026, 9, 31, 9, 0, 0).getTime()
-    const next = nextOccurrence({ kind: 'daily', time: '08:00', timeZone: 'America/New_York' }, from)
-    const expected = new Date(2026, 10, 1, 8, 0, 0).getTime()
-    expect(next).toBe(expected)
-    expect(new Date(next as number).getHours()).toBe(8)
-  })
-
-  it('workdays keeps wall-clock time across a DST boundary', () => {
-    // 2026-03-06（周五）之后的工作日 08:00：跨 03-08 春季前拨 → 03-09（周一）08:00。
-    const friday = new Date(2026, 2, 6, 12, 0, 0).getTime()
-    const next = nextOccurrence({ kind: 'workdays', time: '08:00', timeZone: 'America/New_York' }, friday)
-    expect(next).toBe(new Date(2026, 2, 9, 8, 0, 0).getTime())
+  it.each(['', 'UTC ', ' Asia/Shanghai', 7, null])('rejects invalid explicit zone %j', (timeZone) => {
+    expect(validateSchedule({ kind: 'daily', time: '08:00', timeZone })).toBe(false)
   })
 })

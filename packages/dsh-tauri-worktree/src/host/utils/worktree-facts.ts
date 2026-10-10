@@ -19,10 +19,7 @@ export function worktreeSectionText(binding: Binding): string {
     + `do not read from or modify it in this session, even when the inherited history refers to it. `
     + `Dependency directories (e.g. node_modules) are linked from the source repository and the agent skills directory (.agents) is copied into the worktree, so it works out of the box. The Rust build cache (src-tauri/target) is NOT carried over: the backend recompiles from scratch in this worktree. `
     + `Running a package manager install (e.g. \`pnpm install\`) inside the worktree first detaches that link and materializes an independent copy, `
-    + `leaving the source repository untouched. `
-    + `checkout_worktree is user-authorized only: call it only after a direct human user explicitly requests or approves checkout. `
-    + `Task completion, a merged PR, or inferred convenience is not permission to call it. When checkout would be a natural next step, `
-    + `such as after a PR is merged, you may ask the user whether they want to check out the worktree; wait for their approval before calling.`
+    + `leaving the source repository untouched.`
   )
 }
 
@@ -36,13 +33,5 @@ export function worktreeContextText(binding: Binding): string {
     `${worktreeFactsText(binding)}\n\n`
     + `Continue this session inside the worktree path. The project path is a different checkout: `
     + `do not read from or modify it here, even when the inherited history refers to it.`
-  )
-}
-
-export function worktreeHandoffText(binding: Binding): string {
-  return (
-    `${worktreeFactsText(binding)}\n\n`
-    + `The task has moved to this isolated worktree session. `
-    + `Continue the user request from the inherited context without explaining the handoff again.`
   )
 }

@@ -11,7 +11,11 @@ import { readSource } from './setup/read-source'
  * `dsh-tauri-model` 是它的完整 fork、注册同一个 `settings.section/models`，故必须禁用。
  * 已被核心移除的 `ui-settings-unarchive-sessions` 不得再回到任何 patch 层。
  */
-const OFFICIAL_ROW_DISABLES = ['dsh-tauri-model → ui-settings-models']
+const OFFICIAL_ROW_DISABLES = [
+  'dsh-tauri-model → ui-settings-models',
+  'dsh-tauri-scheduler → schedule',
+  'dsh-tauri-scheduler → ui-schedule',
+]
 
 const PACKAGES_ROOT = new URL('../packages/', import.meta.url)
 
@@ -35,6 +39,13 @@ function disabledRowIds(source: string): string[] {
 }
 
 describe('插件 patch 层的官方目标', () => {
+  it('定时任务插件明确禁用完整官方调度栈且插入唯一实现', () => {
+    const source = readPatchLayer('dsh-tauri-scheduler')
+    expect(source).toMatch(/^- id: schedule\r?\n {2}disabled: true$/m)
+    expect(source).toMatch(/^- id: ui-schedule\r?\n {2}disabled: true$/m)
+    expect(source.match(/name: dsh-tauri-scheduler/g)).toHaveLength(1)
+  })
+
   it('只把核心仍在提供的官方入口列为 patch 目标', () => {
     const actual = packageNames().flatMap(pkg => disabledRowIds(readPatchLayer(pkg)).map(id => `${pkg} → ${id}`))
 

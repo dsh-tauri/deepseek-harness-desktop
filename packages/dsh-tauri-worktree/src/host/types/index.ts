@@ -49,12 +49,6 @@ export interface CheckoutInfo {
   worktreePath?: string
 }
 
-export interface PendingHandoff {
-  sourceAgent: any
-  targetSessionId: string
-  binding: Binding
-}
-
 export type OperationResult<T extends object = object>
   = | ({ ok: true } & T)
     | { ok: false, error: string }

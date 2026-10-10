@@ -5,6 +5,7 @@ export const scheduleParameters = {
   description: 'Schedule spec: once/hourly/daily/interval/workdays/weekly/monthly/custom.',
   properties: {
     kind: { type: 'string', enum: [...SCHEDULE_KINDS] },
+    timeZone: { type: 'string', description: 'IANA time zone for the calendar schedule; defaults to the host zone.' },
     time: { type: 'string', description: '"HH:mm" for daily/workdays/weekly/monthly/custom.' },
     everyMinutes: { type: 'number', description: 'Interval minutes for kind=interval.' },
     everyDays: { type: 'number', description: 'Interval days for kind=custom.' },

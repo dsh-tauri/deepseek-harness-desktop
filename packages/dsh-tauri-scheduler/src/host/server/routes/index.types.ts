@@ -1,6 +1,8 @@
-import type { SchedulerRun, SchedulerScheduleInput, SchedulerTask } from '../../types'
+import type { HistoryPage, OperationResult, SchedulerScheduleInput, SchedulerTask, TaskDelivery } from '../../types'
 
 export interface TaskCreateBody {
+  delivery: TaskDelivery
+  sessionId?: string
   name: string
   schedule: SchedulerScheduleInput
   prompt: string
@@ -15,6 +17,9 @@ export interface TaskCreateBody {
 
 export interface TaskUpdateBody {
   id: string
+  expected: SchedulerTask
+  delivery?: TaskDelivery
+  sessionId?: string
   name?: string
   schedule?: SchedulerScheduleInput
   prompt?: string
@@ -40,14 +45,13 @@ export interface TaskListResponse {
   tasks: SchedulerTask[]
 }
 
-export interface RunListResponse {
-  runs: SchedulerRun[]
-}
+export type RunListResponse = OperationResult<HistoryPage>
 
 export interface TaskActionResult {
   ok?: boolean
   task?: SchedulerTask
   error?: string
+  code?: string
 }
 
 export interface GetTasksQuery {
@@ -56,9 +60,12 @@ export interface GetTasksQuery {
 
 export interface GetHistoryQuery {
   taskId?: string
+  limit: number
+  before?: string
 }
 
 export interface ActionResult {
   ok?: boolean
   error?: string
+  code?: string
 }

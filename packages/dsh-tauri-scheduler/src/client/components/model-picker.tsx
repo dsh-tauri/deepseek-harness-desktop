@@ -3,8 +3,8 @@ import type { ReactElement } from 'react'
 import type { Translate } from '../locales/index.types'
 import type { ModelCatalogFailure, ModelOption } from '../types'
 import { ChevronDown, Chip, Icon, Menu } from 'dsh-tauri-ui/client'
-import { groupBy } from 'dsh-tauri/client'
-import { useEffect, useState } from 'react'
+import { groupBy, useEventListener, useWatchImmediate } from 'dsh-tauri/client'
+import { useState } from 'react'
 
 type Pane = 'root' | 'model' | 'effort'
 
@@ -33,6 +33,7 @@ export function ModelPicker({
   modelKey,
   reasoningEffort,
   onSelection,
+  disabled,
 }: {
   readonly t: Translate
   readonly models: readonly ModelOption[]
@@ -40,9 +41,14 @@ export function ModelPicker({
   readonly modelKey: string
   readonly reasoningEffort: string
   readonly onSelection: (modelKey: string, reasoningEffort: string) => void
+  readonly disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<Pane>('root')
+  useWatchImmediate(disabled, () => {
+    if (disabled)
+      setOpen(false)
+  })
   const selected = models.find(item => `${item.provider}::${item.model}` === modelKey)
   const reasoning = selected?.reasoning
   const effectiveEffort = reasoningEffort === 'none'
@@ -53,34 +59,25 @@ export function ModelPicker({
     : effectiveEffort === undefined
       ? t('effort.providerDefault')
       : reasoning.efforts.find(item => item.id === effectiveEffort)?.name ?? effectiveEffort
-  const trigger = selected?.label ?? t('trigger.fallback')
+  const trigger = selected?.label ?? (modelKey !== 'default' ? modelKey : t('trigger.fallback'))
   const modelGroups = Object.entries(groupBy(models, 'provider')).map(([provider, group]) => ({
     provider,
     label: group[0]?.providerLabel ?? provider,
     models: group,
   }))
 
-  // Escape 必须拦在 capture 阶段，否则会同时触达外层 Modal 并连带关掉对话框
-  useEffect(() => {
-    if (!open)
+  useEventListener('keydown', (event) => {
+    if (!open || event.key !== 'Escape')
       return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape')
-        return
-      event.preventDefault()
-      event.stopPropagation()
-      event.stopImmediatePropagation()
-      if (pane !== 'root') {
-        setPane('root')
-        return
-      }
-      setOpen(false)
+    event.preventDefault()
+    event.stopPropagation()
+    event.stopImmediatePropagation()
+    if (pane !== 'root') {
+      setPane('root')
+      return
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => {
-      window.removeEventListener('keydown', onKey, true)
-    }
-  }, [open, pane])
+    setOpen(false)
+  }, true)
 
   const selectModel = (value: string): void => {
     const item = models.find(model => `${model.provider}::${model.model}` === value)
@@ -96,22 +93,22 @@ export function ModelPicker({
   }
 
   const rootItems: MenuEntry[] = [
-    { id: 'pane:model', label: paneRow(t('menu.model'), selected?.label ?? t('trigger.fallback')) },
+    { id: 'pane:model', label: paneRow(t('menu.model'), trigger) },
   ]
   if (reasoning !== undefined)
     rootItems.push({ id: 'pane:effort', label: paneRow(t('menu.effort'), effortLabel ?? t('effort.providerDefault')) })
 
-  const modelItems: MenuEntry[] = failures.map(failure => ({
+  const modelItems: MenuEntry[] = [{ id: 'model:default', label: optionCopy(t('followGlobal')) }, ...failures.map<MenuEntry>(failure => ({
     type: 'label',
     id: `warning:${failure.provider}`,
     text: t('warning.groupLoad', { name: failure.providerLabel, message: failure.message }),
-  }))
+  }))]
   for (const group of modelGroups) {
     modelItems.push({ type: 'label', id: `group:${group.provider}`, text: group.label })
     for (const item of group.models)
       modelItems.push({ id: `model:${item.provider}::${item.model}`, label: optionCopy(item.label, item.description) })
   }
-  if (modelItems.length === 0)
+  if (modelItems.length === 1)
     modelItems.push({ type: 'label', id: 'empty:models', text: t('empty.models') })
 
   const effortItems: MenuEntry[] = []
@@ -132,6 +129,8 @@ export function ModelPicker({
       : undefined
 
   const onSelect = (id: string): void => {
+    if (disabled)
+      return
     if (id === 'pane:model') {
       setPane('model')
       return
@@ -150,7 +149,7 @@ export function ModelPicker({
 
   return (
     <Menu
-      open={open}
+      open={open && !disabled}
       autoFocus
       portal
       side="top"
@@ -164,8 +163,9 @@ export function ModelPicker({
       }}
       anchor={(
         <Chip
+          disabled={disabled}
           variant="composerTrigger"
-          open={open}
+          open={open && !disabled}
           aria-label={selected === undefined
             ? t('trigger.selectAria')
             : effortLabel === undefined

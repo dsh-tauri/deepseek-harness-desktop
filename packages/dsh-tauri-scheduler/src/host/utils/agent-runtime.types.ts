@@ -1,4 +1,5 @@
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
 
 export interface PlatformModuleLoader {
   import: (name: string) => Promise<unknown>
@@ -13,7 +14,7 @@ export interface SchedulerRuntimeModules {
   createUserMessage: (value: {
     content: readonly { type: 'text', text: string }[]
     source: unknown
-  }) => unknown
+  }) => UserMessage
   setApprovalPolicy: (session: unknown, policy: 'ask' | 'never') => void
 }
 

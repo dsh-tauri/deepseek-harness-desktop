@@ -49,7 +49,22 @@ pub(super) fn pick_error_message(output: &str, hint: Option<&str>) -> String {
             let trimmed = trimmed.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         })
-        .filter(|line| ERROR_MARKERS.iter().any(|marker| line.contains(marker)))
+        .filter(|line| {
+            ERROR_MARKERS.iter().any(|marker| line.contains(marker))
+                || line.split_whitespace().any(|word| {
+                    let code = word
+                        .strip_prefix('[')
+                        .and_then(|word| word.strip_suffix(']'))
+                        .or_else(|| word.strip_suffix(':'));
+                    code.is_some_and(|code| {
+                        code.len() > 1
+                            && code.starts_with('E')
+                            && code.bytes().all(|byte| {
+                                byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                            })
+                    })
+                })
+        })
         .take(8)
         .collect();
     let base = if cleaned.is_empty() {
@@ -369,6 +384,34 @@ fn contains_error_code(output: &str, code: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_error_message_preserves_filesystem_cause_before_cli_summary() {
+        for cause in [
+            "[EISDIR] EISDIR: illegal operation on a directory, readlink 'F:/apps/.dsh/profiles/tauri/node_modules/dsh-tauri'",
+            "EPERM: operation not permitted, unlink 'C:/apps/plugin/package.json'",
+            "[ENOTEMPTY] ENOTEMPTY: directory not empty, rmdir 'C:/apps/plugin'",
+            "EACCES: permission denied, open '/tmp/profile/package.json'",
+            "ENOSPC: no space left on device, write",
+        ] {
+            let output = format!(
+                "Progress: resolved 1, reused 0\n\u{1b}[31m{cause}\u{1b}[0m\ndsh: plugin command failed; diagnostics: C:/profile/.plugin-manager/logs/operation-test/pnpm.log\n"
+            );
+            assert_eq!(
+                pick_error_message(&output, None),
+                format!("{cause}\ndsh: plugin command failed; diagnostics: C:/profile/.plugin-manager/logs/operation-test/pnpm.log")
+            );
+        }
+    }
+
+    #[test]
+    fn pick_error_message_does_not_promote_errno_in_progress_paths() {
+        let output = "Progress: unpacking C:/EISDIR/cache\nResolved EACCES-helper@1.0.0\ndsh: plugin command failed; diagnostics: C:/profile/pnpm.log\n";
+        assert_eq!(
+            pick_error_message(output, None),
+            "dsh: plugin command failed; diagnostics: C:/profile/pnpm.log"
+        );
+    }
 
     #[test]
     fn diagnostic_suffix_preserves_non_allowbuilds_failure() {

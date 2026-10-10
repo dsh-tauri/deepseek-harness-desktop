@@ -39,7 +39,7 @@ export function postTasksRun(body: Types.PostApiTauriSchedulerTasksRunBody, opti
 }
 
 /** @method get */
-export function getHistory(params?: Types.GetApiTauriSchedulerHistoryQuery, options?: FetchOptions) {
+export function getHistory(params: Types.GetApiTauriSchedulerHistoryQuery, options?: FetchOptions) {
   return ofetch<Types.GetApiTauriSchedulerHistoryResponse>("/api/tauri/scheduler/history", { method: "get", params, ...options });
 }
 

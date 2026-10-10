@@ -7,6 +7,7 @@ export const inject = [
   'webServer',
   'agents',
   'sessions',
+  'sessionController',
   'workspaceRegistry',
   'agentDefaultModel',
   'agentPresets',

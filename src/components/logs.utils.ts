@@ -48,6 +48,19 @@ export function containsHeapOomError(lines: readonly string[]): boolean {
   return lines.some(line => /JavaScript heap out of memory|Ineffective mark-compacts near heap limit/i.test(line))
 }
 
+/**
+ * 端口被占用导致的启动失败（`listen EADDRINUSE: address already in use`）。
+ *
+ * dsh 在启动早期派生迁移/恢复用的 CLI 子进程，那个子进程继承同一个
+ * `--port` 并去 bind 已被父进程占住的端口，于是 webserver（required）判定失败、
+ * 整个 dsh 以 code 1 退出。配置端口在启动前必然空闲，因此这个命中意味着端口在
+ * 本次启动过程中被别的进程占了——重启换一个端口即可能成功，无需用户介入。
+ * 纯函数，便于单元测试。
+ */
+export function containsPortInUseError(lines: readonly string[]): boolean {
+  return lines.some(line => /EADDRINUSE/i.test(line) && /address already in use/i.test(line))
+}
+
 /** V8 GC 追踪行：`Mark-Compact 8058.3 (8224.0) -> 8051.0 (8234.2) MB`，最后一个括号里是提交的堆总量 */
 const HEAP_COMMITTED_MB = /\(\d+(?:\.\d+)?\)\s*->[^(]*\((\d+(?:\.\d+)?)\)\s*MB/
 

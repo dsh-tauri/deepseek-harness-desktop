@@ -1,16 +1,22 @@
+import type { GetApiTauriSchedulerHistoryResponse, GetApiTauriSchedulerTasksResponse } from '../apis/index.type'
+
 export type ScheduleKind = 'once' | 'hourly' | 'daily' | 'interval' | 'workdays' | 'weekly' | 'monthly' | 'custom'
 
 export type Weekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU'
 
-export type ScheduleForm
-  = | { kind: 'once', at: string }
-    | { kind: 'hourly', minute: number }
-    | { kind: 'daily', time: string }
-    | { kind: 'interval', everyMinutes: number, anchor?: string }
-    | { kind: 'workdays', time: string }
-    | { kind: 'weekly', weekdays: readonly Weekday[], time: string }
-    | { kind: 'monthly', day: number, time: string }
-    | { kind: 'custom', everyDays: number, anchor?: string, time: string }
+export type TaskDelivery = 'this-session' | 'new-session'
+export type TaskStatus = 'active' | 'inactive'
+
+export type ScheduleForm = (
+  | { kind: 'once', at: string }
+  | { kind: 'hourly', minute: number }
+  | { kind: 'daily', time: string }
+  | { kind: 'interval', everyMinutes: number, anchor?: string }
+  | { kind: 'workdays', time: string }
+  | { kind: 'weekly', weekdays: readonly Weekday[], time: string }
+  | { kind: 'monthly', day: number, time: string }
+  | { kind: 'custom', everyDays: number, anchor?: string, time: string }
+) & { timeZone?: string }
 
 export interface PermissionOption {
   value: string
@@ -44,42 +50,22 @@ export interface ModelCatalogFailure {
   message: string
 }
 
-export interface TaskView {
-  id: string
-  name: string
-  schedule: ScheduleForm & { timeZone?: string }
-  prompt: string
-  recommendationId?: string
-  workspaceId?: string
-  permission?: string
-  provider?: string
-  model?: string
-  reasoningEffort?: string
-  module?: string
-  enabled: boolean
-  createdAt: string
-  updatedAt: string
-  lastRunAt?: string
-  nextRunAt?: string
-  waiting?: boolean
+type TaskRecord = GetApiTauriSchedulerTasksResponse['tasks'][number]
+export type TaskView = Omit<TaskRecord, 'schedule'> & {
+  schedule: Exclude<TaskRecord['schedule'], { kind: 'weekly' }>
+    | (Omit<Extract<TaskRecord['schedule'], { kind: 'weekly' }>, 'weekdays'> & { weekdays: readonly Weekday[] })
 }
-
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted' | 'skipped' | 'cancelled'
-
-export interface RunView {
-  id: string
-  taskId: string
-  taskName: string
-  trigger: 'schedule' | 'manual'
-  status: RunStatus
-  scheduledFor: string
-  startedAt: string
-  finishedAt?: string
-  sessionId?: string
-  error?: string
-}
+type HistoryResponse = Extract<GetApiTauriSchedulerHistoryResponse, { ok: true }>
+export type HistoryPage = Omit<HistoryResponse, 'ok' | 'runs'>
+export type HistoryRecord = HistoryPage['records'][number]
+export type RunView = HistoryResponse['runs'][number]
+export type RunStatus = RunView['status']
 
 export interface TaskFormState {
+  delivery: TaskDelivery
+  sessionId: string
+  enabled: boolean
+  recommendationId?: string
   name: string
   schedule: ScheduleForm
   prompt: string
@@ -100,6 +86,8 @@ export interface SchedulerOptions {
 }
 
 export interface TaskInput {
+  delivery: TaskDelivery
+  sessionId?: string
   name: string
   schedule: ScheduleForm
   prompt: string
