@@ -20,13 +20,21 @@ export const scheduler = defineService({
     const ctx = getServerContext<HostContext>(server)
     const stopActivity = ctx.on?.('workspace/session-activity', sessionActivity)
     const stopSession = ctx.on?.('workspace/session-stop', sessionStop)
-    const recovered = trackAccepted(background(async () => {
+    let tickInFlight = true
+    void trackAccepted(background(async () => {
       await recovery.recover()
       if (!runtime.stopping)
         await scheduler.tick()
-    }).catch((error: unknown) => warn('recover interrupted runs failed', error)))
+    })).catch((error: unknown) => warn('recover interrupted runs failed', error)).finally(() => {
+      tickInFlight = false
+    })
     const timer = setInterval(() => {
-      void recovered.then(() => background(() => scheduler.tick())).catch((error: unknown) => warn('tick failed', error))
+      if (runtime.stopping || tickInFlight)
+        return
+      tickInFlight = true
+      void trackAccepted(background(() => scheduler.tick())).catch((error: unknown) => warn('tick failed', error)).finally(() => {
+        tickInFlight = false
+      })
     }, tickMs)
     return async () => {
       runtime.stopping = true
@@ -109,6 +117,7 @@ async function repairOccurrences(taskId?: string): Promise<void> {
     const next = item.trigger === 'schedule' ? nextFutureOccurrence(item.task.schedule, Date.parse(item.scheduledAt), Date.now()) : undefined
     await task.complete(item.task, item.completedAt, next === undefined ? undefined : new Date(next).toISOString(), item.trigger === 'schedule')
     await history.acknowledge(item.id)
+    runtime.flushes.delete(item.id)
     if (runtime.pending.get(item.task.id)?.message.id === item.id)
       runtime.pending.delete(item.task.id)
     runtime.failed.delete(item.task.id)
@@ -121,6 +130,10 @@ function launchRun(target: SchedulerTask, trigger: RunTrigger, scheduledAt: stri
     try {
       await executor.run(target, trigger, scheduledAt)
       await repairOccurrences(target.id)
+    }
+    catch (error) {
+      runtime.failed.add(target.id)
+      throw error
     }
     finally {
       runtime.running.delete(target.id)

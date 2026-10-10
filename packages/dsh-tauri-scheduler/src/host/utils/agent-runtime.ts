@@ -1,5 +1,6 @@
 import type { PlatformModuleLoader, SchedulerRuntimeModules, SetupAgentLike } from './agent-runtime.types'
 import { isFunction } from 'lodash-es'
+import { withSessionDeadline } from './session-deadline'
 
 type RuntimeModuleExports = Partial<SchedulerRuntimeModules>
 
@@ -19,6 +20,24 @@ export async function loadSchedulerRuntimeModules(loader: PlatformModuleLoader):
 export async function loadSchedulerMessageFactory(loader: PlatformModuleLoader): Promise<SchedulerRuntimeModules['createUserMessage']> {
   const llm = await loader.import('@deepseek-ai/dsh-llm')
   return resolveRuntimeExport(loader, llm, 'createUserMessage')
+}
+
+export async function isSchedulerSessionNotFound(loader: PlatformModuleLoader | undefined, error: unknown): Promise<boolean> {
+  if (typeof error !== 'object' || error === null)
+    return false
+  if ((error as { code?: unknown }).code === 'session/not-found')
+    return true
+  if (typeof loader?.import !== 'function')
+    return false
+  try {
+    const exports = await withSessionDeadline(loader.import('@deepseek-ai/dsh-api-session-controller'))
+    const direct = (exports as { ApiSessionNotFound?: unknown } | null)?.ApiSessionNotFound
+    const constructor = typeof direct === 'function' ? direct : (loader.unwrapExports(exports) as { ApiSessionNotFound?: unknown } | null)?.ApiSessionNotFound
+    return typeof constructor === 'function' && error instanceof constructor
+  }
+  catch {
+    return false
+  }
 }
 
 export function resolveSetupAgent(

@@ -27,7 +27,7 @@ export async function loadOptions(): Promise<void> {
 }
 
 export async function loadTaskHistory(taskId: string, limit: number, before?: string): Promise<HistoryPage> {
-  const result = await getHistory({ taskId, limit, before })
+  const result = await getHistory({ taskId, limit, before }, { ignoreResponseError: true })
   if (!result.ok)
     throw Object.assign(new Error(result.error), { code: result.code })
   return result

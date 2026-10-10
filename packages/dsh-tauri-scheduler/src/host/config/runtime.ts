@@ -8,6 +8,7 @@ export const runtime = {
   running: new Set<string>(),
   accepted: new Set<Promise<unknown>>(),
   pending: new Map<string, PendingDelivery>(),
+  flushes: new Map<string, Promise<boolean>>(),
   failed: new Set<string>(),
 }
 
@@ -43,5 +44,6 @@ export function resetWriteQueue(): void {
   runtime.running.clear()
   runtime.accepted.clear()
   runtime.pending.clear()
+  runtime.flushes.clear()
   runtime.failed.clear()
 }

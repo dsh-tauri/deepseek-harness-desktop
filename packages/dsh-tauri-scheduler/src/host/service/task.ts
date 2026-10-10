@@ -1,3 +1,4 @@
+import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import type { HostContext, OperationResult, SchedulerSchedule, SchedulerTask, TaskInput } from '../types'
 import { randomUUID } from 'node:crypto'
 import { getServerContext } from 'dsh-h3/utils'
@@ -6,7 +7,9 @@ import { isEqual } from 'lodash-es'
 import { runtime, withTaskQueue, withWriteQueue } from '../config/runtime'
 import { server } from '../server'
 import { storage } from '../storage'
+import { isSchedulerSessionNotFound } from '../utils/agent-runtime'
 import { localTimeZone, nextOccurrence, validateSchedule } from '../utils/schedule'
+import { SessionOperationTimeout, withSessionDeadline } from '../utils/session-deadline'
 import { sameTaskRecord } from '../utils/task-record'
 
 const SCHEDULER_TASKS_KEY = 'tasks'
@@ -76,7 +79,8 @@ export const task = defineService({
       const invalid = validateInput(merged)
       if (invalid !== null)
         return { ok: false, error: invalid, code: 'task_invalid' }
-      const bound = await validateBinding(merged, merged.sessionId, initiator?.session.id)
+      const bindingChanged = merged.delivery !== current.delivery || merged.sessionId !== current.sessionId
+      const bound = await validateBinding(merged, merged.sessionId, initiator?.session.id, bindingChanged)
       if (!bound.ok)
         return bound
       const rebuilt = build(merged)
@@ -247,7 +251,7 @@ function currentInitiator(): { session: { id: string } } | undefined {
   return getServerContext<HostContext>(server).agents?.currentInitiator?.()
 }
 
-async function validateBinding(input: Pick<TaskInput, 'delivery' | 'sessionId' | 'workspaceId' | 'permission' | 'provider' | 'model' | 'reasoningEffort'>, sessionId?: string, initiatorId?: string): Promise<OperationResult> {
+async function validateBinding(input: Pick<TaskInput, 'delivery' | 'sessionId' | 'workspaceId' | 'permission' | 'provider' | 'model' | 'reasoningEffort'>, sessionId?: string, initiatorId?: string, verifySession = true): Promise<OperationResult> {
   if (input.delivery === 'new-session')
     return input.sessionId ? { ok: false, error: '新会话投递不能绑定 sessionId', code: 'task_invalid' } : { ok: true }
   if (!sessionId)
@@ -256,13 +260,15 @@ async function validateBinding(input: Pick<TaskInput, 'delivery' | 'sessionId' |
     return { ok: false, error: '不能代表另一个会话创建原会话任务', code: 'session_mismatch' }
   if (RESOURCE_FIELDS.some(field => input[field]))
     return { ok: false, error: '原会话投递继承会话资源，不能覆盖工作区、权限或模型', code: 'task_invalid' }
+  if (!verifySession)
+    return { ok: true }
   const ctx = getServerContext<HostContext>(server)
   if (typeof ctx.sessionController?.inspect !== 'function' || !Array.isArray(ctx.workspaceRegistry?.archivedSessionIds))
     return { ok: false, error: '宿主无法验证目标会话', code: 'session_unavailable' }
   if (ctx.workspaceRegistry.archivedSessionIds.includes(sessionId))
     return { ok: false, error: '目标会话已归档', code: 'session_archived' }
   try {
-    const inspected = await ctx.sessionController.inspect(sessionId)
+    const inspected = await withSessionDeadline<Awaited<ReturnType<SessionController['inspect']>>>(ctx.sessionController.inspect(sessionId))
     if (inspected?.meta?.id !== sessionId)
       return { ok: false, error: '目标会话不存在', code: 'session_not_found' }
     if (inspected.meta.origin === 'subagent' || (inspected.meta.delegationDepth ?? 0) > 0)
@@ -272,8 +278,9 @@ async function validateBinding(input: Pick<TaskInput, 'delivery' | 'sessionId' |
     return { ok: true }
   }
   catch (error) {
-    const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
-    return code === 'session/not-found'
+    if (error instanceof SessionOperationTimeout)
+      return { ok: false, error: error.message, code: 'session_unavailable' }
+    return await isSchedulerSessionNotFound(ctx.loader, error)
       ? { ok: false, error: '目标会话不存在', code: 'session_not_found' }
       : { ok: false, error: '宿主无法读取目标会话', code: 'session_unavailable' }
   }

@@ -166,12 +166,22 @@ jobs:
         run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts
 
       - name: Unified scheduler host and right-sidebar contracts (current core)
+        id: scheduler_contracts
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
+          DSH_SCHEDULER_DIAGNOSTICS_DIR: ${{ runner.temp }}/scheduler-diagnostics
         run: |
           for seed in 987 988 989 990 991; do
             node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-scheduler.e2e.ts test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts || exit $?
           done
+
+      - name: Upload scheduler contract failure diagnostics
+        if: failure() && steps.scheduler_contracts.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: scheduler-contract-diagnostics
+          path: ${{ runner.temp }}/scheduler-diagnostics
+          if-no-files-found: error
 
   # 桌面端 L3 E2E（vitest + WebdriverIO）：
   # 驱动真实 Tauri 窗口，只能在 Windows 上跑（embedded WebDriver + WebView2）。

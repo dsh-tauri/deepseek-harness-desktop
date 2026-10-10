@@ -67,7 +67,7 @@ Retained local behavior and assembly:
 - Reversible `enabled` pause/resume remains distinct from terminal `inactive`. Manual runs, recommendations and `runs/recover` remain supported. Both deliveries coalesce missed recurring occurrences to the latest due instant and preserve IANA calendar / DST semantics for the eight local schedule kinds.
 - The main task list, search and chat/manual creation buttons retain their layout and wording. Runs and mark-all-read UI are removed; editing and manual creation use a right-sidebar task tab, including local `draft: true` creation state.
 - [`src/host/utils/agent-runtime.ts`](./src/host/utils/agent-runtime.ts) uses the host loader for `createUserMessage`, scoped Agent/model selection and approval helpers so runtime module identity remains shared. Session and workspace contracts are capability-checked; unsupported public UI seats are disabled with a warning rather than patched through private React state.
-- A durable prepared-message journal reconciles receipt failures using the same message identity. This is not an exactly-once execution guarantee across a crash between conversation persistence and task-state persistence.
+- A durable prepared-message journal reconciles receipt failures using the same message identity, including messages already consumed into the session surface. Host session reads, resolution and persistence waits are bounded to 10 seconds; an unacknowledged flush remains pending and reuses its in-flight promise on a later drive. The timeout does not cancel the host operation or claim durability. This is not an exactly-once execution guarantee across a crash between conversation persistence and task-state persistence.
 
 ## License
 

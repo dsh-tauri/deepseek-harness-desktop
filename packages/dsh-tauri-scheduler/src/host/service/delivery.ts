@@ -1,12 +1,14 @@
-import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { HostContext, OperationResult, RunTrigger, SchedulerTask } from '../types'
 import type { PlatformModuleLoader } from '../utils/agent-runtime.types'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { runtime } from '../config/runtime'
 import { server } from '../server'
-import { loadSchedulerMessageFactory } from '../utils/agent-runtime'
+import { isSchedulerSessionNotFound, loadSchedulerMessageFactory } from '../utils/agent-runtime'
 import { nextFutureOccurrence } from '../utils/occurrence'
+import { SessionOperationTimeout, withSessionDeadline } from '../utils/session-deadline'
 import { sameTaskRecord } from '../utils/task-record'
 import { history } from './history'
 import { task } from './task'
@@ -19,8 +21,17 @@ export const delivery = defineService({
     let pending = runtime.pending.get(target.id) ?? (await history.pending(target.id))[0]
     let enqueued = runtime.pending.has(target.id)
     if (pending && !enqueued) {
-      const inspected = await ctx.sessionController.inspect(pending.task.sessionId!)
-      enqueued = containsMessage(inspected.events, pending.message.id)
+      try {
+        const inspected = await withSessionDeadline<Awaited<ReturnType<SessionController['inspect']>>>(ctx.sessionController.inspect(pending.task.sessionId!))
+        enqueued = containsMessage(inspected.events, pending.message.id)
+      }
+      catch (error) {
+        if (error instanceof SessionOperationTimeout)
+          return { ok: false, error: error.message, code: 'session_unavailable' }
+        return await isSchedulerSessionNotFound(ctx.loader, error)
+          ? { ok: false, error: '目标会话不存在', code: 'session_not_found' }
+          : { ok: false, error: '宿主无法读取目标会话', code: 'session_unavailable' }
+      }
     }
     const snapshot = pending?.task ?? target
     const occurrence = pending?.scheduledAt ?? scheduledAt
@@ -38,9 +49,17 @@ export const delivery = defineService({
     const bound = await task.validateTarget(snapshot)
     if (!bound.ok)
       return bound
-    const resolved = await ctx.sessionController.resolveAgent(snapshot.sessionId!)
-    if (!resolved.agent)
-      return { ok: false, error: resolved.error?.message ?? '无法恢复目标会话', code: resolved.error?.code ?? 'session_unavailable' }
+    let resolved: Awaited<ReturnType<SessionController['resolveAgent']>>
+    try {
+      resolved = await withSessionDeadline<Awaited<ReturnType<SessionController['resolveAgent']>>>(ctx.sessionController.resolveAgent(snapshot.sessionId!))
+    }
+    catch (error) {
+      if (error instanceof SessionOperationTimeout)
+        return { ok: false, error: error.message, code: 'session_unavailable' }
+      throw error
+    }
+    if ('error' in resolved)
+      return { ok: false, error: resolved.error.message, code: resolved.error.code }
     const agent = resolved.agent
     const rechecked = await task.validateTarget(snapshot)
     if (!rechecked.ok)
@@ -81,7 +100,28 @@ export const delivery = defineService({
       agent.followup(pending.message)
     }
     runtime.pending.set(target.id, pending)
-    const flushed = await ctx.sessions.flush(agent.session)
+    let flush = runtime.flushes.get(pending.message.id)
+    if (!flush) {
+      flush = Promise.resolve(ctx.sessions.flush(agent.session))
+      runtime.flushes.set(pending.message.id, flush)
+      const identity = pending.message.id
+      void flush.then((acknowledged) => {
+        if (acknowledged !== true && runtime.flushes.get(identity) === flush)
+          runtime.flushes.delete(identity)
+      }, () => {
+        if (runtime.flushes.get(identity) === flush)
+          runtime.flushes.delete(identity)
+      })
+    }
+    let flushed: boolean
+    try {
+      flushed = await withSessionDeadline(flush)
+    }
+    catch (error) {
+      if (error instanceof SessionOperationTimeout)
+        return { ok: false, error: 'Session persistence did not acknowledge the reminder', code: 'delivery_pending' }
+      throw error
+    }
     if (flushed !== true)
       return { ok: false, error: 'Session persistence did not acknowledge the reminder', code: 'delivery_pending' }
     pending.deliveredAt = new Date().toISOString()
@@ -90,6 +130,7 @@ export const delivery = defineService({
     await history.commit(pending)
     await task.complete(pending.task, pending.deliveredAt, pending.nextRunAt, pending.trigger === 'schedule')
     await history.acknowledge(pending.message.id)
+    runtime.flushes.delete(pending.message.id)
     runtime.pending.delete(target.id)
     return { ok: true }
   },
@@ -113,6 +154,7 @@ function framing(target: SchedulerTask, scheduledAt: string): string {
   ].join('\n')
 }
 
-function containsMessage(events: readonly { type: string, data?: { inserted?: readonly UserMessage[], message?: { id?: string } } }[], id: string): boolean {
-  return events.some(event => event.data?.message?.id === id || (event.type === 'agent/inbox/spliced' && event.data?.inserted?.some(message => message.id === id)))
+function containsMessage(events: readonly SessionEvent[], id: string): boolean {
+  return events.some(event => (event.type === 'user/message' && event.data.id === id)
+    || (event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.id === id)))
 }

@@ -2,8 +2,11 @@ import type { Locator } from 'playwright'
 import type { GetApiTauriSchedulerHistoryResponse, GetApiTauriSchedulerTasksResponse, PostApiTauriSchedulerTasksBody, PostApiTauriSchedulerTasksResponse, PutApiTauriSchedulerTasksBody } from '../../../packages/dsh-tauri-scheduler/src/client/apis/index.type'
 import type { DshPage } from '../support/browser'
 import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import process from 'node:process'
 import { describe, expect, inject, it } from 'vitest'
-import { dismissAppModals, expectNoSyntheticFallbacks, launchDshBrowser, newDshPage, SIDEBAR_PANELLIST } from '../support/browser'
+import { describePageState, dismissAppModals, expectNoSyntheticFallbacks, launchDshBrowser, newDshPage, SIDEBAR_PANELLIST } from '../support/browser'
 
 const TASKS_PATH = '/api/tauri/scheduler/tasks'
 const HISTORY_PATH = '/api/tauri/scheduler/history'
@@ -45,12 +48,99 @@ async function withScratchPage(run: (app: DshPage, prefix: string) => Promise<vo
   const prefix = `scheduler-client-${randomUUID()}`
   const browser = await launchDshBrowser()
   let app: DshPage | undefined
+  const warnings: string[] = []
   try {
     app = await newDshPage(browser, { ready: SIDEBAR_PANELLIST })
+    app.page.on('console', (message) => {
+      if (message.type() === 'warning')
+        warnings.push(JSON.stringify({ text: message.text(), location: message.location() }))
+    })
     expectNoSyntheticFallbacks(app)
     await run(app, prefix)
     expectNoSyntheticFallbacks(app)
     expect(app.errors, '右栏注册、真实点击与刷新不得产生浏览器错误').toEqual([])
+  }
+  catch (error) {
+    try {
+      const directory = resolve(process.env.DSH_SCHEDULER_DIAGNOSTICS_DIR ?? '.temp/scheduler-diagnostics', prefix)
+      const lines = [`case=${prefix}`, error instanceof Error ? error.stack ?? error.message : String(error)]
+      const capture = async (label: string, collect: () => Promise<string>): Promise<void> => {
+        try {
+          const value = await collect()
+          lines.push(`${label}\n${value}`)
+          process.stderr.write(`[scheduler diagnostics] ${label}\n${value}\n`)
+        }
+        catch (diagnosticError) {
+          const value = `${label}: ${diagnosticError instanceof Error ? diagnosticError.stack ?? diagnosticError.message : String(diagnosticError)}`
+          lines.push(`DIAGNOSTIC_FAILED ${value}`)
+          process.stderr.write(`[scheduler diagnostics] DIAGNOSTIC_FAILED ${value}\n`)
+        }
+      }
+      await capture('console warnings (after page initialization)', async () => warnings.join('\n') || '(none)')
+      await capture('diagnostics directory', async () => {
+        await mkdir(directory, { recursive: true })
+        return directory
+      })
+      const page = app?.page ?? browser.contexts().flatMap(context => context.pages())[0]
+      const frame = app?.frame ?? page?.frames().find(candidate => candidate !== page.mainFrame()) ?? page?.mainFrame()
+      if (page && frame) {
+        await capture('page state', () => describePageState(page, frame))
+        const nodes: readonly [string, Locator][] = [
+          ['tabs', frame.getByRole('tab', { includeHidden: true })],
+          ['titles', frame.locator(TITLE_SLOT)],
+          ['bodies', frame.locator(BODY_SLOT)],
+          ['alerts', frame.getByRole('alert', { includeHidden: true })],
+          ['slot errors', frame.locator('[data-slot-error]')],
+        ]
+        for (const [label, locator] of nodes) {
+          await capture(label, async () => {
+            const count = await locator.count()
+            const values: { index: number, text: string | null, slot: string | null, slotError: string | null, dockkitTab: string | null, sidebarRightTab: string | null, selected: string | null }[] = []
+            for (let index = 0; index < count; index++) {
+              const node = locator.nth(index)
+              values.push({
+                index,
+                text: await node.textContent({ timeout: 2_000 }),
+                slot: await node.getAttribute('data-slot', { timeout: 2_000 }),
+                slotError: await node.getAttribute('data-slot-error', { timeout: 2_000 }),
+                dockkitTab: await node.getAttribute('data-dockkit-tab', { timeout: 2_000 }),
+                sidebarRightTab: await node.getAttribute('data-sidebar-right-tab', { timeout: 2_000 }),
+                selected: await node.getAttribute('aria-selected', { timeout: 2_000 }),
+              })
+            }
+            return JSON.stringify({ count, nodes: values }, null, 2)
+          })
+        }
+        await capture('screenshot', async () => {
+          const path = join(directory, 'page.png')
+          await page.screenshot({ path, fullPage: true, timeout: 5_000 })
+          return path
+        })
+      }
+      else {
+        await capture('page state', async () => 'No public browser page/frame remained at failure')
+      }
+      await capture('scratch host log', async () => {
+        const path = join(inject('dshHome'), 'dsh-web.log')
+        const log = await readFile(path, 'utf8')
+        await writeFile(join(directory, 'dsh-web.log'), log, 'utf8')
+        return `source=${path}\n${log}`
+      })
+      await capture('report', async () => {
+        const path = join(directory, 'report.txt')
+        await writeFile(path, lines.join('\n\n'), 'utf8')
+        return path
+      })
+    }
+    catch (diagnosticError) {
+      try {
+        process.stderr.write(`[scheduler diagnostics] ${diagnosticError instanceof Error ? diagnosticError.stack ?? diagnosticError.message : String(diagnosticError)}\n`)
+      }
+      catch {
+        throw error
+      }
+    }
+    throw error
   }
   finally {
     try {

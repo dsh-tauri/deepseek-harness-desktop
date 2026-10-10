@@ -122,7 +122,7 @@ describe('scheduler catalog reads', () => {
 describe('task-specific delivery history', () => {
   it('passes task identity, explicit page limit and exclusive cursor unchanged', async () => {
     const result = await loadTaskHistory('task-a', 20, 'message-z')
-    expect(getHistory).toHaveBeenCalledExactlyOnceWith({ taskId: 'task-a', limit: 20, before: 'message-z' })
+    expect(getHistory).toHaveBeenCalledExactlyOnceWith({ taskId: 'task-a', limit: 20, before: 'message-z' }, { ignoreResponseError: true })
     expect(result).toEqual({ ok: true, ...page, runs: [] })
     expect(store.scheduler.loadToken).toBe(0)
   })

@@ -324,7 +324,7 @@ describe('L2 宿主路由', () => {
         name: 'e2e-missing-session-reminder',
         sessionId: 'session-e2e-scheduler-does-not-exist',
       }, createdIds)
-      expect(response.status, '原会话投递绑定未知 sessionId 必须返回 400').toBe(400)
+      expect(response.status, `原会话投递绑定未知 sessionId 必须返回 400；响应体：${JSON.stringify(payload)}`).toBe(400)
       expect(payload, '当前宿主必须冷读确认目标不存在并返回精确领域错误').toEqual({
         ok: false,
         error: '目标会话不存在',
@@ -381,7 +381,7 @@ describe('L2 宿主路由', () => {
       body: JSON.stringify({ id: 'task-missing' }),
     })
     expect(notFound.status, '任务不存在必须 400，而不是 500（服务内部抛错）').toBe(400)
-    expect(await notFound.json() as ActionResultPayload, '不存在文案必须逐字相等且与缺参可区分').toEqual({ error: '任务不存在' })
+    expect(await notFound.json() as ActionResultPayload, '不存在文案必须逐字相等且与缺参可区分').toEqual({ ok: false, error: '任务不存在', code: 'task_not_found' })
 
     expect(await readTasks(), '被拒绝的删除不得改动清单').toEqual([])
   })
