@@ -94,6 +94,60 @@ pub(crate) fn load_patch_disabled(profile: &Path) -> HashSet<String> {
     targets
 }
 
+/// patch 顶层条目是否带「启用」语义（`disabled` 字段显式为假值）。
+///
+/// 官方 Plugins 页与 dshmarket 的「启用」只写 `cordis.patch.yml` 的
+/// `disabled: false`，从不碰桌面禁用清单；该显式声明是上游唯一的启用凭证，
+/// 启动自愈必须据此清理台账，否则台账会在每次启动时把刚启用的插件重新删出
+/// `dsh.profile.bundles`（见 `preserve_disabled_bundles`）。
+fn patch_entry_enabled(map: &serde_yaml::Mapping) -> bool {
+    let Some(value) = map.get(serde_yaml::Value::String("disabled".to_string())) else {
+        return false;
+    };
+    match value {
+        serde_yaml::Value::Bool(b) => !*b,
+        serde_yaml::Value::Number(n) => n.as_i64() == Some(0),
+        serde_yaml::Value::String(s) => {
+            s.eq_ignore_ascii_case("false") || s == "0" || s.eq_ignore_ascii_case("off")
+        }
+        _ => false,
+    }
+}
+
+/// 被 `cordis.patch.yml` 显式声明为启用（`disabled: false`）的插件名集合。
+///
+/// 匹配口径与 [`load_patch_disabled`] 一致：顶层条目的 `id` 与任意字符串键/值。
+/// 文件缺失/无法解析为顶层数组时按空集处理。
+fn load_patch_enabled(profile: &Path) -> HashSet<String> {
+    let Ok(content) = fs::read_to_string(profile.join("cordis.patch.yml")) else {
+        return HashSet::new();
+    };
+    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+        return HashSet::new();
+    };
+    let Some(entries) = doc.as_sequence() else {
+        return HashSet::new();
+    };
+    let mut targets = HashSet::new();
+    for entry in entries {
+        let Some(map) = entry.as_mapping() else {
+            continue;
+        };
+        if !patch_entry_enabled(map) {
+            continue;
+        }
+        for (key, value) in map {
+            if let Some(s) = key.as_str() {
+                targets.insert(s.to_string());
+            }
+            if let Some(s) = value.as_str() {
+                targets.insert(s.to_string());
+            }
+        }
+    }
+    targets
+}
+
 /// patch 顶层条目是否带「禁用」语义（`disabled` 字段为真值）。
 ///
 /// 兼容 YAML 常见真值写法：布尔 `true`、非零数字、字符串 true/1/yes/on。
@@ -225,7 +279,31 @@ fn now_seconds_string() -> String {
 }
 
 pub(crate) fn preserve_disabled_bundles(profile: &Path) -> Result<(), String> {
-    let disabled = load_disabled(profile);
+    let mut disabled = load_disabled(profile);
+    // 上游（官方 Plugins 页 / dshmarket）的「启用」只把 `cordis.patch.yml` 的
+    // `disabled` 改成 `false`，从不写桌面禁用清单。台账若仍留着旧条目，启动
+    // 自愈就会把用户刚启用的插件重新删出 `dsh.profile.bundles`，下次启动又被
+    // 界面读成关闭（issue：两份台账无同步机制）。这里以补丁层的显式启用声明
+    // 为准清理台账——只有「明确写了 false」才清，绝不因缺条目而推断。
+    let enabled = load_patch_enabled(profile);
+    if !enabled.is_empty() {
+        let dropped: Vec<String> = disabled
+            .keys()
+            .filter(|id| {
+                plugin_target_names(profile, id)
+                    .iter()
+                    .any(|name| enabled.contains(name))
+            })
+            .cloned()
+            .collect();
+        for id in &dropped {
+            disabled.remove(id);
+            log::info!("Cleared desktop disable ledger for patch-enabled plugin {id}");
+        }
+        if !dropped.is_empty() {
+            save_disabled(profile, &disabled)?;
+        }
+    }
     if disabled.is_empty() {
         return Ok(());
     }
@@ -762,6 +840,107 @@ mod tests {
         enable_plugin_at(&profile, "dsh-better-sidebar", true).unwrap();
         let content = fs::read_to_string(profile.join("cordis.patch.yml")).unwrap();
         assert!(!content.contains("better-sidebar"));
+
+        fs::remove_dir_all(&profile).ok();
+    }
+
+    /// 官方页面写入 `disabled: false` 后，台账条目必须在启动自愈时被清理，
+    /// 否则刚启用的插件会被重新删出 bundles、下次启动又读成关闭。
+    #[test]
+    fn preserve_clears_ledger_when_patch_declares_enabled() {
+        let profile = build_profile("patch-enabled", "clears");
+        disable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
+        assert!(load_disabled(&profile).contains_key("dsh-better-sidebar"));
+        write_patch(&profile, "- id: dsh-better-sidebar\n  disabled: false\n");
+        preserve_disabled_bundles(&profile).unwrap();
+        assert!(
+            !load_disabled(&profile).contains_key("dsh-better-sidebar"),
+            "patch 的显式启用必须清掉桌面台账"
+        );
+
+        fs::remove_dir_all(&profile).ok();
+    }
+
+    /// 台账仍在、bundles 已被上游加回时，启用声明要让它留在 bundles 里。
+    #[test]
+    fn preserve_keeps_bundle_when_patch_declares_enabled() {
+        let profile = build_profile("patch-enabled-bundle", "keeps");
+        disable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
+        let mut manifest = read_manifest(&profile);
+        manifest["dsh"]["profile"]["bundles"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("dsh-better-sidebar"));
+        fs::write(
+            profile.join("package.json"),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        write_patch(&profile, "- id: dsh-better-sidebar\n  disabled: false\n");
+        preserve_disabled_bundles(&profile).unwrap();
+        assert!(read_manifest(&profile)["dsh"]["profile"]["bundles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b.as_str() == Some("dsh-better-sidebar")));
+
+        fs::remove_dir_all(&profile).ok();
+    }
+
+    /// 只写了 `disabled: true`（或压根没写）时，台账是唯一凭证，必须照旧生效。
+    #[test]
+    fn preserve_respects_ledger_when_patch_stays_silent_or_disabled() {
+        for yaml in [
+            "- id: dsh-better-sidebar\n  disabled: true\n",
+            "- id: dsh-better-sidebar\n  name: dsh-better-sidebar\n",
+            "- insert:\n    - id: mcp-other\n",
+        ] {
+            let profile = build_profile("patch-silent", "respects");
+            disable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
+            write_patch(&profile, yaml);
+            preserve_disabled_bundles(&profile).unwrap();
+            assert!(
+                load_disabled(&profile).contains_key("dsh-better-sidebar"),
+                "{yaml} 不得被当成启用声明"
+            );
+
+            fs::remove_dir_all(&profile).ok();
+        }
+    }
+
+    /// 包名与 loader 入口 id 不同时，启用声明按包内 name 命中。
+    #[test]
+    fn preserve_matches_enabled_by_package_json_name_alias() {
+        let profile = build_profile("patch-enabled-alias", "alias");
+        let pkg_dir = profile.join("node_modules").join("dsh-better-sidebar");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"better-sidebar","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        disable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
+        write_patch(&profile, "- id: better-sidebar\n  disabled: false\n");
+        preserve_disabled_bundles(&profile).unwrap();
+        assert!(
+            !load_disabled(&profile).contains_key("dsh-better-sidebar"),
+            "别名 id 的启用声明同样要清台账"
+        );
+
+        fs::remove_dir_all(&profile).ok();
+    }
+
+    /// 反向：显式启用的是别的插件，不得误清。
+    #[test]
+    fn preserve_does_not_clear_ledger_for_other_plugins() {
+        let profile = build_profile("patch-enabled-other", "other");
+        disable_plugin_at(&profile, "dshmarket").unwrap();
+        disable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
+        write_patch(&profile, "- id: dsh-better-sidebar\n  disabled: false\n");
+        preserve_disabled_bundles(&profile).unwrap();
+        let map = load_disabled(&profile);
+        assert!(!map.contains_key("dsh-better-sidebar"));
+        assert!(map.contains_key("dshmarket"), "别的插件台账条目不得被误清");
 
         fs::remove_dir_all(&profile).ok();
     }
