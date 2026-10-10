@@ -23,8 +23,11 @@ const CONFIG_FILES = new Set(['tailwind.config.js', 'tailwind.plugins.config.js'
 const SOURCE_FILE_PATTERN = /[\\/]src[\\/].*\.(?:css|js|jsx|ts|tsx)$/
 const DEBOUNCE_MS = 120
 
-/** dev（`dev` 脚本传 `--no-minify`）不压缩，浏览器 DevTools 里能直接读；build / generate 一律压缩，提交的是压缩产物。 */
-const MINIFY = !process.argv.includes('--no-minify')
+/**
+ * 只有 `build` 传 `--minify`：它压缩产物后再打包，打完立刻用未压缩产物把文件还原，
+ * 因此仓库与 dev 里始终是未压缩产物，发布出去的 dist 里是压缩过的 CSS。
+ */
+const MINIFY = process.argv.includes('--minify')
 
 // 内存中缓存输出文件内容，避免频繁磁盘读操作
 let cachedOutputFileContent: string | null = null
@@ -34,11 +37,11 @@ let cachedOutputFileContent: string | null = null
 // ==========================================
 
 /**
- * 把 index.css 编译成插件侧 Tailwind 产物（默认 lightningcss 压缩后再内嵌）。
+ * 把 index.css 编译成插件侧 Tailwind 产物。
  *
- * 产物会被塞进一个模板字符串里，体积直接算进插件包：不压缩时 CSS 里的换行/缩进/注释
- * 占掉三成以上。dev 传 `--no-minify` 便于在 DevTools 里直接读样式，提交前用
- * `pnpm build:taiwindcss` 生成压缩产物。
+ * 产物内嵌进模板字符串并提交进仓库，默认保持未压缩：压缩后整份 CSS 只有一行，任何一处
+ * utility 增减都会重写那一行，多个 PR 之间必然整行冲突；未压缩时改动落在具体行上。
+ * `--minify` 只给 `build` 用（压缩产物进 dist，打包完再由未压缩的一次生成还原文件）。
  *
  * 空结果必须当成失败：`@config` / `content` 解析不出来时 Tailwind 只往 stderr 打日志、
  * 照常返回空 CSS，直接落盘就会用空样式覆盖上一份产物，而构建仍然「成功」。

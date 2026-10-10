@@ -52,8 +52,8 @@
     }
   },
   "scripts": {
-    "build": "tsx scripts/taiwindcss.ts && tsdown",
-    "dev": "tsx scripts/taiwindcss.ts --watch --no-minify & tsdown --watch",
+    "build": "tsx scripts/taiwindcss.ts --minify && tsdown && tsx scripts/taiwindcss.ts",
+    "dev": "tsx scripts/taiwindcss.ts --watch & tsdown --watch",
     "generate": "tsx scripts/taiwindcss.ts",
     "prepublishOnly": "nr build",
     "start": "tsx src/index.ts",
