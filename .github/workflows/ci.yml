@@ -65,8 +65,9 @@ jobs:
       - name: Build core packages
         run: pnpm --filter dsh-tauri build && pnpm --filter dsh-tauri-ui build
 
-      # dsh-tauri-ui 的构建会重新生成并压缩已提交的 Tailwind 产物。若源码新增/删除了
-      # utility 却漏提产物，运行时只会静默缺样式；显式检查工作树可在合并前阻断漂移。
+      # dsh-tauri-ui 的构建先用压缩产物打包 dist、再用未压缩产物还原该文件，因此工作树里
+      # 留下的应该正是提交进仓库的未压缩形态。若源码新增/删除了 utility 却漏提产物，
+      # 运行时只会静默缺样式；显式检查工作树可在合并前阻断漂移。
       - name: Verify generated Tailwind CSS is current
         id: tailwind_check
         run: git diff --exit-code -- packages/dsh-tauri-ui/src/client/styles/index.ts
