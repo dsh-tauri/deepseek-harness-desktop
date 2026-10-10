@@ -31,11 +31,14 @@ const PLUGIN_PREFIX: &str = "dsh-tauri";
 const PLUGIN_MANAGER_CLIENT_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-ui-plugin-manager/lib/client.js";
 
-/// 官方分组过滤行（不含前导缩进）：`Installed` / `Official` 分组的唯一来源。
-const LISTED_FILTER: &str = "const listed = state.packages.filter((pkg) => !BUILTIN_PROFILE_BUNDLES.has(pkg.name) && (pkg.installed || pkg.optional || pkg.error !== void 0));";
+/// 官方分组过滤行的函数头（分组过滤行的唯一来源，`Installed` / `Official` 都从它派生）。
+const LISTED_PREFIX: &str = "const listed = state.packages.filter((pkg) => ";
 
-/// 补丁后的同一行：把 `dsh-tauri-*` 与 `BUILTIN_PROFILE_BUNDLES` 同等对待。
-const LISTED_FILTER_PATCHED: &str = "const listed = state.packages.filter((pkg) => !BUILTIN_PROFILE_BUNDLES.has(pkg.name) && !pkg.name.startsWith(\"dsh-tauri\") && (pkg.installed || pkg.optional || pkg.error !== void 0));";
+/// 过滤行里判定「属于内置名单」的那一段：插入点就是它的末尾。
+const BUILTIN_GUARD: &str = "!BUILTIN_PROFILE_BUNDLES.has(pkg.name) && ";
+
+/// 壳插件判定，与 [`BUILTIN_GUARD`] 同级；它本身兼作补丁标记（幂等判据）。
+const PREFIX_GUARD: &str = "!pkg.name.startsWith(\"dsh-tauri\") && ";
 
 /// 插件市场登记 inbox bundle 的两份编译产物（相对活动 profile 目录）：`routes.js`
 /// 从 `profile.js` 取名单，校验逻辑从 `order.js` 取，两份都要补。
@@ -49,16 +52,25 @@ const INBOX_ANCHOR: &str = "export const INBOX_BUNDLES = new Set([";
 
 /// 官方插件页补丁的纯函数部分：在分组过滤行里追加 `dsh-tauri-*` 判定。
 ///
-/// 已插入判定即视为已打过（幂等）；上游改写该行时安全跳过——宁可就地失效，
+/// 只锚定函数头与「内置名单判定」两段，过滤条件其余部分（上游改过
+/// `pkg.optional` → `pkg.official` 这类字段名）不参与匹配；判定已插入即视为已打过
+/// （幂等，也认早期无标记版本打出的判定）；找不到这两段时安全跳过——宁可就地失效，
 /// 也不要在未知布局上盲插。
 fn patch_plugin_manager(source: &str) -> PatchOutcome {
-    if source.contains(LISTED_FILTER_PATCHED) {
+    if source.contains(PREFIX_GUARD) {
         return PatchOutcome::AlreadyPatched;
     }
-    if !source.contains(LISTED_FILTER) {
+    let Some(start) = source.find(LISTED_PREFIX) else {
         return PatchOutcome::AnchorMissing;
-    }
-    PatchOutcome::Patched(source.replace(LISTED_FILTER, LISTED_FILTER_PATCHED))
+    };
+    let guard_start = start + LISTED_PREFIX.len();
+    let Some(guard) = source[guard_start..].find(BUILTIN_GUARD) else {
+        return PatchOutcome::AnchorMissing;
+    };
+    let insert_at = guard_start + guard + BUILTIN_GUARD.len();
+    let mut patched = source.to_string();
+    patched.insert_str(insert_at, PREFIX_GUARD);
+    PatchOutcome::Patched(patched)
 }
 
 /// 插件市场名单补丁的纯函数部分：把 `names` 里尚未登记的名字追加进
@@ -200,6 +212,10 @@ mod tests {
 
     const LISTED_LINE: &str = "\t\t\tconst listed = state.packages.filter((pkg) => !BUILTIN_PROFILE_BUNDLES.has(pkg.name) && (pkg.installed || pkg.optional || pkg.error !== void 0));\n\t\t\tconst mine = listed.filter((pkg) => pkg.installed || !pkg.optional);\n";
 
+    /// 官方 `dsh-client-ui-plugin-manager` 0.2.1-alpha.2 的真实过滤行：上游把
+    /// `pkg.optional` 改成了 `pkg.official`，旧补丁的全行锚点因此失效。
+    const LISTED_LINE_OFFICIAL: &str = "\t\t\tconst listed = state.packages.filter((pkg) => !BUILTIN_PROFILE_BUNDLES.has(pkg.name) && (pkg.installed || pkg.official || pkg.error !== void 0));\n\t\t\tconst mine = listed.filter((pkg) => !pkg.official);\n\t\t\tconst official = listed.filter((pkg) => pkg.official);\n";
+
     #[test]
     fn plugin_manager_hides_prefix_inside_group_filter() {
         match patch_plugin_manager(LISTED_LINE) {
@@ -213,9 +229,27 @@ mod tests {
         }
     }
 
+    /// 上游改字段名后补丁仍要生效：锚点只依赖函数头与内置名单判定。
+    #[test]
+    fn plugin_manager_hides_prefix_after_the_upstream_official_field() {
+        match patch_plugin_manager(LISTED_LINE_OFFICIAL) {
+            PatchOutcome::Patched(patched) => {
+                assert!(patched.contains(
+                    "!BUILTIN_PROFILE_BUNDLES.has(pkg.name) && !pkg.name.startsWith(\"dsh-tauri\") && (pkg.installed || pkg.official"
+                ));
+                assert!(patched.contains("const official = listed.filter((pkg) => pkg.official);"));
+            }
+            other => panic!("expected Patched, got {other:?}"),
+        }
+    }
+
     #[test]
     fn plugin_manager_is_idempotent() {
         let PatchOutcome::Patched(patched) = patch_plugin_manager(LISTED_LINE) else {
+            panic!("expected Patched");
+        };
+        assert_eq!(patch_plugin_manager(&patched), PatchOutcome::AlreadyPatched);
+        let PatchOutcome::Patched(patched) = patch_plugin_manager(LISTED_LINE_OFFICIAL) else {
             panic!("expected Patched");
         };
         assert_eq!(patch_plugin_manager(&patched), PatchOutcome::AlreadyPatched);
