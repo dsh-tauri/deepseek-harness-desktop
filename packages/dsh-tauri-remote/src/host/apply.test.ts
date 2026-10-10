@@ -1,0 +1,698 @@
+import type { AddressInfo } from 'node:net'
+import type { Config as RemoteConfig } from './config/schema'
+import type { RemoteHostContext } from './types/index'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, join } from 'pathe'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { apply, inject, name } from './apply'
+import { clearHostRuntime, knownHostsFilePath, machineProfiles, migrateLegacyState, migrationWarningOf } from './config/runtime'
+import { gateway } from './service/gateway'
+import { readHostKeyRecords } from './service/known-hosts.utils'
+import { machine } from './service/machine'
+import { MachineId } from './types/index'
+
+function freePort(): Promise<{ port: number, release: () => Promise<void> }> {
+  const server = createServer()
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = (server.address() as AddressInfo).port
+      resolve({ port, release: () => new Promise<void>((done) => {
+        server.close(() => done())
+      }) })
+    })
+  })
+}
+
+function freePortAt(port: number): Promise<{ port: number, release: () => Promise<void> } | undefined> {
+  const server = createServer()
+  return new Promise((resolve) => {
+    server.once('error', () => resolve(undefined))
+    server.listen(port, '127.0.0.1', () => {
+      resolve({ port, release: () => new Promise<void>((done) => {
+        server.close(() => done())
+      }) })
+    })
+  })
+}
+
+function scriptedHttpServer() {
+  const routes: Array<{ kind: string, path: string, handler?: unknown }> = []
+  return {
+    routes,
+    register: vi.fn((route: { kind: string, path: string, handler?: unknown }) => {
+      routes.push(route)
+      return () => {}
+    }),
+  }
+}
+
+const BASE = '/api/tauri/remote'
+
+const REST_ENDPOINTS = [
+  '/api/tauri/remote/settings',
+  '/api/tauri/remote/session/role',
+  '/api/tauri/remote/machines',
+  '/api/tauri/remote/machines/test',
+  '/api/tauri/remote/machines/connect',
+  '/api/tauri/remote/machines/disconnect',
+  '/api/tauri/remote/machines/install',
+  '/api/tauri/remote/machines/events',
+  '/api/tauri/remote/sync/preview',
+  '/api/tauri/remote/sync/apply',
+]
+
+/** Plugin config without the optional overrides; defaults are exercised separately. */
+const baseConfig: RemoteConfig = {
+  connectTimeoutMs: 15000,
+  healthCheckTimeoutMs: 1000,
+  healthPollIntervalMs: 5,
+  healthPollAttempts: 3,
+  keepaliveIntervalMs: 10000,
+  keepaliveCountMax: 3,
+  reconnectInitialDelayMs: 1,
+  reconnectMaxDelayMs: 2,
+  reconnectMaxAttempts: 2,
+}
+
+// Every service construction points the credential/discovery layer and the
+// state document at a scratch directory — the developer's real ~/.ssh and
+// harness home are never touched.
+let sshDir: string
+let statePath: string
+let previousHome: string | undefined
+
+beforeEach(() => {
+  clearHostRuntime()
+  sshDir = mkdtempSync(join(tmpdir(), 'ssh-index-'))
+  statePath = join(sshDir, 'machines.json')
+  // 暴露配置也落在 $DSH_HOME 下：不隔离就会读到（并在 enabled 时真的开启）开发机上的真实配置。
+  previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = sshDir
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  if (previousHome === undefined)
+    delete process.env.DSH_HOME
+  else
+    process.env.DSH_HOME = previousHome
+  rmSync(sshDir, { recursive: true, force: true })
+  clearHostRuntime()
+})
+
+/** One scripted context: cordis-shaped surface without real cordis types. */
+function scriptedCtx(webServer: unknown, logger?: RemoteHostContext['logger']): { ctx: RemoteHostContext, disposers: Array<() => void> } {
+  const disposers: Array<() => void> = []
+  const ctx = {
+    provide: vi.fn(),
+    effect: vi.fn((callback: () => (() => void) | void) => {
+      const disposer = callback()
+      if (typeof disposer === 'function')
+        disposers.push(disposer)
+    }),
+    ...logger === undefined ? {} : { logger },
+    webServer,
+  } as unknown as RemoteHostContext
+  return { ctx, disposers }
+}
+
+/** Persist one state document before construction. */
+function writeState(state: { enabled?: boolean, machines?: Record<string, unknown> }): void {
+  writeFileSync(statePath, `${JSON.stringify({ version: 1, enabled: state.enabled ?? false, machines: state.machines ?? {} }, null, 2)}\n`)
+}
+
+/** The stored state document as the service wrote it. */
+function readState(): { version: number, enabled: boolean, machines: Record<string, Record<string, unknown>> } {
+  return JSON.parse(readFileSync(statePath, 'utf8')) as { version: number, enabled: boolean, machines: Record<string, Record<string, unknown>> }
+}
+
+/** Assemble the plugin on a scripted webServer double. */
+function construct(config: RemoteConfig = baseConfig, webServer = scriptedHttpServer()): { ctx: RemoteHostContext, webServer: ReturnType<typeof scriptedHttpServer>, service: typeof machine, disposers: Array<() => void> } {
+  const { ctx, disposers } = scriptedCtx(webServer)
+  apply(ctx, { ...config, sshDir, statePath })
+  return { ctx, webServer, service: machine, disposers }
+}
+
+async function boot(overrides: {
+  state?: { enabled?: boolean, machines?: Record<string, unknown> }
+  webServer?: ReturnType<typeof scriptedHttpServer>
+  config?: Partial<RemoteConfig>
+} = {}) {
+  if (overrides.state !== undefined)
+    writeState(overrides.state)
+  const webServer = overrides.webServer ?? scriptedHttpServer()
+  const { ctx } = scriptedCtx(webServer)
+  const config = {
+    ...baseConfig,
+    knownHostsPath: join(homedir(), '.dsh', 'ssh', 'known-hosts.json'),
+    sshDir,
+    statePath,
+    ...overrides.config,
+  }
+  apply(ctx, config)
+  await machine.start()
+  return { ctx, webServer, service: machine }
+}
+
+function row(id: string): Record<string, unknown> {
+  return {
+    id,
+    name: `machine-${id}`,
+    host: '10.0.0.1',
+    port: 22,
+    user: 'root',
+    password: 'sekrit',
+    remotePort: 3080,
+  }
+}
+
+describe('remote plugin', () => {
+  it('declares its plugin metadata', () => {
+    expect(name).toBe('dsh-tauri-remote')
+    expect(inject).toEqual(['webServer', 'connection'])
+    expect(apply).toEqual(expect.any(Function))
+  })
+
+  it('ships the cordis plugin descriptor as the default export', async () => {
+    const descriptor = (await import('./apply')).default
+    expect(descriptor).toMatchObject({
+      name: 'dsh-tauri-remote',
+      inject: ['webServer', 'connection'],
+      Config: expect.anything(),
+    })
+    expect(descriptor.apply).toEqual(expect.any(Function))
+    // The loader reads Config/inject from the default object: a bare function
+    // default would lose both (config defaults never apply, services not injected).
+    expect(descriptor.apply).toBe(apply)
+  })
+
+  it('mounts the REST routes without any settings service', async () => {
+    const { webServer } = await boot()
+    const management = webServer.routes.filter(route => !route.path.includes('/access'))
+    expect(management.map(route => `${route.kind} ${route.path}`)).toEqual(REST_ENDPOINTS.map(path => `exact ${path}`))
+    expect(management.map(route => typeof route.handler)).toEqual(REST_ENDPOINTS.map(() => 'function'))
+  })
+
+  it('mounts the panel-only access routes on the same host', async () => {
+    const { webServer } = await boot()
+    const panelRoutes = webServer.routes.filter(route => route.path.includes('/access'))
+    expect(panelRoutes.map(route => `${route.kind} ${route.path}`)).toEqual([
+      `exact ${BASE}/access`,
+      `exact ${BASE}/access/token`,
+      `exact ${BASE}/access/tunnel`,
+    ])
+    expect(panelRoutes.map(route => typeof route.handler)).toEqual(['function', 'function', 'function'])
+  })
+
+  it('starts switched off and persists the enable switch', async () => {
+    const { service } = await boot()
+    expect(service.enabled()).toBe(false)
+    await service.setEnabled(true)
+    expect(service.enabled()).toBe(true)
+    expect(readState()).toMatchObject({ version: 1, enabled: true })
+    await service.setEnabled(false)
+    expect(readState()).toMatchObject({ enabled: false })
+  })
+
+  it('disconnects every machine when the feature is switched off', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a') } } })
+    const dispose = vi.spyOn(service, 'dispose').mockResolvedValue(undefined)
+    await service.setEnabled(true)
+    expect(dispose).not.toHaveBeenCalled()
+    await service.setEnabled(false)
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads machine profiles from the state document', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a') } } })
+    const views = service.profileViews()
+    expect(views.map(view => view.id)).toEqual(['a'])
+    expect(views[0]).toMatchObject({ name: 'machine-a', hasPassword: true })
+    expect(views[0]).not.toHaveProperty('password')
+  })
+
+  it('reads a corrupt or absent document as the default state', async () => {
+    writeFileSync(statePath, '{ not json')
+    const corrupt = await boot()
+    expect(corrupt.service.enabled()).toBe(false)
+    expect(corrupt.service.profileViews()).toEqual([])
+
+    rmSync(statePath, { force: true })
+    const absent = await boot()
+    expect(absent.service.enabled()).toBe(false)
+    expect(absent.service.profileViews()).toEqual([])
+  })
+
+  it('drops a stored row whose dict key disagrees with the profile id', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { b: row('a') } } })
+    expect(service.profileViews()).toEqual([])
+  })
+
+  it('refreshes the manager when the stored machines change', async () => {
+    const { service } = await boot()
+    await service.save('a' as never, { name: 'alpha', host: '10.0.0.1', port: 22, user: 'root', remotePort: 3080 })
+    await service.save('b' as never, { name: 'beta', host: '10.0.0.2', port: 22, user: 'root', remotePort: 3080 })
+    expect(service.profileViews()).toHaveLength(2)
+    await service.remove('a' as never)
+    expect(service.profileViews().map(view => view.id)).toEqual(['b'])
+  })
+
+  it('exposes the manager connection plane', async () => {
+    const { service } = await boot()
+    expect(service.status('ghost' as never)).toEqual({ machineId: 'ghost' as never, state: 'disconnected' })
+    expect(service.profileViews()).toEqual([])
+    await service.disconnect('a' as never)
+  })
+
+  it('forwards installs to the manager', async () => {
+    const { service } = await boot()
+    const install = vi.spyOn(service, 'install')
+      .mockResolvedValue({ installed: ['node'], dshRef: 'dsh-0.1.2-rc.1-1', dshVersion: '0.1.2-rc.1', dshPath: '/root/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js', credentialsCopied: true })
+    const result = await service.install(MachineId('a'), undefined)
+    expect(install).toHaveBeenCalledWith(MachineId('a'), undefined)
+    expect(result).toEqual({ installed: ['node'], dshRef: 'dsh-0.1.2-rc.1-1', dshVersion: '0.1.2-rc.1', dshPath: '/root/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js', credentialsCopied: true })
+  })
+
+  it('saves a machine into the state document and refreshes the manager', async () => {
+    const { service } = await boot()
+    await service.save('a' as never, {
+      name: 'alpha',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+    }, { password: 'sekrit', passphrase: 'PHRASE' })
+    expect(readState().machines.a).toEqual({
+      id: 'a',
+      name: 'alpha',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+      password: 'sekrit',
+      passphrase: 'PHRASE',
+    })
+    const views = service.profileViews()
+    expect(views.map(view => view.id)).toEqual(['a'])
+    expect(views[0]).toMatchObject({ name: 'alpha', hasPassword: true })
+  })
+
+  it('keeps stored secrets on save unless rewritten', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a') } } })
+    await service.save('a' as never, {
+      name: 'alpha-2',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+    })
+    const views = service.profileViews()
+    expect(views[0]).toMatchObject({ name: 'alpha-2', hasPassword: true })
+  })
+
+  it('clears optional appearance fields on save and keeps sibling machines intact', async () => {
+    const { service } = await boot({
+      state: {
+        enabled: true,
+        machines: {
+          a: { ...row('a'), color: '#ff0000', tintBorder: true, startCommand: 'custom dsh web' },
+          b: row('b'),
+        },
+      },
+    })
+    await service.save('a' as never, {
+      name: 'alpha-3',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+    })
+    const viewA = service.profileViews().find(view => view.id === 'a')
+    // 清除方向：color/tintBorder/startCommand 的空/关形态（row 缺位）必须真
+    // 清除——save 写的是整份 profile，缺位字段不会从旧值复活（回归守护）。
+    expect(viewA).not.toHaveProperty('color')
+    expect(viewA).not.toHaveProperty('tintBorder')
+    expect(viewA).not.toHaveProperty('startCommand')
+    // 同表其他机器原样保留
+    expect(service.profileViews().find(view => view.id === 'b')).toMatchObject({ name: 'machine-b', hasPassword: true })
+  })
+
+  it('keeps stored secrets on save and stores the start command', async () => {
+    const { service } = await boot({
+      state: { enabled: true, machines: { a: { ...row('a'), passphrase: 'OLD-PHRASE' } } },
+    })
+    await service.save('a' as never, {
+      name: 'alpha',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+      startCommand: 'dsh web --port 3080',
+    }, { passphrase: 'NEW-PHRASE' })
+    const views = service.profileViews()
+    expect(views[0]).toMatchObject({
+      name: 'alpha',
+      hasPassword: true,
+      hasPassphrase: true,
+      startCommand: 'dsh web --port 3080',
+    })
+  })
+
+  it('stores the remote profile name on save and clears it when the row omits it', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: { ...row('a'), profileName: 'alpha' } } } })
+    await service.save('a' as never, {
+      name: 'alpha',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+      profileName: 'beta',
+    })
+    // 回归守护：save 必须搬运 row.profileName，否则每次编辑都会把远端 profile
+    // 名清掉、静默退回默认 `remote` profile。
+    expect(service.profileViews()[0]).toMatchObject({ profileName: 'beta' })
+    await service.save('a' as never, {
+      name: 'alpha',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+    })
+    expect(service.profileViews()[0]).not.toHaveProperty('profileName')
+  })
+
+  it('keeps whichever stored secrets exist and rewrites only typed ones', async () => {
+    const { service } = await boot({
+      state: { enabled: true, machines: { a: { ...row('a'), password: undefined, passphrase: 'OLD-PHRASE' } } },
+    })
+    await service.save('a' as never, {
+      name: 'alpha',
+      host: '10.0.0.1',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+    }, { password: 'NEW-PW' })
+    const views = service.profileViews()
+    expect(views[0]).toMatchObject({ name: 'alpha', hasPassword: true, hasPassphrase: true })
+    const stored = readState().machines.a
+    expect(stored?.password).toBe('NEW-PW')
+    expect(stored?.passphrase).toBe('OLD-PHRASE')
+  })
+
+  it('discovers ~/.ssh/config aliases as read-only machines', async () => {
+    writeFileSync(join(sshDir, 'config'), [
+      'Host dev',
+      '  HostName 10.0.0.9',
+      '  User root',
+      '  Port 2222',
+      'Host ci',
+      '  IdentityFile ~/.ssh/special',
+      'Host *.example.com',
+      'Host !banned',
+    ].join('\n'))
+    const { service } = await boot()
+    const views = await service.discoveredViews()
+    expect(views.map(view => view.id)).toEqual(['ci', 'dev'])
+    expect(views[1]).toMatchObject({
+      id: 'dev',
+      name: 'dev',
+      host: 'dev',
+      port: 2222,
+      user: 'root',
+      hasPassword: false,
+      hasPassphrase: false,
+      remotePort: 3080,
+    })
+    expect(service.profileViews()).toEqual([])
+  })
+
+  it('lists no discovered machines without a config file', async () => {
+    const { service } = await boot()
+    expect(await service.discoveredViews()).toEqual([])
+  })
+
+  it('lets a manual machine shadow a config alias', async () => {
+    writeFileSync(join(sshDir, 'config'), 'Host dev\n  User root\n')
+    const { service } = await boot({ state: { enabled: true, machines: { dev: { ...row('dev'), host: '10.1.1.1' } } } })
+    expect((await service.discoveredViews()).map(view => view.id)).toEqual([])
+    expect(service.profileViews().map(view => view.id)).toEqual(['dev'])
+  })
+
+  it('syncs discovered aliases into the manager profile map', async () => {
+    writeFileSync(join(sshDir, 'config'), 'Host dev\n  User root\n  Port 2222\n')
+    await boot()
+    await machine.syncProfiles()
+    const merged = machineProfiles.get(MachineId('dev'))
+    expect([...machineProfiles.keys()]).toEqual([MachineId('dev')])
+    expect(merged).toMatchObject({ host: 'dev', port: 2222, user: 'root' })
+  })
+
+  it('applies the configured remote port and start command template to discovered aliases', async () => {
+    writeFileSync(join(sshDir, 'config'), 'Host dev\n  User root\n')
+    const { service } = await boot({ config: { remotePort: 3199, startCommand: '$HOME/.local/bin/dsh web --host 127.0.0.1 --port {port}' } })
+    const views = await service.discoveredViews()
+    expect(views[0]).toMatchObject({ id: 'dev', remotePort: 3199, startCommand: '$HOME/.local/bin/dsh web --host 127.0.0.1 --port 3199' })
+  })
+
+  it('applies the configured default start command to manual machines without their own', async () => {
+    await boot({ state: { enabled: true, machines: { a: row('a') } }, config: { remotePort: 3080, startCommand: 'dsh web --port {port}' } })
+    await machine.syncProfiles()
+    expect(machineProfiles.get(MachineId('a'))).toMatchObject({ id: 'a', startCommand: 'dsh web --port 3080' })
+  })
+
+  it('keeps a manual start command over the configured default', async () => {
+    await boot({
+      state: { enabled: true, machines: { a: { ...row('a'), startCommand: 'custom dsh web' } } },
+      config: { remotePort: 3080, startCommand: 'dsh web --port {port}' },
+    })
+    await machine.syncProfiles()
+    expect(machineProfiles.get(MachineId('a'))).toMatchObject({ id: 'a', startCommand: 'custom dsh web' })
+  })
+
+  it('removes a machine from the state document', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a'), b: row('b') } } })
+    await service.remove('a' as never)
+    expect(service.profileViews().map(view => view.id)).toEqual(['b'])
+    expect(readState().machines).not.toHaveProperty('a')
+  })
+
+  it('delegates test and connect to the manager', async () => {
+    const { service } = await boot()
+    await expect(service.test('ghost' as never)).rejects.toMatchObject({ code: 'machine-not-found' })
+    await expect(service.connect('ghost' as never)).rejects.toMatchObject({ code: 'machine-not-found' })
+  })
+
+  it('defaults the state document and known-hosts path under DSH_HOME', async () => {
+    const previous = process.env.DSH_HOME
+    const home = join(sshDir, 'dsh-home')
+    try {
+      process.env.DSH_HOME = home
+      apply(scriptedCtx(scriptedHttpServer()).ctx, { ...baseConfig, sshDir })
+      await machine.start()
+      expect(knownHostsFilePath()).toBe(join(home, 'remote', 'known-hosts.json'))
+      await machine.setEnabled(true)
+      expect(JSON.parse(readFileSync(join(home, 'remote', 'machines.json'), 'utf8'))).toMatchObject({ version: 1, enabled: true })
+    }
+    finally {
+      if (previous === undefined)
+        delete process.env.DSH_HOME
+      else
+        process.env.DSH_HOME = previous
+    }
+  })
+
+  it('disposes the manager when the context tears down', () => {
+    const { service, disposers } = construct()
+    const dispose = vi.spyOn(service, 'dispose').mockResolvedValue(undefined)
+    expect(disposers).toHaveLength(3)
+    for (const disposeAll of disposers) disposeAll()
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes every gateway entry and releases its port when the context tears down', async () => {
+    const { disposers } = construct()
+    const free = await freePort()
+    const port = free.port
+    await free.release()
+    const status = await gateway.start({ id: 'entry', kind: 'inbound', upstream: 'http://127.0.0.1:1', port })
+    expect(status.port).toBe(port)
+    expect(status.state).toBe('listening')
+    for (const disposeAll of disposers) disposeAll()
+    await vi.waitFor(() => expect(gateway.status('entry')).toBeUndefined())
+    const rebound = await freePortAt(port)
+    expect(rebound).toBeDefined()
+    await rebound?.release()
+  })
+
+  it('assembles the plugin declaratively', () => {
+    const { ctx, webServer } = construct()
+    expect(webServer.routes.map(route => route.path)).toEqual(
+      expect.arrayContaining([...REST_ENDPOINTS, `${BASE}/access`, `${BASE}/access/token`]),
+    )
+    expect(apply(ctx, { ...baseConfig, sshDir, statePath })).toBeUndefined()
+  })
+})
+
+describe('stored transport rows', () => {
+  it('reads a stored ssh transport as the default and never writes the key back', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: { ...row('a'), transport: 'ssh' } } } })
+    const profile = machineProfiles.get(MachineId('a'))
+    expect(profile).toMatchObject({ id: 'a', name: 'machine-a' })
+    expect(profile).not.toHaveProperty('transport')
+    await service.save(MachineId('a'), { name: 'alpha-2', host: '10.0.0.1', port: 22, user: 'root', remotePort: 3080 })
+    expect(readState().machines.a).not.toHaveProperty('transport')
+  })
+})
+
+/** 旧状态目录下的文档路径（迁移源）。 */
+function legacyDocument(home: string, file: string): string {
+  return join(home, 'ssh', file)
+}
+
+/** 新状态目录下的文档路径（迁移目标）。 */
+function stateDocument(home: string, file: string): string {
+  return join(home, 'remote', file)
+}
+
+function writeDocument(file: string, document: unknown): void {
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`)
+}
+
+/** 像真实档案那样只用 DSH_HOME 定位状态：不传 statePath / knownHostsPath，迁移才会触发。 */
+async function bootWithHome(home: string, logger: RemoteHostContext['logger']): Promise<typeof machine> {
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    const { ctx } = scriptedCtx(scriptedHttpServer(), logger)
+    apply(ctx, { ...baseConfig, sshDir })
+    await machine.start()
+  }
+  finally {
+    if (previous === undefined)
+      delete process.env.DSH_HOME
+    else
+      process.env.DSH_HOME = previous
+  }
+  return machine
+}
+
+function quietLogger(): { error: (message: string) => void, warn: (message: string) => void } {
+  return { error: () => {}, warn: vi.fn<(message: string) => void>() }
+}
+
+/** 记下的告警文案（迁移只在未完成时写 warn，因此它就是迁移结论）。 */
+function warnedMessages(logger: { warn: (message: string) => void }): string[] {
+  return vi.mocked(logger.warn).mock.calls.map(call => String(call[0]))
+}
+
+describe('state directory migration', () => {
+  it('carries machines and known-hosts over while leaving the legacy files in place', async () => {
+    const home = join(sshDir, 'legacy-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    writeDocument(legacyDocument(home, 'known-hosts.json'), [{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    const legacyState = readFileSync(legacyDocument(home, 'machines.json'), 'utf8')
+    const legacyHosts = readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.enabled()).toBe(true)
+    expect(service.profileViews().map(view => view.id)).toEqual(['a'])
+    await expect(readHostKeyRecords(stateDocument(home, 'known-hosts.json'))).resolves.toEqual([{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    expect(readFileSync(legacyDocument(home, 'machines.json'), 'utf8')).toBe(legacyState)
+    expect(readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')).toBe(legacyHosts)
+    expect(warnedMessages(logger)).toEqual([])
+    expect(migrateLegacyState()).toBeUndefined()
+    expect(readFileSync(stateDocument(home, 'machines.json'), 'utf8')).toBe(`${JSON.stringify({ version: 1, enabled: true, machines: { a: row('a') } }, null, 2)}\n`)
+  })
+
+  it('prefers an existing target document and never rewrites it', async () => {
+    const home = join(sshDir, 'existing-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { legacy: row('legacy') } })
+    writeDocument(stateDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { current: row('current') } })
+    const current = readFileSync(stateDocument(home, 'machines.json'), 'utf8')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.profileViews().map(view => view.id)).toEqual(['current'])
+    expect(readFileSync(stateDocument(home, 'machines.json'), 'utf8')).toBe(current)
+    expect(existsSync(legacyDocument(home, 'machines.json'))).toBe(true)
+    expect(warnedMessages(logger)).toEqual([])
+  })
+
+  it('treats an empty target document as already migrated and starts from the default state', async () => {
+    const home = join(sshDir, 'half-migrated-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    mkdirSync(dirname(stateDocument(home, 'machines.json')), { recursive: true })
+    writeFileSync(stateDocument(home, 'machines.json'), '')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.profileViews()).toEqual([])
+    expect(readFileSync(stateDocument(home, 'machines.json'), 'utf8')).toBe('')
+    expect(warnedMessages(logger)).toEqual([])
+  })
+
+  it('warns instead of failing when the legacy document is corrupt, then accepts new machines', async () => {
+    const home = join(sshDir, 'corrupt-home')
+    mkdirSync(dirname(legacyDocument(home, 'machines.json')), { recursive: true })
+    writeFileSync(legacyDocument(home, 'machines.json'), '{ not json')
+    writeDocument(legacyDocument(home, 'known-hosts.json'), [{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.profileViews()).toEqual([])
+    expect(warnedMessages(logger)).toHaveLength(1)
+    expect(warnedMessages(logger)[0]).toContain('旧状态目录迁移未完成')
+    expect(warnedMessages(logger)[0]).toContain('不是合法 JSON')
+    expect(migrationWarningOf()).toContain('不是合法 JSON')
+    await expect(readHostKeyRecords(stateDocument(home, 'known-hosts.json'))).resolves.toEqual([{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    await service.save(MachineId('c'), { name: 'gamma', host: '10.0.0.3', port: 22, user: 'root', remotePort: 3080 })
+    expect(service.profileViews().map(view => view.id)).toEqual(['c'])
+    expect(existsSync(legacyDocument(home, 'machines.json'))).toBe(true)
+  })
+
+  it('warns instead of failing when the new state directory cannot be created, then starts empty', async () => {
+    const home = join(sshDir, 'blocked-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    writeDocument(legacyDocument(home, 'known-hosts.json'), [{ machineId: 'a', fingerprint: 'SHA256:legacy' }])
+    const legacyState = readFileSync(legacyDocument(home, 'machines.json'), 'utf8')
+    const legacyHosts = readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')
+    writeFileSync(join(home, 'remote'), 'blocked')
+    const logger = quietLogger()
+
+    const service = await bootWithHome(home, logger)
+    expect(service.enabled()).toBe(false)
+    expect(service.profileViews()).toEqual([])
+    expect(warnedMessages(logger)).toHaveLength(1)
+    expect(warnedMessages(logger)[0]).toContain('旧状态目录迁移未完成')
+    expect(warnedMessages(logger)[0]).toContain(migrationWarningOf())
+    expect(migrationWarningOf()).toContain('mkdir')
+    expect(migrateLegacyState()).toBe(migrationWarningOf())
+    expect(readFileSync(legacyDocument(home, 'machines.json'), 'utf8')).toBe(legacyState)
+    expect(readFileSync(legacyDocument(home, 'known-hosts.json'), 'utf8')).toBe(legacyHosts)
+  })
+
+  it('skips migration entirely when the state paths are configured explicitly', async () => {
+    const home = join(sshDir, 'configured-home')
+    writeDocument(legacyDocument(home, 'machines.json'), { version: 1, enabled: true, machines: { a: row('a') } })
+    const previous = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      apply(scriptedCtx(scriptedHttpServer()).ctx, { ...baseConfig, sshDir, knownHostsPath: join(sshDir, 'known-hosts.json'), statePath })
+      await machine.start()
+      expect(machine.profileViews()).toEqual([])
+      await machine.setEnabled(true)
+      expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ version: 1, enabled: true })
+      expect(existsSync(stateDocument(home, 'machines.json'))).toBe(false)
+    }
+    finally {
+      if (previous === undefined)
+        delete process.env.DSH_HOME
+      else
+        process.env.DSH_HOME = previous
+    }
+  })
+})

@@ -10,65 +10,65 @@ import type { FetchOptions } from "./http";
 
 /** @method get */
 export function getSettings(options?: FetchOptions) {
-  return ofetch<Types.GetApiTauriSshSettingsResponse>("/api/tauri/ssh/settings", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriRemoteSettingsResponse>("/api/tauri/remote/settings", { method: "get", ...options });
 }
 
 /** @method post */
-export function postSettings(body: Types.PostApiTauriSshSettingsBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiTauriSshSettingsResponse>("/api/tauri/ssh/settings", { method: "post", body, ...options });
+export function postSettings(body: Types.PostApiTauriRemoteSettingsBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteSettingsResponse>("/api/tauri/remote/settings", { method: "post", body, ...options });
 }
 
 /** @method get */
 export function getSessionRole(options?: FetchOptions) {
-  return ofetch<Types.GetApiTauriSshSessionRoleResponse>("/api/tauri/ssh/session/role", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriRemoteSessionRoleResponse>("/api/tauri/remote/session/role", { method: "get", ...options });
 }
 
 /** @method get */
 export function getMachines(options?: FetchOptions) {
-  return ofetch<Types.GetApiTauriSshMachinesResponse>("/api/tauri/ssh/machines", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriRemoteMachinesResponse>("/api/tauri/remote/machines", { method: "get", ...options });
 }
 
 /** @method post */
-export function postMachines(body: Types.PostApiTauriSshMachinesBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiTauriSshMachinesResponse>("/api/tauri/ssh/machines", { method: "post", body, ...options });
+export function postMachines(body: Types.PostApiTauriRemoteMachinesBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteMachinesResponse>("/api/tauri/remote/machines", { method: "post", body, ...options });
 }
 
 /** @method delete */
-export function deleteMachines(body: Types.DeleteApiTauriSshMachinesBody, options?: FetchOptions) {
-  return ofetch<Types.DeleteApiTauriSshMachinesResponse>("/api/tauri/ssh/machines", { method: "delete", body, ...options });
+export function deleteMachines(body: Types.DeleteApiTauriRemoteMachinesBody, options?: FetchOptions) {
+  return ofetch<Types.DeleteApiTauriRemoteMachinesResponse>("/api/tauri/remote/machines", { method: "delete", body, ...options });
 }
 
 /** @method post */
-export function postMachinesTest(body: Types.PostApiTauriSshMachinesTestBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiTauriSshMachinesTestResponse>("/api/tauri/ssh/machines/test", { method: "post", body, ...options });
+export function postMachinesTest(body: Types.PostApiTauriRemoteMachinesTestBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteMachinesTestResponse>("/api/tauri/remote/machines/test", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postMachinesConnect(body: Types.PostApiTauriSshMachinesConnectBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiTauriSshMachinesConnectResponse>("/api/tauri/ssh/machines/connect", { method: "post", body, ...options });
+export function postMachinesConnect(body: Types.PostApiTauriRemoteMachinesConnectBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteMachinesConnectResponse>("/api/tauri/remote/machines/connect", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postMachinesDisconnect(body: Types.PostApiTauriSshMachinesDisconnectBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiTauriSshMachinesDisconnectResponse>("/api/tauri/ssh/machines/disconnect", { method: "post", body, ...options });
+export function postMachinesDisconnect(body: Types.PostApiTauriRemoteMachinesDisconnectBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteMachinesDisconnectResponse>("/api/tauri/remote/machines/disconnect", { method: "post", body, ...options });
 }
 
 /** @method post */
-export function postMachinesInstall(body: Types.PostApiTauriSshMachinesInstallBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiTauriSshMachinesInstallResponse>("/api/tauri/ssh/machines/install", { method: "post", body, ...options });
+export function postMachinesInstall(body: Types.PostApiTauriRemoteMachinesInstallBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteMachinesInstallResponse>("/api/tauri/remote/machines/install", { method: "post", body, ...options });
 }
 
 /** @method get */
-export function getMachinesEvents(params?: Types.GetApiTauriSshMachinesEventsQuery, options?: FetchOptions) {
-  return ofetch<Types.GetApiTauriSshMachinesEventsResponse>("/api/tauri/ssh/machines/events", { method: "get", params, ...options });
+export function getMachinesEvents(params?: Types.GetApiTauriRemoteMachinesEventsQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriRemoteMachinesEventsResponse>("/api/tauri/remote/machines/events", { method: "get", params, ...options });
 }
 
 /** @method get */
 export function getSyncPreview(options?: FetchOptions) {
-  return ofetch<Types.GetApiTauriSshSyncPreviewResponse>("/api/tauri/ssh/sync/preview", { method: "get", ...options });
+  return ofetch<Types.GetApiTauriRemoteSyncPreviewResponse>("/api/tauri/remote/sync/preview", { method: "get", ...options });
 }
 
 /** @method post */
-export function postSyncApply(body: Types.PostApiTauriSshSyncApplyBody, options?: FetchOptions) {
-  return ofetch<Types.PostApiTauriSshSyncApplyResponse>("/api/tauri/ssh/sync/apply", { method: "post", body, ...options });
+export function postSyncApply(body: Types.PostApiTauriRemoteSyncApplyBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteSyncApplyResponse>("/api/tauri/remote/sync/apply", { method: "post", body, ...options });
 }

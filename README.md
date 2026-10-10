@@ -67,7 +67,7 @@
 - [DSH Tauri Pet](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-pet) — 桌宠与活动状态设置
 - [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-rightclick) — 会话、工作区与正文右键菜单
 - [DSH Tauri Model](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-model) — 模型选择与参数、自动配置模型
-- [DSH Tauri SSH](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-ssh) — SSH 远端 Harness 连接与同步
+- [DSH Tauri SSH](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-remote) — SSH 远端 Harness 连接与同步
 - [DSH Tauri Notification](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-notification) — 原生级会话通知与交互操作
 
 ## 可选预设

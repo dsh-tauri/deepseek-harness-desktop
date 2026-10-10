@@ -270,6 +270,9 @@ catalogs:
     '@types/node':
       specifier: ^22.10.0
       version: 22.20.1
+    '@types/qrcode':
+      specifier: ^1.5.5
+      version: 1.5.6
     '@types/react':
       specifier: ^19.2.18
       version: 19.2.18
@@ -314,6 +317,9 @@ catalogs:
     pathe:
       specifier: ^2.0.3
       version: 2.0.3
+    qrcode:
+      specifier: ^1.5.4
+      version: 1.5.4
     schemastery:
       specifier: ^3.18.0
       version: 3.18.0
@@ -373,7 +379,7 @@ importers:
         version: 2.4.4
       dsh-pet-component:
         specifier: catalog:runtime
-        version: 0.2.4(change-case@5.4.4)(react@19.2.8)
+        version: 0.2.4(change-case@5.4.4)(qrcode@1.5.4)(react@19.2.8)
       i18next:
         specifier: catalog:runtime
         version: 26.3.6(typescript@5.8.3)
@@ -710,15 +716,15 @@ importers:
       dsh-tauri-pet:
         specifier: workspace:*
         version: link:../dsh-tauri-pet
+      dsh-tauri-remote:
+        specifier: workspace:*
+        version: link:../dsh-tauri-remote
       dsh-tauri-rightclick:
         specifier: workspace:*
         version: link:../dsh-tauri-rightclick
       dsh-tauri-scheduler:
         specifier: workspace:*
         version: link:../dsh-tauri-scheduler
-      dsh-tauri-ssh:
-        specifier: workspace:*
-        version: link:../dsh-tauri-ssh
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../dsh-tauri-ui
@@ -954,6 +960,79 @@ importers:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
 
+  packages/dsh-tauri-remote:
+    dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
+      dsh-tauri:
+        specifier: workspace:*
+        version: link:../dsh-tauri
+      dsh-tauri-ui:
+        specifier: workspace:*
+        version: link:../dsh-tauri-ui
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
+      pathe:
+        specifier: catalog:utils
+        version: 2.0.3
+      schemastery:
+        specifier: catalog:utils
+        version: 3.18.0
+      ssh2:
+        specifier: catalog:utils
+        version: 1.17.0
+      yaml:
+        specifier: catalog:testing
+        version: 2.9.0
+    devDependencies:
+      '@testing-library/dom':
+        specifier: catalog:testing
+        version: 10.4.2
+      '@testing-library/react':
+        specifier: catalog:testing
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@types/node':
+        specifier: catalog:types
+        version: 22.20.1
+      '@types/qrcode':
+        specifier: catalog:types
+        version: 1.5.6
+      '@types/react':
+        specifier: catalog:types
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: catalog:types
+        version: 19.2.4(@types/react@19.2.18)
+      '@types/ssh2':
+        specifier: catalog:types
+        version: 1.15.6
+      dsh-tauri-tsdown:
+        specifier: workspace:*
+        version: link:../dsh-tauri-tsdown
+      jsdom:
+        specifier: catalog:testing
+        version: 26.1.0
+      qrcode:
+        specifier: catalog:utils
+        version: 1.5.4
+      react:
+        specifier: catalog:runtime
+        version: 19.2.8
+      react-dom:
+        specifier: catalog:runtime
+        version: 19.2.8(react@19.2.8)
+      tsdown:
+        specifier: catalog:cli
+        version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
+      typescript:
+        specifier: catalog:cli
+        version: 5.8.3
+      vitest:
+        specifier: catalog:testing
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/dsh-tauri-rightclick:
     dependencies:
       dsh-h3:
@@ -1033,73 +1112,6 @@ importers:
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
-      vitest:
-        specifier: catalog:testing
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.9.0))
-
-  packages/dsh-tauri-ssh:
-    dependencies:
-      dsh-h3:
-        specifier: 'catalog:'
-        version: 0.2.1(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-host-webserver@0.2.1-alpha.1(@deepseek-ai/cordis@4.0.5-alpha.1))(@genapi/shared@4.1.4)(typescript@5.8.3)
-      dsh-tauri:
-        specifier: workspace:*
-        version: link:../dsh-tauri
-      dsh-tauri-ui:
-        specifier: workspace:*
-        version: link:../dsh-tauri-ui
-      h3:
-        specifier: 'catalog:'
-        version: 2.0.1
-      pathe:
-        specifier: catalog:utils
-        version: 2.0.3
-      schemastery:
-        specifier: catalog:utils
-        version: 3.18.0
-      ssh2:
-        specifier: catalog:utils
-        version: 1.17.0
-      yaml:
-        specifier: catalog:testing
-        version: 2.9.0
-    devDependencies:
-      '@testing-library/dom':
-        specifier: catalog:testing
-        version: 10.4.2
-      '@testing-library/react':
-        specifier: catalog:testing
-        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@types/node':
-        specifier: catalog:types
-        version: 22.20.1
-      '@types/react':
-        specifier: catalog:types
-        version: 19.2.18
-      '@types/react-dom':
-        specifier: catalog:types
-        version: 19.2.4(@types/react@19.2.18)
-      '@types/ssh2':
-        specifier: catalog:types
-        version: 1.15.6
-      dsh-tauri-tsdown:
-        specifier: workspace:*
-        version: link:../dsh-tauri-tsdown
-      jsdom:
-        specifier: catalog:testing
-        version: 26.1.0
-      react:
-        specifier: catalog:runtime
-        version: 19.2.8
-      react-dom:
-        specifier: catalog:runtime
-        version: 19.2.8(react@19.2.8)
-      tsdown:
-        specifier: catalog:cli
-        version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
-      typescript:
-        specifier: catalog:cli
-        version: 5.8.3
       vitest:
         specifier: catalog:testing
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.9.0))
@@ -3539,6 +3551,9 @@ packages:
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
+  '@types/qrcode@1.5.6':
+    resolution: {integrity: sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw==}
+
   '@types/react-dom@19.2.4':
     resolution: {integrity: sha512-Bsc+QHgp+P/F02XDzNCY9jnZNCUuLki36KT7VKrTXXLdHf+vHMNZnW1rVu5DNW/rCK+fya3DATySbLM4yhtKUw==}
     peerDependencies:
@@ -4046,6 +4061,10 @@ packages:
     resolution: {integrity: sha512-tixWYgm5ZoOD+3g6UTea91eow5z6AAHaho3g0V9CNSNb45gM8SmflpAc+GRd1InC4AqN/07Unrgp56Y94N9hJQ==}
     engines: {node: '>=20.19.0'}
 
+  camelcase@5.3.1:
+    resolution: {integrity: sha512-L28STB170nwWS63UjtlEOE3dldQApaJXZkOI1uMFfzf3rRuPegHaHesyee+YxQ+W6SvRDQV6UrdOdRiR153wJg==}
+    engines: {node: '>=6'}
+
   caniuse-lite@1.0.30001809:
     resolution: {integrity: sha512-xxWVywk6a6Arlk+hymeycyn/VgqEfLDxupvhH/xiY5SJ/18kmi9o6MiO320DCUzypORHLtvh0I4i04tUhCNHNQ==}
 
@@ -4114,6 +4133,9 @@ packages:
 
   client-only@0.0.1:
     resolution: {integrity: sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==}
+
+  cliui@6.0.0:
+    resolution: {integrity: sha512-t6wbgtoCXvAzst7QgXxJYqPt0usEfbgQdftEPbLL/cvv6HPE5VgvqCuAIDR0NgU52ds6rFwqrgakNLrHEjCbrQ==}
 
   cliui@8.0.1:
     resolution: {integrity: sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ==}
@@ -4293,6 +4315,10 @@ packages:
       supports-color:
         optional: true
 
+  decamelize@1.2.0:
+    resolution: {integrity: sha512-z2S+W9X73hAUUki+N+9Za2lBlun89zigOyGrsax+KUQ6wKW4ZoWpEYBkGhQjwAjjDCkWxhY0VKEhk8wzY7F5cA==}
+    engines: {node: '>=0.10.0'}
+
   decamelize@6.0.1:
     resolution: {integrity: sha512-G7Cqgaelq68XHJNGlZ7lrNQyhZGsFqpwtGFexqUv4IQdjKoSYF7ipZ9UuTJZUSQXFj/XaoBLuEVIVqr8EJngEQ==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
@@ -4365,6 +4391,9 @@ packages:
   diff@8.0.4:
     resolution: {integrity: sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw==}
     engines: {node: '>=0.3.1'}
+
+  dijkstrajs@1.0.3:
+    resolution: {integrity: sha512-qiSlmBq9+BCdCA/L46dw8Uy93mloxsPSbwnm5yrKn2vMPiy8KyAskTF6zuV/j5BMsmOGZDPs7KjU+mjb670kfA==}
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -4846,6 +4875,10 @@ packages:
   find-up-simple@1.0.1:
     resolution: {integrity: sha512-afd4O7zpqHeRyg4PfDQsXmlDe2PfdHtJt6Akt8jOWaApLOZk5JXs6VMR29lz03pRe9mpykrRCYIYxaJYcfpncQ==}
     engines: {node: '>=18'}
+
+  find-up@4.1.0:
+    resolution: {integrity: sha512-PpOwAdQ/YlXQ2vj8a3h8IipDuYRi3wceVQQGYWxNINccq40Anw7BlsEXCMbt1Zt+OLA6Fq9suIpIWD0OsnISlw==}
+    engines: {node: '>=8'}
 
   find-up@5.0.0:
     resolution: {integrity: sha512-78/PXT1wlLLDgTzDs7sjq9hzz0vXD+zn+7wypEe4fXQxCmdmqfGsEPQxmiCSQI3ajFV91bVSsvNtrJRiW6nGng==}
@@ -5344,6 +5377,10 @@ packages:
   locate-app@2.5.0:
     resolution: {integrity: sha512-xIqbzPMBYArJRmPGUZD9CzV9wOqmVtQnaAn3wrj3s6WYW0bQvPI7x+sPYUGmDTYMHefVK//zc6HEYZ1qnxIK+Q==}
 
+  locate-path@5.0.0:
+    resolution: {integrity: sha512-t7hw9pI+WvuwNJXwk5zVHpyhIqzg2qTlklJOf0mVxGSbe3Fp2VieZcduNYjaLDoy6p9uGpQEGWG87WpMKlNq8g==}
+    engines: {node: '>=8'}
+
   locate-path@6.0.0:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
     engines: {node: '>=10'}
@@ -5778,9 +5815,17 @@ packages:
     resolution: {integrity: sha512-Q6Bekk5wpzW5qIyUP4gdMEujObYstZl6DMMOSenwBvV0BlE5LkDwkjs5yHbZmdCEq2o4RJx4tE1vwxFVf2FG1w==}
     engines: {node: '>=16.17'}
 
+  p-limit@2.3.0:
+    resolution: {integrity: sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w==}
+    engines: {node: '>=6'}
+
   p-limit@3.1.0:
     resolution: {integrity: sha512-TYOanM3wGwNGsZN2cVTYPArw454xnXj5qmWF1bEoAc4+cU/ol7GVh7odevjp1FNHduHc3KZMcFduxU5Xc6uJRQ==}
     engines: {node: '>=10'}
+
+  p-locate@4.1.0:
+    resolution: {integrity: sha512-R79ZZ/0wAxKGu3oYMlz8jy/kbhsNrS7SKZ7PxEHBgJ5+F2mtFW2fK2cOtBh1cHYkQsbzFV7I+EoRKe6Yt0oK7A==}
+    engines: {node: '>=8'}
 
   p-locate@5.0.0:
     resolution: {integrity: sha512-LaNjtRWUBY++zB5nE/NwcaoMylSPk+S+ZHNB1TzdbMJMny6dynpAGt7X/tl/QYq3TIeE6nxHppbo2LGymrG5Pw==}
@@ -5793,6 +5838,10 @@ packages:
   p-timeout@6.1.4:
     resolution: {integrity: sha512-MyIV3ZA/PmyBN/ud8vV9XzwTrNtR4jFrObymZYnZqMmW0zA8Z17vnT0rBgFE/TlohB+YCHqXMgZzb3Csp49vqg==}
     engines: {node: '>=14.16'}
+
+  p-try@2.2.0:
+    resolution: {integrity: sha512-R4nPAVTAU0B9D35/Gk3uJf/7XYbQcyohSKdvAxIRSNghFl4e71hVoGnBNQz9cWaXxO2I10KTC+3jMdvvoKw6dQ==}
+    engines: {node: '>=6'}
 
   pac-proxy-agent@7.2.0:
     resolution: {integrity: sha512-TEB8ESquiLMc0lV8vcd5Ql/JAKAoyzHFXaStwjkzpOpC5Yv+pIzLfHvjTSdf3vpa2bMiUQrg9i6276yn8666aA==}
@@ -5895,6 +5944,10 @@ packages:
     resolution: {integrity: sha512-Nc3IT5yHzflTfbjgqWcCPpo7DaKy4FnpB0l/zCAW0Tc7jxAiuqSxHasntB3D7887LSrA93kDJ9IXovxJYxyLCA==}
     engines: {node: '>=4'}
 
+  pngjs@5.0.0:
+    resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
+    engines: {node: '>=10.13.0'}
+
   pnpm-workspace-yaml@1.8.0:
     resolution: {integrity: sha512-rqGldoFOzjalWzlPtzAi/RcjAyep+Pjl4QUKJ6/oEZXzhVAX79GS/i8gjhQT715g75kTkyfHjL9eBPGZ9Co++Q==}
 
@@ -5962,6 +6015,11 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
+
+  qrcode@1.5.4:
+    resolution: {integrity: sha512-1ca71Zgiu6ORjHqFBDpnSMTR2ReToX4l1Au1VFLyVeBTFavzQnv5JxMFr3ukHVKpSrSA2MCk0lNJSykjUfz7Zg==}
+    engines: {node: '>=10.13.0'}
+    hasBin: true
 
   quansync@0.2.11:
     resolution: {integrity: sha512-AifT7QEbW9Nri4tAwR5M/uzpBuqfZf+zwaEM/QkzEjj7NBuFD2rBuy0K3dE+8wltbezDV7JMA0WfnCPYRSYbXA==}
@@ -6092,6 +6150,9 @@ packages:
     resolution: {integrity: sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==}
     engines: {node: '>=0.10.0'}
 
+  require-main-filename@2.0.0:
+    resolution: {integrity: sha512-NKN5kMDylKuldxYLSUfrbo5Tuzh4hd+2E8NPPX02mZtn1VuREQToYe/ZdlJy+J3uCpfaiGF05e7B8W0iXbQHmg==}
+
   reserved-identifiers@1.2.0:
     resolution: {integrity: sha512-yE7KUfFvaBFzGPs5H3Ops1RevfUEsDc5Iz65rOwWg4lE8HJSYtle77uul3+573457oHvBKuHYDl/xqUkKpEEdw==}
     engines: {node: '>=18'}
@@ -6208,6 +6269,9 @@ packages:
   serialize-error@12.0.0:
     resolution: {integrity: sha512-ZYkZLAvKTKQXWuh5XpBw7CdbSzagarX39WyZ2H07CDLC5/KfsRGlIXV8d4+tfqX1M7916mRqR1QfNHSij+c9Pw==}
     engines: {node: '>=18'}
+
+  set-blocking@2.0.0:
+    resolution: {integrity: sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw==}
 
   setimmediate@1.0.5:
     resolution: {integrity: sha512-MATJdZp8sLqDl/68LfQmbP8zKPLQNV6BIZoIgrscFDQ+RsvK/BxeDQOgyxKKoh0y/8h3BqVFnCqQ/gd+reiIXA==}
@@ -6459,7 +6523,6 @@ packages:
   tsdown@0.17.4:
     resolution: {integrity: sha512-z+kNuv1rwM1POQIufDUVrdNc/uGy0ueRVafCyDH39IdHxin4JXgB8DNGSPoqdIpcOpqUoRbNreK8NxENFmlhKw==}
     engines: {node: '>=20.19.0'}
-    deprecated: Including an unexpected breaking change (copy behavior)
     hasBin: true
     peerDependencies:
       '@arethetypeswrong/core': ^0.18.1
@@ -6830,6 +6893,9 @@ packages:
     resolution: {integrity: sha512-De72GdQZzNTUBBChsXueQUnPKDkg/5A5zp7pFDuQAj5UFoENpiACU0wlCvzpAGnTkj++ihpKwKyYewn/XNUbKw==}
     engines: {node: '>=18'}
 
+  which-module@2.0.1:
+    resolution: {integrity: sha512-iBdZ57RDvnOR9AGBhML2vFZf7h8vmBjhoaZqODJBFWHVtKkDmKuHai3cx5PgVMrX5YDNp27AofYbAwctSS+vhQ==}
+
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
     engines: {node: '>= 8'}
@@ -6848,6 +6914,10 @@ packages:
   word-wrap@1.2.5:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
+
+  wrap-ansi@6.2.0:
+    resolution: {integrity: sha512-r6lPcBGxZXlIcymEu7InxDMhdW0KDxpLgoFLcguasxCaJ/SOIZwINatK9KY/tf+ZrlywOKU0UDj3ATXUBfxJXA==}
+    engines: {node: '>=8'}
 
   wrap-ansi@7.0.0:
     resolution: {integrity: sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==}
@@ -6883,6 +6953,9 @@ packages:
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
 
+  y18n@4.0.3:
+    resolution: {integrity: sha512-JKhqTOwSrqNA1NY5lSztJ1GrBiUodLMmIZuLiDaMRJ+itFd+ABVE8XBjOvIWL+rSqNDC74LCSFmlb/U4UZ4hJQ==}
+
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
@@ -6906,9 +6979,17 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  yargs-parser@18.1.3:
+    resolution: {integrity: sha512-o50j0JeToy/4K6OZcaQmW6lyXXKhq7csREXcDwk2omFPJEwUNOVtJKvmDr9EI1fAJZUyZcRF7kxGBWmRXudrCQ==}
+    engines: {node: '>=6'}
+
   yargs-parser@21.1.1:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
+
+  yargs@15.4.1:
+    resolution: {integrity: sha512-aePbxDmcYW++PaqBsJ+HYUFwCdv4LVvdnhBy78E57PIor8/OVvhMrADFFEDh8DHDFRv/O9i3lPhsENjO7QX0+A==}
+    engines: {node: '>=8'}
 
   yargs@17.7.3:
     resolution: {integrity: sha512-GZtjxm/J/4TSxuL3FNYjCmLktBTnIw/rVmKSIyKeYAZpmJB2ig9VauCC5xsa82GNKVKDAqpOn3KVzNt0zmrU0g==}
@@ -8630,13 +8711,14 @@ snapshots:
       '@reause/shared': 0.1.7(react@19.2.8)
       react: 19.2.8
 
-  '@reause/integrations@0.1.4(change-case@5.4.4)(idb-keyval@6.3.0)(react@19.2.8)':
+  '@reause/integrations@0.1.4(change-case@5.4.4)(idb-keyval@6.3.0)(qrcode@1.5.4)(react@19.2.8)':
     dependencies:
       '@reause/shared': 0.1.4(react@19.2.8)
       react: 19.2.8
     optionalDependencies:
       change-case: 5.4.4
       idb-keyval: 6.3.0
+      qrcode: 1.5.4
 
   '@reause/shared@0.1.4(react@19.2.8)':
     dependencies:
@@ -9111,6 +9193,10 @@ snapshots:
   '@types/node@22.20.1':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/qrcode@1.5.6':
+    dependencies:
+      '@types/node': 22.20.1
 
   '@types/react-dom@19.2.4(@types/react@19.2.18)':
     dependencies:
@@ -9738,6 +9824,8 @@ snapshots:
 
   cac@7.0.0: {}
 
+  camelcase@5.3.1: {}
+
   caniuse-lite@1.0.30001809: {}
 
   ccount@2.0.1: {}
@@ -9840,6 +9928,12 @@ snapshots:
   citty@0.2.2: {}
 
   client-only@0.0.1: {}
+
+  cliui@6.0.0:
+    dependencies:
+      string-width: 4.2.3
+      strip-ansi: 6.0.1
+      wrap-ansi: 6.2.0
 
   cliui@8.0.1:
     dependencies:
@@ -9995,6 +10089,8 @@ snapshots:
     dependencies:
       ms: 2.1.3
 
+  decamelize@1.2.0: {}
+
   decamelize@6.0.1: {}
 
   decimal.js@10.6.0: {}
@@ -10049,6 +10145,8 @@ snapshots:
 
   diff@8.0.4: {}
 
+  dijkstrajs@1.0.3: {}
+
   dom-accessibility-api@0.5.16: {}
 
   dom-helpers@5.2.1:
@@ -10094,11 +10192,11 @@ snapshots:
       - crossws
       - ocache
 
-  dsh-pet-component@0.2.4(change-case@5.4.4)(react@19.2.8):
+  dsh-pet-component@0.2.4(change-case@5.4.4)(qrcode@1.5.4)(react@19.2.8):
     dependencies:
       '@gravity-ui/icons': 2.21.0(react@19.2.8)
       '@reause/core': 0.1.7(react@19.2.8)
-      '@reause/integrations': 0.1.4(change-case@5.4.4)(idb-keyval@6.3.0)(react@19.2.8)
+      '@reause/integrations': 0.1.4(change-case@5.4.4)(idb-keyval@6.3.0)(qrcode@1.5.4)(react@19.2.8)
       css-render: 0.15.14
       idb-keyval: 6.3.0
       react: 19.2.8
@@ -10690,6 +10788,11 @@ snapshots:
 
   find-up-simple@1.0.1: {}
 
+  find-up@4.1.0:
+    dependencies:
+      locate-path: 5.0.0
+      path-exists: 4.0.0
+
   find-up@5.0.0:
     dependencies:
       locate-path: 6.0.0
@@ -11172,6 +11275,10 @@ snapshots:
       '@promptbook/utils': 0.69.5
       type-fest: 4.26.0
       userhome: 1.0.1
+
+  locate-path@5.0.0:
+    dependencies:
+      p-locate: 4.1.0
 
   locate-path@6.0.0:
     dependencies:
@@ -11795,9 +11902,17 @@ snapshots:
     dependencies:
       p-timeout: 6.1.4
 
+  p-limit@2.3.0:
+    dependencies:
+      p-try: 2.2.0
+
   p-limit@3.1.0:
     dependencies:
       yocto-queue: 0.1.0
+
+  p-locate@4.1.0:
+    dependencies:
+      p-limit: 2.3.0
 
   p-locate@5.0.0:
     dependencies:
@@ -11806,6 +11921,8 @@ snapshots:
   p-pipe@4.0.0: {}
 
   p-timeout@6.1.4: {}
+
+  p-try@2.2.0: {}
 
   pac-proxy-agent@7.2.0:
     dependencies:
@@ -11904,6 +12021,8 @@ snapshots:
 
   pluralize@8.0.0: {}
 
+  pngjs@5.0.0: {}
+
   pnpm-workspace-yaml@1.8.0:
     dependencies:
       yaml: 2.9.0
@@ -11982,6 +12101,12 @@ snapshots:
       once: 1.4.0
 
   punycode@2.3.1: {}
+
+  qrcode@1.5.4:
+    dependencies:
+      dijkstrajs: 1.0.3
+      pngjs: 5.0.0
+      yargs: 15.4.1
 
   quansync@0.2.11: {}
 
@@ -12124,6 +12249,8 @@ snapshots:
   require-directory@2.1.1: {}
 
   require-from-string@2.0.2: {}
+
+  require-main-filename@2.0.0: {}
 
   reserved-identifiers@1.2.0: {}
 
@@ -12279,6 +12406,8 @@ snapshots:
   serialize-error@12.0.0:
     dependencies:
       type-fest: 4.41.0
+
+  set-blocking@2.0.0: {}
 
   setimmediate@1.0.5: {}
 
@@ -12852,6 +12981,8 @@ snapshots:
       tr46: 5.1.1
       webidl-conversions: 7.0.0
 
+  which-module@2.0.1: {}
+
   which@2.0.2:
     dependencies:
       isexe: 2.0.0
@@ -12866,6 +12997,12 @@ snapshots:
       stackback: 0.0.2
 
   word-wrap@1.2.5: {}
+
+  wrap-ansi@6.2.0:
+    dependencies:
+      ansi-styles: 4.3.0
+      string-width: 4.2.3
+      strip-ansi: 6.0.1
 
   wrap-ansi@7.0.0:
     dependencies:
@@ -12891,6 +13028,8 @@ snapshots:
 
   xmlchars@2.2.0: {}
 
+  y18n@4.0.3: {}
+
   y18n@5.0.8: {}
 
   yallist@3.1.1: {}
@@ -12906,7 +13045,26 @@ snapshots:
 
   yaml@2.9.0: {}
 
+  yargs-parser@18.1.3:
+    dependencies:
+      camelcase: 5.3.1
+      decamelize: 1.2.0
+
   yargs-parser@21.1.1: {}
+
+  yargs@15.4.1:
+    dependencies:
+      cliui: 6.0.0
+      decamelize: 1.2.0
+      find-up: 4.1.0
+      get-caller-file: 2.0.5
+      require-directory: 2.1.1
+      require-main-filename: 2.0.0
+      set-blocking: 2.0.0
+      string-width: 4.2.3
+      which-module: 2.0.1
+      y18n: 4.0.3
+      yargs-parser: 18.1.3
 
   yargs@17.7.3:
     dependencies:

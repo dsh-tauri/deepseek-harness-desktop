@@ -136,10 +136,18 @@ jobs:
           # 0.1.6 起上游改了设置侧栏分区名与未分组 chip 等文案，另需一轮 e2e 适配。
           npm install --no-audit --no-fund @deepseek-ai/dsh@0.1.5-rc.2
 
+      # dsh-tauri-remote 的入站暴露用例按当前内核（dsh-h3 设置分区与面板）写就，
+      # 与 extension-panel 同口径：legacy 内核排除，改由「Host and migrated plugin contracts」批次跑。
       - name: Plugin L2 test (legacy core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts --exclude test/e2e/plugins/dsh-tauri-scheduler.e2e.ts --exclude test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts
+        run: |
+          node node_modules/vitest/vitest.mjs run --project plugin \
+            --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-remote-access.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-remote-panel.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-scheduler.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts
 
       - name: Mobile settings composition (legacy core)
         env:
@@ -163,7 +171,7 @@ jobs:
       - name: Host and migrated plugin contracts (current core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts
+        run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts test/e2e/plugins/dsh-tauri-remote-access.e2e.ts test/e2e/plugins/dsh-tauri-remote-panel.e2e.ts
 
       - name: Unified scheduler host and right-sidebar contracts (current core)
         id: scheduler_contracts

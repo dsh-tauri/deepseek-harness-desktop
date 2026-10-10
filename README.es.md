@@ -68,7 +68,7 @@ Plugins propios distribuidos con los recursos del escritorio:
 - [DSH Tauri Pet](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-pet) — Ajustes de mascotas y estados de actividad
 - [DSH Tauri Rightclick Menu](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-rightclick) — Menús contextuales de sesiones, workspaces y texto
 - [DSH Tauri Model](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-model) — Selección de modelos, parámetros y configuración automática
-- [DSH Tauri SSH](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh) — Conexiones Harness remotas y sincronización por SSH
+- [DSH Tauri SSH](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-remote) — Conexiones Harness remotas y sincronización por SSH
 - [DSH Tauri Notification](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notification) — Notificaciones de conversaciones y acciones
 
 ## Preajustes opcionales
