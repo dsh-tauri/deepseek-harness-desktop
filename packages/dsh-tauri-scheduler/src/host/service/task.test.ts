@@ -1,5 +1,6 @@
 import type { HostContext, SchedulerTask, TaskInput } from '../types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { inject } from '../../index'
 import { resetWriteQueue, runtime } from '../config/runtime'
 import { server } from '../server'
 import { storage } from '../storage'
@@ -186,6 +187,33 @@ describe('this-session binding and resource authority', () => {
     expect(await task.create({ ...input, delivery: 'this-session' })).toMatchObject({ ok: false, code: 'session_unavailable' })
     delete (host.context as Partial<typeof host.context>).sessionController
     expect(await task.create({ ...input, delivery: 'this-session', sessionId: 'owner' })).toMatchObject({ ok: false, code: 'session_unavailable' })
+  })
+
+  it('declares the session controller required by the host inject guard', () => {
+    expect(inject).toContain('sessionController')
+  })
+
+  it('rejects the core cold-session absence class without hiding read failures', async () => {
+    class ApiSessionNotFound extends Error {}
+    const loader = {
+      import: vi.fn<() => Promise<unknown>>(async () => ({ ApiSessionNotFound })),
+      unwrapExports: vi.fn((value: unknown) => value),
+    }
+    Object.assign(host.context, { loader })
+    host.inspect.mockRejectedValueOnce(new ApiSessionNotFound('missing'))
+    expect(await task.create({ ...input, delivery: 'this-session', sessionId: 'missing' })).toEqual({ ok: false, error: '目标会话不存在', code: 'session_not_found' })
+    expect(loader.import).toHaveBeenCalledWith('@deepseek-ai/dsh-api-session-controller')
+    loader.import.mockResolvedValueOnce({ default: { ApiSessionNotFound } })
+    loader.unwrapExports.mockReturnValueOnce({ ApiSessionNotFound })
+    host.inspect.mockRejectedValueOnce(new ApiSessionNotFound('missing wrapped export'))
+    expect(await task.validateTarget({ ...current, permission: undefined, delivery: 'this-session', sessionId: 'missing' })).toEqual({ ok: false, error: '目标会话不存在', code: 'session_not_found' })
+    host.inspect.mockRejectedValueOnce(new Error('disk read failed'))
+    expect(await task.create({ ...input, delivery: 'this-session', sessionId: 'owner' })).toEqual({ ok: false, error: '宿主无法读取目标会话', code: 'session_unavailable' })
+    loader.import.mockRejectedValueOnce(new Error('module unavailable'))
+    host.inspect.mockRejectedValueOnce(new ApiSessionNotFound('missing'))
+    expect(await task.create({ ...input, delivery: 'this-session', sessionId: 'missing' })).toEqual({ ok: false, error: '宿主无法读取目标会话', code: 'session_unavailable' })
+    expect(storage.setItem).not.toHaveBeenCalled()
+    expect(host.resolveAgent).not.toHaveBeenCalled()
   })
 
   it('rejects archived, missing, and delegated session targets without activation', async () => {

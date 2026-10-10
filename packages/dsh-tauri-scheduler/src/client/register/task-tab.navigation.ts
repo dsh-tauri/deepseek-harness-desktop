@@ -1,4 +1,4 @@
-import type { ClientAdapter, ILayout, LifecycleController, SessionId, SessionListState, WorkspaceSnapshot } from 'dsh-tauri/client'
+import type { ClientAdapter, ILayout, ISessions, LifecycleController, SessionId, SessionListState, WorkspaceSnapshot } from 'dsh-tauri/client'
 import type { Translate } from '../locales/index.types'
 import type { SidebarRight, TaskTabNavigation } from '../types/task-tab'
 import { sessionLinkState } from '../components/session-link'
@@ -86,12 +86,30 @@ export async function openTaskTab({ controller, adapter, layout, sidebar, target
             opening = result.value
           }
           else {
-            const start = adapter.resolveStartSession()
-            if (!start) {
-              finish(new Error(t('navigation.unavailable')))
-              return
+            const sessions = adapter.service<Partial<ISessions>>('sessions')
+            if (typeof sessions?.create === 'function') {
+              if (!adapter.resolveOpenSession()) {
+                finish(new Error(t('navigation.unavailable')))
+                return
+              }
+              opening = sessions.create().then((id) => {
+                if (settled || signal.aborted || controller.isDisposed())
+                  return
+                owner = id
+                const result = adapter.openSession(id)
+                if (result.status !== 'opened')
+                  throw new Error(t('navigation.unavailable'))
+                return result.value
+              })
             }
-            opening = start()
+            else {
+              const start = adapter.resolveStartSession()
+              if (!start) {
+                finish(new Error(t('navigation.unavailable')))
+                return
+              }
+              opening = start()
+            }
           }
           void Promise.resolve(opening).then(() => {
             if (settled)

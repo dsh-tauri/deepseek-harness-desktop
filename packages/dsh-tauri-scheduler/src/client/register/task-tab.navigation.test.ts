@@ -89,7 +89,8 @@ function runtime(options: { ids?: string[], current?: string, original?: string,
     closeRightbar: vi.fn(),
   }
   const uiWorkspace: { openSession?: typeof openSession, startSession?: typeof startSession } = { openSession, startSession }
-  const adapter = defineAdapter({ sessions: { list }, workspaces: { list: workspaces }, uiWorkspace }, { onWarn: vi.fn() })
+  const sessions: { list: typeof list, create?: () => Promise<SessionId> } = { list }
+  const adapter = defineAdapter({ sessions, workspaces: { list: workspaces }, uiWorkspace }, { onWarn: vi.fn() })
   const controller = createLifecycleController()
   const abort = new AbortController()
   const target: TaskTabNavigation = { id: 'task-1', sessionId: options.original ?? 'original' }
@@ -108,7 +109,7 @@ function runtime(options: { ids?: string[], current?: string, original?: string,
     abort.abort()
     controller.dispose()
   })
-  return { input, controller, abort, list, workspaces, mounted, panelInfo, calls, openSession, startSession, openTab, layout, uiWorkspace }
+  return { input, controller, abort, list, sessions, workspaces, mounted, panelInfo, calls, openSession, startSession, openTab, layout, uiWorkspace }
 }
 
 function observe(promise: Promise<void>) {
@@ -238,8 +239,10 @@ describe('openTaskTab public session selection', () => {
     { name: 'first when no current is selected', options: { original: 'missing', current: '', mounted: 'original' }, owner: 'original' },
   ])('closes the main panel before opening the $name', async ({ options, owner }) => {
     const fixture = runtime(options)
+    fixture.sessions.create = vi.fn(async () => sessionId('unneeded'))
     await openTaskTab(fixture.input)
 
+    expect(fixture.sessions.create).not.toHaveBeenCalled()
     expect(fixture.calls).toEqual(['panel:null', `session:${owner}`, 'tab'])
     expect(fixture.openSession).toHaveBeenCalledExactlyOnceWith(owner)
     expect(fixture.startSession).not.toHaveBeenCalled()
@@ -260,6 +263,79 @@ describe('openTaskTab public session selection', () => {
     await request.settled
     expect(request.result()).toEqual({ status: 'opened' })
     expect(fixture.calls).toEqual(['panel:null', 'start', 'tab'])
+    expectClean(fixture)
+  })
+
+  it('creates and opens a real session when workspace navigation would only show the empty hero', async () => {
+    const fixture = runtime({ ids: [] })
+    fixture.sessions.create = vi.fn(async () => {
+      fixture.calls.push('create')
+      fixture.list.publish({ ...fixture.list.getSnapshot(), ids: [sessionId('created')] })
+      return sessionId('created')
+    })
+    fixture.openSession.mockImplementation((id) => {
+      fixture.calls.push(`session:${id}`)
+      fixture.mounted.publish(sessionId(id))
+    })
+
+    await openTaskTab(fixture.input)
+
+    expect(fixture.calls).toEqual(['panel:null', 'create', 'session:created', 'tab'])
+    expect(fixture.sessions.create).toHaveBeenCalledExactlyOnceWith()
+    expect(fixture.startSession).not.toHaveBeenCalled()
+    expect(fixture.openTab).toHaveBeenCalledExactlyOnceWith('scheduleTask', { params: fixture.input.target })
+    expectClean(fixture)
+  })
+
+  it.each(['abort', 'dispose', 'deadline'] as const)('does not navigate after session creation completes past %s', async (cancel) => {
+    const fixture = runtime({ ids: [] })
+    let complete = (_id: SessionId) => {}
+    fixture.sessions.create = vi.fn(() => new Promise<SessionId>((resolve) => {
+      complete = resolve
+    }))
+    const request = observe(openTaskTab(fixture.input))
+    if (cancel === 'abort')
+      fixture.abort.abort(new Error('cancelled'))
+    else if (cancel === 'dispose')
+      fixture.controller.dispose()
+    else
+      await vi.advanceTimersByTimeAsync(5_000)
+    complete(sessionId('created'))
+    await request.settled
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(request.result()?.status).toBe('failed')
+    expect(fixture.openSession).not.toHaveBeenCalled()
+    expect(fixture.startSession).not.toHaveBeenCalled()
+    expect(fixture.openTab).not.toHaveBeenCalled()
+    expectClean(fixture)
+  })
+
+  it('does not create an orphan session when the public opening capability is unavailable', async () => {
+    const fixture = runtime({ ids: [] })
+    fixture.sessions.create = vi.fn(async () => sessionId('created'))
+    const adapter = defineAdapter({ sessions: fixture.sessions, workspaces: { list: fixture.workspaces } }, { onWarn: vi.fn() })
+
+    await expect(openTaskTab({ ...fixture.input, adapter })).rejects.toThrow('navigation.unavailable')
+
+    expect(fixture.sessions.create).not.toHaveBeenCalled()
+    expect(fixture.startSession).not.toHaveBeenCalled()
+    expect(fixture.openTab).not.toHaveBeenCalled()
+    expectClean(fixture)
+  })
+
+  it('propagates public session creation failure without opening a hero or a task tab', async () => {
+    const fixture = runtime({ ids: [] })
+    const error = new Error('session creation failed')
+    fixture.sessions.create = vi.fn(async () => {
+      throw error
+    })
+
+    await expect(openTaskTab(fixture.input)).rejects.toBe(error)
+
+    expect(fixture.openSession).not.toHaveBeenCalled()
+    expect(fixture.startSession).not.toHaveBeenCalled()
+    expect(fixture.openTab).not.toHaveBeenCalled()
     expectClean(fixture)
   })
 
