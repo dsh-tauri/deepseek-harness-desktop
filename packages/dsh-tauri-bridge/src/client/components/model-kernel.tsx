@@ -4,14 +4,19 @@ import type { KernelBinding } from '../../shared/types'
 import type { OfficialModelSelectFace } from '../types/kernel-model'
 import type { ModelKernelProps } from './slot-contract'
 import { Select } from 'dsh-tauri-ui/client'
-import { useWatchImmediate } from 'dsh-tauri/client'
+import { useStore, useWatchImmediate } from 'dsh-tauri/client'
 import { createElement, useState } from 'react'
 import { locale } from '../locales'
 import { backendFromIdentity, isForkedIdentity } from '../service/kernel-identity'
 import { hasModelLockFace } from '../service/kernel-model'
 import { isNativeTurnOptions } from '../service/kernel-model.utils'
+import { kernelContentAvailable } from '../service/kernel-version'
+import { kernelStore } from '../store/modules/kernel-store'
 
 export function ModelKernel(props: ModelKernelProps): ReactElement {
+  const store = useStore(kernelStore)
+  if (store.phase === 'ready' && !kernelContentAvailable(store.backends))
+    return createElement(props.Original, { ...props })
   if (!hasModelLockFace(props))
     return createElement(props.Original, { ...props })
   return <VerifiedModelKernel {...props} />

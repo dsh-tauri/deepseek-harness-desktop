@@ -158,6 +158,7 @@ let persistence: MemoryPersistence
 let http: Server | undefined
 let rejection: 401 | 403 | undefined
 let runtimeSession: typeof legacySessionModule
+let runtimeBoot: unknown
 let registered: Map<string, WebRoute>
 let requestRejection: ReturnType<typeof vi.fn<(request: IncomingMessage) => 401 | 403 | undefined>>
 let handles: AgentHandle[]
@@ -170,6 +171,7 @@ beforeEach(async () => {
   vi.setSystemTime(now)
   await resetRuntime()
   runtimeSession = sessionModule
+  runtimeBoot = undefined
   rejection = undefined
   registered = new Map()
   handles = []
@@ -216,6 +218,8 @@ beforeEach(async () => {
         return llmModule
       if (id === '@deepseek-ai/dsh-session')
         return runtimeSession
+      if (id === '@deepseek-ai/dsh-app-boot' && runtimeBoot !== undefined)
+        return runtimeBoot
       throw new Error(`Unexpected public runtime import: ${id}`)
     },
     unwrapExports: value => value,
@@ -317,6 +321,15 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     expect(createCodexSession).not.toHaveBeenCalled()
     expect(createClaudeSession).not.toHaveBeenCalled()
     expect(runtime.sessions.size).toBe(0)
+  })
+
+  it('reports the official runtime version so the client can gate on it', async () => {
+    runtimeBoot = { getDshRuntimeVersion: () => '0.2.1-alpha.2' }
+    const base = await start()
+    const response = await fetch(`${base}/api/tauri/bridge/backends`)
+    expect(response.status).toBe(200)
+    const payload = await response.json() as Array<Record<string, unknown>>
+    expect(payload[0]).toEqual({ ...dsh, version: '0.2.1-alpha.2' })
   })
 
   it('retains CLI installation status while marking the bridge unavailable when official record support is absent', async () => {

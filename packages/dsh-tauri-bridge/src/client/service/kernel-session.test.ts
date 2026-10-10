@@ -69,12 +69,12 @@ function fixture(rows: SessionSummary[] = [], current?: string, grouped = false)
 }
 
 beforeEach(() => {
-  kernelStore.$patch({ selected: 'dsh', phase: 'ready', error: null, backends: BACKENDS })
+  kernelStore.$patch({ selected: undefined, phase: 'ready', error: null, backends: BACKENDS })
   vi.mocked(postSessions).mockReset().mockResolvedValue({ sessionId: 'bridge-session' })
 })
 
 afterEach(() => {
-  kernelStore.$patch({ selected: 'dsh', phase: 'idle', error: null, backends: [] })
+  kernelStore.$patch({ selected: undefined, phase: 'idle', error: null, backends: [] })
   vi.restoreAllMocks()
 })
 

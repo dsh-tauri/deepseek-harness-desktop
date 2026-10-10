@@ -1,15 +1,17 @@
 import type { ReactElement } from 'react'
 import type { BackendDetection, BackendId } from '../../shared/types'
 import type { HeroKernelProps } from './slot-contract'
-import { ChevronDown, Chip, Menu } from 'dsh-tauri-ui/client'
+import { ChevronDown, Chip, Menu, Xmark } from 'dsh-tauri-ui/client'
 import { If, useAsyncState, useStore, useWatchImmediate } from 'dsh-tauri/client'
 import { useRef, useState } from 'react'
 import { locale } from '../locales'
 import { backendFromIdentity, isBackendAvailable, isForkedIdentity } from '../service/kernel-identity'
-import { kernelStore } from '../store/modules/kernel-store'
+import { kernelContentAvailable } from '../service/kernel-version'
+import { kernelStore, rememberedKernel } from '../store/modules/kernel-store'
 import { KernelIcon } from './kernel-icon'
 
 const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude' }
+const CHOICES = ['codex', 'claude'] as const
 
 function backendHint(backend: BackendDetection | undefined): string | undefined {
   if (backend === undefined || !backend.installed)
@@ -23,7 +25,7 @@ function backendHint(backend: BackendDetection | undefined): string | undefined 
   return undefined
 }
 
-export function HeroKernel(props: HeroKernelProps): ReactElement {
+export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   locale.useLocale()
   const store = useStore(kernelStore)
   const identity = props.useProjection('bridgeKernel')
@@ -40,14 +42,19 @@ export function HeroKernel(props: HeroKernelProps): ReactElement {
       void props.ensureProjection(sessionId)
   })
 
-  const backend = props.sessionId === undefined ? store.selected : backendFromIdentity(identity)
+  if (store.phase === 'ready' && !kernelContentAvailable(store.backends))
+    return null
+
+  const remembered = props.sessionId === undefined || identity === null
+  const backend = remembered ? rememberedKernel(store.selected) : backendFromIdentity(identity)
   const roster = new Map(store.backends.map(item => [item.id, item]))
   const workspaceBySession = new Map(workspaces.flatMap(workspace => workspace.sessionIds.map(id => [id, workspace.workspaceId] as const)))
   const workspaceId = props.sessionId === undefined ? undefined : workspaceBySession.get(props.sessionId)
   const busy = isLoading || store.phase === 'loading'
   const capable = props.canCreate()
-  const disabled = busy || !capable || backend === undefined
-  const items = (['dsh', 'codex', 'claude'] as const).map((id) => {
+  const clearable = remembered && backend !== undefined
+  const disabled = busy || !capable || (!remembered && backend === undefined)
+  const items = CHOICES.map((id) => {
     const hint = backendHint(roster.get(id))
     return {
       id,
@@ -76,7 +83,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement {
   const failure = error == null ? store.error : error instanceof Error ? error.message : String(error)
 
   function select(id: string): void {
-    if (isLoading || store.phase !== 'ready' || !capable || (id !== 'dsh' && id !== 'codex' && id !== 'claude') || !isBackendAvailable(roster.get(id)))
+    if (isLoading || store.phase !== 'ready' || !capable || (id !== 'codex' && id !== 'claude') || !isBackendAvailable(roster.get(id)))
       return
     const preset = summary?.projectionValues?.agentPreset
     void executeImmediate(id, workspaceId === undefined
@@ -84,8 +91,13 @@ export function HeroKernel(props: HeroKernelProps): ReactElement {
       : { workspaceId }, typeof preset === 'string' ? preset : undefined)
   }
 
+  function clear(): void {
+    kernelStore.select(undefined)
+    setExpanded(false)
+  }
+
   return (
-    <div className="relative" data-bridge-kernel-picker="" aria-busy={isLoading}>
+    <div className="relative inline-flex items-center" data-bridge-kernel-picker="" aria-busy={isLoading}>
       <Menu
         open={expanded}
         anchor={(
@@ -93,7 +105,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement {
             ref={chipRef}
             variant="seat"
             icon={<KernelIcon backend={backend} />}
-            chevron={<ChevronDown />}
+            chevron={clearable ? undefined : <ChevronDown />}
             open={expanded}
             disabled={disabled}
             aria-label={locale.text('kernel.label')}
@@ -102,7 +114,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement {
             title={title}
             onClick={() => setExpanded(current => !current)}
           >
-            {backend === undefined ? locale.text('kernel.pending') : LABELS[backend]}
+            {backend === undefined ? remembered ? locale.text('kernel.select') : locale.text('kernel.pending') : LABELS[backend]}
           </Chip>
         )}
         items={items}
@@ -112,6 +124,22 @@ export function HeroKernel(props: HeroKernelProps): ReactElement {
         portal
         side="bottom"
         getAnchorRect={() => chipRef.current?.getBoundingClientRect() ?? null}
+      />
+      <If
+        cond={clearable}
+        then={(
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={locale.text('kernel.clear')}
+            title={locale.text('kernel.clear')}
+            data-bridge-kernel-clear=""
+            className="inline-flex shrink-0 cursor-pointer border-none bg-transparent p-0 text-[var(--dsw-alias-label-caption)] disabled:cursor-default [&_svg]:w-[11px] [&_svg]:h-[11px]"
+            onClick={clear}
+          >
+            <Xmark />
+          </button>
+        )}
       />
       <If
         cond={failure != null}

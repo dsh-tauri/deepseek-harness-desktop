@@ -8,6 +8,7 @@ import { runtime } from '../config/runtime'
 import { server } from '../server'
 import { detectBackend } from '../utils/detection'
 import { loadRuntimeModules } from '../utils/runtime-modules'
+import { runtimeVersion } from '../utils/runtime-version'
 
 export const backend = defineService({
   async resolve(id: 'codex' | 'claude'): Promise<DetectedCommand> {
@@ -33,7 +34,8 @@ export const backend = defineService({
   },
 
   async getCatalog(): Promise<BackendDetection[]> {
+    const ctx = getServerContext<HostContext>(server)
     const results = await Promise.all([backend.resolve('codex'), backend.resolve('claude')])
-    return [{ id: 'dsh', installed: true, auth: 'ok', version: null, drift: false, hint: null }, ...results.map(result => result.detection)]
+    return [{ id: 'dsh', installed: true, auth: 'ok', version: await runtimeVersion(ctx.loader), drift: false, hint: null }, ...results.map(result => result.detection)]
   },
 })

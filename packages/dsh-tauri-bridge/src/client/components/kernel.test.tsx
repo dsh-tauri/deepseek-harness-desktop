@@ -47,11 +47,11 @@ function sidebarProps(identity: KernelBinding | null | undefined): SessionKernel
 
 beforeEach(() => {
   kernelStore.$patch({
-    selected: 'dsh',
+    selected: undefined,
     phase: 'ready',
     error: null,
     backends: [
-      { id: 'dsh', installed: true, auth: 'ok', version: null, drift: false, hint: null },
+      { id: 'dsh', installed: true, auth: 'ok', version: '0.2.1-alpha.2', drift: false, hint: null },
       { id: 'codex', installed: true, auth: 'ok', version: '1.0', drift: false, hint: null },
       { id: 'claude', installed: false, auth: 'unknown', version: null, drift: false, hint: null },
     ],
@@ -60,13 +60,68 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
-  kernelStore.$patch({ selected: 'dsh', backends: [], phase: 'idle', error: null })
+  kernelStore.$patch({ selected: undefined, backends: [], phase: 'idle', error: null })
   vi.restoreAllMocks()
 })
 
 afterAll(() => vi.unstubAllGlobals())
 
 describe('hero kernel picker', () => {
+  it('starts unselected with the two native kernels and no persisted default', () => {
+    const props = heroProps()
+    const view = render(<HeroKernel {...props} />)
+    const chip = view.getByRole('button', { name: 'Kernel' })
+    expect(chip.textContent).toContain('Select kernel')
+    expect((chip as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(chip)
+    expect(view.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Codex', 'Claude · Not installed'])
+    expect(view.getByRole('menu').querySelectorAll('[aria-checked="true"]')).toHaveLength(0)
+  })
+
+  it('reads a legacy persisted dsh choice as the unselected state', () => {
+    kernelStore.$patch({ selected: 'dsh' })
+    const view = render(<HeroKernel {...heroProps()} />)
+    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
+  })
+
+  it('clears a remembered native kernel back to the unselected state without opening the menu', async () => {
+    kernelStore.select('codex')
+    const props = heroProps()
+    const view = render(<HeroKernel {...props} />)
+    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Codex')
+    const clear = view.getByRole('button', { name: 'Clear kernel selection' })
+    fireEvent.click(clear)
+    expect(kernelStore.$state.selected).toBeUndefined()
+    await act(async () => {})
+    expect(view.container.textContent).toContain('Select kernel')
+    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
+    expect(view.queryByRole('menu')).toBeNull()
+    expect(props.createSession).not.toHaveBeenCalled()
+  })
+
+  it('an existing bound session offers no clear affordance', () => {
+    const view = render(<HeroKernel {...heroProps({ sessionId: 'session-a', identity: IDENTITY })} />)
+    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Codex')
+    expect(view.queryByRole('button', { name: 'Clear kernel selection' })).toBeNull()
+  })
+
+  it('mounts no content when the detected runtime predates the bridge baseline', () => {
+    kernelStore.$patch({ backends: kernelStore.$state.backends.map(item => item.id === 'dsh' ? { ...item, version: '0.2.1-alpha.1' } : item) })
+    const view = render(<HeroKernel {...heroProps()} />)
+    expect(view.container.childElementCount).toBe(0)
+  })
+
+  it('mounts no content when an unreadable runtime version has no capable kernel either', () => {
+    kernelStore.$patch({
+      backends: [
+        { id: 'dsh', installed: true, auth: 'ok', version: null, drift: false, hint: null },
+        { id: 'codex', installed: true, auth: 'ok', version: '1.0', drift: false, hint: null, bridgeReady: false },
+      ],
+    })
+    const view = render(<HeroKernel {...heroProps()} />)
+    expect(view.container.childElementCount).toBe(0)
+  })
+
   it('missing persisted identity remains pending and disabled instead of adopting a saved default', async () => {
     kernelStore.select('claude')
     const props = heroProps({ sessionId: 'session-a' })
@@ -88,7 +143,7 @@ describe('hero kernel picker', () => {
     expect(chip.getAttribute('title')).toContain('its kernel cannot be changed')
     expect(chip.getAttribute('title')).not.toContain('model and kernel cannot be changed')
     fireEvent.click(chip)
-    expect(view.getByRole('menu').querySelectorAll('button')).toHaveLength(3)
+    expect(view.getByRole('menu').querySelectorAll('button')).toHaveLength(2)
     expect((view.getByRole('menuitem', { name: 'Claude · Not installed' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
@@ -99,7 +154,7 @@ describe('hero kernel picker', () => {
     fireEvent.click(view.getByRole('menuitem', { name: 'Codex' }))
     await vi.waitFor(() => expect(props.createSession).toHaveBeenCalledWith('codex', { workspaceId: 'workspace-a' }, 'coding'))
     await vi.waitFor(() => expect(view.queryByRole('menu')).toBeNull())
-    expect(kernelStore.$state.selected).toBe('dsh')
+    expect(kernelStore.$state.selected).toBeUndefined()
   })
 
   it('ungrouped creation passes only cwd and uninstalled choices cannot create', async () => {
@@ -165,8 +220,8 @@ describe('hero kernel picker', () => {
     fireEvent.click(view.getByRole('button', { name: 'Kernel' }))
     fireEvent.click(view.getByRole('menuitem', { name: 'Codex' }))
     await vi.waitFor(() => expect(view.getByRole('alert').textContent).toContain('native create refused'))
-    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('DeepSeek Harness')
-    expect(kernelStore.$state.selected).toBe('dsh')
+    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
+    expect(kernelStore.$state.selected).toBeUndefined()
   })
 
   it('busy creation disables further selection until it settles', async () => {
@@ -189,16 +244,17 @@ describe('hero kernel picker', () => {
   })
 
   it('official Menu keyboard entry and Escape return focus to the Chip anchor', async () => {
+    kernelStore.$patch({ backends: kernelStore.$state.backends.map(item => item.id === 'claude' ? { ...item, installed: true, auth: 'ok' } : item) })
     const view = render(<HeroKernel {...heroProps({ sessionId: 'session-a', identity: null })} />)
     const chip = view.getByRole('button', { name: 'Kernel' })
     chip.focus()
     fireEvent.click(chip)
     fireEvent.keyDown(chip, { key: 'Tab' })
-    expect(document.activeElement).toBe(view.getByRole('menuitem', { name: 'DeepSeek Harness' }))
+    expect(document.activeElement).toBe(view.getByRole('menuitem', { name: 'Codex' }))
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
-    expect(document.activeElement).toBe(view.getByRole('menuitem', { name: 'Codex' }))
+    expect(document.activeElement).toBe(view.getByRole('menuitem', { name: 'Claude' }))
     fireEvent.keyDown(document.activeElement!, { key: 'End' })
-    expect(document.activeElement).toBe(view.getByRole('menuitem', { name: 'Codex' }))
+    expect(document.activeElement).toBe(view.getByRole('menuitem', { name: 'Claude' }))
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
     await vi.waitFor(() => expect(view.queryByRole('menu')).toBeNull())
     expect(document.activeElement).toBe(chip)
@@ -206,6 +262,14 @@ describe('hero kernel picker', () => {
 })
 
 describe('sidebar kernel identity', () => {
+  it('mounts no sidebar decoration when the detected runtime predates the bridge baseline', () => {
+    kernelStore.$patch({ backends: kernelStore.$state.backends.map(item => item.id === 'dsh' ? { ...item, version: '0.2.0' } : item) })
+    const kernel = render(<SessionKernel {...sidebarProps(IDENTITY)} />)
+    expect(kernel.container.childElementCount).toBe(0)
+    const hover = render(<SessionKernelHover {...sidebarProps(IDENTITY)} />)
+    expect(hover.container.childElementCount).toBe(0)
+  })
+
   it('codex uses a gray currentColor GPT icon with an accessible identity label', () => {
     const props = sidebarProps(IDENTITY)
     const view = render(<SessionKernel {...props} />)
