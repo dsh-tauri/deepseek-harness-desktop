@@ -16,6 +16,7 @@ const initialization = { subtype: 'initialize', hooks: { SessionStart: [{ hookCa
 function claudeProcess(options: {
   acknowledge?: boolean
   useSystemInit?: boolean
+  useSnapshot?: boolean
   mismatch?: boolean
   forkId?: string
   model?: string
@@ -24,6 +25,8 @@ function claudeProcess(options: {
   capabilities?: string[]
   intercept?: (frame: Frame, fixture: ProcessFixture) => boolean
 } = {}) {
+  const useSnapshot = options.useSnapshot ?? !options.useSystemInit
+  let initializationCount = 0
   const fixture = new ProcessFixture((frame) => {
     if (options.intercept?.(frame, fixture))
       return
@@ -31,10 +34,13 @@ function claudeProcess(options: {
       const request = frame.request as Frame
       const response: Frame = {}
       if (request.subtype === 'initialize') {
+        initializationCount++
         const args = vi.mocked(spawn).mock.calls.at(-1)![1] as string[]
         const nativeId = args.find(arg => arg.startsWith('--session-id=') || arg.startsWith('--resume='))!.split('=')[1]!
         const acknowledgedId = options.mismatch ? 'different-native-session' : args.includes('--fork-session') ? options.forkId ?? '22222222-2222-4222-8222-222222222222' : nativeId
-        if (options.acknowledge !== false) {
+        response.hooks_applied = true
+        response.session_state = 'idle'
+        if (options.acknowledge !== false && !useSnapshot) {
           if (options.useSystemInit)
             fixture.send({ type: 'system', subtype: 'init', session_id: acknowledgedId, model: options.model, capabilities: options.capabilities ?? [] })
           else
@@ -45,6 +51,10 @@ function claudeProcess(options: {
           response.models = options.models
         if (options.account)
           response.account = options.account
+        fixture.send({ type: 'control_response', response: { subtype: 'success', request_id: frame.request_id, response } })
+        if (useSnapshot && options.acknowledge !== false && initializationCount > 1)
+          fixture.send({ type: 'system', subtype: 'background_tasks_changed', tasks: [], uuid: 'native-snapshot', session_id: acknowledgedId })
+        return
       }
       fixture.send({ type: 'control_response', response: { subtype: 'success', request_id: frame.request_id, response } })
     }
@@ -74,7 +84,7 @@ afterEach(async () => {
 
 describe('claude native stream-json control contract', () => {
   it('requires a native id acknowledgement before returning a newly reserved session', async () => {
-    const fixture = claudeProcess()
+    const fixture = claudeProcess({ useSnapshot: false })
     const session = await open()
     expect(session.id).toMatch(/^[\da-f-]{36}$/)
     const args = vi.mocked(spawn).mock.calls[0]![1]
@@ -100,13 +110,162 @@ describe('claude native stream-json control contract', () => {
     expect(fixture.frames).toEqual([{ type: 'control_request', request_id: expect.any(String), request: initialization }])
   })
 
+  it.each(['create', 'resume', 'fork'] as const)('opens %s from the native repeated-initialize snapshot without a bootstrap prompt', async (mode) => {
+    vi.useFakeTimers()
+    const fixture = claudeProcess({ useSnapshot: true, models: [modelInfo('native-model')] })
+    const sink = createSink()
+    const opening = open(mode === 'resume' ? storedId : null, sink, mode === 'fork' ? { forkFrom: storedId } : undefined)
+    await Promise.all([
+      vi.advanceTimersByTimeAsync(60_000),
+      expect(opening).resolves.toMatchObject({ id: mode === 'resume' ? storedId : expect.any(String) }),
+    ])
+    const controls = [
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ]
+    expect(fixture.frames).toEqual(controls)
+    const session = await opening
+    if (mode === 'fork')
+      expect(session.id).toBe('22222222-2222-4222-8222-222222222222')
+    const args = vi.mocked(spawn).mock.calls[0]![1] as string[]
+    expect(args).toContain(mode === 'create' ? `--session-id=${session.id}` : `--resume=${storedId}`)
+    expect(args.includes('--fork-session')).toBe(mode === 'fork')
+    expect(await session.models!(new AbortController().signal)).toEqual({ models: [
+      { id: 'native-model', name: 'Native native-model', description: 'native-model description', reasoning: { efforts: [{ id: 'low', name: 'low' }, { id: 'high', name: 'high' }] } },
+    ] })
+    expect(sink.text).not.toHaveBeenCalled()
+    expect(sink.assistant).not.toHaveBeenCalled()
+    const submitted = session.submit([user()], new AbortController().signal)
+    result(fixture, session.id)
+    await submitted
+    expect(fixture.frames).toEqual([
+      ...controls,
+      { type: 'user', session_id: session.id, uuid: expect.any(String), parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text: 'inspect the workspace' }] } },
+    ])
+    expect(fixture.kill).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
   it('refuses initialize without an id acknowledgement instead of binding a reserved UUID', async () => {
     vi.useFakeTimers()
     const fixture = claudeProcess({ acknowledge: false })
     const rejected = expect(open()).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_BIND_UNCONFIRMED' })
     await vi.advanceTimersByTimeAsync(60_000)
     await rejected
-    expect(fixture.frames.map(frame => frame.type)).toEqual(['control_request'])
+    expect(fixture.frames).toEqual([
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ])
+    expect(fixture.stdin.end).toHaveBeenCalledTimes(1)
+    expect(fixture.kill).not.toHaveBeenCalled()
+  })
+
+  it('waits for the repeated-initialize snapshot after its control acknowledgement', async () => {
+    const fixture = claudeProcess({ acknowledge: false })
+    const repeated = fixture.next(frame => frame.type === 'control_request' && fixture.frames.length === 2)
+    const opening = open(storedId)
+    const settled = vi.fn()
+    void opening.then(settled, settled)
+    await repeated
+    expect(settled).not.toHaveBeenCalled()
+    expect(fixture.frames).toEqual([
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ])
+    fixture.send({ type: 'system', subtype: 'background_tasks_changed', tasks: [], uuid: 'late-snapshot', session_id: storedId })
+    const session = await opening
+    expect(session.id).toBe(storedId)
+    expect(settled).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['resume', 'fork', 'missing-id'] as const)('refuses the %s identity from the repeated-initialize snapshot', async (mode) => {
+    const fixture = claudeProcess({ acknowledge: false })
+    const repeated = fixture.next(frame => frame.type === 'control_request' && fixture.frames.length === 2)
+    const opening = open(mode === 'fork' ? null : storedId, createSink(), mode === 'fork' ? { forkFrom: storedId } : undefined)
+    const rejected = expect(opening).rejects.toMatchObject({ code: mode === 'resume' ? 'BRIDGE_RESUME_MISMATCH' : mode === 'fork' ? 'BRIDGE_FORK_MISMATCH' : 'BRIDGE_PROTOCOL' })
+    await repeated
+    fixture.send({ type: 'system', subtype: 'background_tasks_changed', tasks: [], uuid: 'invalid-snapshot', ...mode === 'missing-id' ? {} : { session_id: mode === 'fork' ? storedId : 'wrong-native' } })
+    await rejected
+    expect(fixture.frames).toEqual([
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ])
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('refuses a fatal startup result following a matching snapshot in the same native output chunk', async () => {
+    const fixture = claudeProcess({ intercept: (frame, child) => {
+      if (frame.type !== 'control_request' || child.frames.length !== 2)
+        return false
+      child.writeChunk([
+        { type: 'control_response', response: { subtype: 'success', request_id: frame.request_id, response: { hooks_applied: true, session_state: 'idle' } } },
+        { type: 'system', subtype: 'background_tasks_changed', tasks: [], uuid: 'failed-snapshot', session_id: storedId },
+        { type: 'result', subtype: 'error_during_execution', is_error: true, session_id: storedId, errors: ['Native startup refused'] },
+      ].map(message => `${JSON.stringify(message)}\n`).join(''))
+      return true
+    } })
+    await expect(open(storedId)).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_TURN', message: '["Native startup refused"]' })
+    expect(fixture.frames).toEqual([
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ])
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('propagates a repeated-initialize control error without a prompt or a fresh-session fallback', async () => {
+    const fixture = claudeProcess({ intercept: (frame, child) => {
+      if (frame.type !== 'control_request' || child.frames.length !== 2)
+        return false
+      child.send({ type: 'control_response', response: { subtype: 'error', request_id: frame.request_id, error: 'Cannot refresh native state' } })
+      return true
+    } })
+    await expect(open(storedId)).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_REQUEST', message: 'Cannot refresh native state' })
+    expect(fixture.frames).toEqual([
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ])
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(fixture.stdin.end).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['pending-control', 'pending-snapshot'] as const)('cancels the %s refresh before accepting a native binding', async (phase) => {
+    const fixture = claudeProcess({ acknowledge: false, intercept: (frame, child) => phase === 'pending-control' && frame.type === 'control_request' && child.frames.length === 2 })
+    const repeated = fixture.next(frame => frame.type === 'control_request' && fixture.frames.length === 2)
+    const controller = new AbortController()
+    const rejected = expect(createClaudeSession(command, 'C:/fixture/workspace', storedId, createSink(), controller.signal)).rejects.toThrow('cancel native refresh')
+    await repeated
+    controller.abort(new Error('cancel native refresh'))
+    await rejected
+    expect(fixture.frames).toEqual([
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ])
+    expect(fixture.stdin.end).toHaveBeenCalledTimes(1)
+    expect(fixture.kill).not.toHaveBeenCalled()
+  })
+
+  it('bounds the total startup deadline while the repeated initialize control is unanswered', async () => {
+    vi.useFakeTimers()
+    const fixture = claudeProcess({ intercept: frame => frame.type === 'control_request' })
+    const opening = open(storedId)
+    const rejected = expect(opening).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_BIND_UNCONFIRMED' })
+    const settled = vi.fn()
+    void opening.then(settled, settled)
+    await vi.advanceTimersByTimeAsync(30_000)
+    const repeated = fixture.next(frame => frame.type === 'control_request' && fixture.frames.length === 2)
+    fixture.send({ type: 'control_response', response: { subtype: 'success', request_id: fixture.frames[0]!.request_id, response: { hooks_applied: true, session_state: 'idle' } } })
+    await repeated
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(settled).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toHaveBeenCalledTimes(1)
+    await rejected
+    expect(fixture.frames).toEqual([
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+      { type: 'control_request', request_id: expect.any(String), request: initialization },
+    ])
     expect(fixture.stdin.end).toHaveBeenCalledTimes(1)
     expect(fixture.kill).not.toHaveBeenCalled()
   })
@@ -162,14 +321,20 @@ describe('claude native stream-json control contract', () => {
     expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
   })
 
-  it('rejects native startup resume failure instead of silently starting a replacement', async () => {
+  it.each([
+    { mode: 'resume', fatalId: storedId },
+    { mode: 'resume', fatalId: 'error-only-native' },
+    { mode: 'fork', fatalId: storedId },
+    { mode: 'fork', fatalId: 'error-only-child' },
+  ] as const)('rejects $mode startup failure before confirming its error-only identity $fatalId', async ({ mode, fatalId }) => {
     const fixture = claudeProcess({ intercept: (frame, child) => {
       if (frame.type !== 'control_request')
         return false
-      child.send({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: storedId, errors: ['No conversation found'] })
+      child.send({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: fatalId, errors: ['No conversation found'] })
       return true
     } })
-    await expect(open(storedId)).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_TURN', message: '["No conversation found"]' })
+    await expect(open(mode === 'resume' ? storedId : null, createSink(), mode === 'fork' ? { forkFrom: storedId } : undefined)).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_TURN', message: '["No conversation found"]' })
+    expect(fixture.frames).toEqual([{ type: 'control_request', request_id: expect.any(String), request: initialization }])
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
   })
@@ -232,7 +397,7 @@ describe('claude native stream-json control contract', () => {
     const fixture = claudeProcess()
     const session = await open()
     await expect(session.models!(new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_MODEL_DISCOVERY_UNAVAILABLE' })
-    expect(fixture.frames).toHaveLength(1)
+    expect(fixture.frames).toHaveLength(2)
   })
 
   it('awaits set_model and apply_flag_settings acknowledgements before the one snapshotted user frame', async () => {
@@ -270,7 +435,7 @@ describe('claude native stream-json control contract', () => {
     const first = session.submit([user()], signal, { model: null, reasoningEffort: null })
     result(fixture, session.id)
     await first
-    expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([initialization])
+    expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([initialization, initialization])
     const changedInput = fixture.next(frame => frame.type === 'user')
     const changed = session.submit([user()], signal, { model: 'chosen', reasoningEffort: 'high' })
     await changedInput
@@ -282,6 +447,7 @@ describe('claude native stream-json control contract', () => {
     result(fixture, session.id)
     await reset
     expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([
+      initialization,
       initialization,
       { subtype: 'set_model', model: 'chosen' },
       { subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } },
@@ -316,6 +482,7 @@ describe('claude native stream-json control contract', () => {
     result(fixture, session.id)
     await submitted
     expect(fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)).toEqual([
+      initialization,
       initialization,
       { subtype: 'set_model', model: 'chosen' },
       { subtype: 'apply_flag_settings', settings: { effortLevel: null } },
@@ -400,7 +567,7 @@ describe('claude native stream-json control contract', () => {
     const fixture = claudeProcess({ models: [{ value: 'custom', displayName: 'Custom', supportsEffort: true }] })
     const session = await open()
     await expect(session.submit([user()], new AbortController().signal, { model: 'custom', reasoningEffort: 'high' })).rejects.toMatchObject({ code: 'BRIDGE_EFFORT_UNSUPPORTED' })
-    expect(fixture.frames).toHaveLength(1)
+    expect(fixture.frames).toHaveLength(2)
     expect(session.id).toMatch(/^[\da-f-]{36}$/)
   })
 
@@ -658,7 +825,7 @@ describe('claude native stream-json control contract', () => {
     await Promise.resolve()
     expect(settled).toBe(false)
     const requests = fixture.frames.filter(frame => frame.type === 'control_request').map(frame => frame.request)
-    expect(requests).toEqual([initialization, { subtype: 'interrupt', cancel_queued: true }, { subtype: 'stop_task', task_id: 'task-1' }])
+    expect(requests).toEqual([initialization, initialization, { subtype: 'interrupt', cancel_queued: true }, { subtype: 'stop_task', task_id: 'task-1' }])
     fixture.send({ type: 'system', subtype: 'task_notification', task_id: 'task-1', status: 'stopped', session_id: session.id })
     await rejected
   })

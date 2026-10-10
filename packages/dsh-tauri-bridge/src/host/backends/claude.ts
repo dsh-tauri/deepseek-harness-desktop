@@ -89,6 +89,7 @@ class ClaudeSession implements NativeSession {
   private opening = true
   private disposePromise?: Promise<void>
   private readonly identity = deferred<void>()
+  private identityConfirmed = false
   private identityTimer?: ReturnType<typeof setTimeout>
   private readonly capabilities = new Set<string>()
   private startupModel?: string
@@ -133,16 +134,26 @@ class ClaudeSession implements NativeSession {
       signal.throwIfAborted()
       signal.addEventListener('abort', aborted, { once: true })
       this.identityTimer = setTimeout(() => {
-        this.identity.reject(new NativeBridgeError('BRIDGE_NATIVE_BIND_UNCONFIRMED', 'Claude did not acknowledge the native session before user input; a reserved UUID is not a running conversation'))
+        const error = new NativeBridgeError('BRIDGE_NATIVE_BIND_UNCONFIRMED', 'Claude did not acknowledge the native session before user input; a reserved UUID is not a running conversation')
+        this.identity.reject(error)
+        this.requests.failAll(error)
       }, REQUEST_TIMEOUT_MS)
-      const response = record(await this.control({ subtype: 'initialize', hooks: { SessionStart: [{ hookCallbackIds: [SESSION_START_HOOK_ID] }] } }, signal))
+      const initialization = { subtype: 'initialize', hooks: { SessionStart: [{ hookCallbackIds: [SESSION_START_HOOK_ID] }] } }
+      const response = record(await this.control(initialization, signal))
       this.checkIdentity(response)
       this.noteCapabilities(response)
       if (response.models !== undefined)
         this.catalog = this.modelCatalog(response.models)
       if (this.failure)
         throw this.failure
+      if (!this.identityConfirmed) {
+        // Repeated initialize publishes a background-task snapshot even before the first user input.
+        const snapshot = record(await this.control(initialization, signal))
+        this.checkIdentity(snapshot)
+      }
       await this.identity.promise
+      if (this.failure)
+        throw this.failure
       signal.throwIfAborted()
       this.opening = false
     }
@@ -326,6 +337,7 @@ class ClaudeSession implements NativeSession {
       else if (id !== this.id) {
         throw new NativeBridgeError('BRIDGE_RESUME_MISMATCH', 'Claude reported a different native session; refusing to replace the stored binding')
       }
+      this.identityConfirmed = true
       this.identity.resolve()
     }
   }
@@ -365,15 +377,6 @@ class ClaudeSession implements NativeSession {
     }
     if (type === 'conversation_reset')
       throw new NativeBridgeError('BRIDGE_NATIVE_RESET', 'Claude reset its conversation; the existing official session binding cannot be silently changed')
-    this.checkIdentity(message, type === 'result' || (type === 'system' && message.subtype === 'init'))
-    if (type === 'system' && message.subtype === 'init') {
-      this.noteCapabilities(message)
-      if (this.opening && typeof message.model === 'string' && message.model !== '') {
-        this.effectiveModel ??= message.model
-        if (!this.defaultsPending)
-          this.startupModel ??= message.model
-      }
-    }
     const run = this.active
     if (type === 'result') {
       const aborted = message.terminal_reason === 'aborted_streaming' || message.terminal_reason === 'aborted_tools'
@@ -382,10 +385,13 @@ class ClaudeSession implements NativeSession {
         : message.is_error === true || message.subtype !== 'success'
           ? new NativeBridgeError('BRIDGE_NATIVE_TURN', typeof message.result === 'string' && message.result !== '' ? message.result : JSON.stringify(message.errors ?? message.subtype))
           : undefined
+      if (!run && error) {
+        this.transport.fail(error)
+        return
+      }
+      this.checkIdentity(message, true)
       if (!run) {
-        if (error)
-          this.transport.fail(error)
-        else if (!this.opening)
+        if (!this.opening)
           throw new NativeBridgeError('BRIDGE_UNEXPECTED_TURN', 'Claude completed a run outside the official agent turn')
         return
       }
@@ -393,6 +399,15 @@ class ClaudeSession implements NativeSession {
       run.error = error
       this.finish(run)
       return
+    }
+    this.checkIdentity(message, type === 'system' && (message.subtype === 'init' || message.subtype === 'background_tasks_changed'))
+    if (type === 'system' && message.subtype === 'init') {
+      this.noteCapabilities(message)
+      if (this.opening && typeof message.model === 'string' && message.model !== '') {
+        this.effectiveModel ??= message.model
+        if (!this.defaultsPending)
+          this.startupModel ??= message.model
+      }
     }
     if (!run) {
       if (type === 'assistant' || type === 'stream_event' || (type === 'system' && message.subtype === 'task_started'))

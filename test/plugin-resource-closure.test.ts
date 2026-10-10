@@ -42,14 +42,16 @@ function packageJsonFiles(root: URL): string[] {
 }
 
 describe('worktree handoff host dependency closure', () => {
-  it('erases official message-id types without a static DSH runtime import', () => {
+  it('keeps native fork runtime while erasing official types without static DSH imports', () => {
     const source = readFileSync(new URL('../packages/dsh-tauri-worktree/src/host/service/handoff.ts', import.meta.url), 'utf8')
     const { outputText } = ts.transpileModule(source, {
       fileName: 'handoff.ts',
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, verbatimModuleSyntax: true },
     })
     expect(outputText).toContain('randomUUID()')
-    expect(outputText).toContain('handle.agent.followup(')
+    expect(outputText).toContain('bridge.create(sourceSession, create)')
+    expect(outputText).toContain('bridge.prepare(sourceSession, agent, scoped)')
+    expect(outputText).not.toContain('.agent.followup(')
     expect(outputText).not.toMatch(DSH_STATIC_IMPORT)
   })
 })
