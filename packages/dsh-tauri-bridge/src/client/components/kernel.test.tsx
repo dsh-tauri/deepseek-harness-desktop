@@ -99,10 +99,18 @@ describe('hero kernel picker', () => {
     expect(props.createSession).not.toHaveBeenCalled()
   })
 
-  it('an existing bound session offers no clear affordance', () => {
-    const view = render(<HeroKernel {...heroProps({ sessionId: 'session-a', identity: IDENTITY })} />)
+  it('a bound native session returns to dsh through the clear affordance', async () => {
+    const props = heroProps({ sessionId: 'session-a', identity: IDENTITY, workspaceId: 'workspace-a' })
+    const view = render(<HeroKernel {...props} />)
     expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Codex')
-    expect(view.queryByRole('button', { name: 'Clear kernel selection' })).toBeNull()
+    const clear = view.getByRole('button', { name: 'Clear kernel selection' })
+    const pill = view.container.querySelector('[data-bridge-kernel-pill]')!
+    expect(pill.contains(view.getByRole('button', { name: 'Kernel' }))).toBe(true)
+    expect(pill.contains(clear)).toBe(true)
+    fireEvent.click(clear)
+    await vi.waitFor(() => expect(props.createSession).toHaveBeenCalledWith('dsh', { workspaceId: 'workspace-a' }, 'coding'))
+    expect(kernelStore.$state.selected).toBeUndefined()
+    expect(view.queryByRole('menu')).toBeNull()
   })
 
   it('mounts no content when the detected runtime predates the bridge baseline', () => {

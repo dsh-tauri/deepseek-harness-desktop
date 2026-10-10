@@ -25,6 +25,13 @@ function backendHint(backend: BackendDetection | undefined): string | undefined 
   return undefined
 }
 
+function pillClass(disabled: boolean, expanded: boolean): string {
+  const base = 'inline-flex items-center rounded-sm whitespace-nowrap'
+  if (disabled)
+    return `${base} text-[var(--dsw-alias-label-quaternary)]`
+  return `${base} text-primary ${expanded ? 'bg-hover' : 'hover:bg-hover'}`
+}
+
 export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   locale.useLocale()
   const store = useStore(kernelStore)
@@ -52,7 +59,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   const workspaceId = props.sessionId === undefined ? undefined : workspaceBySession.get(props.sessionId)
   const busy = isLoading || store.phase === 'loading'
   const capable = props.canCreate()
-  const clearable = remembered && backend !== undefined
+  const clearable = (backend === 'codex' || backend === 'claude') && !busy && capable
   const disabled = busy || !capable || (!remembered && backend === undefined)
   const items = CHOICES.map((id) => {
     const hint = backendHint(roster.get(id))
@@ -94,53 +101,62 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   function clear(): void {
     kernelStore.select(undefined)
     setExpanded(false)
+    if (remembered || isLoading || store.phase !== 'ready' || !capable)
+      return
+    const preset = summary?.projectionValues?.agentPreset
+    void executeImmediate('dsh', workspaceId === undefined
+      ? summary?.cwd === undefined ? {} : { cwd: summary.cwd }
+      : { workspaceId }, typeof preset === 'string' ? preset : undefined)
   }
 
   return (
     <div className="relative inline-flex items-center" data-bridge-kernel-picker="" aria-busy={isLoading}>
-      <Menu
-        open={expanded}
-        anchor={(
-          <Chip
-            ref={chipRef}
-            variant="seat"
-            icon={<KernelIcon backend={backend} />}
-            chevron={clearable ? undefined : <ChevronDown />}
-            open={expanded}
-            disabled={disabled}
-            aria-label={locale.text('kernel.label')}
-            aria-haspopup="menu"
-            aria-expanded={expanded}
-            title={title}
-            onClick={() => setExpanded(current => !current)}
-          >
-            {backend === undefined ? remembered ? locale.text('kernel.select') : locale.text('kernel.pending') : LABELS[backend]}
-          </Chip>
-        )}
-        items={items}
-        selectedId={backend}
-        onSelect={select}
-        onClose={() => setExpanded(false)}
-        portal
-        side="bottom"
-        getAnchorRect={() => chipRef.current?.getBoundingClientRect() ?? null}
-      />
-      <If
-        cond={clearable}
-        then={(
-          <button
-            type="button"
-            disabled={busy}
-            aria-label={locale.text('kernel.clear')}
-            title={locale.text('kernel.clear')}
-            data-bridge-kernel-clear=""
-            className="inline-flex shrink-0 cursor-pointer border-none bg-transparent p-0 text-[var(--dsw-alias-label-caption)] disabled:cursor-default [&_svg]:w-[11px] [&_svg]:h-[11px]"
-            onClick={clear}
-          >
-            <Xmark />
-          </button>
-        )}
-      />
+      <span className={pillClass(disabled, expanded)} data-bridge-kernel-pill="">
+        <Menu
+          open={expanded}
+          anchor={(
+            <Chip
+              ref={chipRef}
+              variant="seat"
+              className={`rounded-none bg-transparent hover:not-disabled:bg-transparent aria-expanded:bg-transparent${clearable ? ' pr-0' : ''}`}
+              icon={<KernelIcon backend={backend} />}
+              chevron={clearable ? undefined : <ChevronDown />}
+              open={expanded}
+              disabled={disabled}
+              aria-label={locale.text('kernel.label')}
+              aria-haspopup="menu"
+              aria-expanded={expanded}
+              title={title}
+              onClick={() => setExpanded(current => !current)}
+            >
+              {backend === undefined ? remembered ? locale.text('kernel.select') : locale.text('kernel.pending') : LABELS[backend]}
+            </Chip>
+          )}
+          items={items}
+          selectedId={backend}
+          onSelect={select}
+          onClose={() => setExpanded(false)}
+          portal
+          side="bottom"
+          getAnchorRect={() => chipRef.current?.getBoundingClientRect() ?? null}
+        />
+        <If
+          cond={clearable}
+          then={(
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={locale.text('kernel.clear')}
+              title={locale.text('kernel.clear')}
+              data-bridge-kernel-clear=""
+              className="inline-flex shrink-0 cursor-pointer items-center self-stretch border-none bg-transparent pl-[4px] pr-[8px] text-[var(--dsw-alias-label-caption)] disabled:cursor-default [&_svg]:w-[11px] [&_svg]:h-[11px]"
+              onClick={clear}
+            >
+              <Xmark />
+            </button>
+          )}
+        />
+      </span>
       <If
         cond={failure != null}
         then={(
