@@ -75,6 +75,52 @@ async function pruneAssets(runnerTemp: string, tag: string, releases: Map<string
   return github
 }
 
+describe('nightly release notes', () => {
+  it.each([false, true])('composes fresh notes on repeated publication with changelog missing: %s', (missing) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'nightly-notes-'))
+    temporaryRepos.push(directory)
+    if (!missing)
+      writeFileSync(path.join(directory, 'nightly_changelog.md'), '### Bug Fixes\n- Fixed nightly publishing\n')
+    writeFileSync(path.join(directory, 'nightly_notes.md'), 'stale notes\n### Artifacts\n')
+    const body = stepBody(readSource(WORKFLOW), 'Compose release notes')
+    const script = body.split('run: |\n')[1]!.replace(/^ {10}/gm, '')
+    const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash'
+    const execute = () => execFileSync(bash, ['-c', `gh() { printf '%s\\n' "$*" > published.txt; }\n${script}`], {
+      cwd: directory,
+      env: { ...process.env, RUNNER_TEMP: directory.replace(/\\/g, '/'), NIGHTLY_TAG: 'nightly-20261009', NIGHTLY_SHA: 'abc1234', NIGHTLY_DESCRIPTION: 'Nightly warning' },
+      encoding: 'utf8',
+      timeout: 5000,
+    })
+    if (missing) {
+      expect(execute).toThrow()
+      expect(readdirSync(directory)).not.toContain('published.txt')
+      return
+    }
+    execute()
+    const notes = readFileSync(path.join(directory, 'nightly_notes.md'), 'utf8')
+    expect(notes).toContain('Nightly warning\n\n### Bug Fixes\n- Fixed nightly publishing\n')
+    expect(notes).not.toContain('stale notes')
+    expect(notes.match(/### 📦 Artifacts/g)).toHaveLength(1)
+    expect(notes).toContain('<!-- nightly-sha:abc1234 -->')
+    expect(readFileSync(path.join(directory, 'published.txt'), 'utf8')).toContain('--notes-file nightly_notes.md --draft=false --prerelease --latest=false')
+  })
+
+  it('generates changelog locally without creating a second release', () => {
+    const body = stepBody(readSource(WORKFLOW), 'Generate changelog')
+    expect(body).toContain('--output "$RUNNER_TEMP/nightly_changelog.md"')
+    expect(body).not.toContain('--draft')
+    expect(body).not.toMatch(/pnpm exec changelogithub[^\n]*\|\|/)
+  })
+
+  it('publishes the generated changelog instead of rereading an ambiguous release tag', () => {
+    const body = stepBody(readSource(WORKFLOW), 'Compose release notes')
+    expect(body).toContain('cat "$RUNNER_TEMP/nightly_changelog.md"')
+    expect(body).toContain('printf \'%s\\n\' "$NIGHTLY_DESCRIPTION"')
+    expect(body).not.toContain('gh release view')
+    expect(body).toContain('--notes-file nightly_notes.md --draft=false --prerelease --latest=false')
+  })
+})
+
 describe('nightly release assets', () => {
   it.each([
     { product: 'DSH Tauri', version: '0.22.4' },
