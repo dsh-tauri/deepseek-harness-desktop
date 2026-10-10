@@ -16,6 +16,7 @@ export interface NativeModelInfo {
 export interface NativeModelCatalog {
   models: NativeModelInfo[]
   defaultModel?: string
+  defaultReasoningEffort?: string
 }
 
 export interface NativeModelDirectory extends NativeModelCatalog {

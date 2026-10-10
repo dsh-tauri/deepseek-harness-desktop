@@ -185,8 +185,6 @@ class ClaudeSession implements NativeSession {
         ...efforts.length > 0 ? { reasoning: { efforts } } : {},
       }
       models.set(id, info)
-      if (typeof model.resolvedModel === 'string' && model.resolvedModel !== '' && !models.has(model.resolvedModel))
-        models.set(model.resolvedModel, { ...info, id: model.resolvedModel })
       if (models.size > 10_000)
         throw new NativeBridgeError('BRIDGE_PROTOCOL_LIMIT', 'Claude model listing exceeded its limit')
     }

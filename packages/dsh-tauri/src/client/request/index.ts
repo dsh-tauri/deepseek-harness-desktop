@@ -20,7 +20,7 @@ export const fetch = createFetch({
     retry: 0,
     parseResponse: parseJsonResponse,
     onResponseError: ({ response }) => {
-      throw new Error(defaultErrorMessage(response.status, response._data))
+      throw Object.assign(new Error(defaultErrorMessage(response.status, response._data)), { status: response.status })
     },
   },
 })

@@ -393,6 +393,30 @@ describe('claude native stream-json control contract', () => {
     expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
   })
 
+  it('keeps each Claude alias once instead of exposing its resolved model id as a duplicate row', async () => {
+    const fixture = claudeProcess({
+      models: [
+        { value: 'default', resolvedModel: 'claude-opus-5-5', displayName: 'Default (recommended)', description: 'Use the default model (currently Opus 5.5)', supportsEffort: true, supportedEffortLevels: ['high'] },
+        { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus', description: 'Opus 5.5', supportsEffort: true, supportedEffortLevels: ['high'] },
+        { value: 'fable', resolvedModel: 'claude-fable-5-1', displayName: 'Fable', supportsEffort: true, supportedEffortLevels: ['high'] },
+        { value: 'sonnet', resolvedModel: 'claude-sonnet-5-5', displayName: 'Sonnet', supportsEffort: true, supportedEffortLevels: ['high'] },
+        { value: 'haiku', resolvedModel: 'claude-haiku-5-5', displayName: 'Haiku', supportsEffort: true, supportedEffortLevels: ['high'] },
+      ],
+    })
+    const session = await open(storedId)
+    const catalog = await session.models!(new AbortController().signal)
+    expect(catalog.models.map(model => ({ id: model.id, name: model.name }))).toEqual([
+      { id: 'default', name: 'Default (recommended)' },
+      { id: 'opus', name: 'Opus' },
+      { id: 'fable', name: 'Fable' },
+      { id: 'sonnet', name: 'Sonnet' },
+      { id: 'haiku', name: 'Haiku' },
+    ])
+    expect(catalog.defaultModel).toBeUndefined()
+    expect(catalog.models.some(model => model.id.startsWith('claude-'))).toBe(false)
+    expect(fixture.frames.some(frame => frame.type === 'user')).toBe(false)
+  })
+
   it('reports absent discovery as unsupported and never guesses effort levels', async () => {
     const fixture = claudeProcess()
     const session = await open()

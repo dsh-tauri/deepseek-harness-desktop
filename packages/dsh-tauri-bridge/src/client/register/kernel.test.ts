@@ -30,10 +30,14 @@ function deferred<T>() {
   let resolve: (value: T) => void = () => {
     throw new Error('uninitialized promise')
   }
-  const promise = new Promise<T>((accept) => {
+  let reject: (reason: unknown) => void = () => {
+    throw new Error('uninitialized promise')
+  }
+  const promise = new Promise<T>((accept, decline) => {
     resolve = accept
+    reject = decline
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function fixture(options: { hero?: boolean, sidebar?: boolean, hover?: boolean, model?: boolean, unknownModel?: boolean, refresh?: boolean, create?: boolean, open?: boolean } = {}) {
@@ -147,6 +151,7 @@ afterEach(() => {
     dispose()
   kernelStore.$patch({ selected: 'dsh', phase: 'idle', backends: [], error: null })
   vi.restoreAllMocks()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.stubGlobal('localStorage', undefined)
 })
@@ -266,6 +271,141 @@ describe('kernel registration and lifecycle', () => {
     expect(feature.refreshProjections).not.toHaveBeenCalled()
     expect(feature.openSession).not.toHaveBeenCalled()
     expect(kernelStore.$state.selected).toBe('dsh')
+  })
+
+  it('recovers when the startup route is registered after two 404 responses', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getBackends)
+      .mockRejectedValueOnce(Object.assign(new Error('请求失败 (404): route pending'), { status: 404 }))
+      .mockRejectedValueOnce(Object.assign(new Error('请求失败 (404): still pending'), { status: 404 }))
+      .mockResolvedValueOnce(BACKENDS)
+    fixture()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(kernelStore.$state).toMatchObject({ phase: 'loading', error: null })
+    expect(getBackends).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(getBackends).toHaveBeenCalledTimes(2)
+    expect(kernelStore.$state.phase).toBe('loading')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(getBackends).toHaveBeenCalledTimes(3)
+    expect(kernelStore.$state).toMatchObject({ phase: 'ready', backends: BACKENDS, error: null })
+    expect(console.warn).not.toHaveBeenCalled()
+    const signals = vi.mocked(getBackends).mock.calls.map(([options]) => options?.signal)
+    expect(signals.every(signal => signal instanceof AbortSignal && !signal.aborted)).toBe(true)
+    expect(new Set(signals).size).toBe(1)
+  })
+
+  it.each([401, 403, 500, undefined, '404'])('never retries a startup failure with status %s', async (status) => {
+    vi.useFakeTimers()
+    const reason = Object.assign(new Error('请求失败 (404): not a missing route'), { status })
+    vi.mocked(getBackends).mockRejectedValue(reason)
+    fixture()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(getBackends).toHaveBeenCalledTimes(1)
+    expect(kernelStore.$state).toMatchObject({ phase: 'error', error: reason.message })
+    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-bridge] kernel detection failed', reason)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('bounds permanent startup 404 retries and preserves the final real error', async () => {
+    vi.useFakeTimers()
+    const reasons = Array.from({ length: 5 }, (_, index) => Object.assign(new Error(`请求失败 (404): route missing ${index}`), { status: 404 }))
+    for (const reason of reasons)
+      vi.mocked(getBackends).mockRejectedValueOnce(reason)
+    fixture()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(getBackends).toHaveBeenCalledTimes(5)
+    expect(kernelStore.$state).toMatchObject({ phase: 'error', error: reasons[4]!.message })
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-bridge] kernel detection failed', reasons[4])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('reports a non-404 encountered after a retry without hiding it behind the startup error', async () => {
+    vi.useFakeTimers()
+    const reason = Object.assign(new Error('请求失败 (403): origin blocked'), { status: 403 })
+    vi.mocked(getBackends)
+      .mockRejectedValueOnce(Object.assign(new Error('请求失败 (404): route pending'), { status: 404 }))
+      .mockRejectedValueOnce(reason)
+    fixture()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(getBackends).toHaveBeenCalledTimes(2)
+    expect(kernelStore.$state).toMatchObject({ phase: 'error', error: reason.message })
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-bridge] kernel detection failed', reason)
+  })
+
+  it('manual refresh uses one attempt rather than silently starting another startup retry window', async () => {
+    vi.useFakeTimers()
+    const feature = fixture()
+    await vi.advanceTimersByTimeAsync(0)
+    const reason = Object.assign(new Error('请求失败 (404): route removed'), { status: 404 })
+    vi.mocked(getBackends).mockRejectedValueOnce(reason)
+    const refresh = feature.hero().refreshBackends()
+    await vi.advanceTimersByTimeAsync(10_000)
+    await refresh
+    expect(getBackends).toHaveBeenCalledTimes(2)
+    expect(kernelStore.$state).toMatchObject({ phase: 'error', error: reason.message })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('disposal cancels a pending startup retry and aborts its request ownership', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getBackends).mockRejectedValueOnce(Object.assign(new Error('请求失败 (404): route pending'), { status: 404 }))
+    const feature = fixture()
+    await vi.advanceTimersByTimeAsync(0)
+    const signal = vi.mocked(getBackends).mock.calls[0]?.[0]?.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    feature.dispose()
+    expect(signal?.aborted).toBe(true)
+    kernelStore.$patch({ phase: 'idle', backends: [], error: null })
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(getBackends).toHaveBeenCalledTimes(1)
+    expect(kernelStore.$state).toMatchObject({ phase: 'idle', backends: [], error: null })
+    expect(console.warn).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('manual refresh aborts and cancels an older startup retry without delaying the new roster', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getBackends)
+      .mockRejectedValueOnce(Object.assign(new Error('请求失败 (404): route pending'), { status: 404 }))
+      .mockResolvedValueOnce([BACKENDS[0]!])
+    const feature = fixture()
+    await vi.advanceTimersByTimeAsync(0)
+    const signal = vi.mocked(getBackends).mock.calls[0]?.[0]?.signal
+    const pending = feature.hero().refreshBackends()
+    await vi.advanceTimersByTimeAsync(0)
+    await pending
+    expect(signal?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(getBackends).toHaveBeenCalledTimes(2)
+    expect(kernelStore.$state).toMatchObject({ phase: 'ready', backends: [BACKENDS[0]!], error: null })
+    expect(console.warn).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['dispose', 'supersede'] as const)('a late startup 404 after %s cannot warn, retry or change the current store', async (action) => {
+    vi.useFakeTimers()
+    const pending = deferred<BackendDetection[]>()
+    vi.mocked(getBackends).mockReturnValueOnce(pending.promise).mockResolvedValueOnce([BACKENDS[0]!])
+    const feature = fixture()
+    const signal = vi.mocked(getBackends).mock.calls[0]?.[0]?.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    if (action === 'dispose') {
+      feature.dispose()
+      kernelStore.$patch({ phase: 'idle', backends: [], error: null })
+    }
+    else {
+      await feature.hero().refreshBackends()
+    }
+    expect(signal?.aborted).toBe(true)
+    pending.reject(Object.assign(new Error('请求失败 (404): stale route response'), { status: 404 }))
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(getBackends).toHaveBeenCalledTimes(action === 'dispose' ? 1 : 2)
+    expect(kernelStore.$state).toMatchObject(action === 'dispose'
+      ? { phase: 'idle', backends: [], error: null }
+      : { phase: 'ready', backends: [BACKENDS[0]!], error: null })
+    expect(console.warn).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('a detection response arriving after disposal cannot update the shared store', async () => {

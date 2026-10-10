@@ -39,6 +39,12 @@ export function registerNativeModels(controller: RegisterController, adapter: Cl
           const latest = isEqual(values?.bridgeKernel, binding) && isNativeTurnOptions(values?.bridgeModel) ? values.bridgeModel : current
           actions.syncNativeModel(sessionId, binding, latest)
           const unsubscribe = nativeModel.$subscribe(listener)
+          const scope = scopeOf(sessionId, binding)
+          queueMicrotask(() => {
+            const entry = nativeModel.$state.entries[sessionId]
+            if (scope?.active() && entry?.scope === scope.scope && entry.request === 0)
+              void loadNativeModels(scope)
+          })
           let stopped = false
           const dispose = () => {
             if (stopped)

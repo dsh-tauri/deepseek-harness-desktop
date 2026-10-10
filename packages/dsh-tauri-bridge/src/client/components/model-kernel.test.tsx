@@ -103,13 +103,23 @@ function fixture(identity: KernelBinding | null | undefined, options: { current?
     const group = snapshot.groups.find(group => group.id === snapshot.current?.provider)
     const current = group?.models.find(model => model.id === snapshot.current?.model)
     const label = current?.name ?? `${snapshot.current?.provider}/${snapshot.current?.model}`
-    const select = (selection: ModelSelection) => {
-      void props.select(selection)
+    const reasoning = current?.reasoning
+    const effectiveEffort = snapshot.current?.reasoningEffort ?? reasoning?.defaultEffort
+    const effortLabel = reasoning === undefined ? snapshot.retainedEffort : effectiveEffort === undefined ? undefined : reasoning.efforts.find(effort => effort.id === effectiveEffort)?.name ?? effectiveEffort
+    const chooseModel = (model: NonNullable<typeof group>['models'][number]) => {
+      if (snapshot.current?.provider === group!.id && snapshot.current.model === model.id)
+        return
+      void props.select({ provider: group!.id, model: model.id, ...(model.reasoning?.defaultEffort === undefined ? {} : { reasoningEffort: model.reasoning.defaultEffort }) })
     }
-    return createElement('section', { 'data-original-marker': props.marker }, createElement('button', { disabled: props.locked, onClick: props.load }, `${label}${snapshot.current?.reasoningEffort ? ` · ${snapshot.current.reasoningEffort}` : ''}`), ...(snapshot.status === 'ready' ? group?.models.map(model => createElement('button', { key: model.id, disabled: props.locked, onClick: () => select({ provider: group.id, model: model.id }) }, `Model: ${model.name}`)) ?? [] : []), ...(snapshot.status === 'ready' && snapshot.current && current?.reasoning
+    const chooseEffort = (effort?: string) => {
+      if (snapshot.current === null || effectiveEffort === effort)
+        return
+      void props.select({ provider: snapshot.current.provider, model: snapshot.current.model, ...(effort === undefined ? {} : { reasoningEffort: effort }) })
+    }
+    return createElement('section', { 'data-original-marker': props.marker }, createElement('button', { disabled: props.locked, onClick: props.load }, `${label}${effortLabel === undefined ? '' : ` · ${effortLabel}`}`), ...(snapshot.status === 'ready' ? group?.models.map(model => createElement('button', { key: model.id, disabled: props.locked, onClick: () => chooseModel(model) }, `Model: ${model.name}`)) ?? [] : []), ...(snapshot.status === 'ready' && snapshot.current && reasoning
       ? [
-          createElement('button', { key: 'default-effort', disabled: props.locked, onClick: () => select({ provider: snapshot.current!.provider, model: snapshot.current!.model }) }, 'Depth: default'),
-          ...current.reasoning.efforts.map(effort => createElement('button', { key: effort.id, disabled: props.locked, onClick: () => select({ ...snapshot.current!, reasoningEffort: effort.id }) }, `Depth: ${effort.name}`)),
+          ...(reasoning.defaultEffort === undefined ? [createElement('button', { key: 'default-effort', disabled: props.locked, onClick: () => chooseEffort() }, 'Depth: default')] : []),
+          ...reasoning.efforts.map(effort => createElement('button', { key: effort.id, disabled: props.locked, onClick: () => chooseEffort(effort.id) }, `Depth: ${effort.name}`)),
         ]
       : []), ...(snapshot.error ? [createElement('div', { key: 'error', role: 'alert' }, snapshot.error), createElement('button', { key: 'retry', onClick: props.load }, 'Retry')] : []))
   }
@@ -156,16 +166,142 @@ afterEach(() => {
 })
 
 describe('native model renderer public contract', () => {
+  it('the initial native default shows its actual model and effective effort without a click or durable write', async () => {
+    vi.mocked(getModels).mockResolvedValue({
+      backend: 'codex',
+      defaultModel: 'deepseek',
+      defaultReasoningEffort: 'high',
+      current: { model: 'catalog-hint-is-not-durable', reasoningEffort: 'low' },
+      models: [{ id: 'deepseek', name: 'DeepSeek V4.1 Flash', reasoning: { efforts: [{ id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }], defaultEffort: 'medium' } }],
+    })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
+    const view = render(<ModelKernel {...feature.props} />)
+    await view.findByRole('button', { name: 'DeepSeek V4.1 Flash · High' })
+    expect(view.getAllByRole('button', { name: /^Model:/ }).map(button => button.textContent)).toEqual(['Model: DeepSeek V4.1 Flash'])
+    expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' })
+    expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: null, reasoningEffort: null })
+    expect(nativeModel.$state.entries['session-a']?.directory.current).toEqual({ provider: 'bridge/codex', model: 'deepseek', reasoningEffort: 'high' })
+    expect(view.queryByRole('button', { name: /bridge\/codex/ })).toBeNull()
+    expect(postModels).not.toHaveBeenCalled()
+    for (const action of [feature.officialSelect, feature.officialLoad, feature.sessions.selectModel, feature.sessions.create, feature.sessions.binding, feature.sessions.retain, feature.navigation.openSession, feature.navigation.startSession])
+      expect(action).not.toHaveBeenCalled()
+  })
+
+  it('the native custom default effort is a read-only caption when no native depth metadata exists', async () => {
+    vi.mocked(getModels).mockResolvedValue({ backend: 'codex', defaultModel: 'deepseek', defaultReasoningEffort: 'high', current: { model: null, reasoningEffort: null }, models: [{ id: 'deepseek', name: 'DeepSeek' }] })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
+    const view = render(<ModelKernel {...feature.props} />)
+    await view.findByRole('button', { name: 'DeepSeek · high' })
+    expect(view.getAllByRole('button', { name: /^Model:/ }).map(button => button.textContent)).toEqual(['Model: DeepSeek'])
+    expect(view.queryByRole('button', { name: /^Depth:/ })).toBeNull()
+    expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: null, reasoningEffort: null })
+    expect(postModels).not.toHaveBeenCalled()
+  })
+
+  it('a missing native default uses one honest placeholder and no guessed model or depth', async () => {
+    vi.mocked(getModels).mockResolvedValue({ backend: 'codex', current: { model: null, reasoningEffort: null }, models: [] })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
+    const view = render(<ModelKernel {...feature.props} />)
+    await view.findByRole('button', { name: 'Model: Native default' })
+    expect(view.getAllByRole('button', { name: /^Model:/ }).map(button => button.textContent)).toEqual(['Model: Native default'])
+    expect(view.queryByRole('button', { name: /GPT|Depth:|bridge\/codex/ })).toBeNull()
+    expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' })
+    expect(postModels).not.toHaveBeenCalled()
+  })
+
+  it('default model and provider-default depth actions reset nullable options without persisting the displayed high hint', async () => {
+    vi.mocked(getModels).mockResolvedValue({ ...CATALOG, defaultReasoningEffort: 'high' })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
+    const view = render(<ModelKernel {...feature.props} />)
+    await view.findByRole('button', { name: 'GPT-5.4 · High' })
+    fireEvent.click(view.getByRole('button', { name: 'Model: GPT-5.4' }))
+    fireEvent.click(view.getByRole('button', { name: 'Depth: High' }))
+    expect(postModels).not.toHaveBeenCalled()
+    fireEvent.click(view.getByRole('button', { name: 'Depth: default' }))
+    await waitFor(() => expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: null, reasoningEffort: null }))
+    await waitFor(() => expect(nativeModel.$state.entries['session-a']?.directory.status).toBe('ready'))
+    feature.setServerSelection({ model: 'gpt-5.4-mini', reasoningEffort: null })
+    fireEvent.click(view.getByRole('button', { name: 'Model: GPT-5.4 Mini' }))
+    await view.findByRole('button', { name: 'GPT-5.4 Mini' })
+    feature.setServerSelection({ model: null, reasoningEffort: null })
+    fireEvent.click(view.getByRole('button', { name: 'Model: GPT-5.4' }))
+    await view.findByRole('button', { name: 'GPT-5.4 · High' })
+    expect(vi.mocked(postModels).mock.calls).toEqual([
+      [{ sessionId: 'session-a', model: null, reasoningEffort: null }],
+      [{ sessionId: 'session-a', model: 'gpt-5.4-mini', reasoningEffort: null }],
+      [{ sessionId: 'session-a', model: null, reasoningEffort: null }],
+    ])
+    expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: null, reasoningEffort: null })
+  })
+
+  it('a medium-to-High user action submits the actual advertised effort rather than the native display baseline', async () => {
+    vi.mocked(getModels).mockResolvedValue({ ...CATALOG, defaultReasoningEffort: 'high' })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: null, reasoningEffort: 'medium' } })
+    const view = render(<ModelKernel {...feature.props} />)
+    await view.findByRole('button', { name: 'GPT-5.4 · Medium' })
+    feature.setServerSelection({ model: null, reasoningEffort: 'high' })
+    fireEvent.click(view.getByRole('button', { name: 'Depth: High' }))
+    await view.findByRole('button', { name: 'GPT-5.4 · High' })
+    expect(postModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a', model: null, reasoningEffort: 'high' })
+    expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: null, reasoningEffort: 'high' })
+  })
+
+  it('reading an existing fixed default preference never silently converts it to nullable delegation', async () => {
+    vi.mocked(getModels).mockResolvedValue({ ...CATALOG, defaultReasoningEffort: 'high' })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'gpt-5.4', reasoningEffort: null } })
+    const view = render(<ModelKernel {...feature.props} />)
+    await view.findByRole('button', { name: 'GPT-5.4 · High' })
+    fireEvent.click(view.getByRole('button', { name: 'Model: GPT-5.4' }))
+    fireEvent.click(view.getByRole('button', { name: 'Depth: High' }))
+    expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: 'gpt-5.4', reasoningEffort: null })
+    expect(postModels).not.toHaveBeenCalled()
+    expect(feature.refreshProjections).not.toHaveBeenCalled()
+  })
+
+  it('strict mode and shared renderers perform one initial request for a nullable native default', async () => {
+    const pending = deferred<NativeModelDirectory>()
+    vi.mocked(getModels).mockReturnValueOnce(pending.promise)
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
+    const first = render(<StrictMode><ModelKernel {...feature.props} /></StrictMode>)
+    const second = render(<StrictMode><ModelKernel {...feature.props} /></StrictMode>)
+    await waitFor(() => expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' }))
+    const scope = nativeModel.$state.entries['session-a']!.scope
+    first.unmount()
+    await act(async () => {
+      pending.resolve({ backend: 'codex', defaultModel: 'deepseek', defaultReasoningEffort: 'high', current: { model: null, reasoningEffort: null }, models: [{ id: 'deepseek', name: 'DeepSeek' }] })
+      await pending.promise
+    })
+    await second.findByRole('button', { name: 'DeepSeek · high' })
+    expect(second.getAllByRole('button', { name: /^Model:/ }).map(button => button.textContent)).toEqual(['Model: DeepSeek'])
+    expect(nativeModel.$state.entries['session-a']!.scope).toBe(scope)
+    expect(nativeModel.$state.entries['session-a']!.current).toEqual({ model: null, reasoningEffort: null })
+    expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' })
+    expect(postModels).not.toHaveBeenCalled()
+    second.unmount()
+    await act(async () => {})
+    expect(nativeModel.$state.entries).toEqual({})
+  })
+
+  it('an inherited native binding uses a native-default placeholder rather than presenting its bridge route as a model', () => {
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-parent', sessionId: 'parent-session' })
+    const view = render(<ModelKernel {...feature.props} />)
+    const trigger = view.getByRole('button', { name: 'Native default' }) as HTMLButtonElement
+    expect(trigger.disabled).toBe(true)
+    expect(trigger.title).toBe('Forked sessions cannot resume the native kernel')
+    expect(view.queryByRole('button', { name: /bridge\/codex/ })).toBeNull()
+    expect(nativeModel.$state.entries).toEqual({})
+    expect(getModels).not.toHaveBeenCalled()
+    expect(postModels).not.toHaveBeenCalled()
+  })
+
   it.each(['codex', 'claude'] as const)('the %s identity reuses the original renderer with real native model and depth metadata', async (backend) => {
     const modelId = backend === 'codex' ? 'gpt-5.4' : 'claude-sonnet-4-6'
     const modelName = backend === 'codex' ? 'GPT-5.4' : 'Sonnet 4.6'
     vi.mocked(getModels).mockResolvedValue({ ...CATALOG, backend, defaultModel: modelId, models: [{ id: modelId, name: modelName, reasoning: { efforts: [{ id: 'high', name: 'High' }] } }] })
     const feature = fixture({ backend, nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: modelId, reasoningEffort: 'high' } })
     const view = render(<ModelKernel {...feature.props} />)
-    const initial = view.getByRole('button', { name: `bridge/${backend}/${modelId} · high` }) as HTMLButtonElement
+    const initial = await view.findByRole('button', { name: `${modelName} · High` }) as HTMLButtonElement
     expect(initial.disabled).toBe(false)
-    fireEvent.click(initial)
-    await view.findByRole('button', { name: `${modelName} · high` })
     expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' })
     expect(view.queryByRole('button', { name: 'Official model' })).toBeNull()
     expect(view.container.querySelector('[data-bridge-kernel-model="native"]')?.getAttribute('title')).toBe('Model and reasoning changes apply to the next complete turn; this session kernel cannot be changed')
@@ -194,20 +330,19 @@ describe('native model renderer public contract', () => {
     })
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'gpt-6.1-sol', reasoningEffort: 'low' } })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/codex/gpt-6.1-sol · low' }))
-    await view.findByRole('button', { name: 'GPT-6.1-Sol · low' })
+    await view.findByRole('button', { name: 'GPT-6.1-Sol · Low' })
     expect(view.getAllByRole('button', { name: /^Model: GPT/ }).map(button => button.textContent)).toEqual(['Model: GPT-6.1-Sol', 'Model: GPT-6-Astra', 'Model: GPT-6-Luna'])
     expect(view.getAllByRole('button', { name: /^Depth:/ }).map(button => button.textContent)).toEqual(['Depth: default', 'Depth: Low', 'Depth: Medium', 'Depth: High', 'Depth: Extra High', 'Depth: Max', 'Depth: Ultra'])
     expect(view.queryByRole('button', { name: 'Official model' })).toBeNull()
     expect(view.queryByRole('button', { name: 'Depth: Off' })).toBeNull()
     feature.setServerSelection({ model: 'gpt-6.1-sol', reasoningEffort: 'xhigh' })
     fireEvent.click(view.getByRole('button', { name: 'Depth: Extra High' }))
-    await view.findByRole('button', { name: 'GPT-6.1-Sol · xhigh' })
+    await view.findByRole('button', { name: 'GPT-6.1-Sol · Extra High' })
     feature.setServerSelection({ model: 'gpt-6.1-sol', reasoningEffort: 'max' })
     fireEvent.click(view.getByRole('button', { name: 'Depth: Max' }))
-    await view.findByRole('button', { name: 'GPT-6.1-Sol · max' })
-    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: 'gpt-6.1-sol', reasoningEffort: 'xhigh' })
-    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: 'gpt-6.1-sol', reasoningEffort: 'max' })
+    await view.findByRole('button', { name: 'GPT-6.1-Sol · Max' })
+    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: null, reasoningEffort: 'xhigh' })
+    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: null, reasoningEffort: 'max' })
     expect(feature.officialLoad).not.toHaveBeenCalled()
     expect(feature.officialSelect).not.toHaveBeenCalled()
   })
@@ -221,32 +356,30 @@ describe('native model renderer public contract', () => {
     })
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'vendor-model', reasoningEffort: 'max' } })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/codex/vendor-model · max' }))
     await view.findByRole('button', { name: 'Depth: Off' })
     feature.setServerSelection({ model: 'vendor-model', reasoningEffort: 'none' })
     fireEvent.click(view.getByRole('button', { name: 'Depth: Off' }))
-    await view.findByRole('button', { name: 'Native vendor model · none' })
-    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: 'vendor-model', reasoningEffort: 'none' })
+    await view.findByRole('button', { name: 'Native vendor model · Off' })
+    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: null, reasoningEffort: 'none' })
     feature.setServerSelection({ model: 'vendor-model', reasoningEffort: null })
     fireEvent.click(view.getByRole('button', { name: 'Depth: default' }))
     await view.findByRole('button', { name: 'Native vendor model' })
-    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: 'vendor-model', reasoningEffort: null })
+    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: null, reasoningEffort: null })
     expect(feature.officialSelect).not.toHaveBeenCalled()
   })
 
   it('model and depth choices use generated native APIs and durable projection without global model RPC or activation', async () => {
-    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'gpt-5.4-mini', reasoningEffort: null } })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/codex' }))
     await view.findByRole('button', { name: 'Model: GPT-5.4' })
-    feature.setServerSelection({ model: 'gpt-5.4', reasoningEffort: null })
+    feature.setServerSelection({ model: null, reasoningEffort: null })
     fireEvent.click(view.getByRole('button', { name: 'Model: GPT-5.4' }))
     await view.findByRole('button', { name: 'GPT-5.4' })
-    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: 'gpt-5.4', reasoningEffort: null })
-    feature.setServerSelection({ model: 'gpt-5.4', reasoningEffort: 'high' })
+    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: null, reasoningEffort: null })
+    feature.setServerSelection({ model: null, reasoningEffort: 'high' })
     fireEvent.click(view.getByRole('button', { name: 'Depth: High' }))
-    await view.findByRole('button', { name: 'GPT-5.4 · high' })
-    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: 'gpt-5.4', reasoningEffort: 'high' })
+    await view.findByRole('button', { name: 'GPT-5.4 · High' })
+    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: null, reasoningEffort: 'high' })
     expect(feature.refreshProjections.mock.calls).toEqual([['session-a'], ['session-a']])
     for (const action of [feature.officialSelect, feature.sessions.selectModel, feature.sessions.create, feature.sessions.binding, feature.sessions.retain, feature.navigation.openSession, feature.navigation.startSession])
       expect(action).not.toHaveBeenCalled()
@@ -255,15 +388,14 @@ describe('native model renderer public contract', () => {
   it('the nullable default model retains actual depth choices and sends a nullable effort reset', async () => {
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/codex' }))
     await view.findByRole('button', { name: 'Depth: High' })
     feature.setServerSelection({ model: null, reasoningEffort: 'high' })
     fireEvent.click(view.getByRole('button', { name: 'Depth: High' }))
-    await view.findByRole('button', { name: 'bridge/codex · high' })
+    await view.findByRole('button', { name: 'GPT-5.4 · High' })
     expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: null, reasoningEffort: 'high' })
     feature.setServerSelection({ model: null, reasoningEffort: null })
     fireEvent.click(view.getByRole('button', { name: 'Depth: default' }))
-    await view.findByRole('button', { name: 'bridge/codex' })
+    await view.findByRole('button', { name: 'GPT-5.4' })
     expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: null, reasoningEffort: null })
   })
 
@@ -271,7 +403,6 @@ describe('native model renderer public contract', () => {
     vi.mocked(getModels).mockResolvedValue({ backend: 'claude', defaultModel: 'claude-sonnet-4-6', current: { model: null, reasoningEffort: null }, models: [{ id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' }] })
     const feature = fixture({ backend: 'claude', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'claude-sonnet-4-6', reasoningEffort: null } })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/claude/claude-sonnet-4-6' }))
     await view.findByRole('button', { name: 'Sonnet 4.6' })
     expect(view.queryByRole('button', { name: /Depth:/ })).toBeNull()
   })
@@ -280,7 +411,7 @@ describe('native model renderer public contract', () => {
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, options)
     const view = render(<ModelKernel {...feature.props} />)
     if (options.available)
-      expect((view.getByRole('button', { name: 'bridge/codex' }) as HTMLButtonElement).disabled).toBe(true)
+      expect((await view.findByRole('button', { name: 'GPT-5.4' }) as HTMLButtonElement).disabled).toBe(true)
     else
       expect(view.queryByRole('button')).toBeNull()
     await act(async () => {
@@ -294,7 +425,6 @@ describe('native model renderer public contract', () => {
     vi.mocked(getModels).mockRejectedValueOnce(new Error('CLI catalog failed'))
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/codex' }))
     expect((await view.findByRole('alert')).textContent).toBe('CLI catalog failed')
     fireEvent.click(view.getByRole('button', { name: 'Retry' }))
     await view.findByRole('button', { name: 'Model: GPT-5.4' })
@@ -306,18 +436,18 @@ describe('native model renderer public contract', () => {
   it('a selection pending during session switch cannot update the new session or refresh the old projection', async () => {
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/codex' }))
-    await view.findByRole('button', { name: 'Model: GPT-5.4' })
+    await view.findByRole('button', { name: 'Model: GPT-5.4 Mini' })
     const pending = deferred<NativeTurnOptions>()
     vi.mocked(postModels).mockReturnValueOnce(pending.promise)
-    fireEvent.click(view.getByRole('button', { name: 'Model: GPT-5.4' }))
+    fireEvent.click(view.getByRole('button', { name: 'Model: GPT-5.4 Mini' }))
+    vi.mocked(getModels).mockResolvedValueOnce({ backend: 'claude', defaultModel: 'claude-native', current: { model: null, reasoningEffort: null }, models: [{ id: 'claude-native', name: 'Claude native' }] })
     act(() => feature.setProjection('session-b', { backend: 'claude', nativeSessionId: 'native-b', sessionId: 'session-b' }, { model: null, reasoningEffort: null }))
     view.rerender(<ModelKernel {...feature.propsFor('session-b')} />)
     await act(async () => {
       pending.resolve({ model: 'gpt-5.4', reasoningEffort: null })
       await pending.promise
     })
-    expect(view.getByRole('button', { name: 'bridge/claude' })).toBeDefined()
+    await view.findByRole('button', { name: 'Claude native' })
     expect(nativeModel.$state.entries['session-a']).toBeUndefined()
     expect(nativeModel.$state.entries['session-b']?.current).toEqual({ model: null, reasoningEffort: null })
     expect(feature.refreshProjections).not.toHaveBeenCalled()
@@ -328,7 +458,7 @@ describe('native model renderer public contract', () => {
     vi.mocked(getModels).mockReturnValueOnce(pending.promise)
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
     const view = render(<ModelKernel {...feature.props} />)
-    fireEvent.click(view.getByRole('button', { name: 'bridge/codex' }))
+    await waitFor(() => expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' }))
     view.unmount()
     await act(async () => {
       pending.resolve(CATALOG)
@@ -341,15 +471,18 @@ describe('native model renderer public contract', () => {
     const binding: KernelBinding = { backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }
     const feature = fixture(binding, { current: { model: 'gpt-5.4', reasoningEffort: 'high' } })
     const first = render(<StrictMode><ModelKernel {...feature.props} /></StrictMode>)
-    fireEvent.click(first.getByRole('button', { name: 'bridge/codex/gpt-5.4 · high' }))
-    await first.findByRole('button', { name: 'GPT-5.4 · high' })
+    await first.findByRole('button', { name: 'GPT-5.4 · High' })
+    expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' })
+    expect(first.getAllByRole('button', { name: /^Model:/ }).map(button => button.textContent)).toEqual(['Model: GPT-5.4', 'Model: GPT-5.4 Mini'])
     const directory = feature.faces.at(-1)?.directory
     const scope = nativeModel.$state.entries['session-a']?.scope
     act(() => feature.setProjection('session-a', { ...binding }, { model: 'gpt-5.4', reasoningEffort: 'medium' }))
-    await first.findByRole('button', { name: 'GPT-5.4 · medium' })
+    await first.findByRole('button', { name: 'GPT-5.4 · Medium' })
     expect(feature.faces.at(-1)?.directory).toBe(directory)
     expect(nativeModel.$state.entries['session-a']?.scope).toBe(scope)
     const second = render(<StrictMode><ModelKernel {...feature.props} /></StrictMode>)
+    await act(async () => {})
+    expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' })
     first.unmount()
     expect(nativeModel.$state.entries['session-a']?.scope).toBe(scope)
     expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: 'gpt-5.4', reasoningEffort: 'medium' })
@@ -358,11 +491,13 @@ describe('native model renderer public contract', () => {
     expect(nativeModel.$state.entries).toEqual({})
   })
 
-  it('deepseek retains the original renderer directory and business actions', () => {
+  it('deepseek retains the original renderer directory and business actions', async () => {
     const feature = fixture(null)
     const view = render(<ModelKernel {...feature.props} />)
     fireEvent.click(view.getByRole('button', { name: 'Official model' }))
-    fireEvent.click(view.getByRole('button', { name: 'Model: Official model' }))
+    await act(async () => {
+      await feature.faces.at(-1)!.select({ provider: 'openai', model: 'official-model' })
+    })
     expect(feature.officialLoad).toHaveBeenCalledOnce()
     expect(feature.officialSelect).toHaveBeenCalledExactlyOnceWith({ provider: 'openai', model: 'official-model' })
     expect(feature.faces.at(-1)?.directory).toBe(feature.directory)
@@ -393,7 +528,7 @@ describe('native model renderer public contract', () => {
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' })
     feature.setProjection('session-a', { backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, undefined)
     const view = render(<ModelKernel {...feature.props} />)
-    expect((view.getByRole('button', { name: 'bridge/codex' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByRole('button', { name: 'Native default' }) as HTMLButtonElement).disabled).toBe(true)
     await waitFor(() => expect(feature.ensureProjection).toHaveBeenCalledExactlyOnceWith('session-a'))
     expect(nativeModel.$state.entries).toEqual({})
   })
@@ -401,7 +536,7 @@ describe('native model renderer public contract', () => {
   it('an inherited parent binding stays locked until the child owns a separate native identity', () => {
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-parent', sessionId: 'parent-session' })
     const view = render(<ModelKernel {...feature.props} />)
-    expect((view.getByRole('button', { name: 'bridge/codex' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByRole('button', { name: 'Native default' }) as HTMLButtonElement).disabled).toBe(true)
     expect(nativeModel.$state.entries).toEqual({})
     expect(getModels).not.toHaveBeenCalled()
   })
@@ -409,7 +544,7 @@ describe('native model renderer public contract', () => {
   it('a missing official projection reader cannot silently unlock the native seat', () => {
     const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { refresh: false })
     const view = render(<ModelKernel {...feature.props} />)
-    expect((view.getByRole('button', { name: 'bridge/codex' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByRole('button', { name: 'Native default' }) as HTMLButtonElement).disabled).toBe(true)
     expect(nativeModel.$state.entries).toEqual({})
   })
 

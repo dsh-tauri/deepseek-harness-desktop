@@ -20,6 +20,7 @@ export const locale = defineLocale(PLUGIN_ID, {
     'kernel.immutable': '此会话已绑定原生内核，不能更换内核',
     'kernel.modelNextTurn': '模型与推理深度仅影响下一完整轮次，不能更换此会话内核',
     'kernel.modelRetry': '重新加载模型',
+    'kernel.modelDefault': '原生默认',
   },
   en: {
     'kernel.label': 'Kernel',
@@ -39,5 +40,6 @@ export const locale = defineLocale(PLUGIN_ID, {
     'kernel.immutable': 'This session is bound to a native kernel; its kernel cannot be changed',
     'kernel.modelNextTurn': 'Model and reasoning changes apply to the next complete turn; this session kernel cannot be changed',
     'kernel.modelRetry': 'Reload models',
+    'kernel.modelDefault': 'Native default',
   },
 })

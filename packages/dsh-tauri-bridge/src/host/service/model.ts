@@ -27,6 +27,7 @@ const catalogSchema = z.object({
     }).optional(),
   })).max(2048),
   defaultModel: identifier.optional(),
+  defaultReasoningEffort: identifier.optional(),
 })
 
 export const model = defineService({
@@ -168,6 +169,8 @@ async function getCatalog(agent: Agent, lifetime: AbortController): Promise<Nati
   }
   if (catalog.defaultModel !== undefined && !ids.has(catalog.defaultModel))
     throw new Error('BRIDGE_MODEL_CATALOG_INVALID: 原生默认模型未包含在模型目录中。')
+  if (catalog.defaultReasoningEffort !== undefined && catalog.defaultModel === undefined)
+    throw new Error('BRIDGE_MODEL_CATALOG_INVALID: 原生默认推理深度未关联默认模型。')
   return catalog
 }
 

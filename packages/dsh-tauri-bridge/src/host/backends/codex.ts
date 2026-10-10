@@ -1,7 +1,12 @@
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Deferred } from './transport'
 import type { NativeCommand, NativeContent, NativeModelCatalog, NativeModelInfo, NativeQuestion, NativeSession, NativeSessionOpenOptions, NativeSink, NativeTurnOptions } from './types'
-import { abortError, deferred, errorFrom, INTERRUPT_TIMEOUT_MS, JsonLinesProcess, NativeBridgeError, PendingRequests, record, stringField, textMessages } from './transport'
+import { abortError, deferred, errorFrom, INTERRUPT_TIMEOUT_MS, JsonLinesProcess, NativeBridgeError, PendingRequests, record, REQUEST_TIMEOUT_MS, stringField, textMessages } from './transport'
+
+const INITIALIZATION = {
+  clientInfo: { name: 'dsh-tauri-bridge', title: 'DSH native session bridge', version: '1.0.0' },
+  capabilities: { experimentalApi: true },
+}
 
 const CODEX_REASONING_EFFORT_NAMES = new Map([
   ['none', 'Off'],
@@ -70,6 +75,8 @@ class CodexSession implements NativeSession {
   private readonly transport: JsonLinesProcess
   private readonly requests: PendingRequests
   private readonly approvals = new Map<string | number, AbortController>()
+  private readonly catalogProcesses = new Set<JsonLinesProcess>()
+  private catalogRequest = 0
   private requestId = 0
   private nativeId = ''
   private active?: CodexTurn
@@ -81,6 +88,7 @@ class CodexSession implements NativeSession {
   private backgroundBaseline?: Set<string>
   private readonly commandItems = new Set<string>()
   private baselineModel?: string
+  private baselineProvider?: string
   private baselineEffort?: string | null
   private effectiveModel?: string
   private defaultsPending = false
@@ -88,13 +96,15 @@ class CodexSession implements NativeSession {
   private appliedOptions: NativeTurnOptions = { model: null, reasoningEffort: null }
   private effortOverridden = false
 
-  constructor(command: NativeCommand, private readonly sink: NativeSink, private readonly cwd: string) {
+  constructor(private readonly command: NativeCommand, private readonly sink: NativeSink, private readonly cwd: string) {
     this.transport = new JsonLinesProcess(command, ['app-server', '--listen', 'stdio://'], cwd)
     this.requests = new PendingRequests(value => this.transport.write(value))
     this.transport.onFailure((error) => {
       this.failure = error
       this.requests.failAll(error)
       this.active?.result.reject(error)
+      for (const transport of this.catalogProcesses)
+        transport.fail(error)
       for (const controller of this.approvals.values())
         controller.abort(error)
       this.approvals.clear()
@@ -109,10 +119,7 @@ class CodexSession implements NativeSession {
   async open(cwd: string, storedId: string | null, signal: AbortSignal, options?: NativeSessionOpenOptions): Promise<void> {
     signal.throwIfAborted()
     try {
-      await this.request('initialize', {
-        clientInfo: { name: 'dsh-tauri-bridge', title: 'DSH native session bridge', version: '1.0.0' },
-        capabilities: { experimentalApi: true },
-      }, signal)
+      await this.request('initialize', INITIALIZATION, signal)
       this.transport.write({ method: 'initialized', params: {} })
       const forkFrom = options?.forkFrom
       const response = record(await this.request(forkFrom ? 'thread/fork' : storedId === null ? 'thread/start' : 'thread/resume', {
@@ -125,6 +132,8 @@ class CodexSession implements NativeSession {
       if (forkFrom && id === forkFrom)
         throw new NativeBridgeError('BRIDGE_FORK_MISMATCH', 'Codex fork did not acknowledge a new native thread')
       this.nativeId = id
+      if (typeof response.modelProvider === 'string' && response.modelProvider !== '')
+        this.baselineProvider = response.modelProvider
       this.defaultsPending = storedId !== null || forkFrom !== undefined
       this.effortOverridden = this.defaultsPending
       if (typeof response.model === 'string' && response.model !== '') {
@@ -147,58 +156,128 @@ class CodexSession implements NativeSession {
     signal.throwIfAborted()
     if (this.disposed || this.failure)
       throw this.failure ?? new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Codex session was disposed')
+    const generation = ++this.catalogRequest
     this.catalog = undefined
-    const config = record(record(await this.request('config/read', { includeLayers: false, cwd: this.cwd }, signal)).config)
-    const configuredModel = typeof config.model === 'string' && config.model !== '' ? config.model : undefined
-    this.baselineModel ??= configuredModel
-    if (this.baselineEffort === undefined && (config.model_reasoning_effort === null || typeof config.model_reasoning_effort === 'string'))
-      this.baselineEffort = config.model_reasoning_effort
+    // Codex caches its model catalog at startup, even when config/read sees cc-switch changes.
+    const transport = new JsonLinesProcess(this.command, ['app-server', '--listen', 'stdio://'], this.cwd)
+    const requests = new PendingRequests(value => transport.write(value))
+    let requestId = 0
+    let failure: Error | undefined
+    let defaultModel: string | undefined
+    let defaultEffort: unknown
     const models = new Map<string, NativeModelInfo>()
-    const cursors = new Set<string>()
-    const defaultModel = this.baselineModel
-    let cursor: string | null = null
-    do {
-      const response = record(await this.request('model/list', { cursor, limit: 100, includeHidden: false }, signal))
-      if (!Array.isArray(response.data))
-        throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model listing is missing data')
-      for (const value of response.data) {
-        const model = record(value)
-        const id = stringField(model, 'model')
-        if (!Array.isArray(model.supportedReasoningEfforts))
-          throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model is missing reasoning capabilities')
-        const efforts = model.supportedReasoningEfforts.map((value) => {
-          const effort = record(value)
-          const id = stringField(effort, 'reasoningEffort')
-          return { id, name: CODEX_REASONING_EFFORT_NAMES.get(id) ?? id, ...typeof effort.description === 'string' ? { description: effort.description } : {} }
-        })
-        const defaultEffort = typeof model.defaultReasoningEffort === 'string' && efforts.some(effort => effort.id === model.defaultReasoningEffort) ? model.defaultReasoningEffort : undefined
-        models.set(id, {
-          id,
-          name: stringField(model, 'displayName'),
-          ...typeof model.description === 'string' ? { description: model.description } : {},
-          ...efforts.length > 0 ? { reasoning: { efforts, ...defaultEffort === undefined ? {} : { defaultEffort } } } : {},
-        })
-        if (models.size > 10_000)
-          throw new NativeBridgeError('BRIDGE_PROTOCOL_LIMIT', 'Codex model listing exceeded its limit')
+    const abort = new AbortController()
+    const aborted = () => abort.abort(abortError(signal))
+    signal.addEventListener('abort', aborted, { once: true })
+    const timer = setTimeout(() => abort.abort(new NativeBridgeError('BRIDGE_REQUEST_TIMEOUT', 'Codex model discovery timed out')), REQUEST_TIMEOUT_MS)
+    this.catalogProcesses.add(transport)
+    transport.onFailure((error) => {
+      failure = error
+      requests.failAll(error)
+    })
+    transport.onMessage((message) => {
+      const id = message.id
+      if (typeof id === 'number' || typeof id === 'string') {
+        if ('result' in message || 'error' in message) {
+          const error = message.error ? record(message.error) : undefined
+          requests.settle(id, message.result, error ? new NativeBridgeError('BRIDGE_NATIVE_REQUEST', typeof error.message === 'string' ? error.message : JSON.stringify(error)) : undefined)
+        }
+        else {
+          transport.write({ id, error: { code: -32601, message: 'Read-only model discovery cannot handle native server requests' } })
+        }
       }
-      if (response.nextCursor !== null && response.nextCursor !== undefined && typeof response.nextCursor !== 'string')
-        throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model cursor is invalid')
-      cursor = typeof response.nextCursor === 'string' ? response.nextCursor : null
-      if (cursor !== null) {
-        if (cursors.has(cursor))
-          throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model listing repeated a cursor')
-        cursors.add(cursor)
+    })
+    function request(method: string, params: unknown): Promise<unknown> {
+      const id = ++requestId
+      return requests.request(id, { id, method, params }, abort.signal)
+    }
+    try {
+      await request('initialize', INITIALIZATION)
+      transport.write({ method: 'initialized', params: {} })
+      const config = record(record(await request('config/read', { includeLayers: false, cwd: this.cwd })).config)
+      const configuredModel = typeof config.model === 'string' && config.model !== '' ? config.model : undefined
+      if (this.baselineProvider !== undefined && typeof config.model_provider === 'string' && config.model_provider !== this.baselineProvider)
+        throw new NativeBridgeError('BRIDGE_PROVIDER_CHANGED', 'Codex provider changed after this session was created; create a new native session to use its models')
+      defaultModel = this.baselineModel ?? configuredModel
+      defaultEffort = this.baselineEffort === undefined ? config.model_reasoning_effort : this.baselineEffort
+      const cursors = new Set<string>()
+      let cursor: string | null = null
+      do {
+        if (cursors.size >= 100)
+          throw new NativeBridgeError('BRIDGE_PROTOCOL_LIMIT', 'Codex model listing exceeded its page limit')
+        const response = record(await request('model/list', { cursor, limit: 100, includeHidden: false }))
+        if (!Array.isArray(response.data))
+          throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model listing is missing data')
+        for (const value of response.data) {
+          const model = record(value)
+          const id = stringField(model, 'model')
+          if (!Array.isArray(model.supportedReasoningEfforts))
+            throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model is missing reasoning capabilities')
+          const efforts = model.supportedReasoningEfforts.map((value) => {
+            const effort = record(value)
+            const id = stringField(effort, 'reasoningEffort')
+            return { id, name: CODEX_REASONING_EFFORT_NAMES.get(id) ?? id, ...typeof effort.description === 'string' ? { description: effort.description } : {} }
+          })
+          const defaultEffort = typeof model.defaultReasoningEffort === 'string' && efforts.some(effort => effort.id === model.defaultReasoningEffort) ? model.defaultReasoningEffort : undefined
+          models.set(id, {
+            id,
+            name: stringField(model, 'displayName'),
+            ...typeof model.description === 'string' ? { description: model.description } : {},
+            ...efforts.length > 0 ? { reasoning: { efforts, ...defaultEffort === undefined ? {} : { defaultEffort } } } : {},
+          })
+          if (models.size > 10_000)
+            throw new NativeBridgeError('BRIDGE_PROTOCOL_LIMIT', 'Codex model listing exceeded its limit')
+        }
+        if (response.nextCursor !== null && response.nextCursor !== undefined && typeof response.nextCursor !== 'string')
+          throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model cursor is invalid')
+        cursor = typeof response.nextCursor === 'string' ? response.nextCursor : null
+        if (cursor !== null) {
+          if (cursors.has(cursor))
+            throw new NativeBridgeError('BRIDGE_PROTOCOL', 'Codex model listing repeated a cursor')
+          cursors.add(cursor)
+        }
+      } while (cursor !== null)
+      for (const id of [configuredModel, defaultModel, this.effectiveModel]) {
+        if (id && !models.has(id))
+          models.set(id, { id, name: id })
       }
-    } while (cursor !== null)
-    // A custom provider's configured/effective model may be absent from Codex's catalog.
-    // Preserve that exact selectable id, but never borrow another model's capabilities.
-    for (const id of [configuredModel, this.baselineModel, this.effectiveModel]) {
-      if (id && !models.has(id))
-        models.set(id, { id, name: id })
+      abort.signal.throwIfAborted()
+      if (failure || this.failure || this.disposed)
+        throw failure ?? this.failure ?? new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Codex session was disposed')
+    }
+    catch (error) {
+      failure ??= errorFrom(error)
+    }
+    finally {
+      clearTimeout(timer)
+      requests.failAll(new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Codex model discovery was closed'))
+    }
+    try {
+      await transport.close(true)
+      this.catalogProcesses.delete(transport)
+    }
+    catch (error) {
+      if (failure && error !== failure)
+        throw new AggregateError([failure, error], failure.message)
+      throw error
+    }
+    finally {
+      signal.removeEventListener('abort', aborted)
     }
     signal.throwIfAborted()
-    const catalog = { models: [...models.values()], ...defaultModel === undefined ? {} : { defaultModel } }
-    this.catalog = catalog
+    if (failure || this.failure || this.disposed)
+      throw failure ?? this.failure ?? new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Codex session was disposed')
+    const catalog = {
+      models: [...models.values()],
+      ...defaultModel === undefined ? {} : { defaultModel },
+      ...defaultModel !== undefined && typeof defaultEffort === 'string' && defaultEffort !== '' ? { defaultReasoningEffort: defaultEffort } : {},
+    }
+    if (generation === this.catalogRequest) {
+      this.baselineModel ??= defaultModel
+      if (this.baselineEffort === undefined && (defaultEffort === null || typeof defaultEffort === 'string'))
+        this.baselineEffort = defaultEffort
+      this.catalog = catalog
+    }
     return catalog
   }
 
@@ -312,6 +391,8 @@ class CodexSession implements NativeSession {
     this.disposed = true
     const error = new NativeBridgeError('BRIDGE_PROCESS_CLOSED', 'Codex native session was disposed')
     this.active?.result.reject(error)
+    for (const transport of this.catalogProcesses)
+      transport.fail(error)
     for (const controller of this.approvals.values())
       controller.abort(error)
     this.approvals.clear()
@@ -321,7 +402,7 @@ class CodexSession implements NativeSession {
     }
     finally {
       this.requests.failAll(error)
-      await this.transport.close()
+      await Promise.all([this.transport.close(), ...[...this.catalogProcesses].map(transport => transport.close())])
     }
   }
 

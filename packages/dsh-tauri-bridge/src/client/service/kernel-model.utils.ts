@@ -2,7 +2,9 @@ import type { ModelCatalogModel, ModelSelection } from '@deepseek-ai/dsh-api-ses
 import type { NativeModelDirectory, NativeTurnOptions } from '../../shared/native-model'
 import type { KernelBinding } from '../../shared/types'
 import type { NativeModelDirectoryState } from '../types/kernel-model'
+import { groupBy, uniqBy } from 'dsh-tauri/client'
 import { NATIVE_DEFAULT_MODEL } from '../constants'
+import { locale } from '../locales'
 
 export function nativeModelDirectory(
   backend: KernelBinding['backend'],
@@ -11,25 +13,27 @@ export function nativeModelDirectory(
   previous?: NativeModelDirectoryState,
 ): NativeModelDirectoryState {
   const provider = `bridge/${backend}`
-  const defaultModel = catalog?.models.find(model => model.id === catalog.defaultModel)
-  const modelView = (model: ModelCatalogModel): ModelCatalogModel => ({
+  const defaultId = catalog?.defaultModel ?? NATIVE_DEFAULT_MODEL
+  const listed = uniqBy(catalog?.models ?? [], 'id')
+  const directory = listed.some(model => model.id === defaultId)
+    ? listed
+    : [{ id: defaultId, name: catalog?.defaultModel ?? locale.text('kernel.modelDefault') }, ...listed]
+  const names = groupBy(directory, 'name')
+  const models: ModelCatalogModel[] = directory.map(model => ({
     ...model,
+    name: names[model.name]!.length > 1 ? `${model.name} (${model.id})` : model.name,
     ...(model.reasoning === undefined ? {} : { reasoning: { efforts: model.reasoning.efforts } }),
-  })
-  const models: ModelCatalogModel[] = [{
-    id: NATIVE_DEFAULT_MODEL,
-    name: provider,
-    ...(defaultModel?.description === undefined ? {} : { description: defaultModel.description }),
-    ...(defaultModel?.reasoning === undefined ? {} : { reasoning: { efforts: defaultModel.reasoning.efforts } }),
-  }, ...(catalog?.models.map(modelView) ?? [])]
+  }))
+  const reasoningEffort = current.reasoningEffort
+    ?? (current.model === null || current.model === catalog?.defaultModel ? catalog?.defaultReasoningEffort : undefined)
   const selection: ModelSelection = {
     provider,
-    model: current.model ?? NATIVE_DEFAULT_MODEL,
-    ...(current.reasoningEffort === null ? {} : { reasoningEffort: current.reasoningEffort }),
+    model: current.model ?? defaultId,
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
   }
   return {
     current: selection,
-    ...(current.reasoningEffort === null ? {} : { retainedEffort: current.reasoningEffort }),
+    ...(reasoningEffort === undefined ? {} : { retainedEffort: reasoningEffort }),
     routable: catalog === null ? null : models.some(model => model.id === selection.model),
     groups: [{ id: provider, name: backend === 'codex' ? 'Codex' : 'Claude', models }],
     failures: [],
@@ -42,7 +46,7 @@ export function nativeModelDirectory(
 export function nativeModelOptions(backend: KernelBinding['backend'], catalog: NativeModelDirectory, selection: ModelSelection): NativeTurnOptions {
   if (selection.provider !== `bridge/${backend}`)
     throw new Error('Native session kernel cannot be changed')
-  const model = selection.model === NATIVE_DEFAULT_MODEL ? null : selection.model
+  const model = selection.model === NATIVE_DEFAULT_MODEL || selection.model === catalog.defaultModel ? null : selection.model
   const info = catalog.models.find(item => item.id === (model ?? catalog.defaultModel))
   if (model !== null && info === undefined)
     throw new Error('Native model is unavailable')

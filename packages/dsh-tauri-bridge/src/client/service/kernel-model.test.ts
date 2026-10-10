@@ -102,22 +102,24 @@ describe('native model actions', () => {
     expect(postModels).not.toHaveBeenCalled()
   })
 
-  it('submits exact native model and depth then refreshes only the durable projection', async () => {
+  it('submits the default-following model and exact depth then refreshes only the durable projection', async () => {
     const scope = open()
     const refreshProjection = vi.fn(async () => ({ model: 'gpt-5.4', reasoningEffort: 'high' }))
     expect(await selectNativeModel({ ...scope, selection: { provider: 'bridge/codex', model: 'gpt-5.4', reasoningEffort: 'high' }, refreshProjection })).toEqual({ ok: true, value: undefined })
-    expect(postModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a', model: 'gpt-5.4', reasoningEffort: 'high' })
+    expect(postModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a', model: null, reasoningEffort: 'high' })
     expect(refreshProjection).toHaveBeenCalledExactlyOnceWith('session-a')
     expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: 'gpt-5.4', reasoningEffort: 'high' })
     expect(nativeModel.$state.entries['session-a']?.directory.pending).toBeNull()
   })
 
-  it('sends nullable model and effort resets rather than the UI-only default route', async () => {
-    const scope = open()
+  it('the single default model resets nullable preferences without persisting its displayed native baseline', async () => {
+    const scope = open('session-a', 1, { ...CATALOG, defaultReasoningEffort: 'high' })
     const refreshProjection = vi.fn(async () => ({ model: null, reasoningEffort: null }))
-    await selectNativeModel({ ...scope, selection: { provider: 'bridge/codex', model: '' }, refreshProjection })
+    await selectNativeModel({ ...scope, selection: { provider: 'bridge/codex', model: 'gpt-5.4' }, refreshProjection })
     expect(postModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a', model: null, reasoningEffort: null })
-    expect(nativeModel.$state.entries['session-a']?.directory.current).toEqual({ provider: 'bridge/codex', model: '' })
+    expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: null, reasoningEffort: null })
+    expect(nativeModel.$state.entries['session-a']?.directory.current).toEqual({ provider: 'bridge/codex', model: 'gpt-5.4', reasoningEffort: 'high' })
+    expect(refreshProjection).toHaveBeenCalledExactlyOnceWith('session-a')
   })
 
   it('backend changes and unsupported depths cannot issue a mutation', async () => {
@@ -133,7 +135,7 @@ describe('native model actions', () => {
     const scope = open()
     vi.mocked(getModels).mockRejectedValueOnce(new Error('CLI model catalog unavailable'))
     await loadNativeModels(scope)
-    expect(nativeModel.$state.entries['session-a']?.directory).toMatchObject({ status: 'error', error: 'CLI model catalog unavailable', current: { provider: 'bridge/codex', model: '' } })
+    expect(nativeModel.$state.entries['session-a']?.directory).toMatchObject({ status: 'error', error: 'CLI model catalog unavailable', current: { provider: 'bridge/codex', model: 'gpt-5.4' } })
     await loadNativeModels(scope)
     expect(nativeModel.$state.entries['session-a']?.directory).toMatchObject({ status: 'ready', error: null })
   })

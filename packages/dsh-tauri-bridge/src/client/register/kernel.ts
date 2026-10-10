@@ -17,6 +17,7 @@ import { registerNativeModels } from './kernel-model'
 
 export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) => {
   let detection = 0
+  let cancelDetection: (() => void) | undefined
   const warned = new Set<string>()
   const active = (): boolean => !controller.isDisposed()
 
@@ -27,21 +28,53 @@ export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) =
     console.warn(`[${PLUGIN_ID}] ${key}`, error)
   }
 
-  async function refreshBackends(): Promise<void> {
+  async function refreshBackends(startup = false): Promise<void> {
     if (!active())
       return
+    cancelDetection?.()
     const request = ++detection
+    const abort = new AbortController()
+    const cancel = () => abort.abort()
+    cancelDetection = cancel
+    const unhook = controller.add(cancel)
+    const current = (): boolean => active() && request === detection && !abort.signal.aborted
     kernelStore.$patch({ phase: 'loading', error: null })
     try {
-      const backends = await getBackends()
-      if (active() && request === detection)
-        kernelStore.$patch({ backends, phase: 'ready', error: null })
+      for (let attempt = 0; current(); attempt++) {
+        try {
+          const backends = await getBackends({ signal: abort.signal })
+          if (current())
+            kernelStore.$patch({ backends, phase: 'ready', error: null })
+          return
+        }
+        catch (reason) {
+          if (!current())
+            return
+          if (!startup || attempt >= 4 || typeof reason !== 'object' || reason === null || !('status' in reason) || reason.status !== 404)
+            throw reason
+          await new Promise<void>((resolve) => {
+            let stop: (() => void) | undefined
+            const finish = () => {
+              stop?.()
+              abort.signal.removeEventListener('abort', finish)
+              resolve()
+            }
+            stop = controller.timeout(finish, 250 * 2 ** attempt)
+            abort.signal.addEventListener('abort', finish, { once: true })
+          })
+        }
+      }
     }
     catch (reason) {
-      if (active() && request === detection) {
+      if (current()) {
         kernelStore.$patch({ phase: 'error', error: reason instanceof Error ? reason.message : String(reason) })
         warn('kernel detection failed', reason)
       }
+    }
+    finally {
+      unhook()
+      if (cancelDetection === cancel)
+        cancelDetection = undefined
     }
   }
 
@@ -140,5 +173,5 @@ export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) =
       }, SessionKernelHover)
     }))
   }
-  void refreshBackends()
+  void refreshBackends(true)
 })

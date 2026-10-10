@@ -19,51 +19,65 @@ interface Terminal {
 function codexProcess(options: {
   threadId?: string
   model?: string
+  modelProvider?: string
   reasoningEffort?: string | null
   config?: Frame
   models?: Frame[]
+  catalog?: { config?: Frame, models?: Frame[] }
   terminals?: Terminal[]
   intercept?: (frame: Frame, fixture: ProcessFixture) => boolean
 } = {}) {
   const terminals = options.terminals ?? []
-  const fixture = new ProcessFixture((frame) => {
-    if (options.intercept?.(frame, fixture))
-      return
-    switch (frame.method) {
-      case 'initialize':
-        fixture.send({ id: frame.id, result: { userAgent: 'codex-cli/fixture' } })
-        break
-      case 'thread/start':
-      case 'thread/resume':
-      case 'thread/fork':
-        fixture.send({ id: frame.id, result: { thread: { id: options.threadId ?? 'thread-1' }, model: options.model, reasoningEffort: options.reasoningEffort } })
-        break
-      case 'config/read':
-        fixture.send({ id: frame.id, result: { config: options.config ?? {} } })
-        break
-      case 'model/list':
-        fixture.send({ id: frame.id, result: { data: options.models ?? [], nextCursor: null } })
-        break
-      case 'thread/backgroundTerminals/list':
-        fixture.send({ id: frame.id, result: { data: [...terminals], nextCursor: null } })
-        break
-      case 'thread/backgroundTerminals/terminate': {
-        const params = frame.params as Frame
-        const index = terminals.findIndex(terminal => terminal.processId === params.processId)
-        if (index >= 0)
-          terminals.splice(index, 1)
-        fixture.send({ id: frame.id, result: { terminated: index >= 0 } })
-        break
+  const catalogs: ProcessFixture[] = []
+  function process(catalog = false) {
+    const source = catalog ? options.catalog ?? options : options
+    const fixture = new ProcessFixture((frame) => {
+      if (options.intercept?.(frame, fixture))
+        return
+      switch (frame.method) {
+        case 'initialize':
+          fixture.send({ id: frame.id, result: { userAgent: 'codex-cli/fixture' } })
+          break
+        case 'thread/start':
+        case 'thread/resume':
+        case 'thread/fork':
+          fixture.send({ id: frame.id, result: { thread: { id: options.threadId ?? 'thread-1' }, model: options.model, modelProvider: options.modelProvider, reasoningEffort: options.reasoningEffort } })
+          break
+        case 'config/read':
+          fixture.send({ id: frame.id, result: { config: source.config ?? {} } })
+          break
+        case 'model/list':
+          fixture.send({ id: frame.id, result: { data: source.models ?? [], nextCursor: null } })
+          break
+        case 'thread/backgroundTerminals/list':
+          fixture.send({ id: frame.id, result: { data: [...terminals], nextCursor: null } })
+          break
+        case 'thread/backgroundTerminals/terminate': {
+          const params = frame.params as Frame
+          const index = terminals.findIndex(terminal => terminal.processId === params.processId)
+          if (index >= 0)
+            terminals.splice(index, 1)
+          fixture.send({ id: frame.id, result: { terminated: index >= 0 } })
+          break
+        }
+        case 'turn/start':
+          fixture.send({ id: frame.id, result: { turn: { id: 'turn-1' } } })
+          break
+        case 'turn/interrupt':
+          fixture.send({ id: frame.id, result: {} })
       }
-      case 'turn/start':
-        fixture.send({ id: frame.id, result: { turn: { id: 'turn-1' } } })
-        break
-      case 'turn/interrupt':
-        fixture.send({ id: frame.id, result: {} })
-    }
+    })
+    return fixture
+  }
+  const fixture = process()
+  vi.mocked(spawn).mockImplementation(() => {
+    if (vi.mocked(spawn).mock.calls.length === 1)
+      return fixture.child
+    const catalog = process(true)
+    catalogs.push(catalog)
+    return catalog.child
   })
-  vi.mocked(spawn).mockReturnValue(fixture.child)
-  return { fixture, terminals }
+  return { fixture, catalogs, terminals }
 }
 
 async function open(storedId: string | null = null, sink = createSink(), options?: NativeSessionOpenOptions) {
@@ -148,8 +162,258 @@ describe('codex native app-server contract', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
+  it('reads each model directory from a fresh app-server without replacing the native thread', async () => {
+    const options = {
+      model: 'fixture-alpha',
+      reasoningEffort: 'high',
+      config: { model: 'fixture-alpha' },
+      models: [modelInfo('old-gpt')],
+      catalog: { config: { model: 'fixture-alpha', model_reasoning_effort: 'high' }, models: [modelInfo('fixture-alpha'), modelInfo('fixture-beta')] },
+    }
+    const { fixture, catalogs } = codexProcess(options)
+    const session = await open()
+    const initialFrames = [...fixture.frames]
+    const directory = await session.models!(new AbortController().signal)
+    expect(directory.models.map(model => model.id)).toEqual(['fixture-alpha', 'fixture-beta'])
+    expect(directory.defaultModel).toBe('fixture-alpha')
+    expect(directory.defaultReasoningEffort).toBe('high')
+    expect(catalogs).toHaveLength(1)
+    expect(catalogs[0]!.frames.map(frame => frame.method)).toEqual(['initialize', 'initialized', 'config/read', 'model/list'])
+    expect(catalogs[0]!.frames[0]).toEqual(initialFrames[0])
+    expect(catalogs[0]!.stdin.end).toHaveBeenCalledOnce()
+    expect(fixture.frames).toEqual(initialFrames)
+    expect(fixture.kill).not.toHaveBeenCalled()
+    options.catalog.models = [modelInfo('fixture-alpha'), modelInfo('fixture-gamma')]
+    expect((await session.models!(new AbortController().signal)).models.map(model => model.id)).toEqual(['fixture-alpha', 'fixture-gamma'])
+    expect(catalogs).toHaveLength(2)
+    expect(catalogs.every(child => child.stdin.end.mock.calls.length === 1)).toBe(true)
+    expect(session.id).toBe('thread-1')
+    expect(spawn).toHaveBeenCalledTimes(3)
+    expect(fixture.frames).toEqual(initialFrames)
+  })
+
+  it('refuses a changed native provider instead of applying its models to the bound thread', async () => {
+    const options = {
+      model: 'old-model',
+      modelProvider: 'old-provider',
+      catalog: { config: { model_provider: 'new-provider', model: 'new-model' }, models: [modelInfo('new-model')] },
+    }
+    const { fixture, catalogs } = codexProcess(options)
+    const session = await open()
+    await expect(session.models!(new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_PROVIDER_CHANGED' })
+    expect(catalogs[0]!.frames.map(frame => frame.method)).toEqual(['initialize', 'initialized', 'config/read'])
+    expect(catalogs[0]!.stdin.end).toHaveBeenCalledOnce()
+    expect(fixture.kill).not.toHaveBeenCalled()
+    expect(session.id).toBe('thread-1')
+    options.catalog.config.model_provider = 'old-provider'
+    expect((await session.models!(new AbortController().signal)).models.map(model => model.id)).toEqual(['new-model', 'old-model'])
+    expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('keeps the effective native default effort distinct from the catalog preset', async () => {
+    const { fixture } = codexProcess({ model: 'deepseek', reasoningEffort: 'high', config: { model: 'deepseek', model_reasoning_effort: 'high' }, models: [modelInfo('deepseek', ['low', 'high'], 'low')] })
+    const session = await open()
+    const catalog = await session.models!(new AbortController().signal)
+    expect(catalog.defaultModel).toBe('deepseek')
+    expect(catalog.defaultReasoningEffort).toBe('high')
+    expect(catalog.models[0]?.reasoning?.defaultEffort).toBe('low')
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, { model: null, reasoningEffort: null })
+    expect((await started).params).toEqual({ threadId: 'thread-1', input: [{ type: 'text', text: 'inspect the workspace', text_elements: [] }] })
+    completed(fixture)
+    await submitted
+    expect(session.id).toBe('thread-1')
+  })
+
+  it('closes a failed catalog reader without closing the bound thread and can retry', async () => {
+    let fail = true
+    const { fixture, catalogs } = codexProcess({ model: 'baseline', intercept: (frame, child) => {
+      if (frame.method !== 'model/list' || !fail)
+        return false
+      child.send({ id: frame.id, error: { code: -32601, message: 'Catalog is unavailable' } })
+      return true
+    } })
+    const session = await open()
+    await expect(session.models!(new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_NATIVE_REQUEST', message: 'Catalog is unavailable' })
+    expect(catalogs).toHaveLength(1)
+    expect(catalogs[0]!.stdin.end).toHaveBeenCalledOnce()
+    expect(fixture.kill).not.toHaveBeenCalled()
+    fail = false
+    expect((await session.models!(new AbortController().signal)).defaultModel).toBe('baseline')
+    expect(catalogs).toHaveLength(2)
+    expect(session.id).toBe('thread-1')
+    expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('cancels a catalog reader before any native input without closing the thread', async () => {
+    const { fixture, catalogs } = codexProcess({ intercept: frame => frame.method === 'config/read' })
+    const session = await open()
+    const controller = new AbortController()
+    const listed = session.models!(controller.signal)
+    const rejected = expect(listed).rejects.toThrow('cancel catalog')
+    await vi.waitFor(() => expect(catalogs[0]?.frames.map(frame => frame.method)).toEqual(['initialize', 'initialized', 'config/read']))
+    controller.abort(new Error('cancel catalog'))
+    await rejected
+    expect(catalogs[0]!.stdin.end).toHaveBeenCalledOnce()
+    expect(fixture.kill).not.toHaveBeenCalled()
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+    expect(session.id).toBe('thread-1')
+  })
+
+  it('disposes every pending catalog reader with its native session', async () => {
+    const { fixture, catalogs } = codexProcess({ intercept: frame => frame.method === 'config/read' })
+    const session = await open()
+    const listed = session.models!(new AbortController().signal)
+    const rejected = expect(listed).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_CLOSED' })
+    await vi.waitFor(() => expect(catalogs[0]?.frames.map(frame => frame.method)).toEqual(['initialize', 'initialized', 'config/read']))
+    await session.dispose()
+    await rejected
+    expect(catalogs[0]!.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+    expect(session.id).toBe('thread-1')
+  })
+
+  it.each(['abort', 'dispose'] as const)('does not publish a catalog %s during its graceful close', async (mode) => {
+    const { fixture, catalogs } = codexProcess({ models: [modelInfo('chosen')], intercept: (frame, child) => {
+      if (frame.method === 'model/list')
+        child.stdin.end.mockImplementationOnce(() => {})
+      return false
+    } })
+    const session = await open()
+    const controller = new AbortController()
+    const listed = session.models!(controller.signal)
+    const rejected = mode === 'abort' ? expect(listed).rejects.toThrow('cancel while closing') : expect(listed).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_CLOSED' })
+    await vi.waitFor(() => expect(catalogs[0]?.stdin.end).toHaveBeenCalledOnce())
+    const disposing = mode === 'dispose' ? session.dispose() : undefined
+    if (mode === 'abort')
+      controller.abort(new Error('cancel while closing'))
+    catalogs[0]!.exit(0)
+    await disposing
+    await rejected
+    expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('does not retain a catalog when its reader cannot close', async () => {
+    let closeFails = true
+    const { fixture, catalogs } = codexProcess({ config: { model: 'chosen', model_reasoning_effort: 'low' }, models: [modelInfo('chosen')], intercept: (frame, child) => {
+      if (frame.method === 'model/list' && closeFails) {
+        child.stdin.end.mockImplementationOnce(() => {})
+        child.kill.mockImplementation(() => true)
+      }
+      return false
+    } })
+    const session = await open()
+    vi.useFakeTimers()
+    const listed = session.models!(new AbortController().signal)
+    const rejected = expect(listed).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
+    await vi.advanceTimersByTimeAsync(4500)
+    await rejected
+    catalogs[0]!.exit(0)
+    closeFails = false
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: 'low' })
+    expect((await Promise.race([started, submitted]))?.params).toMatchObject({ model: 'chosen', effort: 'low' })
+    completed(fixture)
+    await submitted
+    expect(catalogs).toHaveLength(2)
+    expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
+    await expect(session.dispose()).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
+    sessions.splice(sessions.indexOf(session), 1)
+  })
+
+  it('retains ownership of a catalog reader that has not exited after termination', async () => {
+    const { fixture, catalogs } = codexProcess({ intercept: (frame, child) => {
+      if (frame.method === 'model/list') {
+        child.stdin.end.mockImplementationOnce(() => {})
+        child.kill.mockImplementation(() => true)
+      }
+      return false
+    } })
+    const session = await open()
+    vi.useFakeTimers()
+    const listed = session.models!(new AbortController().signal)
+    const rejected = expect(listed).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
+    await vi.advanceTimersByTimeAsync(4500)
+    await rejected
+    const disposing = session.dispose()
+    sessions.splice(sessions.indexOf(session), 1)
+    await expect(disposing).rejects.toMatchObject({ code: 'BRIDGE_PROCESS_STOP_TIMEOUT' })
+    catalogs[0]!.exit(0)
+    expect(fixture.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('keeps the newest successful catalog when an earlier reader closes late', async () => {
+    let hold = true
+    const options = { catalog: { config: { model: 'old', model_reasoning_effort: 'low' }, models: [modelInfo('old')] }, intercept: (frame: Frame, child: ProcessFixture) => {
+      if (frame.method === 'model/list' && hold)
+        child.stdin.end.mockImplementationOnce(() => {})
+      return false
+    } }
+    const { fixture, catalogs } = codexProcess(options)
+    const session = await open()
+    const earlier = session.models!(new AbortController().signal)
+    await vi.waitFor(() => expect(catalogs[0]?.stdin.end).toHaveBeenCalledOnce())
+    hold = false
+    options.catalog = { config: { model: 'new', model_reasoning_effort: 'high' }, models: [modelInfo('new')] }
+    const latest = await session.models!(new AbortController().signal)
+    catalogs[0]!.exit(0)
+    expect((await earlier).defaultModel).toBe('old')
+    expect(latest.defaultModel).toBe('new')
+    expect(latest.defaultReasoningEffort).toBe('high')
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, { model: 'new', reasoningEffort: 'high' })
+    expect((await Promise.race([started, submitted]))?.params).toMatchObject({ model: 'new', effort: 'high' })
+    completed(fixture)
+    await submitted
+    expect(catalogs).toHaveLength(2)
+    expect(session.id).toBe('thread-1')
+  })
+
+  it('bounds the complete catalog operation across consecutive native requests', async () => {
+    let delayed = false
+    const { fixture, catalogs } = codexProcess({ intercept: frame => delayed && (frame.method === 'initialize' || frame.method === 'config/read') })
+    const session = await open()
+    delayed = true
+    vi.useFakeTimers()
+    const resolved = vi.fn()
+    const rejected = vi.fn()
+    const listed = session.models!(new AbortController().signal).then(resolved, rejected)
+    await vi.advanceTimersByTimeAsync(30_000)
+    catalogs[0]!.send({ id: catalogs[0]!.frames[0]!.id, result: { userAgent: 'codex-cli/fixture' } })
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(catalogs[0]!.frames.map(frame => frame.method)).toEqual(['initialize', 'initialized', 'config/read'])
+    expect(rejected).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(rejected).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: 'BRIDGE_REQUEST_TIMEOUT', message: 'Codex model discovery timed out' }))
+    expect(resolved).not.toHaveBeenCalled()
+    await listed
+    expect(catalogs[0]!.stdin.end).toHaveBeenCalledOnce()
+    expect(fixture.kill).not.toHaveBeenCalled()
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
+  it('bounds empty catalog pages even when every cursor is distinct', async () => {
+    let pages = 0
+    const { fixture, catalogs } = codexProcess({ intercept: (frame, child) => {
+      if (frame.method !== 'model/list')
+        return false
+      pages++
+      child.send({ id: frame.id, result: { data: [], nextCursor: pages <= 100 ? `cursor-${pages}` : null } })
+      return true
+    } })
+    const session = await open()
+    await expect(session.models!(new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_PROTOCOL_LIMIT' })
+    expect(pages).toBe(100)
+    expect(catalogs[0]!.stdin.end).toHaveBeenCalledOnce()
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
   it('keeps a custom-provider configured model without inventing reasoning capabilities or exposing config', async () => {
-    const { fixture } = codexProcess({
+    const { fixture, catalogs } = codexProcess({
       model: 'deepseek-flash',
       config: { model: 'deepseek-flash', model_provider: 'deepseek', model_reasoning_effort: null, auth: { token: 'secret-fixture' }, model_providers: { deepseek: { api_key: 'secret-fixture' } } },
       models: [modelInfo('gpt-fixture')],
@@ -159,8 +423,8 @@ describe('codex native app-server contract', () => {
     expect(catalog.defaultModel).toBe('deepseek-flash')
     expect(catalog.models.find(model => model.id === 'deepseek-flash')).toEqual({ id: 'deepseek-flash', name: 'deepseek-flash' })
     expect(JSON.stringify(catalog)).not.toContain('secret-fixture')
-    expect(fixture.frames.filter(frame => frame.method === 'config/read').map(frame => frame.params)).toEqual([{ includeLayers: false, cwd: 'C:/fixture/workspace' }])
-    expect(fixture.frames.filter(frame => frame.method === 'model/list').map(frame => frame.params)).toEqual([{ cursor: null, limit: 100, includeHidden: false }])
+    expect(catalogs[0]!.frames.filter(frame => frame.method === 'config/read').map(frame => frame.params)).toEqual([{ includeLayers: false, cwd: 'C:/fixture/workspace' }])
+    expect(catalogs[0]!.frames.filter(frame => frame.method === 'model/list').map(frame => frame.params)).toEqual([{ cursor: null, limit: 100, includeHidden: false }])
     expect(fixture.frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
     expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
   })
@@ -402,13 +666,12 @@ describe('codex native app-server contract', () => {
   })
 
   it('guards concurrent submissions while waiting for catalog discovery and cancels before input', async () => {
-    const { fixture } = codexProcess({ intercept: frame => frame.method === 'config/read' })
+    const { fixture, catalogs } = codexProcess({ intercept: frame => frame.method === 'config/read' })
     const session = await open()
     const signal = new AbortController()
-    const pending = fixture.next(frame => frame.method === 'config/read')
     const submitted = session.submit([user()], signal.signal, { model: 'chosen', reasoningEffort: null })
     const rejected = expect(submitted).rejects.toThrow('cancel discovery')
-    await pending
+    await vi.waitFor(() => expect(catalogs[0]?.frames.map(frame => frame.method)).toEqual(['initialize', 'initialized', 'config/read']))
     await expect(session.submit([user()], new AbortController().signal)).rejects.toMatchObject({ code: 'BRIDGE_BUSY' })
     signal.abort(new Error('cancel discovery'))
     await rejected

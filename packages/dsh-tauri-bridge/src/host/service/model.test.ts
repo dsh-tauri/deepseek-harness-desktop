@@ -316,6 +316,26 @@ describe('official native model selection', () => {
     expect(createClaudeSession).toHaveBeenCalledTimes(backend === 'claude' ? 1 : 0)
   }, 10_000)
 
+  it('preserves acknowledged native defaults without treating a catalog preset as the effective effort', async () => {
+    const catalog: NativeModelCatalog = { ...directory, defaultReasoningEffort: 'deep' }
+    const { agent, connection } = await create(native('effective-default-native', catalog))
+    expect(await model.getCatalog(agent.id)).toEqual({ ...catalog, backend: 'codex', current: initial })
+    expect(model.resolve(agent)).toEqual(initial)
+    expect(modelEvents(agent.session)).toEqual([])
+    expect(connection.submit).not.toHaveBeenCalled()
+    checkUnchangedRoute(agent)
+  }, 10_000)
+
+  it('preserves a configured default effort without inventing selectable reasoning controls', async () => {
+    const catalog: NativeModelCatalog = { defaultModel: 'custom-model', defaultReasoningEffort: 'high', models: [{ id: 'custom-model', name: 'custom-model' }] }
+    const { agent, connection } = await create(native('configured-effort-native', catalog))
+    expect(await model.getCatalog(agent.id)).toEqual({ ...catalog, backend: 'codex', current: initial })
+    await expect(model.select(agent.id, { model: null, reasoningEffort: 'high' })).rejects.toThrow('BRIDGE_REASONING_UNAVAILABLE')
+    expect(modelEvents(agent.session)).toEqual([])
+    expect(connection.submit).not.toHaveBeenCalled()
+    checkUnchangedRoute(agent)
+  }, 10_000)
+
   it('commits exactly one ignorable record and an awaited official durability checkpoint without changing DSH defaults', async () => {
     const { agent, connection } = await create()
     const cursor = Number(agent.session.seq)
@@ -414,6 +434,7 @@ describe('official native model selection', () => {
 
   it.each([
     { defaultModel: 'not-in-directory', models: [{ id: 'valid', name: 'Valid model' }] },
+    { defaultReasoningEffort: 'high', models: [{ id: 'valid', name: 'Valid model' }] },
     { models: [{ id: 'duplicate', name: 'One' }, { id: 'duplicate', name: 'Two' }] },
     { models: [{ id: 'bad-efforts', name: 'Bad', reasoning: { efforts: [{ id: 'deep', name: 'One' }, { id: 'deep', name: 'Two' }] } }] },
     { models: [{ id: 'bad-default-effort', name: 'Bad', reasoning: { defaultEffort: 'high', efforts: [{ id: 'deep', name: 'Deep' }] } }] },

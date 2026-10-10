@@ -30,7 +30,7 @@ function VerifiedModelKernel(props: ModelKernelProps & OfficialModelSelectFace):
     return createElement(props.Original, { ...props })
   if (backend === undefined || !isNativeTurnOptions(current) || isForkedIdentity(identity, props.sessionId)
     || !props.canSelectNativeModel()) {
-    const label = backend === undefined ? locale.text('kernel.label') : `bridge/${backend}`
+    const label = backend === undefined ? locale.text('kernel.label') : locale.text('kernel.modelDefault')
     return (
       <Select
         variant="composerTrigger"
