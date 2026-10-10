@@ -1,8 +1,8 @@
 import type {} from '@deepseek-ai/dsh-agent-preset-registry/types'
 import type { SessionProjectionMap as ClientProjectionMap } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
-import type { NativeTurnOptions } from '../packages/dsh-tauri-bridge/src/shared/native-model'
-import type { KernelBinding } from '../packages/dsh-tauri-bridge/src/shared/types'
+import type { NativeTurnOptions } from '../packages/dsh-tauri-kernel/src/shared/native-model'
+import type { KernelBinding } from '../packages/dsh-tauri-kernel/src/shared/types'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { SESSION_SCHEDULE_ORIGIN_PROJECTION } from '../packages/dsh-tauri-scheduler/src/shared/constants'
 

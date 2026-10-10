@@ -98,7 +98,7 @@ describe('owned bridge application lifecycle', () => {
     expect(runtime.ready).toBe(false)
     imports.resolve()
     await vi.waitFor(() => expect(registerAdapter).toHaveBeenCalledOnce())
-    expect(registerAdapter.mock.calls[0]![0]).toEqual(['dsh-tauri-bridge'])
+    expect(registerAdapter.mock.calls[0]![0]).toEqual(['dsh-tauri-kernel'])
     expect(registerAdapter.mock.calls[0]![1]).toBeInstanceOf(llmModule.LlmAdapter)
     expect(runtime.ready).toBe(true)
     await fiber.dispose()

@@ -5,8 +5,8 @@
   "dependencies": {
     "dsh-tauri": "workspace:*",
     "dsh-tauri-archive": "workspace:*",
-    "dsh-tauri-bridge": "workspace:*",
     "dsh-tauri-extension": "workspace:*",
+    "dsh-tauri-kernel": "workspace:*",
     "dsh-tauri-mobile-ui": "workspace:*",
     "dsh-tauri-model": "workspace:*",
     "dsh-tauri-notification": "workspace:*",

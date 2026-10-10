@@ -227,7 +227,7 @@ export const adapter = defineService({
       const current = runtime.exchanges.get(value.id)
       if (event.type === 'turn/end' && current?.state.input.agent.session === value) {
         const task = session.finish(current.state.input.agent, current.state.input.turn)
-        void task.catch((error: unknown) => getServerContext<HostContext>(server).logger.warn('dsh-tauri-bridge: native turn drainage failed', error))
+        void task.catch((error: unknown) => getServerContext<HostContext>(server).logger.warn('dsh-tauri-kernel: native turn drainage failed', error))
       }
     }
   },

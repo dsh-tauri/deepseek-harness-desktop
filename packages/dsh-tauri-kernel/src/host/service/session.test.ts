@@ -378,7 +378,7 @@ describe('independent native worktree session setup', () => {
     const child = await fork(parent.agent, `serialized-worktree-official-${id}`)
     const cut = child.agent.session.inheritedEventCount
     expect(() => restoreSerialized(child.agent.session)).not.toThrow()
-    expect(child.agent.session.snapshotEvents().slice(cut).map(event => event.type)).toEqual(['session/end-seed', 'plugin:dsh-tauri-bridge/kernel'])
+    expect(child.agent.session.snapshotEvents().slice(cut).map(event => event.type)).toEqual(['session/end-seed', 'plugin:dsh-tauri-kernel/kernel'])
     expect(child.agent.session.requestHeader()).toEqual(parent.agent.session.requestHeader())
     await followup(child.agent, 'persist the first independent worktree reply')
     expect(errors).toEqual([])
@@ -438,7 +438,7 @@ describe('independent native worktree session setup', () => {
     expect(announced).toEqual([parent.agent, owned.agent])
     expect(child.snapshotEvents().slice(cut)).toEqual([
       { seq: cut, time: now, type: 'session/end-seed', data: { inherited: true } },
-      { seq: cut + 1, time: now, type: 'plugin:dsh-tauri-bridge/kernel', ignorable: true, data: { backend: id, nativeSessionId: `worktree-child-${id}`, sessionId: `worktree-official-${id}` } },
+      { seq: cut + 1, time: now, type: 'plugin:dsh-tauri-kernel/kernel', ignorable: true, data: { backend: id, nativeSessionId: `worktree-child-${id}`, sessionId: `worktree-official-${id}` } },
     ])
     expect(identity.resolve(owned.agent)).toEqual({ backend: id, nativeSessionId: `worktree-child-${id}`, sessionId: `worktree-official-${id}` })
     expect(identity.resolve(parent.agent)).toEqual({ backend: id, nativeSessionId: `worktree-parent-${id}`, sessionId: source.id })
@@ -517,7 +517,7 @@ describe('independent native worktree session setup', () => {
     await session.remove(child.agent.id)
     const open = vi.spyOn(persistence!, 'open')
     const createStored = vi.spyOn(persistence!, 'create')
-    const restored = await agents.resume({ resumeSessionId: child.agent.id, agentOptions: { provider: 'dsh-tauri-bridge', model: 'codex' } })
+    const restored = await agents.resume({ resumeSessionId: child.agent.id, agentOptions: { provider: 'dsh-tauri-kernel', model: 'codex' } })
     const close = vi.spyOn(persistence!.writers.get(child.agent.id)!, 'close')
     expect(open).toHaveBeenCalledExactlyOnceWith(child.agent.id, 'write', { signal: expect.any(AbortSignal) })
     const resumed = native('worktree-cold-child-native')
@@ -682,7 +682,7 @@ describe('independent native worktree session setup', () => {
     expect(createCodexSession).toHaveBeenCalledTimes(2)
     expect(vi.mocked(createCodexSession).mock.calls[1]![2]).toBeNull()
     expect(vi.mocked(createCodexSession).mock.calls[1]![5]).toEqual({ forkFrom: 'worktree-parent-codex' })
-    expect(persistence!.stored.get(child.agent.id)?.durable.find(event => event.seq === cut + 1)).toEqual({ seq: cut + 1, time: now, type: 'plugin:dsh-tauri-bridge/kernel', ignorable: true, data: binding })
+    expect(persistence!.stored.get(child.agent.id)?.durable.find(event => event.seq === cut + 1)).toEqual({ seq: cut + 1, time: now, type: 'plugin:dsh-tauri-kernel/kernel', ignorable: true, data: binding })
     expect(records(child.agent.session)).toEqual(before)
     expect(errors).toHaveLength(1)
     expect(identity.resolve(parent.agent)).toEqual({ backend: 'codex', nativeSessionId: 'worktree-parent-codex', sessionId: parent.agent.id })
@@ -748,7 +748,7 @@ describe('independent native worktree session setup', () => {
   it('refuses a stale inherited cut before contacting the native fork boundary', async () => {
     const { handle: parent } = await conversation()
     const stale = parent.agent.session.snapshotEvents()
-    sessionModule.appendPluginRecord!(parent.agent.session, 'plugin:dsh-tauri-bridge/kernel', identity.resolve(parent.agent))
+    sessionModule.appendPluginRecord!(parent.agent.session, 'plugin:dsh-tauri-kernel/kernel', identity.resolve(parent.agent))
     const task = context.nativeSessionBridge.create(parent.agent.session, () => agents.create({
       sessionId: sessionModule.SessionId('worktree-stale-cut'),
       seed: stale,
@@ -779,7 +779,7 @@ describe('independent native worktree session setup', () => {
     const rejected = expect(task).rejects.toThrow('BRIDGE_FORK_SOURCE_CHANGED')
     background.push(rejected)
     await started.promise
-    sessionModule.appendPluginRecord!(parent.agent.session, 'plugin:dsh-tauri-bridge/kernel', identity.resolve(parent.agent))
+    sessionModule.appendPluginRecord!(parent.agent.session, 'plugin:dsh-tauri-kernel/kernel', identity.resolve(parent.agent))
     ack.resolve(connection)
     await rejected
     expect(connection.dispose).toHaveBeenCalledOnce()
@@ -928,8 +928,8 @@ describe('official cold native route restoration', () => {
 
   it.each([
     { provider: 'cloud-provider', model: 'global-default' },
-    { provider: 'dsh-tauri-bridge', model: 'claude' },
-    { provider: 'dsh-tauri-bridge', model: 'codex', reasoningEffort: llmModule.ReasoningEffortId('high') },
+    { provider: 'dsh-tauri-kernel', model: 'claude' },
+    { provider: 'dsh-tauri-kernel', model: 'codex', reasoningEffort: llmModule.ReasoningEffortId('high') },
   ])('rejects an explicit cold model selection instead of restoring over it: %j', async (selected) => {
     const original = native('api-cold-selected')
     vi.mocked(createCodexSession).mockResolvedValueOnce(original)
@@ -1045,7 +1045,7 @@ describe('official native session lifecycle', () => {
     await creating(id)
     const agent = officialHandle!.agent
     expect(() => restoreSerialized(agent.session)).not.toThrow()
-    expect(agent.session.snapshotEvents().map(event => event.type)).toEqual(['plugin:dsh-tauri-bridge/kernel'])
+    expect(agent.session.snapshotEvents().map(event => event.type)).toEqual(['plugin:dsh-tauri-kernel/kernel'])
     expect(agent.session.requestHeader()).toBeUndefined()
     expect(agent.options).toMatchObject({ provider: BRIDGE_PROVIDER, model: id })
     expect(connection.submit).not.toHaveBeenCalled()
@@ -1117,8 +1117,8 @@ describe('official native session lifecycle', () => {
     expect(agents.get(official.id)).toBe(officialHandle!.agent)
     expect(sessions.get(official.id)).toBe(official)
     const binding = { backend: id, nativeSessionId: connection.id, sessionId: official.id }
-    expect(records(official)).toMatchObject([{ type: 'plugin:dsh-tauri-bridge/kernel', data: binding }])
-    expect(official.snapshotEvents().find(event => (event.type as string) === 'plugin:dsh-tauri-bridge/kernel')).toMatchObject({ ignorable: true, data: binding })
+    expect(records(official)).toMatchObject([{ type: 'plugin:dsh-tauri-kernel/kernel', data: binding }])
+    expect(official.snapshotEvents().find(event => (event.type as string) === 'plugin:dsh-tauri-kernel/kernel')).toMatchObject({ ignorable: true, data: binding })
     expect(identity.resolve(officialHandle!.agent)).toEqual(binding)
     expect(official.requestHeader()).toBeUndefined()
     expect(officialHandle!.agent.options).toMatchObject({ provider: BRIDGE_PROVIDER, model: id })

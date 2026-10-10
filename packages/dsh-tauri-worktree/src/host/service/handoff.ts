@@ -145,9 +145,9 @@ async function createAgent(
       const projected = ctx.get?.('sessionProjections')?.stateOf?.(sourceSession, 'bridgeKernel')
       const hasNativeRecord = inheritedSeed.some((value) => {
         const event = value as { type?: unknown, ignorable?: unknown }
-        return event?.type === 'plugin:dsh-tauri-bridge/kernel' && event.ignorable === true
+        return event?.type === 'plugin:dsh-tauri-kernel/kernel' && event.ignorable === true
       })
-      if (hasNativeRecord || projected?.binding || projected?.inheritedBinding || projected?.nativeSessionId || sourceSession.requestHeader?.()?.config?.provider === 'dsh-tauri-bridge' || sourceAgent?.options?.provider === 'dsh-tauri-bridge')
+      if (hasNativeRecord || projected?.binding || projected?.inheritedBinding || projected?.nativeSessionId || sourceSession.requestHeader?.()?.config?.provider === 'dsh-tauri-kernel' || sourceAgent?.options?.provider === 'dsh-tauri-kernel')
         throw new Error('BRIDGE_CORE_UNAVAILABLE: Native session inheritance requires the native session fork capability')
     }
     const presets = ctx.get?.('agentPresets')

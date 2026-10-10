@@ -25,7 +25,7 @@ export interface RuntimeModules {
   HarnessError: typeof LlmRuntime.HarnessError
   LlmAdapter: typeof LlmRuntime.LlmAdapter
   isAgentLoopRequest: typeof LlmRuntime.isAgentLoopRequest
-  appendPluginRecord?: (session: Session, type: 'plugin:dsh-tauri-bridge/kernel' | 'plugin:dsh-tauri-bridge/model', data: KernelBinding | NativeTurnOptions) => number
+  appendPluginRecord?: (session: Session, type: 'plugin:dsh-tauri-kernel/kernel' | 'plugin:dsh-tauri-kernel/model', data: KernelBinding | NativeTurnOptions) => number
   pluginRecordOf?: (event: SessionEvent) => { type: string, data: unknown } | undefined
 }
 

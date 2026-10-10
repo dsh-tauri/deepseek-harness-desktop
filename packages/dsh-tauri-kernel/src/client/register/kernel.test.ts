@@ -164,8 +164,8 @@ describe('kernel registration and lifecycle', () => {
     await vi.waitFor(() => expect(kernelStore.$state.phase).toBe('ready'))
     expect(feature.slots.register.mock.calls.map(([entry]) => ({ name: entry.name, id: entry.id, order: entry.order }))).toEqual([
       { name: 'conversation.hero.agentPreset', id: undefined, order: undefined },
-      { name: 'sidebar.session.row.leading', id: 'dsh-tauri-bridge:kernel', order: -10 },
-      { name: 'sidebar.session.row.hover', id: 'dsh-tauri-bridge:kernel', order: -10 },
+      { name: 'sidebar.session.row.leading', id: 'dsh-tauri-kernel:kernel', order: -10 },
+      { name: 'sidebar.session.row.hover', id: 'dsh-tauri-kernel:kernel', order: -10 },
     ])
     expect(feature.openSession).not.toHaveBeenCalled()
     expect(feature.sessions.binding).not.toHaveBeenCalled()
@@ -184,7 +184,7 @@ describe('kernel registration and lifecycle', () => {
     const feature = fixture({ model: true })
     await Promise.resolve()
     const entry = feature.core.entriesOfSlot('conversation.input.model')[0]
-    expect(entry?.registrant).toBe('dsh-tauri-bridge')
+    expect(entry?.registrant).toBe('dsh-tauri-kernel')
     expect(entry?.options.priority).toBe(-1)
     expect(entry?.locale).toBe('model')
     expect(feature.core.entries('conversation.input.model')).toHaveLength(2)
@@ -200,7 +200,7 @@ describe('kernel registration and lifecycle', () => {
     await Promise.resolve()
     expect(feature.core.entries('conversation.input.model')).toHaveLength(1)
     expect((feature.core.entriesOfSlot('conversation.input.model')[0]?.component as ComponentType)?.name).toBe('UnknownModel')
-    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-bridge] slot decoration unavailable; the official renderer capability is unverified', undefined)
+    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] slot decoration unavailable; the official renderer capability is unverified', undefined)
     expect(feature.openSession).not.toHaveBeenCalled()
   })
 
@@ -299,7 +299,7 @@ describe('kernel registration and lifecycle', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(getBackends).toHaveBeenCalledTimes(1)
     expect(kernelStore.$state).toMatchObject({ phase: 'error', error: reason.message })
-    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-bridge] kernel detection failed', reason)
+    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] kernel detection failed', reason)
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -312,7 +312,7 @@ describe('kernel registration and lifecycle', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(getBackends).toHaveBeenCalledTimes(5)
     expect(kernelStore.$state).toMatchObject({ phase: 'error', error: reasons[4]!.message })
-    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-bridge] kernel detection failed', reasons[4])
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-kernel] kernel detection failed', reasons[4])
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -326,7 +326,7 @@ describe('kernel registration and lifecycle', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(getBackends).toHaveBeenCalledTimes(2)
     expect(kernelStore.$state).toMatchObject({ phase: 'error', error: reason.message })
-    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-bridge] kernel detection failed', reason)
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-kernel] kernel detection failed', reason)
   })
 
   it('manual refresh uses one attempt rather than silently starting another startup retry window', async () => {
@@ -446,7 +446,7 @@ describe('kernel registration and lifecycle', () => {
     await feature.sidebar().ensureProjection('archived-session')
     await feature.sidebar().ensureProjection('archived-session')
     expect(console.warn).toHaveBeenCalledTimes(1)
-    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-bridge] session kernel identity unavailable: archived-session', undefined)
+    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] session kernel identity unavailable: archived-session', undefined)
     expect(feature.openSession).not.toHaveBeenCalled()
   })
 
@@ -469,7 +469,7 @@ describe('kernel registration and lifecycle', () => {
     await feature.sidebar().ensureProjection('archived-session')
     await feature.sidebar().ensureProjection('archived-session')
     expect(console.warn).toHaveBeenCalledTimes(1)
-    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-bridge] sessions.refreshProjections unavailable; session kernel identity is unknown', undefined)
+    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] sessions.refreshProjections unavailable; session kernel identity is unknown', undefined)
     expect(feature.openSession).not.toHaveBeenCalled()
   })
 })

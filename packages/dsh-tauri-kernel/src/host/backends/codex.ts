@@ -4,7 +4,7 @@ import type { NativeCommand, NativeContent, NativeModelCatalog, NativeModelInfo,
 import { abortError, deferred, errorFrom, INTERRUPT_TIMEOUT_MS, JsonLinesProcess, NativeBridgeError, PendingRequests, record, REQUEST_TIMEOUT_MS, stringField, textMessages } from './transport'
 
 const INITIALIZATION = {
-  clientInfo: { name: 'dsh-tauri-bridge', title: 'DSH native session bridge', version: '1.0.0' },
+  clientInfo: { name: 'dsh-tauri-kernel', title: 'DSH native session bridge', version: '1.0.0' },
   capabilities: { experimentalApi: true },
 }
 

@@ -21,7 +21,7 @@ let loader: PlatformLoader
 
 function kernelEvent(value: unknown, seq = 0, options: { type?: string, ignorable?: true } = { ignorable: true }): SessionEvent {
   return {
-    type: options.type ?? 'plugin:dsh-tauri-bridge/kernel',
+    type: options.type ?? 'plugin:dsh-tauri-kernel/kernel',
     seq: SessionSeq(seq),
     time: 1000 + seq,
     data: value,
@@ -59,7 +59,7 @@ describe('official kernel identity projection', () => {
     const session = Session.create(SessionId('session-a'))
     expect(projections.stateOf(session, 'bridgeKernel')?.binding).toBeNull()
     expect(projections.snapshot(session)).toEqual({ asOfSeq: -1, values: { bridgeKernel: null } })
-    const agent = { ...agentOf(session), options: { provider: 'dsh-tauri-bridge', model: 'codex' } } as Agent
+    const agent = { ...agentOf(session), options: { provider: 'dsh-tauri-kernel', model: 'codex' } } as Agent
     expect(() => identity.resolve(agent)).toThrow('BRIDGE_BINDING_MISSING')
   })
 
