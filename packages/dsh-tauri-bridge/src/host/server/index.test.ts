@@ -355,7 +355,8 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     ])
     expect(checkpointed).toEqual([agent.id, agent.id])
     expect(identity.resolve(agent)).toEqual(originalBinding)
-    expect(agent.session.requestHeader()?.config).toEqual({ provider: 'dsh-tauri-bridge', model: 'codex' })
+    expect(agent.session.requestHeader()).toBeUndefined()
+    expect(agent.options).toMatchObject({ provider: 'dsh-tauri-bridge', model: 'codex' })
     expect(context.agentDefaultModel.currentSelection()).toEqual({ provider: 'global-provider', model: 'global-model', reasoningEffort: 'global-effort' })
     expect(llm.listProviders()).toEqual(providers)
     expect(connection.submit).not.toHaveBeenCalled()
@@ -482,7 +483,8 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     expect(connection.submit).not.toHaveBeenCalled()
     expect(modelEvents(agent.session)).toEqual([])
     expect(checkpointed).toEqual([])
-    expect(agent.session.requestHeader()?.config).toEqual({ provider: 'dsh-tauri-bridge', model: 'codex' })
+    expect(agent.session.requestHeader()).toBeUndefined()
+    expect(agent.options).toMatchObject({ provider: 'dsh-tauri-bridge', model: 'codex' })
   }, 10_000)
 
   it('fails rather than pretending a native backend without models can accept model controls', async () => {

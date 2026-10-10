@@ -13,7 +13,7 @@ export function registerNativeModels(controller: RegisterController, adapter: Cl
     const lease = scopes.get(sessionId)
     return canSelectNativeModel() && binding.sessionId === sessionId && lease?.backend === binding.backend
       && lease.nativeSessionId === binding.nativeSessionId
-      ? { sessionId, scope: lease.scope, active: () => !controller.isDisposed() && scopes.get(sessionId) === lease }
+      ? { sessionId, scope: lease.scope, active: () => !controller.isDisposed() && scopes.get(sessionId) === lease && lease.references > 0 }
       : undefined
   }
   controller.add(() => {
@@ -73,8 +73,12 @@ export function registerNativeModels(controller: RegisterController, adapter: Cl
           return
         released = true
         if (--owned.references === 0) {
-          scopes.delete(sessionId)
-          nativeModel.close(sessionId, owned.scope)
+          queueMicrotask(() => {
+            if (scopes.get(sessionId) !== owned || owned.references !== 0)
+              return
+            scopes.delete(sessionId)
+            nativeModel.close(sessionId, owned.scope)
+          })
         }
       }
     },

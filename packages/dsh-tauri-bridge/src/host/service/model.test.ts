@@ -288,8 +288,9 @@ function followup(agent: Agent, text: string) {
   return task
 }
 
-function checkUnchangedRoute(agent: Agent) {
-  expect(agent.session.requestHeader()?.config).toEqual({ provider: 'dsh-tauri-bridge', model: 'codex' })
+function checkUnchangedRoute(agent: Agent, started = false) {
+  expect(agent.options).toMatchObject({ provider: 'dsh-tauri-bridge', model: 'codex' })
+  expect(agent.session.requestHeader()?.config).toEqual(started ? { provider: 'dsh-tauri-bridge', model: 'codex' } : undefined)
   expect(context.agentDefaultModel.currentSelection()).toEqual({ provider: 'global-provider', model: 'global-model', reasoningEffort: 'global-effort' })
 }
 
@@ -516,7 +517,7 @@ describe('official native model selection', () => {
     expect(checkpoints).toEqual([agent.id])
     expect(errors).toEqual([])
     expect(createCodexSession).toHaveBeenCalledOnce()
-    checkUnchangedRoute(agent)
+    checkUnchangedRoute(agent, true)
   }, 10_000)
 
   it('blocks actual native admission after a failed checkpoint and retries the same official record before submitting', async () => {
@@ -549,7 +550,7 @@ describe('official native model selection', () => {
     expect(errors).toHaveLength(1)
     expect(errors[0]).toMatchObject({ name: 'LlmError', code: 'UNKNOWN', message: 'first native model durability checkpoint refused', failure: { code: 'UNKNOWN', message: 'first native model durability checkpoint refused' } })
     expect(createCodexSession).toHaveBeenCalledOnce()
-    checkUnchangedRoute(agent)
+    checkUnchangedRoute(agent, true)
   }, 10_000)
 
   it('rejects a no-op flush observer that settles true without storing the official model record', async () => {
@@ -600,7 +601,7 @@ describe('official native model selection', () => {
     expect(modelEvents(agent.session)).toEqual(before)
     expect(persistence.stored.get(agent.id)?.durable.filter(event => (event.type as string) === 'plugin:dsh-tauri-bridge/model')).toEqual(before)
     expect(errors).toHaveLength(1)
-    checkUnchangedRoute(agent)
+    checkUnchangedRoute(agent, true)
   }, 10_000)
 
   it.each(['catalog', 'selection'] as const)('never adopts an old %s catalog result after unload and remount', async (operation) => {
@@ -748,7 +749,7 @@ describe('official native model selection', () => {
     expect(modelEvents(agent.session).map(event => event.data)).toEqual([{ model: 'vendor/reasoning-model', reasoningEffort: 'deep' }, { model: 'vendor/plain-model', reasoningEffort: null }])
     expect(createCodexSession).toHaveBeenCalledOnce()
     expect(runtime.exchanges.size).toBe(0)
-    checkUnchangedRoute(agent)
+    checkUnchangedRoute(agent, true)
   }, 10_000)
 
   it('keeps one immutable native option snapshot across three official steps and applies concurrent selections only to the next turn', async () => {
@@ -814,7 +815,7 @@ describe('official native model selection', () => {
       { turn: 1, step: 1, callId: 'snapshot-first', content: [{ type: 'text', text: 'first native result' }] },
       { turn: 1, step: 2, callId: 'snapshot-second', content: [{ type: 'text', text: 'second native result' }] },
     ])
-    checkUnchangedRoute(agent)
+    checkUnchangedRoute(agent, true)
     await followup(agent, 'use the newly selected native controls')
     expect(connection.submit).toHaveBeenCalledTimes(2)
     expect(connection.submit.mock.calls[1]![0]).toMatchObject([{ source: { kind: 'user' }, content: [{ type: 'text', text: 'use the newly selected native controls' }] }])

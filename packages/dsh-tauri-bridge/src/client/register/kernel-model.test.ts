@@ -87,7 +87,7 @@ describe('registered native model lifecycle', () => {
     expect(fixture({ refresh: false }).actions.canSelectNativeModel()).toBe(false)
   })
 
-  it('reference-counts the same native directory and closes it only after the last release', () => {
+  it('reference-counts the same native directory and closes it only after the last release', async () => {
     const { actions } = fixture()
     const first = actions.acquireNativeModel('session-a', BINDING)
     const scope = nativeModel.$state.entries['session-a']?.scope
@@ -97,7 +97,82 @@ describe('registered native model lifecycle', () => {
     first()
     expect(nativeModel.$state.entries['session-a']).toBeDefined()
     second()
+    await Promise.resolve()
     expect(nativeModel.$state.entries['session-a']).toBeUndefined()
+  })
+
+  it('same-commit resubscription preserves the catalog snapshot and native request scope', async () => {
+    const feature = fixture()
+    const directory = feature.actions.createNativeModelDirectory('session-a', BINDING, { model: null, reasoningEffort: null })
+    const first = directory.subscribe(vi.fn())
+    await feature.actions.loadNativeModels('session-a', BINDING)
+    const snapshot = directory.getSnapshot()
+    const scope = nativeModel.$state.entries['session-a']!.scope
+    expect(snapshot.status).toBe('ready')
+    expect(snapshot.groups[0]!.models.map(model => model.id)).toEqual(['', 'gpt-5.4'])
+    first()
+    const second = directory.subscribe(vi.fn())
+    expect(directory.getSnapshot()).toBe(snapshot)
+    expect(nativeModel.$state.entries['session-a']!.scope).toBe(scope)
+    await Promise.resolve()
+    expect(directory.getSnapshot()).toBe(snapshot)
+    second()
+    await Promise.resolve()
+    expect(nativeModel.$state.entries).toEqual({})
+  })
+
+  it('same-commit resubscription keeps an in-flight catalog request attached to the same scope', async () => {
+    const feature = fixture()
+    const directory = feature.actions.createNativeModelDirectory('session-a', BINDING, { model: null, reasoningEffort: null })
+    const first = directory.subscribe(vi.fn())
+    const pending = deferred<NativeModelDirectory>()
+    vi.mocked(getModels).mockReturnValueOnce(pending.promise)
+    const loading = feature.actions.loadNativeModels('session-a', BINDING)
+    const scope = nativeModel.$state.entries['session-a']!.scope
+    first()
+    const second = directory.subscribe(vi.fn())
+    pending.resolve(CATALOG)
+    await loading
+    expect(directory.getSnapshot().status).toBe('ready')
+    expect(directory.getSnapshot().groups[0]!.models.map(model => model.id)).toEqual(['', 'gpt-5.4'])
+    expect(nativeModel.$state.entries['session-a']!.scope).toBe(scope)
+    expect(getModels).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-a' })
+    second()
+    await Promise.resolve()
+    expect(nativeModel.$state.entries).toEqual({})
+  })
+
+  it('the last release revokes a resolved catalog before deferred directory cleanup', async () => {
+    const feature = fixture()
+    const release = feature.actions.acquireNativeModel('session-a', BINDING)
+    const pending = deferred<NativeModelDirectory>()
+    vi.mocked(getModels).mockReturnValueOnce(pending.promise)
+    const loading = feature.actions.loadNativeModels('session-a', BINDING)
+    pending.resolve(CATALOG)
+    const beforeCleanup = new Promise((resolve) => {
+      queueMicrotask(() => {
+        const entry = nativeModel.$state.entries['session-a']!
+        resolve({ status: entry.directory.status, catalog: entry.catalog })
+      })
+    })
+    release()
+    expect(await beforeCleanup).toEqual({ status: 'loading', catalog: null })
+    await loading
+    expect(nativeModel.$state.entries).toEqual({})
+  })
+
+  it('the last release revokes a resolved selection before it can refresh the projection', async () => {
+    const feature = fixture()
+    const release = feature.actions.acquireNativeModel('session-a', BINDING)
+    await feature.actions.loadNativeModels('session-a', BINDING)
+    const pending = deferred<NativeTurnOptions>()
+    vi.mocked(postModels).mockReturnValueOnce(pending.promise)
+    const selection = feature.actions.selectNativeModel('session-a', BINDING, { provider: 'bridge/codex', model: 'gpt-5.4', reasoningEffort: 'high' })
+    pending.resolve({ model: 'gpt-5.4', reasoningEffort: 'high' })
+    release()
+    expect(await selection).toBeUndefined()
+    expect(feature.refreshProjections).not.toHaveBeenCalled()
+    expect(nativeModel.$state.entries).toEqual({})
   })
 
   it('the public directory owns subscriptions, reads refreshed projection on reconnect, and rejects disposed listeners', async () => {
@@ -107,6 +182,7 @@ describe('registered native model lifecycle', () => {
     await feature.refreshProjections('session-a')
     first()
     first()
+    await Promise.resolve()
     expect(nativeModel.$state.entries).toEqual({})
     const listener = vi.fn()
     const second = directory.subscribe(listener)

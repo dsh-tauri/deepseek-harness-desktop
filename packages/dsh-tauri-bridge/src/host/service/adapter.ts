@@ -94,7 +94,7 @@ export const adapter = defineService({
   },
 
   async request(payload: { agent: Agent, signal: AbortSignal }, next: () => Promise<LlmCallConfig>): Promise<LlmCallConfig> {
-    const config = await next()
+    let config = await next()
     const ctx = getServerContext<HostContext>(server)
     const projected = ctx.sessionProjections.stateOf(payload.agent.session, 'bridgeKernel')?.binding
     if (projected === null || projected === undefined) {
@@ -104,6 +104,12 @@ export const adapter = defineService({
     }
     const binding = identity.resolve(payload.agent)
     assertLive(payload.agent, payload.signal)
+    // Cold API activation supplies the global selection until the loop commits its first legal request header.
+    const fallback = ctx.get('agentDefaultModel')?.currentSelection()
+    if (runtime.coldRoutes.has(payload.agent) && payload.agent.session.requestHeader() === undefined && !payload.agent.session.snapshotEvents().some(event => event.type === 'model/selection') && fallback !== undefined && config.provider === fallback.provider && config.model === fallback.model && config.reasoningEffort === fallback.reasoningEffort && config.maxTokens === undefined && config.temperature === undefined && config.stop === undefined) {
+      const { reasoningEffort: _effort, ...native } = config
+      config = { ...native, provider: BRIDGE_PROVIDER, model: binding.backend }
+    }
     if (config.provider !== BRIDGE_PROVIDER || config.model !== binding.backend || config.reasoningEffort !== undefined || config.maxTokens !== undefined || config.temperature !== undefined || config.stop !== undefined)
       throw new Error('BRIDGE_KERNEL_IMMUTABLE: 已绑定会话不能切换内核或由 DSH 覆写原生选项。')
     return config
@@ -199,6 +205,7 @@ export const adapter = defineService({
   },
 
   async remove(agent: Agent): Promise<void> {
+    runtime.coldRoutes.delete(agent)
     const current = runtime.exchanges.get(agent.id)
     if (current?.state.input.agent === agent)
       await session.finish(agent, current.state.input.turn)
@@ -209,6 +216,11 @@ export const adapter = defineService({
   },
 
   end(value: Session, event: SessionEvent): void {
+    if (event.type === 'request/header' || event.type === 'model/selection') {
+      const agent = getServerContext<HostContext>(server).agents.get(value.id)
+      if (agent?.session === value)
+        runtime.coldRoutes.delete(agent)
+    }
     sink.commitTool(value, event)
     if (event.type === 'step/end' || event.type === 'turn/end') {
       runtime.steps.delete(value.id)

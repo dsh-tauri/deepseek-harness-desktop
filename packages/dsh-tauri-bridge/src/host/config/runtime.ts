@@ -15,6 +15,7 @@ export const runtime = {
   sinks: new Map<string, NativeSink>(),
   exchanges: new Map<string, OfficialSink>(),
   steps: new Map<string, AdmittedStep>(),
+  coldRoutes: new Set<Agent>(),
   modelWrites: new Map<Agent, Promise<void>>(),
   checkpoints: new Map<Agent, Promise<void>>(),
   verified: new Map<Agent, Map<BridgeRecordType, RecordWatermark>>(),
@@ -49,6 +50,7 @@ export async function resetRuntime(): Promise<void> {
   runtime.sinks.clear()
   runtime.exchanges.clear()
   runtime.steps.clear()
+  runtime.coldRoutes.clear()
   runtime.modelWrites.clear()
   runtime.checkpoints.clear()
   runtime.verified.clear()

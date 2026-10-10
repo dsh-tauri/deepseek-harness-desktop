@@ -5,7 +5,8 @@ import type { HostContext } from '../types'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { z } from 'zod'
-import { KERNEL_RECORD_TYPE } from '../config/constants'
+import { BRIDGE_PROVIDER, KERNEL_RECORD_TYPE } from '../config/constants'
+import { runtime } from '../config/runtime'
 import { server } from '../server'
 import { loadRuntimeModules } from '../utils/runtime-modules'
 
@@ -29,7 +30,7 @@ export const identity = defineService({
     const projections = ctx.get('sessionProjections')
     if (typeof projections?.register !== 'function')
       throw new Error('BRIDGE_CORE_UNAVAILABLE: The official session projection registry is unavailable')
-    return projections.register({
+    const unregister = projections.register({
       key: 'bridgeKernel',
       stateSchema,
       init: (header, inheritedEventCount) => Object.freeze({ ownerSessionId: header.id, inheritedEventCount, inheritedBinding: null, binding: null }),
@@ -55,6 +56,32 @@ export const identity = defineService({
       wire: { viewSchema, view: state => state.binding },
       stateVersion: 2,
     })
+    const dispose = ctx.on('agent/created', ({ agent, source }) => {
+      if (source !== 'resume' || projections.stateOf(agent.session, 'bridgeKernel')?.binding == null)
+        return
+      const binding = identity.resolve(agent)
+      const fallback = ctx.get('agentDefaultModel')?.currentSelection()
+      if ((agent.options.provider === undefined && agent.options.model === undefined) || (agent.options.provider === fallback?.provider && agent.options.model === fallback?.model)) {
+        identity.hydrate(agent)
+        if (agent.session.requestHeader() === undefined && !agent.session.snapshotEvents().some(event => event.type === 'model/selection'))
+          runtime.coldRoutes.add(agent)
+      }
+      else if (agent.options.provider === BRIDGE_PROVIDER && agent.options.model === binding.backend) {
+        identity.hydrate(agent)
+      }
+      return undefined
+    }, { global: true })
+    return () => {
+      dispose()
+      unregister()
+      runtime.coldRoutes.clear()
+    }
+  },
+
+  hydrate(agent: Agent): void {
+    const binding = identity.resolve(agent)
+    agent.options.provider = BRIDGE_PROVIDER
+    agent.options.model = binding.backend
   },
 
   async append(agent: Agent, binding: KernelBinding): Promise<number> {

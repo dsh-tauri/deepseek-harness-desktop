@@ -96,7 +96,8 @@ function fixture(identity: KernelBinding | null | undefined, options: { current?
   const directory = { getSnapshot: () => OFFICIAL_DIRECTORY, subscribe: () => () => {} }
   function ModelSelect(props: ContractFace) {
     faces.push(props)
-    const snapshot = useSyncExternalStore(props.directory?.subscribe ?? directory.subscribe, props.directory?.getSnapshot ?? directory.getSnapshot)
+    const source = props.directory ?? directory
+    const snapshot = useSyncExternalStore(listener => source.subscribe(listener), () => source.getSnapshot())
     if (!props.available)
       return null
     const group = snapshot.groups.find(group => group.id === snapshot.current?.provider)
@@ -170,6 +171,66 @@ describe('native model renderer public contract', () => {
     expect(view.container.querySelector('[data-bridge-kernel-model="native"]')?.getAttribute('title')).toBe('Model and reasoning changes apply to the next complete turn; this session kernel cannot be changed')
     expect(view.container.querySelector('[data-original-marker="original-owner"]')).not.toBeNull()
     expect(feature.officialLoad).not.toHaveBeenCalled()
+    expect(feature.officialSelect).not.toHaveBeenCalled()
+  })
+
+  it('the official Codex catalog exposes GPT display names and distinct advertised Extra High and Max choices', async () => {
+    vi.mocked(getModels).mockResolvedValue({
+      backend: 'codex',
+      defaultModel: 'gpt-6.1-sol',
+      current: { model: null, reasoningEffort: null },
+      models: [
+        { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol', reasoning: { efforts: [
+          { id: 'low', name: 'Low' },
+          { id: 'medium', name: 'Medium' },
+          { id: 'high', name: 'High' },
+          { id: 'xhigh', name: 'Extra High' },
+          { id: 'max', name: 'Max' },
+          { id: 'ultra', name: 'Ultra' },
+        ], defaultEffort: 'low' } },
+        { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+        { id: 'gpt-6-luna', name: 'GPT-6-Luna' },
+      ],
+    })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'gpt-6.1-sol', reasoningEffort: 'low' } })
+    const view = render(<ModelKernel {...feature.props} />)
+    fireEvent.click(view.getByRole('button', { name: 'bridge/codex/gpt-6.1-sol · low' }))
+    await view.findByRole('button', { name: 'GPT-6.1-Sol · low' })
+    expect(view.getAllByRole('button', { name: /^Model: GPT/ }).map(button => button.textContent)).toEqual(['Model: GPT-6.1-Sol', 'Model: GPT-6-Astra', 'Model: GPT-6-Luna'])
+    expect(view.getAllByRole('button', { name: /^Depth:/ }).map(button => button.textContent)).toEqual(['Depth: default', 'Depth: Low', 'Depth: Medium', 'Depth: High', 'Depth: Extra High', 'Depth: Max', 'Depth: Ultra'])
+    expect(view.queryByRole('button', { name: 'Official model' })).toBeNull()
+    expect(view.queryByRole('button', { name: 'Depth: Off' })).toBeNull()
+    feature.setServerSelection({ model: 'gpt-6.1-sol', reasoningEffort: 'xhigh' })
+    fireEvent.click(view.getByRole('button', { name: 'Depth: Extra High' }))
+    await view.findByRole('button', { name: 'GPT-6.1-Sol · xhigh' })
+    feature.setServerSelection({ model: 'gpt-6.1-sol', reasoningEffort: 'max' })
+    fireEvent.click(view.getByRole('button', { name: 'Depth: Max' }))
+    await view.findByRole('button', { name: 'GPT-6.1-Sol · max' })
+    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: 'gpt-6.1-sol', reasoningEffort: 'xhigh' })
+    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: 'gpt-6.1-sol', reasoningEffort: 'max' })
+    expect(feature.officialLoad).not.toHaveBeenCalled()
+    expect(feature.officialSelect).not.toHaveBeenCalled()
+  })
+
+  it('advertised native Off sends none while the separate default choice sends null', async () => {
+    vi.mocked(getModels).mockResolvedValue({
+      backend: 'codex',
+      defaultModel: 'vendor-model',
+      current: { model: null, reasoningEffort: null },
+      models: [{ id: 'vendor-model', name: 'Native vendor model', reasoning: { efforts: [{ id: 'none', name: 'Off' }, { id: 'max', name: 'Max' }], defaultEffort: 'max' } }],
+    })
+    const feature = fixture({ backend: 'codex', nativeSessionId: 'native-a', sessionId: 'session-a' }, { current: { model: 'vendor-model', reasoningEffort: 'max' } })
+    const view = render(<ModelKernel {...feature.props} />)
+    fireEvent.click(view.getByRole('button', { name: 'bridge/codex/vendor-model · max' }))
+    await view.findByRole('button', { name: 'Depth: Off' })
+    feature.setServerSelection({ model: 'vendor-model', reasoningEffort: 'none' })
+    fireEvent.click(view.getByRole('button', { name: 'Depth: Off' }))
+    await view.findByRole('button', { name: 'Native vendor model · none' })
+    expect(postModels).toHaveBeenNthCalledWith(1, { sessionId: 'session-a', model: 'vendor-model', reasoningEffort: 'none' })
+    feature.setServerSelection({ model: 'vendor-model', reasoningEffort: null })
+    fireEvent.click(view.getByRole('button', { name: 'Depth: default' }))
+    await view.findByRole('button', { name: 'Native vendor model' })
+    expect(postModels).toHaveBeenNthCalledWith(2, { sessionId: 'session-a', model: 'vendor-model', reasoningEffort: null })
     expect(feature.officialSelect).not.toHaveBeenCalled()
   })
 
@@ -293,6 +354,7 @@ describe('native model renderer public contract', () => {
     expect(nativeModel.$state.entries['session-a']?.scope).toBe(scope)
     expect(nativeModel.$state.entries['session-a']?.current).toEqual({ model: 'gpt-5.4', reasoningEffort: 'medium' })
     second.unmount()
+    await act(async () => {})
     expect(nativeModel.$state.entries).toEqual({})
   })
 

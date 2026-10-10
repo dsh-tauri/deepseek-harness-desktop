@@ -23,6 +23,7 @@ import { createCodexSession } from '../backends/codex'
 import { BRIDGE_PROVIDER } from '../config/constants'
 import { resetRuntime, runtime } from '../config/runtime'
 import { detectBackend } from '../utils/detection'
+import { adapter } from './adapter'
 import { identity } from './identity'
 import { session } from './session'
 
@@ -34,6 +35,11 @@ const packageId: string = 'dsh-session-current'
 const sessionModule = await import(packageId) as typeof import('@deepseek-ai/dsh-session') & Pick<RuntimeModules, 'appendPluginRecord' | 'pluginRecordOf'>
 const require = createRequire(import.meta.url)
 const coreRequire = createRequire(require.resolve('@deepseek-ai/dsh-agent-loop'))
+const { sessionFormatCatalog } = await import(pathToFileURL(coreRequire.resolve('@deepseek-ai/dsh-session-format-catalog')).href)
+const { SessionQueryEngine } = await import(pathToFileURL(coreRequire.resolve('@deepseek-ai/dsh-session-query')).href)
+const controllerEntry = pathToFileURL(require.resolve('@deepseek-ai/dsh-api-session-controller'))
+const { ApiSessionAgentController } = await import(new URL('./types/agent.js', controllerEntry).href)
+const { installModelSelectionProjection } = await import(new URL('./types/model-selection-projection.js', controllerEntry).href)
 const promptModule: { SystemPrompt: new (ctx: Context, config: { includeHarnessIdentity: boolean, includeRuntimeContext: boolean }) => Context['systemPrompt'] } = await import(pathToFileURL(coreRequire.resolve('@deepseek-ai/dsh-system-prompt')).href)
 const cwd = process.cwd()
 const now = 1_791_576_000_000
@@ -261,6 +267,25 @@ function followup(agent: Agent, text: string) {
   return idle
 }
 
+function restoreSerialized(official: Session) {
+  const text = [
+    sessionFormatCatalog.encodeCurrentHeader({ ...official.header, delegationDepth: official.header.delegationDepth ?? 0 }, official.inheritedEventCount),
+    ...official.snapshotEvents().map(event => sessionFormatCatalog.encodeCurrentEvent(event)),
+  ].map(row => JSON.stringify(row)).join('\n')
+  const [header, ...events] = text.split('\n').map(row => JSON.parse(row))
+  const restore = sessionFormatCatalog.createRestore(header, { recovery: 'strict', validation: 'current' })
+  for (const event of events)
+    restore.decodeRow(event)
+  const stored = restore.finish()
+  const restored = sessionModule.Session.fromRestore(sessionModule.SessionId(stored.header.id), stored.events, stored.header, sessionModule.SessionLogOffset(stored.inheritedEventCount), 'detached')
+  expect(restored.header).toEqual({ ...official.header, delegationDepth: official.header.delegationDepth ?? 0 })
+  expect(restored.inheritedEventCount).toBe(official.inheritedEventCount)
+  expect(restored.snapshotEvents().slice(0, stored.events.length)).toEqual(official.snapshotEvents())
+  expect(restored.requestHeader()).toEqual(official.requestHeader())
+  expect(restored.deriveMessages()).toEqual(official.deriveMessages())
+  return restored
+}
+
 function records(official: Session) {
   return official.snapshotEvents().flatMap((event) => {
     const record = sessionModule.pluginRecordOf!(event)
@@ -341,6 +366,36 @@ describe('independent native worktree session setup', () => {
     })
   })
 
+  it.each(['codex', 'claude'] as const)('round-trips the official V4 serializer before and after the first %s worktree turn', async (id) => {
+    const { handle: parent, connection: original } = await conversation(id)
+    const prefix = parent.agent.session.snapshotEvents()
+    const connection = native(`serialized-worktree-child-${id}`)
+    const factory = vi.mocked(id === 'codex' ? createCodexSession : createClaudeSession)
+    factory.mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
+      connection.submit.mockImplementation(async () => output.assistant('serialized-worktree-answer', [{ type: 'text', text: 'independent serialized worktree reply' }]))
+      return connection
+    })
+    const child = await fork(parent.agent, `serialized-worktree-official-${id}`)
+    const cut = child.agent.session.inheritedEventCount
+    expect(() => restoreSerialized(child.agent.session)).not.toThrow()
+    expect(child.agent.session.snapshotEvents().slice(cut).map(event => event.type)).toEqual(['session/end-seed', 'plugin:dsh-tauri-bridge/kernel'])
+    expect(child.agent.session.requestHeader()).toEqual(parent.agent.session.requestHeader())
+    await followup(child.agent, 'persist the first independent worktree reply')
+    expect(errors).toEqual([])
+    expect(connection.submit).toHaveBeenCalledOnce()
+    expect(original.submit).toHaveBeenCalledOnce()
+    expect(parent.agent.session.snapshotEvents()).toEqual(prefix)
+    expect(child.agent.session.snapshotEvents().slice(cut).filter(event => event.type === 'request/header').map(event => event.data.reason)).toEqual(['resume'])
+    const restored = restoreSerialized(child.agent.session)
+    expect(records(restored)).toEqual(records(child.agent.session))
+    expect(restored.deriveMessages().map(message => ({ role: message.role, content: message.content }))).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'create the worktree from this real human conversation' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'source conversation already settled' }] },
+      { role: 'user', content: [{ type: 'text', text: 'persist the first independent worktree reply' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'independent serialized worktree reply' }] },
+    ])
+  }, 10_000)
+
   it.each(['codex', 'claude'] as const)('publishes a %s child only after a distinct native fork ACK and its own official identity commit', async (id) => {
     const { handle: parent, connection: original } = await conversation(id)
     const source = parent.agent.session
@@ -384,7 +439,6 @@ describe('independent native worktree session setup', () => {
     expect(child.snapshotEvents().slice(cut)).toEqual([
       { seq: cut, time: now, type: 'session/end-seed', data: { inherited: true } },
       { seq: cut + 1, time: now, type: 'plugin:dsh-tauri-bridge/kernel', ignorable: true, data: { backend: id, nativeSessionId: `worktree-child-${id}`, sessionId: `worktree-official-${id}` } },
-      { seq: cut + 2, time: now, type: 'request/header', data: { header: { config: { provider: 'dsh-tauri-bridge', model: id } }, reason: 'change' } },
     ])
     expect(identity.resolve(owned.agent)).toEqual({ backend: id, nativeSessionId: `worktree-child-${id}`, sessionId: `worktree-official-${id}` })
     expect(identity.resolve(parent.agent)).toEqual({ backend: id, nativeSessionId: `worktree-parent-${id}`, sessionId: source.id })
@@ -683,7 +737,7 @@ describe('independent native worktree session setup', () => {
   it('refuses a stale inherited cut before contacting the native fork boundary', async () => {
     const { handle: parent } = await conversation()
     const stale = parent.agent.session.snapshotEvents()
-    parent.agent.session.append('request/header', { header: { config: { provider: 'dsh-tauri-bridge', model: 'codex' } }, reason: 'change' })
+    sessionModule.appendPluginRecord!(parent.agent.session, 'plugin:dsh-tauri-bridge/kernel', identity.resolve(parent.agent))
     const task = context.nativeSessionBridge.create(parent.agent.session, () => agents.create({
       sessionId: sessionModule.SessionId('worktree-stale-cut'),
       seed: stale,
@@ -714,7 +768,7 @@ describe('independent native worktree session setup', () => {
     const rejected = expect(task).rejects.toThrow('BRIDGE_FORK_SOURCE_CHANGED')
     background.push(rejected)
     await started.promise
-    parent.agent.session.append('request/header', { header: { config: { provider: 'dsh-tauri-bridge', model: 'codex' } }, reason: 'change' })
+    sessionModule.appendPluginRecord!(parent.agent.session, 'plugin:dsh-tauri-bridge/kernel', identity.resolve(parent.agent))
     ack.resolve(connection)
     await rejected
     expect(connection.dispose).toHaveBeenCalledOnce()
@@ -786,7 +840,217 @@ describe('independent native worktree session setup', () => {
   }, 10_000)
 })
 
+describe('official cold native route restoration', () => {
+  let controller: InstanceType<typeof ApiSessionAgentController>
+  let query: InstanceType<typeof SessionQueryEngine>
+  const defaultSelection = { provider: 'cloud-provider', model: 'global-default' }
+
+  beforeEach(() => {
+    persistence = new MemoryPersistence(context)
+    context.on('session/flush', async (official) => {
+      const stored = persistence!.stored.get(official.id)!
+      const writer = persistence!.writers.get(official.id)!
+      const suffix = official.snapshotEvents().slice(stored.events.length)
+      if (suffix.length > 0)
+        await writer.append(suffix)
+      await writer.flush()
+    })
+    installModelSelectionProjection(context)
+    context.provide('agentDefaultModel', { currentSelection: () => defaultSelection } as HostContext['agentDefaultModel'])
+    context.provide('typert', {
+      lookups: { configure: vi.fn() },
+      contexts: { configureHost: vi.fn() },
+    } as unknown as HostContext['typert'])
+    query = new SessionQueryEngine(context)
+    controller = new ApiSessionAgentController(context)
+    context.provide('sessionController', { resolveAgent: controller.resolveAgent.bind(controller) } as HostContext['sessionController'])
+  })
+
+  it.each(['codex', 'claude'] as const)('restores the first %s cold request through the real API controller without a setup header', async (id) => {
+    const factory = vi.mocked(id === 'codex' ? createCodexSession : createClaudeSession)
+    const original = native(`api-cold-${id}`)
+    factory.mockResolvedValueOnce(original)
+    await creating(id)
+    const previous = officialHandle!
+    const before = restoreSerialized(previous.agent.session)
+    const binding = { backend: id, nativeSessionId: original.id, sessionId: previous.agent.id }
+    expect(before.requestHeader()).toBeUndefined()
+    await previous.dispose()
+    await session.remove(previous.agent.id)
+    expect(sessions.get(previous.agent.id)).toBeUndefined()
+    expect(agents.get(previous.agent.id)).toBeUndefined()
+    const observed = await query.observeSession(previous.agent.id)
+    expect(observed.header.id).toBe(previous.agent.id)
+    expect(observed.events).toEqual(previous.agent.session.snapshotEvents())
+    observed[Symbol.dispose]()
+    const found = await controller.resolveAgent(previous.agent.id)
+    expect(found).not.toHaveProperty('error')
+    if ('error' in found)
+      throw found.error
+    const restored = found.agent
+    expect(restored.session.requestHeader()).toBeUndefined()
+    expect(identity.resolve(restored)).toEqual(binding)
+    expect(factory).toHaveBeenCalledOnce()
+    expect(runtime.coldRoutes.has(restored)).toBe(true)
+    const resumed = native(original.id)
+    factory.mockImplementationOnce(async (_command, _cwd, storedId, output) => {
+      expect(storedId).toBe(original.id)
+      resumed.submit.mockImplementation(async () => output.assistant('api-cold-answer', [{ type: 'text', text: 'the bound native session continued' }]))
+      return resumed
+    })
+    await followup(restored, 'continue the cold native session')
+    expect(errors).toEqual([])
+    expect(restored.options).toMatchObject({ provider: BRIDGE_PROVIDER, model: id })
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(resumed.submit).toHaveBeenCalledOnce()
+    expect(resumed.submit.mock.calls[0]![2]).toEqual({ model: null, reasoningEffort: null })
+    const replayed = restoreSerialized(restored.session)
+    expect(replayed.requestHeader()?.config).toEqual({ provider: BRIDGE_PROVIDER, model: id })
+    expect(replayed.snapshotEvents().filter(event => event.type === 'request/header').map(event => event.data.reason)).toEqual(['initial'])
+    expect(runtime.coldRoutes.has(restored)).toBe(false)
+    expect(records(replayed)).toEqual(records(before))
+    expect(replayed.deriveMessages().map(message => ({ role: message.role, content: message.content }))).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'continue the cold native session' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'the bound native session continued' }] },
+    ])
+  }, 10_000)
+
+  it.each([
+    { provider: 'cloud-provider', model: 'global-default' },
+    { provider: 'dsh-tauri-bridge', model: 'claude' },
+    { provider: 'dsh-tauri-bridge', model: 'codex', reasoningEffort: llmModule.ReasoningEffortId('high') },
+  ])('rejects an explicit cold model selection instead of restoring over it: %j', async (selected) => {
+    const original = native('api-cold-selected')
+    vi.mocked(createCodexSession).mockResolvedValueOnce(original)
+    await creating()
+    const previous = officialHandle!
+    await previous.dispose()
+    await session.remove(previous.agent.id)
+    const found = await controller.resolveAgent(previous.agent.id)
+    expect(found).not.toHaveProperty('error')
+    if ('error' in found)
+      throw found.error
+    controller.selectForNextRequest(found.agent, selected)
+    await followup(found.agent, 'reject switching the bound native kernel')
+    expect(errors).toEqual([expect.objectContaining({ message: 'BRIDGE_KERNEL_IMMUTABLE: 已绑定会话不能切换内核或由 DSH 覆写原生选项。' })])
+    expect(createCodexSession).toHaveBeenCalledOnce()
+    expect(createClaudeSession).not.toHaveBeenCalled()
+    expect(original.submit).not.toHaveBeenCalled()
+    expect(found.agent.session.requestHeader()).toBeUndefined()
+    expect(found.agent.session.snapshotEvents().filter((event: SessionEvent) => event.type === 'model/selection').map((event: SessionEvent) => event.data)).toEqual([selected])
+    expect(identity.resolve(found.agent)).toEqual({ backend: 'codex', nativeSessionId: original.id, sessionId: previous.agent.id })
+    expect(runtime.coldRoutes.has(found.agent)).toBe(false)
+    expect(() => restoreSerialized(found.agent.session)).not.toThrow()
+  }, 10_000)
+
+  it.each([
+    { provider: 'foreign-provider', model: 'global-default' },
+    { provider: 'cloud-provider', model: 'foreign-model' },
+    { provider: 'cloud-provider', model: 'global-default', reasoningEffort: llmModule.ReasoningEffortId('high') },
+    { provider: 'cloud-provider', model: 'global-default', maxTokens: 1 },
+    { provider: 'cloud-provider', model: 'global-default', temperature: 0 },
+    { provider: 'cloud-provider', model: 'global-default', stop: ['stop'] },
+  ])('rejects nondefault cold request overrides without a native submission: %j', async (override) => {
+    const original = native('api-cold-overrides')
+    vi.mocked(createCodexSession).mockResolvedValueOnce(original)
+    await creating()
+    const previous = officialHandle!
+    await previous.dispose()
+    await session.remove(previous.agent.id)
+    const found = await controller.resolveAgent(previous.agent.id)
+    expect(found).not.toHaveProperty('error')
+    if ('error' in found)
+      throw found.error
+    const started = deferred<AbortSignal>()
+    const gate = deferred<void>()
+    releases.push(() => gate.resolve())
+    context.on('agent/pre-step', async ({ signal }) => {
+      started.resolve(signal)
+      await gate.promise
+      return { kind: 'reject' }
+    }, { global: true, prepend: true })
+    const turn = followup(found.agent, 'reject overriding native options during cold resume')
+    const signal = await started.promise
+    await expect(adapter.request({ agent: found.agent, signal }, async () => override)).rejects.toThrow('BRIDGE_KERNEL_IMMUTABLE: 已绑定会话不能切换内核或由 DSH 覆写原生选项。')
+    expect(createCodexSession).toHaveBeenCalledOnce()
+    expect(original.submit).not.toHaveBeenCalled()
+    expect(found.agent.session.requestHeader()).toBeUndefined()
+    expect(identity.resolve(found.agent)).toEqual({ backend: 'codex', nativeSessionId: original.id, sessionId: previous.agent.id })
+    gate.resolve()
+    await turn
+    expect(errors).toEqual([])
+    expect(() => restoreSerialized(found.agent.session)).not.toThrow()
+  }, 10_000)
+
+  it.each(['codex', 'claude'] as const)('hydrates an empty %s worktree route from its committed child binding', async (id) => {
+    const factory = vi.mocked(id === 'codex' ? createCodexSession : createClaudeSession)
+    const original = native(`api-empty-parent-${id}`)
+    factory.mockResolvedValueOnce(original)
+    await creating(id)
+    const previous = officialHandle!
+    await previous.dispose()
+    await session.remove(previous.agent.id)
+    const found = await controller.resolveAgent(previous.agent.id)
+    expect(found).not.toHaveProperty('error')
+    if ('error' in found)
+      throw found.error
+    const source = found.agent.session
+    const connection = native(`api-empty-child-${id}`)
+    factory.mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
+      connection.submit.mockImplementation(async () => output.assistant('api-empty-child-answer', [{ type: 'text', text: 'the independent empty-source worktree continued' }]))
+      return connection
+    })
+    const child = await context.nativeSessionBridge.create(source, signal => agents.create({
+      sessionId: sessionModule.SessionId(`api-empty-child-official-${id}`),
+      seed: source.snapshotEvents(),
+      inheritedEventCount: source.seq,
+      meta: { cwd, parentSession: source.id, isSeeded: true },
+      agentOptions: {},
+      signal,
+      setup: (_agentCtx, agent) => context.nativeSessionBridge.prepare(source, agent, signal!),
+    }))
+    expect(identity.resolve(child.agent)).toEqual({ backend: id, nativeSessionId: connection.id, sessionId: child.agent.id })
+    expect(child.agent.session.requestHeader()).toBeUndefined()
+    expect(() => restoreSerialized(child.agent.session)).not.toThrow()
+    await followup(child.agent, 'continue the cold empty-source worktree')
+    expect(errors).toEqual([])
+    expect(child.agent.options).toEqual({ provider: BRIDGE_PROVIDER, model: id })
+    expect(connection.submit).toHaveBeenCalledOnce()
+    expect(original.submit).not.toHaveBeenCalled()
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(factory.mock.calls[1]![5]).toBeUndefined()
+    expect(restoreSerialized(child.agent.session).requestHeader()?.config).toEqual({ provider: BRIDGE_PROVIDER, model: id })
+  }, 10_000)
+})
+
 describe('official native session lifecycle', () => {
+  it.each(['codex', 'claude'] as const)('round-trips the official V4 serializer before and after the first %s native turn', async (id) => {
+    const connection = native(`serialized-native-${id}`)
+    const factory = vi.mocked(id === 'codex' ? createCodexSession : createClaudeSession)
+    factory.mockImplementationOnce(async (_command, _cwd, _storedId, output) => {
+      connection.submit.mockImplementation(async () => output.assistant('serialized-native-answer', [{ type: 'text', text: 'serialized native reply' }]))
+      return connection
+    })
+    await creating(id)
+    const agent = officialHandle!.agent
+    expect(() => restoreSerialized(agent.session)).not.toThrow()
+    expect(agent.session.snapshotEvents().map(event => event.type)).toEqual(['plugin:dsh-tauri-bridge/kernel'])
+    expect(agent.session.requestHeader()).toBeUndefined()
+    expect(agent.options).toMatchObject({ provider: BRIDGE_PROVIDER, model: id })
+    expect(connection.submit).not.toHaveBeenCalled()
+    await followup(agent, 'persist one real native reply')
+    expect(errors).toEqual([])
+    expect(connection.submit).toHaveBeenCalledOnce()
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'request/header').map(event => event.data.reason)).toEqual(['initial'])
+    const restored = restoreSerialized(agent.session)
+    expect(restored.requestHeader()?.config).toEqual({ provider: BRIDGE_PROVIDER, model: id })
+    expect(records(restored)).toEqual(records(agent.session))
+    expect(restored.deriveMessages().map(message => ({ role: message.role, content: message.content }))).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'persist one real native reply' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'serialized native reply' }] },
+    ])
+  }, 10_000)
+
   it('connects Codex with unknown login status and leaves provider authentication native-owned', async () => {
     vi.mocked(detectBackend).mockResolvedValue({
       detection: { id: 'codex', installed: true, auth: 'unknown', version: 'test', drift: false, hint: 'Check native provider authentication' },
@@ -845,7 +1109,8 @@ describe('official native session lifecycle', () => {
     expect(records(official)).toMatchObject([{ type: 'plugin:dsh-tauri-bridge/kernel', data: binding }])
     expect(official.snapshotEvents().find(event => (event.type as string) === 'plugin:dsh-tauri-bridge/kernel')).toMatchObject({ ignorable: true, data: binding })
     expect(identity.resolve(officialHandle!.agent)).toEqual(binding)
-    expect(official.requestHeader()?.config).toEqual({ provider: BRIDGE_PROVIDER, model: id })
+    expect(official.requestHeader()).toBeUndefined()
+    expect(officialHandle!.agent.options).toMatchObject({ provider: BRIDGE_PROVIDER, model: id })
     expect(announced).toEqual([officialHandle!.agent])
     expect(attachSession).toHaveBeenCalledExactlyOnceWith(official.id)
     expect(connection.submit).not.toHaveBeenCalled()

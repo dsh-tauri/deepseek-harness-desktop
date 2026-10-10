@@ -3,6 +3,17 @@ import type { Deferred } from './transport'
 import type { NativeCommand, NativeContent, NativeModelCatalog, NativeModelInfo, NativeQuestion, NativeSession, NativeSessionOpenOptions, NativeSink, NativeTurnOptions } from './types'
 import { abortError, deferred, errorFrom, INTERRUPT_TIMEOUT_MS, JsonLinesProcess, NativeBridgeError, PendingRequests, record, stringField, textMessages } from './transport'
 
+const CODEX_REASONING_EFFORT_NAMES = new Map([
+  ['none', 'Off'],
+  ['minimal', 'Minimal'],
+  ['low', 'Low'],
+  ['medium', 'Medium'],
+  ['high', 'High'],
+  ['xhigh', 'Extra High'],
+  ['max', 'Max'],
+  ['ultra', 'Ultra'],
+])
+
 interface ToolState {
   output: string
   ended: boolean
@@ -158,7 +169,7 @@ class CodexSession implements NativeSession {
         const efforts = model.supportedReasoningEfforts.map((value) => {
           const effort = record(value)
           const id = stringField(effort, 'reasoningEffort')
-          return { id, name: id, ...typeof effort.description === 'string' ? { description: effort.description } : {} }
+          return { id, name: CODEX_REASONING_EFFORT_NAMES.get(id) ?? id, ...typeof effort.description === 'string' ? { description: effort.description } : {} }
         })
         const defaultEffort = typeof model.defaultReasoningEffort === 'string' && efforts.some(effort => effort.id === model.defaultReasoningEffort) ? model.defaultReasoningEffort : undefined
         models.set(id, {

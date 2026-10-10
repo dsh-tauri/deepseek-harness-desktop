@@ -165,6 +165,87 @@ describe('codex native app-server contract', () => {
     expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
   })
 
+  it('preserves official display names and distinct advertised xhigh, max and ultra effort identities', async () => {
+    codexProcess({
+      model: 'gpt-6.1-sol',
+      models: [{
+        id: 'gpt-6.1-sol',
+        model: 'gpt-6.1-sol',
+        displayName: 'GPT-6.1-Sol',
+        description: 'Latest workhorse model for coding and everyday work.',
+        hidden: false,
+        isDefault: true,
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low', description: 'Fast responses with lighter reasoning' },
+          { reasoningEffort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+          { reasoningEffort: 'high', description: 'Greater reasoning depth for complex problems' },
+          { reasoningEffort: 'xhigh', description: 'Extra high reasoning depth for complex problems' },
+          { reasoningEffort: 'max', description: 'Maximum reasoning depth for the hardest problems' },
+          { reasoningEffort: 'ultra', description: 'Maximum reasoning with automatic task delegation' },
+        ],
+        defaultReasoningEffort: 'low',
+      }],
+    })
+    const session = await open()
+    const catalog = await session.models!(new AbortController().signal)
+    expect(catalog).toEqual({
+      defaultModel: 'gpt-6.1-sol',
+      models: [{
+        id: 'gpt-6.1-sol',
+        name: 'GPT-6.1-Sol',
+        description: 'Latest workhorse model for coding and everyday work.',
+        reasoning: {
+          efforts: [
+            { id: 'low', name: 'Low', description: 'Fast responses with lighter reasoning' },
+            { id: 'medium', name: 'Medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+            { id: 'high', name: 'High', description: 'Greater reasoning depth for complex problems' },
+            { id: 'xhigh', name: 'Extra High', description: 'Extra high reasoning depth for complex problems' },
+            { id: 'max', name: 'Max', description: 'Maximum reasoning depth for the hardest problems' },
+            { id: 'ultra', name: 'Ultra', description: 'Maximum reasoning with automatic task delegation' },
+          ],
+          defaultEffort: 'low',
+        },
+      }],
+    })
+  })
+
+  it('labels advertised none as Off without changing vendor-specific reasoning ids', async () => {
+    codexProcess({ models: [modelInfo('vendor-model', ['none', 'minimal', 'vendor-deep'], 'none')] })
+    const session = await open()
+    const catalog = await session.models!(new AbortController().signal)
+    expect(catalog.models).toEqual([{
+      id: 'vendor-model',
+      name: 'Native vendor-model',
+      description: 'vendor-model description',
+      reasoning: {
+        efforts: [
+          { id: 'none', name: 'Off', description: 'none reasoning' },
+          { id: 'minimal', name: 'Minimal', description: 'minimal reasoning' },
+          { id: 'vendor-deep', name: 'vendor-deep', description: 'vendor-deep reasoning' },
+        ],
+        defaultEffort: 'none',
+      },
+    }])
+  })
+
+  it.each(['none', 'xhigh', 'max', 'ultra'])('submits advertised %s effort unchanged on the Codex wire', async (effort) => {
+    const { fixture } = codexProcess({ model: 'chosen', reasoningEffort: 'low', models: [modelInfo('chosen', ['none', 'low', 'xhigh', 'max', 'ultra'])] })
+    const session = await open()
+    const started = fixture.next(frame => frame.method === 'turn/start')
+    const submitted = session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: effort })
+    expect(await started).toMatchObject({ params: { model: 'chosen', effort } })
+    completed(fixture)
+    await submitted
+    expect(fixture.frames.filter(frame => frame.method === 'turn/start')).toHaveLength(1)
+  })
+
+  it('rejects unadvertised Off before input instead of inferring it from other GPT models', async () => {
+    const { fixture } = codexProcess({ model: 'chosen', reasoningEffort: 'low', models: [modelInfo('chosen', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])] })
+    const session = await open()
+    await expect(session.submit([user()], new AbortController().signal, { model: 'chosen', reasoningEffort: 'none' })).rejects.toMatchObject({ code: 'BRIDGE_EFFORT_UNSUPPORTED' })
+    expect(fixture.frames.some(frame => frame.method === 'turn/start')).toBe(false)
+  })
+
   it('paginates native models using wire model ids and rejects repeated cursors', async () => {
     let repeat = false
     const { fixture } = codexProcess({ intercept: (frame, child) => {

@@ -74,12 +74,11 @@ export const session = defineService({
           await identity.append(agent, entry.binding)
           signal.throwIfAborted()
           agentCtx.fiber.assertActive()
-          agent.session.append('request/header', { header: { config: { provider: BRIDGE_PROVIDER, model: id } }, reason: 'initial' })
           return {
             commit(): void {
               signal.throwIfAborted()
               agentCtx.fiber.assertActive()
-              if (runtime.lifetime !== lifetime || !runtime.ready || !sameBinding(identity.resolve(agent), entry.binding) || agent.session.requestHeader()?.config.provider !== BRIDGE_PROVIDER)
+              if (runtime.lifetime !== lifetime || !runtime.ready || !sameBinding(identity.resolve(agent), entry.binding) || agent.options.provider !== BRIDGE_PROVIDER || agent.options.model !== id)
                 throw new Error('BRIDGE_BINDING_NOT_COMMITTED: 原生身份未写入官方投影。')
             },
           }
@@ -334,15 +333,12 @@ async function bindFork(agent: Agent, source: KernelBinding, signal: AbortSignal
     if (entry.binding.nativeSessionId === source.nativeSessionId)
       throw new Error('BRIDGE_FORK_MISMATCH: 工作树必须获得独立的原生会话身份。')
     const seq = await identity.append(agent, entry.binding)
+    if (agent.options.provider === undefined && agent.options.model === undefined)
+      identity.hydrate(agent)
     if (ctx.agents.get(agent.id) === agent && ctx.sessions.get(agent.id) === agent.session)
       checkpoint.mark(agent, KERNEL_RECORD_TYPE, seq, entry.binding)
     scoped.throwIfAborted()
     agent.ctx.fiber.assertActive()
-    const previous = agent.session.requestHeader()?.config
-    agent.session.append('request/header', {
-      header: { config: { provider: BRIDGE_PROVIDER, model: source.backend } },
-      reason: previous === undefined ? 'initial' : 'change',
-    })
     return {
       commit(): void {
         scoped.throwIfAborted()
