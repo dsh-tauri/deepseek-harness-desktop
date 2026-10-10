@@ -26,7 +26,7 @@ function backendHint(backend: BackendDetection | undefined): string | undefined 
 }
 
 function pillClass(disabled: boolean, expanded: boolean): string {
-  const base = 'inline-flex items-center rounded-sm whitespace-nowrap'
+  const base = 'inline-flex h-[28px] items-center rounded-sm whitespace-nowrap leading-none [&>span]:inline-flex [&>span]:h-full [&>span]:items-center'
   if (disabled)
     return `${base} text-[var(--dsw-alias-label-quaternary)]`
   return `${base} text-primary ${expanded ? 'bg-hover' : 'hover:bg-hover'}`
@@ -118,7 +118,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
             <Chip
               ref={chipRef}
               variant="seat"
-              className={`rounded-none bg-transparent hover:not-disabled:bg-transparent aria-expanded:bg-transparent${clearable ? ' pr-0' : ''}`}
+              className={`h-full rounded-none bg-transparent hover:not-disabled:bg-transparent aria-expanded:bg-transparent${clearable ? ' pr-0' : ''}`}
               icon={<KernelIcon backend={backend} />}
               chevron={clearable ? undefined : <ChevronDown />}
               open={expanded}
