@@ -10,6 +10,7 @@
 //! 失败仅告警。
 
 pub(crate) mod composer;
+pub(crate) mod foreground_resume;
 pub(crate) mod llm_session;
 pub(crate) mod mobile_composer;
 pub(crate) mod mobile_sidebar;
@@ -36,6 +37,7 @@ pub(crate) fn apply_all_at(core_dir: &Path) -> Result<(), String> {
     let patches: [(&str, fn(&Path) -> Result<(), String>); 11] = [
         ("renderer", renderer::apply_at),
         ("composer", composer::apply_at),
+        ("foreground_resume", foreground_resume::apply_at),
         ("mobile_composer", mobile_composer::apply_at),
         ("mobile_sidebar", mobile_sidebar::apply_at),
         ("session", session::apply_at),

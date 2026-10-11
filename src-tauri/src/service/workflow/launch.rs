@@ -419,6 +419,11 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::patch::composer::apply(&app_handle) {
         log::warn!("composer workspace-less patch failed: {e}");
     }
+    // WebView 退到后台时定时器与事件投递会被节流，但连接不一定真正断开；回到前台后
+    // 重建连接代次补拉会话事件，并立即按墙钟校准运行计时。最佳努力且幂等。
+    if let Err(e) = crate::service::patch::foreground_resume::apply(&app_handle) {
+        log::warn!("foreground session resume patch failed: {e}");
+    }
     if let Err(e) = crate::service::patch::mobile_composer::apply(&app_handle) {
         log::warn!("mobile composer patch failed: {e}");
     }
