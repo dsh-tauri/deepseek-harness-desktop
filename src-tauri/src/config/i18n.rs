@@ -18,6 +18,13 @@ pub fn set_language(lang: Lang) {
     );
 }
 
+pub fn lang_from_setting(language: &str) -> Lang {
+    match language {
+        "en" | "en-US" => Lang::En,
+        _ => Lang::Zh,
+    }
+}
+
 fn lang() -> Lang {
     if CURRENT_LANG.load(Ordering::SeqCst) == 1 {
         Lang::En
@@ -41,6 +48,7 @@ pub fn t(key: &str) -> String {
         "menu.new_window" => ("新建窗口", "New Window"),
         "menu.new_chat" => ("新聊天", "New Chat"),
         "menu.open_folder" => ("打开文件夹", "Open Folder"),
+        "menu.open_panel" => ("打开面板", "Open Panel"),
         "menu.close" => ("关闭", "Close"),
         "menu.quit" => ("退出", "Quit"),
         "menu.documentation" => ("文档", "Documentation"),
@@ -87,5 +95,24 @@ pub fn t(key: &str) -> String {
     match lang() {
         Lang::Zh => zh.to_string(),
         Lang::En => en.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lang_from_setting_covers_english_variants() {
+        assert!(matches!(lang_from_setting("en"), Lang::En));
+        assert!(matches!(lang_from_setting("en-US"), Lang::En));
+        assert!(matches!(lang_from_setting("zh-CN"), Lang::Zh));
+        assert!(matches!(lang_from_setting(""), Lang::Zh));
+    }
+
+    #[test]
+    fn tray_menu_keys_are_translated() {
+        assert_ne!(t("menu.open_panel"), "menu.open_panel");
+        assert_ne!(t("menu.quit"), "menu.quit");
     }
 }

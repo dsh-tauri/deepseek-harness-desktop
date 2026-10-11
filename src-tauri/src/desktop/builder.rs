@@ -192,11 +192,13 @@ pub fn tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let icon = app.default_window_icon().unwrap().clone();
 
     // 构建菜单
+    let open_label = crate::config::i18n::t("menu.open_panel");
+    let quit_label = crate::config::i18n::t("menu.quit");
     let menu = Menu::with_items(
         app,
         &[
-            &MenuItem::with_id(app, "open", "打开面板", true, None::<&str>)?,
-            &MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?,
+            &MenuItem::with_id(app, "open", open_label, true, None::<&str>)?,
+            &MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?,
         ],
     )?;
 
@@ -253,10 +255,7 @@ pub fn tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
 #[cfg(target_os = "macos")]
 pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let setting = crate::config::get_store_dat_setting(app);
-    crate::config::i18n::set_language(match setting.language.as_str() {
-        "en" | "en-US" => crate::config::i18n::Lang::En,
-        _ => crate::config::i18n::Lang::Zh,
-    });
+    crate::config::i18n::set_language(crate::config::i18n::lang_from_setting(&setting.language));
 
     let config = MenuItem::with_id(
         app,
@@ -1676,6 +1675,9 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             // config::detect_first_install 的时序说明）。
             crate::config::detect_first_install(&app_handle);
             build_main_window(&app_handle)?;
+            // 菜单文案在构建时就取当前语言，语言初始化必须早于菜单/托盘构建。
+            let language = crate::config::get_store_dat_setting(&app_handle).language;
+            crate::config::i18n::set_language(crate::config::i18n::lang_from_setting(&language));
             #[cfg(target_os = "macos")]
             install_macos_menu(&app_handle)?;
             tray(&app_handle)?;

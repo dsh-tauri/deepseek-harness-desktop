@@ -142,10 +142,7 @@ pub fn set_language(app_handle: AppHandle, lang: String) {
     let mut setting = config::get_store_dat_setting(&app_handle);
     setting.language = lang.clone();
     config::set_store_dat_setting(&app_handle, setting);
-    config::i18n::set_language(match lang.as_str() {
-        "en" | "en-US" => config::i18n::Lang::En,
-        _ => config::i18n::Lang::Zh,
-    });
+    config::i18n::set_language(config::i18n::lang_from_setting(&lang));
     #[cfg(target_os = "macos")]
     if let Err(error) = crate::desktop::builder::install_macos_menu(&app_handle) {
         log::warn!("[menu] failed to refresh macOS menu language: {error}");

@@ -42,11 +42,13 @@ fn build_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     use tray_icon::menu::{Menu, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
 
-    // 菜单文案与 `tauri::tray` 版本保持一致（"打开面板" / "退出"）。
+    // 菜单文案与 `tauri::tray` 版本保持一致，同走 config::i18n。
+    let open_label = crate::config::i18n::t("menu.open_panel");
+    let quit_label = crate::config::i18n::t("menu.quit");
     let menu = Menu::new();
     menu.append_items(&[
-        &MenuItem::with_id("open", "打开面板", true, None),
-        &MenuItem::with_id("quit", "退出", true, None),
+        &MenuItem::with_id("open", open_label, true, None),
+        &MenuItem::with_id("quit", quit_label, true, None),
     ])
     .map_err(|error| format!("LINUX_TRAY_MENU_FAILED: {error}"))?;
 
