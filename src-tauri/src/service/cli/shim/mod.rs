@@ -24,6 +24,14 @@ pub const SHIM_PS1_NAME: &str = "dsh.ps1";
 pub const PNPM_SHIM_CMD_NAME: &str = "pnpm.cmd";
 #[cfg(windows)]
 pub const PNPM_SHIM_PS1_NAME: &str = "pnpm.ps1";
+#[cfg(windows)]
+pub const NPX_SHIM_CMD_NAME: &str = "npx.cmd";
+#[cfg(windows)]
+pub const NPX_SHIM_PS1_NAME: &str = "npx.ps1";
+#[cfg(windows)]
+pub const NPM_SHIM_CMD_NAME: &str = "npm.cmd";
+#[cfg(windows)]
+pub const NPM_SHIM_PS1_NAME: &str = "npm.ps1";
 
 /// Unix 下 shim 文件名
 #[cfg(unix)]

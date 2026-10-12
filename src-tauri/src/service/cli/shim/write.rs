@@ -4,20 +4,23 @@
 use crate::config;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 #[cfg(not(windows))]
 #[allow(unused_imports)] // debug 构建 dsh shim 不写入；测试仍引用
 use super::build::build_sh_shim;
 #[allow(unused_imports)] // 构建函数在 debug 构建/异平台下由 cfg 裁剪，测试仍引用
 use super::build::{
-    build_cmd_shim, build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim, build_ps1_shim,
-    ShimPaths,
+    build_cmd_shim, build_npm_cmd_shim, build_npm_ps1_shim, build_npx_cmd_shim, build_npx_ps1_shim,
+    build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim, build_ps1_shim, ShimPaths,
 };
 #[cfg(all(windows, not(debug_assertions)))]
 use super::SHIM_PS1_NAME;
 #[cfg(windows)]
-use super::{PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME};
+use super::{
+    NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME, NPX_SHIM_PS1_NAME, PNPM_SHIM_CMD_NAME,
+    PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME,
+};
 #[cfg(not(windows))]
 use super::{PNPM_SHIM_SH_NAME, SHIM_SH_NAME};
 
@@ -147,7 +150,7 @@ pub fn user_dsh_preserved(bin_dir: &Path) -> bool {
 
 /// shim 生成时烘焙的依赖路径：按依赖映射表解析，可能指向 AppData 之外的任意
 /// 位置（如安装目录的 `resources/*` 捆绑副本）。
-pub fn shim_paths(app_handle: &AppHandle) -> ShimPaths {
+pub fn shim_paths<R: Runtime>(app_handle: &AppHandle<R>) -> ShimPaths {
     ShimPaths {
         node_bin: config::dependencies::binary_path(app_handle, config::dependencies::DEP_NODE),
         dsh_bin: config::get_dsh_binary_path(app_handle),
@@ -158,14 +161,14 @@ pub fn shim_paths(app_handle: &AppHandle) -> ShimPaths {
 
 /// 捆绑 MinGit 的 `cmd` 目录（系统 Git 缺 HTTPS helper 时由 shim 注入 PATH）。
 #[cfg(windows)]
-fn bundled_git_dir(app_handle: &AppHandle) -> Option<PathBuf> {
+fn bundled_git_dir<R: Runtime>(app_handle: &AppHandle<R>) -> Option<PathBuf> {
     config::get_mingit_binary_path(app_handle)
         .parent()
         .map(Path::to_path_buf)
 }
 
 #[cfg(not(windows))]
-fn bundled_git_dir(_app_handle: &AppHandle) -> Option<PathBuf> {
+fn bundled_git_dir<R: Runtime>(_app_handle: &AppHandle<R>) -> Option<PathBuf> {
     None
 }
 
@@ -175,8 +178,9 @@ fn bundled_git_dir(_app_handle: &AppHandle) -> Option<PathBuf> {
 ///
 /// 覆盖式仅针对本应用生成的 shim（自愈时内容与当前安装一致）；用户手动放置的
 /// 同名 `dsh`/`pnpm` 一律保留不动，避免覆盖用户自己的安装与配置。
-pub fn write_shims(app_handle: &AppHandle, bin_dir: &Path) -> Result<(), String> {
+pub fn write_shims<R: Runtime>(app_handle: &AppHandle<R>, bin_dir: &Path) -> Result<(), String> {
     let paths = shim_paths(app_handle);
+    let dsh_home = config::get_dsh_data_path(app_handle);
     fs::create_dir_all(bin_dir)
         .map_err(|e| format!("SHIM_MKDIR_FAILED: create bin dir failed: {e}"))?;
 
@@ -194,7 +198,6 @@ pub fn write_shims(app_handle: &AppHandle, bin_dir: &Path) -> Result<(), String>
     // 目录，并覆盖生产的命令行集成；生产版生成的 dsh shim 原样保留。
     #[cfg(not(debug_assertions))]
     {
-        let dsh_home = config::get_dsh_data_path(app_handle);
         #[cfg(windows)]
         {
             write_if_ours!(SHIM_CMD_NAME, build_cmd_shim(&paths, &dsh_home));
@@ -206,15 +209,22 @@ pub fn write_shims(app_handle: &AppHandle, bin_dir: &Path) -> Result<(), String>
         }
     }
     #[cfg(debug_assertions)]
-    log::debug!("debug build: skip dsh shim write (shared user state kept for release)");
+    {
+        let _ = &dsh_home;
+        log::debug!("debug build: skip dsh shim write (shared user state kept for release)");
+    }
 
-    // pnpm shim 不烘焙 $DSH_HOME（仅绑定 bundle 目录与“用户 pnpm 优先”逻辑），
-    // 内容与生产完全一致，开发构建也可写入——dsh plugin 子进程经 PATH 解析
-    // pnpm 依赖它，写它不污染任何共享数据。
+    // pnpm/npx/npm shim 不烘焙 $DSH_HOME（仅绑定 bundle 目录与“用户命令优先”
+    // 逻辑），内容与生产完全一致，开发构建也可写入——dsh plugin 子进程经 PATH
+    // 解析这些命令依赖它，写它不污染任何共享数据。
     #[cfg(windows)]
     {
         write_if_ours!(PNPM_SHIM_CMD_NAME, build_pnpm_cmd_shim(&paths));
         write_if_ours!(PNPM_SHIM_PS1_NAME, build_pnpm_ps1_shim(&paths));
+        write_if_ours!(NPX_SHIM_CMD_NAME, build_npx_cmd_shim(&paths));
+        write_if_ours!(NPX_SHIM_PS1_NAME, build_npx_ps1_shim(&paths));
+        write_if_ours!(NPM_SHIM_CMD_NAME, build_npm_cmd_shim(&paths));
+        write_if_ours!(NPM_SHIM_PS1_NAME, build_npm_ps1_shim(&paths));
     }
     #[cfg(not(windows))]
     {
@@ -241,6 +251,7 @@ pub fn write_shims(app_handle: &AppHandle, bin_dir: &Path) -> Result<(), String>
 mod tests {
     use super::super::test_util::{sample_dsh_home, sample_shim_paths, shim_paths_for};
     use super::*;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
 
     #[test]
     fn foreign_file_detection() {
@@ -508,6 +519,40 @@ mod tests {
         let expected = crate::utils::encode_multibyte(&fixed, codepage)
             .unwrap_or_else(|| fixed.as_bytes().to_vec());
         assert_eq!(std::fs::read(&target).unwrap(), expected);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// 生产入口 `write_shims` 的落盘编排：pnpm/npx/npm 的 cmd 与 ps1 shim 必须一并
+    /// 写入 bin 目录——这些 shim 是 dsh plugin 子进程解析 npx 的唯一可靠来源。
+    /// 用 mock app 走真实入口，保证「接线断了」这类事故会被测试挡住。
+    #[test]
+    #[cfg(windows)]
+    fn write_shims_writes_npx_and_npm_shims() {
+        let dir = temp_dir("write-npx-npm");
+        let bin_dir = dir.join("bin");
+        let mut context = mock_context(noop_assets());
+        context.config_mut().identifier = "dsh-tauri".into();
+        let app = mock_builder().build(context).unwrap();
+
+        write_shims(app.handle(), &bin_dir).unwrap();
+
+        for name in [
+            "pnpm.cmd", "pnpm.ps1", "npx.cmd", "npx.ps1", "npm.cmd", "npm.ps1",
+        ] {
+            let path = bin_dir.join(name);
+            assert!(path.is_file(), "{name} was not written");
+            assert!(!is_foreign_file(&path), "{name} must be a generated shim");
+        }
+
+        let npx = std::fs::read_to_string(bin_dir.join("npx.cmd")).unwrap();
+        assert!(
+            npx.contains("npx-cli.js"),
+            "npx.cmd must bake the npm cli entry: {npx}"
+        );
+        assert!(
+            npx.contains("npx command shim (generated)"),
+            "npx.cmd lost its generated marker: {npx}"
+        );
+        assert!(!bin_dir.join("dsh.cmd").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -91,11 +91,18 @@ pub fn remove(app_handle: &AppHandle) -> Result<CliLinkStatus, String> {
 
     #[cfg(windows)]
     {
-        use super::shim::{PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME, SHIM_PS1_NAME};
+        use super::shim::{
+            NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME, NPX_SHIM_PS1_NAME,
+            PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME, SHIM_PS1_NAME,
+        };
         let _ = fs::remove_file(bin_dir.join(SHIM_CMD_NAME));
         let _ = fs::remove_file(bin_dir.join(SHIM_PS1_NAME));
         let _ = fs::remove_file(bin_dir.join(PNPM_SHIM_CMD_NAME));
         let _ = fs::remove_file(bin_dir.join(PNPM_SHIM_PS1_NAME));
+        let _ = fs::remove_file(bin_dir.join(NPX_SHIM_CMD_NAME));
+        let _ = fs::remove_file(bin_dir.join(NPX_SHIM_PS1_NAME));
+        let _ = fs::remove_file(bin_dir.join(NPM_SHIM_CMD_NAME));
+        let _ = fs::remove_file(bin_dir.join(NPM_SHIM_PS1_NAME));
     }
     #[cfg(not(windows))]
     {
