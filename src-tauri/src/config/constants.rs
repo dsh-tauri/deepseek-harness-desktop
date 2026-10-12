@@ -153,6 +153,11 @@ pub const PROXY_TEST_URL: &str = "https://github.com/hairyf/deepseek-harness-des
 /// 比更新检查的 5s 宽松：手动点击的测试允许慢代理建连，也不至于让用户干等。
 pub const PROXY_TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 通知 webhook（邮件 / pushplus）单次投递的整体超时。
+///
+/// 推送发生在通知链路里，卡住只会让用户白等；与代理测试取同一量级。
+pub const NOTIFY_WEBHOOK_TIMEOUT: Duration = Duration::from_secs(15);
+
 #[cfg(test)]
 mod tests {
     use super::get_dsh_service_url;

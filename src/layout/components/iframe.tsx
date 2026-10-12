@@ -27,6 +27,7 @@ import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
+import { isNotificationForeground } from '@/utils/notify-foreground'
 import { zoomActionFromBridgeMessage, zoomActionFromShortcut } from '@/utils/zoom'
 import { appearanceBootCss, appearanceTranslucent, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
 import { Loadable } from './loadable'
@@ -359,6 +360,10 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     const hasActions = actions.length > 0
     const title = data.title ?? ''
     const body = data.body ?? ''
+
+    // 只在窗口失焦时转发：前台本来就看得见通知，再推一份是噪音
+    if (!isNotificationForeground())
+      void invoke('notify_webhook_dispatch', { payload: { title, body, sessionId: data.sessionId ?? '' } }).catch(error => console.error('[notification] webhook dispatch failed:', error))
 
     void (async () => {
       if (!await ensureNotificationPermission())

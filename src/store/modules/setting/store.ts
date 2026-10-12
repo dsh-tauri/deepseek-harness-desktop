@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { defineStore } from 'valtio-define'
 import { APPEARANCE_DEFAULTS, normalizeAppearance } from '../../../../packages/dsh-tauri/src/shared/appearance'
+import { NOTIFY_WEBHOOK_DEFAULTS, normalizeNotifyWebhook } from '../../../../packages/dsh-tauri/src/shared/notify-webhook'
 import { ZOOM_FACTOR_STEP } from './constants'
 import { normalizeZoomFactor } from './utils'
 
@@ -23,6 +24,7 @@ export const setting = defineStore({
     close_action: 'tray',
     backup_retention_count: 10,
     backup_include_credentials: false,
+    notify_webhook: normalizeNotifyWebhook(NOTIFY_WEBHOOK_DEFAULTS),
     language: null as string | null,
     hydrated: false,
   }),

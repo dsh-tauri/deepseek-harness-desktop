@@ -44,6 +44,9 @@ pub fn is_dev_build() -> bool {
 ///
 /// 备份字段（backup_retention_count / backup_include_credentials）由前端
 /// 设置页写入，归一化由 `normalize_backup_fields` 统一负责。
+///
+/// `notify_webhook` 整体替换：嵌套结构逐字段合并会让「清空 SMTP 密码」这类
+/// 操作无法表达，归一化在 `NotifyWebhook::normalize` 里统一收口。
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_app_config(
@@ -58,6 +61,7 @@ pub async fn update_app_config(
     close_action: Option<String>,
     backup_retention_count: Option<u32>,
     backup_include_credentials: Option<bool>,
+    notify_webhook: Option<config::notify_webhook::NotifyWebhook>,
 ) -> Result<config::Setting, String> {
     let proxy_url = proxy_url
         .as_deref()
@@ -110,6 +114,9 @@ pub async fn update_app_config(
         }
         if let Some(include) = backup_include_credentials {
             setting.backup_include_credentials = include;
+        }
+        if let Some(webhook) = notify_webhook {
+            setting.notify_webhook = webhook;
         }
     });
     Ok(setting)
@@ -170,4 +177,22 @@ pub async fn test_proxy(app_handle: AppHandle) -> Result<config::proxy::ProxyTes
 #[tauri::command]
 pub fn get_dsh_theme(app_handle: AppHandle) -> config::DshTheme {
     config::get_dsh_theme(&app_handle)
+}
+
+/// 把一条系统通知转发到用户配置的 webhook（邮件 / pushplus）。
+///
+/// 是否转发由前端按窗口失焦状态决定（见 `dsh://visibility-state`），壳层只负责
+/// 投递：渠道为「关闭」时立即返回，配置缺失或网络失败只回固定错误码。
+#[tauri::command]
+pub async fn notify_webhook_dispatch(
+    app_handle: AppHandle,
+    payload: config::notify_webhook::NotifyWebhookPayload,
+) -> Result<(), String> {
+    config::notify_webhook::dispatch(&app_handle, payload).await
+}
+
+/// 用当前保存的 webhook 配置发一条真实测试消息，供设置页「测试」按钮调用
+#[tauri::command]
+pub async fn test_notify_webhook(app_handle: AppHandle) -> Result<(), String> {
+    config::notify_webhook::test(&app_handle).await
 }

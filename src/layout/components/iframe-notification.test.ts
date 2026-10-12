@@ -9,10 +9,12 @@ const mocks = vi.hoisted(() => ({
   requestPermission: vi.fn<() => Promise<NotificationPermission>>(),
   registerActionTypes: vi.fn(),
   sendNotification: vi.fn(),
+  invoke: vi.fn(),
   onMessage: undefined as ((data: Record<string, unknown>) => void) | undefined,
 }))
 
 vi.mock('@choochmeque/tauri-plugin-notifications-api', () => mocks)
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@reause/core', () => ({
   useEventListener: vi.fn(),
   useWatch: vi.fn(),
@@ -60,6 +62,7 @@ beforeEach(() => {
   mocks.requestPermission.mockResolvedValue('granted')
   mocks.registerActionTypes.mockResolvedValue(undefined)
   mocks.sendNotification.mockResolvedValue(undefined)
+  mocks.invoke.mockResolvedValue(undefined)
   vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   renderToStaticMarkup(createElement(Iframe, {
@@ -69,6 +72,7 @@ beforeEach(() => {
 
 afterEach(() => {
   mocks.onMessage = undefined
+  delete (globalThis as Record<string, unknown>).document
   vi.restoreAllMocks()
 })
 
@@ -172,5 +176,60 @@ describe('iframe native notification authorization', () => {
     expect(mocks.isPermissionGranted).toHaveBeenCalledTimes(2)
     expect(mocks.requestPermission).toHaveBeenCalledOnce()
     expect(mocks.sendNotification).toHaveBeenCalledOnce()
+  })
+})
+
+function dispatched() {
+  return mocks.invoke.mock.calls.filter(([command]) => command === 'notify_webhook_dispatch')
+}
+
+function setHidden(hidden: boolean) {
+  (globalThis as Record<string, unknown>).document = { hidden }
+}
+
+describe('iframe notification webhook forwarding', () => {
+  it('forwards nothing while the window is in the foreground', async () => {
+    notify()
+    await settle()
+
+    expect(dispatched()).toEqual([])
+    expect(mocks.sendNotification).toHaveBeenCalledOnce()
+  })
+
+  it('forwards the notification body once the window is hidden', async () => {
+    setHidden(true)
+
+    notify()
+    await settle()
+
+    expect(dispatched()).toEqual([['notify_webhook_dispatch', {
+      payload: { title: 'Permission required', body: 'Approve the tool', sessionId: 'session' },
+    }]])
+  })
+
+  it('keeps the local notification even when the webhook call fails', async () => {
+    setHidden(true)
+    const failure = new Error('NOTIFY_CONNECT: smtp')
+    mocks.invoke.mockRejectedValue(failure)
+
+    notify()
+    await settle()
+
+    expect(mocks.sendNotification).toHaveBeenCalledOnce()
+    expect(console.error).toHaveBeenCalledWith('[notification] webhook dispatch failed:', failure)
+  })
+
+  it('stops forwarding once the window regains focus', async () => {
+    setHidden(true)
+    notify()
+    await settle()
+    expect(dispatched()).toHaveLength(1)
+
+    setHidden(false)
+    notify('second')
+    await settle()
+
+    expect(dispatched()).toHaveLength(1)
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(2)
   })
 })

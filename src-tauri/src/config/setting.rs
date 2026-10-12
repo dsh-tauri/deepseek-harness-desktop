@@ -98,6 +98,11 @@ pub struct Setting {
     /// 源码改动即时生效（无需重启服务）。没有本地插件时不产生任何补丁层。
     #[serde(default = "default_local_plugin_hmr")]
     pub local_plugin_hmr: bool,
+    /// 通知 webhook：窗口失焦时把系统通知同时推送到邮件 / pushplus（可关闭）。
+    /// 与 `appearance` 一样是嵌套结构，内部字段类型故意保留字符串：写坏一个枚举
+    /// 值会让整个 `Setting` 反序列化失败并回落默认，校验统一交给 `normalize`。
+    #[serde(default)]
+    pub notify_webhook: super::notify_webhook::NotifyWebhook,
 }
 
 pub const ZOOM_FACTOR_MIN: f64 = 0.5;
@@ -180,6 +185,7 @@ fn normalize_setting(setting: &mut Setting) {
     setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
     setting.close_action = normalize_close_action(&setting.close_action);
     setting.backup_retention_count = normalize_backup_retention(setting.backup_retention_count);
+    setting.notify_webhook.normalize();
 }
 
 /// 默认服务端口：debug 构建与生产隔离，避免开发时与已运行的桌面端争用 3080。
@@ -220,6 +226,7 @@ impl Default for Setting {
             throw_enabled: false,
             force_xwayland: false,
             local_plugin_hmr: default_local_plugin_hmr(),
+            notify_webhook: super::notify_webhook::NotifyWebhook::default(),
         }
     }
 }
@@ -367,6 +374,7 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.throw_enabled = current.throw_enabled;
     replacement.force_xwayland = current.force_xwayland;
     replacement.local_plugin_hmr = current.local_plugin_hmr;
+    replacement.notify_webhook.clone_from(&current.notify_webhook);
     replacement
 }
 

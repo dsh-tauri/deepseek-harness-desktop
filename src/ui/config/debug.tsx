@@ -15,6 +15,7 @@ import { store } from '@/store'
 import { HARNESS_HEAP_MAX_MB, HARNESS_HEAP_MIN_MB } from '@/store/modules/setting'
 import { ConfigCloseAction } from '@/ui/config/components/close-action'
 import { ConfigLaunchOnLogin } from '@/ui/config/components/launch-on-login'
+import { ConfigNotifyWebhook } from '@/ui/config/components/notify-webhook'
 import { useCoreBreakingConfirm } from '@/ui/config/hooks/use-core-breaking-confirm'
 import { useCoreProfileSwitch } from '@/ui/config/hooks/use-core-profile-switch'
 import { writeClipboardText } from '@/utils/clipboard'
@@ -520,6 +521,10 @@ export function ConfigDebug() {
             </div>
           </If>
         </div>
+
+        <div className="border-t border-line/30" />
+
+        <ConfigNotifyWebhook />
       </div>
 
     </div>

@@ -1600,6 +1600,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::set_language,
         crate::bridge::toggle_sidebar,
         crate::bridge::get_dsh_theme,
+        crate::bridge::notify_webhook_dispatch,
+        crate::bridge::test_notify_webhook,
         crate::bridge::check_desktop_update,
         crate::bridge::download_desktop_update,
         crate::bridge::open_desktop_installer,
