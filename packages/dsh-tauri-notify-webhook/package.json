@@ -1,0 +1,86 @@
+{
+  "name": "dsh-tauri-notify-webhook",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "DSH 桌面通知转发插件：任务异常停止或完成时，把通知推到邮件（SMTP）或 pushplus；只在窗口失去焦点时推送，宿主路由挂在 /api/tauri/notify-webhook。",
+  "author": "Hairyf <wwu710632@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notify-webhook",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dsh-tauri-desk/deepseek-harness-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/issues"
+  },
+  "keywords": [
+    "dsh",
+    "plugin",
+    "dsh-plugin",
+    "notification",
+    "webhook",
+    "pushplus",
+    "tauri",
+    "deepseek-harness"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.cjs",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "cordis.patch.yml",
+    "dist"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "dsh-tauri",
+        "dsh-tauri-ui"
+      ],
+      "external": [
+        "dsh-tauri/client",
+        "dsh-tauri-ui/client"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "nr build",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "dsh-h3": "catalog:",
+    "dsh-tauri": "workspace:*",
+    "dsh-tauri-ui": "workspace:*",
+    "h3": "catalog:",
+    "unstorage": "catalog:utils"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "catalog:testing",
+    "@testing-library/react": "catalog:testing",
+    "@types/node": "catalog:types",
+    "@types/react": "catalog:types",
+    "@types/react-dom": "catalog:types",
+    "dsh-tauri-tsdown": "workspace:*",
+    "jsdom": "catalog:testing",
+    "react": "catalog:runtime",
+    "react-dom": "catalog:runtime",
+    "tsdown": "catalog:cli",
+    "typescript": "catalog:cli",
+    "vitest": "catalog:testing"
+  }
+}

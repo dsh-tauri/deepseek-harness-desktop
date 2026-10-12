@@ -155,6 +155,12 @@
         "spec": "dsh-tauri-notification",
         "name": "DSH Tauri Notification",
         "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notification"
+      },
+      {
+        "id": "dsh-tauri-notify-webhook",
+        "spec": "dsh-tauri-notify-webhook",
+        "name": "DSH Tauri Notify Webhook",
+        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notify-webhook"
       }
     ],
     "preset": [
