@@ -1254,26 +1254,38 @@ async fn detect_node_target(node: &Path, core_root: &Path) -> Result<NodeTarget,
     })
 }
 
+/// 用指定运行时执行原生模块探测脚本：脚本先落盘成临时 `.mjs` 再以文件路径交给 node。
+///
+/// 不能走 `node -e`：`-e` 只取脚本的第一行（本脚本以换行开头，载荷会退化成空串，
+/// 于是永远没有标记行、探测结论永远是"未知"），而 `--input-type=module` 与脚本
+/// 文件路径不能同时给出（ERR_INPUT_TYPE_NOT_ALLOWED）。脚本本身不读 argv，改用文件
+/// 路径不损失任何信息：解析根仍由 `cwd` 提供，require 根仍是核心根。
+fn run_native_probe(node: &Path, core_root: &Path) -> Result<std::process::Output, String> {
+    let script = std::env::temp_dir().join(format!("dsh-native-probe-{}.mjs", std::process::id()));
+    std::fs::write(&script, NATIVE_PROBE_SCRIPT).map_err(|error| {
+        format!(
+            "CORE_NATIVE_PROBE_SCRIPT_FAILED: write {} failed: {error}",
+            script.display()
+        )
+    })?;
+    let program = node.as_os_str().to_os_string();
+    let args = vec![script.clone().into_os_string()];
+    let output = run_process_with_timeout(
+        &program,
+        &args,
+        core_root,
+        NATIVE_PROBE_TIMEOUT,
+        "native probe",
+    );
+    let _ = std::fs::remove_file(&script);
+    output
+}
+
 /// 用指定运行时执行原生模块探测脚本，返回结构化结论。
 async fn probe_native_modules(node: &Path, core_root: &Path) -> NativeProbe {
     let node = node.to_path_buf();
     let core_root = core_root.to_path_buf();
-    let result = tokio::task::spawn_blocking(move || {
-        let program = node.as_os_str().to_os_string();
-        let args = vec![
-            OsString::from("--input-type=module"),
-            OsString::from("-e"),
-            OsString::from(NATIVE_PROBE_SCRIPT),
-        ];
-        run_process_with_timeout(
-            &program,
-            &args,
-            &core_root,
-            NATIVE_PROBE_TIMEOUT,
-            "native probe",
-        )
-    })
-    .await;
+    let result = tokio::task::spawn_blocking(move || run_native_probe(&node, &core_root)).await;
 
     match result {
         Ok(Ok(output)) if output.status.success() => {
@@ -1684,6 +1696,25 @@ fn command_output_tail(output: &std::process::Output) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 以生产同款方式执行探测脚本（落盘成 `.mjs` 再交给 node），保证测试覆盖的
+    /// 正是运行时那条路径——`node -e` 会截断多行脚本，测出来的是假绿。
+    fn run_probe_script(node: &std::path::Path, cwd: &std::path::Path) -> std::process::Output {
+        let script = cwd.join("dsh-native-probe-test.mjs");
+        std::fs::write(&script, NATIVE_PROBE_SCRIPT).unwrap();
+        let mut command = Command::new(node);
+        command
+            .arg(&script)
+            .current_dir(cwd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        command.output().expect("node must be runnable")
+    }
 
     /// 指纹摘要必须与条目规模无关：真实安装的条目数已超过早先的固定上限，
     /// 若还按条目数放弃缓存，结论戳永远写不下来（每次启动都重跑两个 node 子进程）。
@@ -2204,18 +2235,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("node_modules")).unwrap();
 
-        let mut command = Command::new(&node);
-        command
-            .args(["--input-type=module", "-e", NATIVE_PROBE_SCRIPT])
-            .current_dir(&root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
-        let output = command.output().expect("node must be runnable");
+        let output = run_probe_script(&node, &root);
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
@@ -2258,18 +2278,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut command = Command::new(&node);
-        command
-            .args(["--input-type=module", "-e", NATIVE_PROBE_SCRIPT])
-            .current_dir(&root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
-        let output = command.output().expect("node must be runnable");
+        let output = run_probe_script(&node, &root);
         let failures = parse_native_probe_failures(&String::from_utf8_lossy(&output.stdout))
             .expect("marker line");
         let probe = NativeProbe::Failed(failures);
