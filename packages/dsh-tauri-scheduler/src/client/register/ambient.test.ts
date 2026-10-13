@@ -173,19 +173,50 @@ describe('ambient public registration lifecycle', () => {
     expect(host.events.register).toHaveBeenCalledTimes(2)
   })
 
-  it('waits for late seat declaration and tears down a collapsed seat without DOM fallback', () => {
+  it.each([
+    ['conversation.chat.turnTail', 'schedule-created'],
+    ['conversation.session.header.utilities', 'schedule-catalog'],
+    ['sidebar.session.row.leading', 'schedule-mark'],
+    ['sidebar.session.row.hover', 'schedule-tasks'],
+    ['shell.overlay', 'dsh-tauri-scheduler.delete-toast'],
+  ] as const)('waits silently for %s and restores its entry after redeclaration', (name, id) => {
+    const { [name]: spec, ...initial } = seats
+    const host = runtime(initial)
+    mount(host.context)
+    expect(host.active.has(id)).toBe(false)
+    expect(console.warn).not.toHaveBeenCalled()
+    host.declare(name, spec)
+    expect(host.active.has(id)).toBe(true)
+    host.collapse(name)
+    expect(host.active.has(id)).toBe(false)
+    host.declare(name, spec)
+    expect(host.active.has(id)).toBe(true)
+    expect(host.entryDisposals).toHaveBeenCalledExactlyOnceWith(id)
+    expect(console.warn).not.toHaveBeenCalled()
+  })
+
+  it('warns when a delayed seat declares an incompatible contract', () => {
     const { 'sidebar.session.row.leading': _leading, ...initial } = seats
     const host = runtime(initial)
     mount(host.context)
+    expect(console.warn).not.toHaveBeenCalled()
+    host.declare('sidebar.session.row.leading', { kind: 'list', scope: 'session' })
     expect(host.active.has('schedule-mark')).toBe(false)
-    expect(console.warn).toHaveBeenCalledWith('[scheduler ambient] Public seat sidebar.session.row.leading unavailable; disabled until declared.')
+    expect(host.active.has('schedule-tasks')).toBe(true)
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[scheduler ambient] Public seat sidebar.session.row.leading incompatible; expected list/root.')
+  })
+
+  it('cancels pending seat registration when unloaded before declaration', () => {
+    const { 'sidebar.session.row.leading': _leading, ...initial } = seats
+    const host = runtime(initial)
+    const dispose = mount(host.context)
+    expect(host.pending.has('sidebar.session.row.leading')).toBe(true)
+    dispose()
     host.declare('sidebar.session.row.leading')
-    expect(host.active.has('schedule-mark')).toBe(true)
-    host.collapse('sidebar.session.row.leading')
-    expect(host.active.has('schedule-mark')).toBe(false)
-    host.declare('sidebar.session.row.leading')
-    expect(host.active.has('schedule-mark')).toBe(true)
-    expect(host.entryDisposals).toHaveBeenCalledWith('schedule-mark')
+    expect(host.active.size).toBe(0)
+    expect(host.pending.size).toBe(0)
+    expect(host.slots.register.mock.calls.map(([entry]) => entry.id)).not.toContain('schedule-mark')
+    expect(console.warn).not.toHaveBeenCalled()
   })
 
   it('warns and disables optional missing services or incompatible seats instead of guessing internals', () => {
@@ -215,8 +246,8 @@ describe('ambient public registration lifecycle', () => {
     expect(console.warn).toHaveBeenCalledWith('[scheduler ambient] Public seat sidebar.session.row.leading registration failed; surface disabled.', expect.objectContaining({ message: 'unsupported owner' }))
   })
 
-  it('defers turn definition until uiConversation arrives and disposes it on service replacement/unload', () => {
-    const host = runtime()
+  it('waits silently for startup dependencies and disposes turn registration on service replacement/unload', () => {
+    const host = runtime({ 'shell.overlay': seats['shell.overlay'] })
     let available = false
     let dependency: ((scope: object) => unknown) | undefined
     let effectCleanup: (() => void) | undefined
@@ -239,12 +270,18 @@ describe('ambient public registration lifecycle', () => {
     }
     const dispose = mount(context)
     expect(host.events.register).not.toHaveBeenCalled()
-    expect(host.active.has('schedule-created')).toBe(false)
-    expect(console.warn).toHaveBeenCalledWith('[scheduler ambient] uiConversation unavailable; created turn cards disabled until declared.')
+    expect([...host.active.keys()]).toEqual(['dsh-tauri-scheduler.delete-toast'])
+    expect(console.warn).not.toHaveBeenCalled()
+    host.declare('conversation.session.header.utilities', seats['conversation.session.header.utilities'])
+    host.declare('sidebar.session.row.leading')
+    host.declare('sidebar.session.row.hover')
     available = true
     dependency!(context)
-    expect(host.events.register).toHaveBeenCalledTimes(1)
-    expect(host.active.has('schedule-created')).toBe(true)
+    expect(host.events.register).toHaveBeenCalledExactlyOnceWith(scheduleTurnDefinition)
+    expect(host.active.has('schedule-created')).toBe(false)
+    host.declare('conversation.chat.turnTail', seats['conversation.chat.turnTail'])
+    expect([...host.active.keys()].sort()).toEqual(['dsh-tauri-scheduler.delete-toast', 'schedule-catalog', 'schedule-created', 'schedule-mark', 'schedule-tasks'])
+    expect(console.warn).not.toHaveBeenCalled()
     effectCleanup!()
     expect(host.active.has('schedule-created')).toBe(false)
     expect(host.eventDisposal).toHaveBeenCalledTimes(1)
@@ -257,5 +294,6 @@ describe('ambient public registration lifecycle', () => {
     dependency!(context)
     expect(host.events.register).toHaveBeenCalledTimes(2)
     expect(host.active.size).toBe(0)
+    expect(console.warn).not.toHaveBeenCalled()
   })
 })
