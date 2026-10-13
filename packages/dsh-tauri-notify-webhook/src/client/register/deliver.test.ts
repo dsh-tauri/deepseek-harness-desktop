@@ -190,6 +190,46 @@ describe('notify-webhook delivery feature', () => {
     expect(deliveryCalls()).toEqual([])
   })
 
+  it('问原因期间会话又停了一次，上一趟的回包作废、只推最新那次', async () => {
+    const harness = boot({ s1: { running: true } })
+    const releases: Array<(reply: WireReply) => void> = []
+    answer((call: WireCall): WireReply | Promise<WireReply> => call.url === TURN_END
+      ? new Promise<WireReply>((resolve) => { releases.push(resolve) })
+      : replies.ok({ ok: true }))
+    harness.emit({ s1: { running: false } })
+    await settle()
+    expect(releases).toHaveLength(1)
+
+    harness.emit({ s1: { running: true } })
+    harness.emit({ s1: { running: false } })
+    await settle()
+    expect(releases).toHaveLength(2)
+
+    // 这一趟问的是上一次停下，宿主那格 turn/end 已经被后一次覆盖，原因对不上就不该推。
+    releases[0](replies.ok({ reason: 'completed' }))
+    await flush()
+    expect(deliveryCalls()).toEqual([])
+
+    releases[1](replies.ok({ reason: 'aborted' }))
+    await flush()
+    expect(deliveryCalls().map(call => call.body)).toEqual([{ sessionId: 's1', title: '', trigger: 'abnormal' }])
+  })
+
+  it('问原因期间会话从列表消失，回包落地也不投递', async () => {
+    const harness = boot({ s1: { running: true } })
+    let release: (reply: WireReply) => void = () => {}
+    answer((call: WireCall): WireReply | Promise<WireReply> => call.url === TURN_END
+      ? new Promise<WireReply>((resolve) => { release = resolve })
+      : replies.ok({ ok: true }))
+    harness.emit({ s1: { running: false } })
+    await settle()
+
+    harness.emit({})
+    release(replies.ok({ reason: 'completed' }))
+    await flush()
+    expect(deliveryCalls()).toEqual([])
+  })
+
   it('投递请求失败时只告警', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const harness = boot({ s1: { running: true } })

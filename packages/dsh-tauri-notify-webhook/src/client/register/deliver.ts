@@ -10,7 +10,10 @@ const SETTLE_MS = 250
 
 export const deliverFeature = defineRegister<ClientContext>((controller, ctx) => {
   const seenRunning = new Map<string, boolean | undefined>()
+  /** 每次「跑起来 → 停下」都记一个序号：问原因的往返里又停过一次时，上一趟的回包已经作废。 */
+  const stopSeq = new Map<string, number>()
   const timers = new Map<string, () => void>()
+  let stopCounter = 0
 
   const readSessions = (): SessionsFace | undefined => ctx.get('sessions') as SessionsFace | undefined
 
@@ -52,13 +55,17 @@ export const deliverFeature = defineRegister<ClientContext>((controller, ctx) =>
       // 首次观察只建立基线：插件加载前就存在的完成态不该补推一条通知。
       if (!known || previous !== true || running === true)
         continue
+      stopCounter += 1
+      const seq = stopCounter
+      stopSeq.set(sessionId, seq)
       settle(sessionId, () => {
         // 窗口内可能又跑起来了：与通知插件一样，落定后再确认一次状态。
         if (isRunning(sessionId))
           return
         void resolveTrigger(sessionId).then((trigger) => {
-          // 问原因这一趟往返里插件可能已被卸载、会话也可能又跑起来，投递前再确认一次。
-          if (controller.isDisposed() || isRunning(sessionId))
+          // 问原因这一趟往返里插件可能已被卸载、会话可能又跑起来、也可能又停了一次：
+          // 宿主每个会话只留最新的 turn/end，旧回包的原因已经对不上，投递前逐条确认。
+          if (controller.isDisposed() || isRunning(sessionId) || stopSeq.get(sessionId) !== seq)
             return
           void dispatch(sessionId, trigger)
         })
@@ -68,6 +75,7 @@ export const deliverFeature = defineRegister<ClientContext>((controller, ctx) =>
       if (entries.has(sessionId))
         continue
       seenRunning.delete(sessionId)
+      stopSeq.delete(sessionId)
       timers.get(sessionId)?.()
       timers.delete(sessionId)
     }
