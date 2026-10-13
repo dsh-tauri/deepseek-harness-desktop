@@ -13,6 +13,7 @@ export interface SettingsState {
   error: string | null
   busy: SettingsBusy
   values: SettingsForm
+  saved: SettingsForm
 }
 
 function formOf(value: NotifyWebhookSettings): SettingsForm {
@@ -25,6 +26,7 @@ function initialState(): SettingsState {
     error: null,
     busy: 'idle',
     values: formOf(NOTIFY_WEBHOOK_DEFAULTS),
+    saved: formOf(NOTIFY_WEBHOOK_DEFAULTS),
   }
 }
 
@@ -36,7 +38,9 @@ export const settings = defineStore({
       this.error = null
     },
     commit(value: NotifyWebhookSettings) {
-      this.values = formOf(normalizeNotifyWebhook(value))
+      const next = normalizeNotifyWebhook(value)
+      this.values = formOf(next)
+      this.saved = formOf(next)
       this.status = 'ready'
       this.error = null
     },

@@ -34,10 +34,10 @@ function Field({ label, hint, span = 6, children }: { label: string, hint?: stri
   )
 }
 
-function TriggerRow({ label, hint, checked, onChange }: { label: string, hint: string, checked: boolean, onChange: (next: boolean) => void }): ReactNode {
+function TriggerRow({ label, hint, checked, disabled, onChange }: { label: string, hint: string, checked: boolean, disabled: boolean, onChange: (next: boolean) => void }): ReactNode {
   return (
     <span className="inline-flex items-center gap-[8px]">
-      <Switch checked={checked} label={label} onChange={onChange} />
+      <Switch checked={checked} label={label} disabled={disabled} onChange={onChange} />
       <span className="flex flex-col">
         <span className="text-[12px] leading-[18px] font-medium text-secondary">{label}</span>
         <span className="text-[12px] leading-[18px] text-secondary">{hint}</span>
@@ -51,9 +51,11 @@ const PANEL = 'flex flex-col gap-[10px] rounded-[8px] border border-border-l2 bg
 
 export function NotifyWebhookSection(): ReactNode {
   locale.useLocale()
-  const { status, error, busy, values } = useStore(store.settings)
+  const { status, error, busy, values, saved } = useStore(store.settings)
   const [notice, setNotice] = useState<Notice | null>(null)
   const text = locale.text
+  // 测试推送只发已落盘的配置，表单里有未保存改动时按钮必须锁住，否则测的不是眼前这套值。
+  const dirty = JSON.stringify(values) !== JSON.stringify(saved)
 
   useEffect(() => {
     void service.loadSettings()
@@ -107,12 +109,14 @@ export function NotifyWebhookSection(): ReactNode {
               label={text('triggerComplete')}
               hint={text('triggerCompleteHint')}
               checked={values.notifyOnComplete}
+              disabled={busy !== 'idle'}
               onChange={next => store.settings.patch({ notifyOnComplete: next })}
             />
             <TriggerRow
               label={text('triggerAbnormal')}
               hint={text('triggerAbnormalHint')}
               checked={values.notifyOnAbnormal}
+              disabled={busy !== 'idle'}
               onChange={next => store.settings.patch({ notifyOnAbnormal: next })}
             />
           </span>
@@ -122,10 +126,10 @@ export function NotifyWebhookSection(): ReactNode {
         <span className="text-[12px] leading-[18px] font-medium text-primary">{text('email')}</span>
         <div className={GRID}>
           <Field label={text('smtpHost')} span={6}>
-            <Input className="box-border w-full" value={values.email.host} onChange={event => store.settings.patchEmail({ host: event.target.value })} />
+            <Input className="box-border w-full" disabled={busy !== 'idle'} value={values.email.host} onChange={event => store.settings.patchEmail({ host: event.target.value })} />
           </Field>
           <Field label={text('smtpPort')} span={3}>
-            <Input className="box-border w-full" type="number" value={values.email.port} onChange={event => store.settings.patchEmail({ port: event.target.value })} />
+            <Input className="box-border w-full" type="number" disabled={busy !== 'idle'} value={values.email.port} onChange={event => store.settings.patchEmail({ port: event.target.value })} />
           </Field>
           <Field label={text('smtpSecurity')} span={3}>
             <Select
@@ -137,16 +141,16 @@ export function NotifyWebhookSection(): ReactNode {
             />
           </Field>
           <Field label={text('smtpUsername')} hint={text('smtpOptional')} span={6}>
-            <Input className="box-border w-full" value={values.email.username} onChange={event => store.settings.patchEmail({ username: event.target.value })} />
+            <Input className="box-border w-full" disabled={busy !== 'idle'} value={values.email.username} onChange={event => store.settings.patchEmail({ username: event.target.value })} />
           </Field>
           <Field label={text('smtpPassword')} hint={text('smtpOptional')} span={6}>
-            <Input className="box-border w-full" type="password" value={values.email.password} onChange={event => store.settings.patchEmail({ password: event.target.value })} />
+            <Input className="box-border w-full" type="password" disabled={busy !== 'idle'} value={values.email.password} onChange={event => store.settings.patchEmail({ password: event.target.value })} />
           </Field>
           <Field label={text('smtpFrom')} span={6}>
-            <Input className="box-border w-full" value={values.email.from} onChange={event => store.settings.patchEmail({ from: event.target.value })} />
+            <Input className="box-border w-full" disabled={busy !== 'idle'} value={values.email.from} onChange={event => store.settings.patchEmail({ from: event.target.value })} />
           </Field>
           <Field label={text('smtpTo')} span={6}>
-            <Input className="box-border w-full" value={values.email.to} onChange={event => store.settings.patchEmail({ to: event.target.value })} />
+            <Input className="box-border w-full" disabled={busy !== 'idle'} value={values.email.to} onChange={event => store.settings.patchEmail({ to: event.target.value })} />
           </Field>
         </div>
         <span className="text-[12px] leading-[18px] text-secondary">{text('emailHint')}</span>
@@ -155,7 +159,7 @@ export function NotifyWebhookSection(): ReactNode {
         <span className="text-[12px] leading-[18px] font-medium text-primary">{text('pushplus')}</span>
         <div className={GRID}>
           <Field label={text('pushplusToken')} span={12}>
-            <Input className="box-border w-full" type="password" value={values.pushplus.token} onChange={event => store.settings.patchPushplus({ token: event.target.value })} />
+            <Input className="box-border w-full" type="password" disabled={busy !== 'idle'} value={values.pushplus.token} onChange={event => store.settings.patchPushplus({ token: event.target.value })} />
           </Field>
         </div>
         <span className="text-[12px] leading-[18px] text-secondary">{text('pushplusHint')}</span>
@@ -165,7 +169,7 @@ export function NotifyWebhookSection(): ReactNode {
           variant="outline"
           size="sm"
           data-testid="notify-webhook-test"
-          disabled={busy !== 'idle'}
+          disabled={busy !== 'idle' || dirty}
           onClick={() => { void test() }}
         >
           {busy === 'testing' ? text('testing') : text('test')}

@@ -60,6 +60,12 @@ async function settle(): Promise<void> {
   await vi.advanceTimersByTimeAsync(SETTLE_MS)
 }
 
+/** ofetch 的应答链有好几跳，等挂起的回包落地得把微任务队列抽干。 */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 20; i += 1)
+    await Promise.resolve()
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   resetWire()
@@ -151,6 +157,37 @@ describe('notify-webhook delivery feature', () => {
     harness.emit({ s1: { running: false } })
     await settle()
     expect(warn).toHaveBeenCalledWith('[dsh-tauri-notify-webhook] 推送失败：NOTIFY_UNCONFIGURED: channel')
+  })
+
+  it('问原因的回包还没落地插件就被卸载，此时不投递', async () => {
+    const harness = boot({ s1: { running: true } })
+    let release: (reply: WireReply) => void = () => {}
+    answer((call: WireCall): WireReply | Promise<WireReply> => call.url === TURN_END
+      ? new Promise<WireReply>((resolve) => { release = resolve })
+      : replies.ok({ ok: true }))
+    harness.emit({ s1: { running: false } })
+    await settle()
+    expect(turnEndCalls()).toHaveLength(1)
+
+    harness.dispose()
+    release(replies.ok({ reason: 'completed' }))
+    await flush()
+    expect(deliveryCalls()).toEqual([])
+  })
+
+  it('问原因的这段时间里会话又跑起来，回包落地也不投递', async () => {
+    const harness = boot({ s1: { running: true } })
+    let release: (reply: WireReply) => void = () => {}
+    answer((call: WireCall): WireReply | Promise<WireReply> => call.url === TURN_END
+      ? new Promise<WireReply>((resolve) => { release = resolve })
+      : replies.ok({ ok: true }))
+    harness.emit({ s1: { running: false } })
+    await settle()
+
+    harness.emit({ s1: { running: true } })
+    release(replies.ok({ reason: 'completed' }))
+    await flush()
+    expect(deliveryCalls()).toEqual([])
   })
 
   it('投递请求失败时只告警', async () => {

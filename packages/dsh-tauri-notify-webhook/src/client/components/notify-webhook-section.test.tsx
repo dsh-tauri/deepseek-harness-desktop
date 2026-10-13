@@ -1,6 +1,6 @@
 import type { WireReply } from '../test-utils/client-mock'
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NOTIFY_WEBHOOK_DEFAULTS } from '../../shared/settings'
@@ -65,6 +65,17 @@ function bootWire(): void {
 
 const value = (name: string): string => (screen.getByLabelText(name, { selector: 'input' }) as HTMLInputElement).value
 const notices = (): Element[] => screen.queryAllByTestId('notify-webhook-notice')
+/** 直接推动 store 的 busy 槽：要验的是锁态，不必真的走一趟 HTTP。 */
+function beginSave(): void {
+  store.settings.beginSave()
+}
+
+function endBusy(): void {
+  store.settings.endBusy()
+}
+
+// Field 用 <label> 包住 Select，渠道选项的无障碍名会带上外层标签文字，只能按结构取。
+const channelOptions = (): HTMLButtonElement[] => [...screen.getByRole('listbox', { name: en.channel }).querySelectorAll('[role="option"]')] as HTMLButtonElement[]
 const rendered = (): Promise<void> => waitFor(() => expect(screen.getByTestId('notify-webhook-section')).toBeTruthy())
 
 beforeEach(() => {
@@ -204,5 +215,42 @@ describe('notifyWebhookSection', () => {
     render(<NotifyWebhookSection />)
 
     await waitFor(() => expect(screen.getByTestId('notify-webhook-error').textContent).toBe('Failed to load settings: 请求失败 (405)'))
+  })
+
+  it('表单有未保存改动时测试推送按钮锁住，保存落地后解锁', async () => {
+    render(<NotifyWebhookSection />)
+    await rendered()
+
+    const button = screen.getByTestId('notify-webhook-test') as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+
+    fireEvent.change(screen.getByLabelText(en.smtpHost, { selector: 'input' }), { target: { value: 'smtp.other' } })
+    await waitFor(() => expect(button.disabled).toBe(true))
+
+    fireEvent.click(screen.getByTestId('notify-webhook-save'))
+    await waitFor(() => expect(screen.getByTestId('notify-webhook-notice').textContent).toBe(en.saveOk))
+    expect(button.disabled).toBe(false)
+  })
+
+  it('保存进行中把输入框、渠道选项与两个开关一起锁住', async () => {
+    render(<NotifyWebhookSection />)
+    await rendered()
+
+    act(beginSave)
+
+    await waitFor(() => expect((screen.getByLabelText(en.smtpHost, { selector: 'input' }) as HTMLInputElement).disabled).toBe(true))
+    expect((screen.getByLabelText(en.smtpPort, { selector: 'input' }) as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByLabelText(en.smtpPassword, { selector: 'input', exact: false }) as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByLabelText(en.pushplusToken, { selector: 'input' }) as HTMLInputElement).disabled).toBe(true)
+    expect(channelOptions().map(option => option.disabled)).toEqual([true, true, true])
+    expect((screen.getByRole('switch', { name: en.triggerComplete }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('switch', { name: en.triggerAbnormal }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId('notify-webhook-save') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId('notify-webhook-test') as HTMLButtonElement).disabled).toBe(true)
+
+    act(endBusy)
+
+    await waitFor(() => expect((screen.getByLabelText(en.smtpHost, { selector: 'input' }) as HTMLInputElement).disabled).toBe(false))
+    expect((screen.getByRole('switch', { name: en.triggerComplete }) as HTMLButtonElement).disabled).toBe(false)
   })
 })

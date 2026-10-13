@@ -36,6 +36,7 @@ describe('the settings store initial state', () => {
       error: null,
       busy: 'idle',
       values: initialForm,
+      saved: initialForm,
     })
   })
 })
@@ -46,6 +47,20 @@ describe('commit', () => {
     expect(store.settings.values).toEqual({ ...remote, email: { ...remote.email, port: '465' } })
     expect(store.settings.status).toBe('ready')
     expect(store.settings.error).toBeNull()
+  })
+
+  it('已保存基线与表单一起落地，两者口径一致', () => {
+    store.settings.commit(remote)
+    const expected = { ...remote, email: { ...remote.email, port: '465' } }
+    expect(store.settings.values).toEqual(expected)
+    expect(store.settings.saved).toEqual(expected)
+  })
+
+  it('改表单不动已保存基线，未落盘的改动能被认出来', () => {
+    store.settings.commit(remote)
+    store.settings.patchEmail({ host: 'smtp.other' })
+    expect(store.settings.values.email.host).toBe('smtp.other')
+    expect(store.settings.saved.email.host).toBe('smtp.example.com')
   })
 
   it('坏数据在入库前被归一化，不让非法值进表单', () => {

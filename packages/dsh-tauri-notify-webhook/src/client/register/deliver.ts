@@ -14,6 +14,8 @@ export const deliverFeature = defineRegister<ClientContext>((controller, ctx) =>
 
   const readSessions = (): SessionsFace | undefined => ctx.get('sessions') as SessionsFace | undefined
 
+  const isRunning = (sessionId: string): boolean => readSessions()?.list.getSnapshot().byId[sessionId]?.running === true
+
   function settle(sessionId: string, run: () => void): void {
     timers.get(sessionId)?.()
     timers.set(sessionId, controller.timeout(() => {
@@ -52,9 +54,14 @@ export const deliverFeature = defineRegister<ClientContext>((controller, ctx) =>
         continue
       settle(sessionId, () => {
         // 窗口内可能又跑起来了：与通知插件一样，落定后再确认一次状态。
-        if (readSessions()?.list.getSnapshot().byId[sessionId]?.running === true)
+        if (isRunning(sessionId))
           return
-        void resolveTrigger(sessionId).then(trigger => dispatch(sessionId, trigger))
+        void resolveTrigger(sessionId).then((trigger) => {
+          // 问原因这一趟往返里插件可能已被卸载、会话也可能又跑起来，投递前再确认一次。
+          if (controller.isDisposed() || isRunning(sessionId))
+            return
+          void dispatch(sessionId, trigger)
+        })
       })
     }
     for (const sessionId of [...seenRunning.keys()]) {
