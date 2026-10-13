@@ -25,7 +25,10 @@ export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) =
     if (controller.isDisposed() || warned.has(key))
       return
     warned.add(key)
-    console.warn(`[${PLUGIN_ID}] ${key}`, error)
+    if (error === undefined)
+      console.warn(`[${PLUGIN_ID}] ${key}`)
+    else
+      console.warn(`[${PLUGIN_ID}] ${key}`, error)
   }
 
   async function refreshBackends(startup = false): Promise<void> {
@@ -91,8 +94,16 @@ export const kernel = defineRegister<ClientContext>((controller, ctx, adapter) =
       if (!active())
         return
       const sessions = adapter.service<ISessions>('sessions')
-      const identity = sessions === undefined ? undefined : kernelFromList(sessions.list.getSnapshot(), sessionId as SessionId)
-      if (backendFromIdentity(identity) === undefined)
+      const state = sessions?.list.getSnapshot()
+      if (state === undefined)
+        return
+      const projection = state.projectionsBySession?.[sessionId as SessionId]
+      if (projection?.state === 'error') {
+        warn(`session projection read failed: ${sessionId}`, projection.error)
+        return
+      }
+      const identity = kernelFromList(state, sessionId as SessionId)
+      if (identity !== undefined && backendFromIdentity(identity) === undefined)
         warn(`session kernel identity unavailable: ${sessionId}`)
     }
     catch (reason) {
