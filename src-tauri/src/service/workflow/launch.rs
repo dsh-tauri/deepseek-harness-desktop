@@ -53,13 +53,19 @@ fn harness_library_path(
     appdir: Option<&std::ffi::OsStr>,
     library_path: Option<&std::ffi::OsStr>,
 ) -> Option<OsString> {
+    use std::os::unix::ffi::OsStrExt;
+
     let library_path = library_path?;
     let Some(appdir) = appdir.filter(|path| !path.is_empty()) else {
         return Some(library_path.to_os_string());
     };
     Some(
         std::env::join_paths(
-            std::env::split_paths(library_path).filter(|path| !path.starts_with(Path::new(appdir))),
+            library_path
+                .as_bytes()
+                .split(|byte| matches!(*byte, b':' | b';'))
+                .map(|path| Path::new(std::ffi::OsStr::from_bytes(path)))
+                .filter(|path| !path.starts_with(Path::new(appdir))),
         )
         .expect("split Linux library paths contain no path separator"),
     )
@@ -1015,6 +1021,50 @@ mod tests {
         }
 
         #[test]
+        fn filters_semicolon_and_mixed_library_path_separators() {
+            for path in [
+                "/opt/custom/lib;/tmp/.mount_DSH/usr/lib",
+                "/tmp/.mount_DSH/usr/lib;/opt/custom/lib",
+                "/tmp/.mount_DSH/usr/lib:/opt/custom/lib;/tmp/.mount_DSH/usr/lib64",
+            ] {
+                assert_eq!(
+                    harness_library_path(
+                        Some(OsStr::new("/tmp/.mount_DSH")),
+                        Some(OsStr::new(path))
+                    ),
+                    Some(OsString::from("/opt/custom/lib")),
+                    "{path}",
+                );
+            }
+        }
+
+        #[test]
+        fn retains_empty_components_and_loader_tokens() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    Some(OsStr::new(";/tmp/.mount_DSH/usr/lib;;$ORIGIN/$LIB:;")),
+                ),
+                Some(OsString::from("::$ORIGIN/$LIB::")),
+            );
+        }
+
+        #[test]
+        fn filters_non_utf8_appimage_paths_without_removing_siblings() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::from_bytes(b"/tmp/.mount_\xff")),
+                    Some(OsStr::from_bytes(
+                        b"/tmp/.mount_\xff/usr/lib;/opt/\xfe/lib:/tmp/.mount_\xff-other/lib"
+                    )),
+                ),
+                Some(OsString::from_vec(
+                    b"/opt/\xfe/lib:/tmp/.mount_\xff-other/lib".to_vec()
+                )),
+            );
+        }
+
+        #[test]
         fn preserves_library_path_without_an_appimage_directory() {
             let path = Some(OsStr::new("/opt/custom/lib"));
             assert_eq!(
@@ -1037,13 +1087,20 @@ mod tests {
 
         #[test]
         fn clears_a_library_path_containing_only_appimage_directories() {
-            assert_eq!(
-                harness_library_path(
-                    Some(OsStr::new("/tmp/.mount_DSH")),
-                    Some(OsStr::new("/tmp/.mount_DSH/usr/lib"))
-                ),
-                Some(OsString::new()),
-            );
+            for path in [
+                "/tmp/.mount_DSH/usr/lib",
+                "/tmp/.mount_DSH/usr/lib;/tmp/.mount_DSH/usr/lib64",
+                "",
+            ] {
+                assert_eq!(
+                    harness_library_path(
+                        Some(OsStr::new("/tmp/.mount_DSH")),
+                        Some(OsStr::new(path))
+                    ),
+                    Some(OsString::new()),
+                    "{path}",
+                );
+            }
         }
 
         #[test]
