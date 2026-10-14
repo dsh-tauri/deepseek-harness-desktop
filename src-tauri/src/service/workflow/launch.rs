@@ -48,6 +48,23 @@ type SpawnResult = Result<
 /// 复用配置端口；到期仍未释放才按“真占用”逐级递增。
 const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
+#[cfg(target_os = "linux")]
+fn harness_library_path(
+    appdir: Option<&std::ffi::OsStr>,
+    library_path: Option<&std::ffi::OsStr>,
+) -> Option<OsString> {
+    let library_path = library_path?;
+    let Some(appdir) = appdir.filter(|path| !path.is_empty()) else {
+        return Some(library_path.to_os_string());
+    };
+    Some(
+        std::env::join_paths(
+            std::env::split_paths(library_path).filter(|path| !path.starts_with(Path::new(appdir))),
+        )
+        .expect("split Linux library paths contain no path separator"),
+    )
+}
+
 /// 组装启动 Harness 的参数：`[--max-old-space-size] <dsh> --profile <档案>
 /// [--patch <补丁层>] --port <端口> --no-open`。
 ///
@@ -640,6 +657,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 的 `dsh web` 不受影响（取代原先对核心 JS 打的 `--skip-auth` 磁盘补丁）。
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
 
+    // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
+    #[cfg(target_os = "linux")]
+    let library_path = harness_library_path(
+        std::env::var_os("APPDIR").as_deref(),
+        std::env::var_os("LD_LIBRARY_PATH").as_deref(),
+    );
+
     // 日志文件（前端日志面板读取）。
     // 每次真实启动前轮转：只保留最近 3 次启动的日志，旧文件后退为
     // `dsh-web.log.1` / `dsh-web.log.2`，避免单文件随多次启动无限增长。
@@ -859,6 +883,10 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                 setting.port,
                 heap_mb,
             ));
+            #[cfg(target_os = "linux")]
+            if let Some(path) = &library_path {
+                cmd.env("LD_LIBRARY_PATH", path);
+            }
             cmd.envs(&envs)
                 .current_dir(&core_dir)
                 // 核心修正：提供一个空的 stdin 防止 setRawMode 报错
@@ -901,6 +929,10 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                                             setting.port,
                                             heap_mb,
                                         ));
+                                        #[cfg(target_os = "linux")]
+                                        if let Some(path) = &library_path {
+                                            cmd.env("LD_LIBRARY_PATH", path);
+                                        }
                                         cmd.envs(&envs)
                                             .current_dir(&core_dir)
                                             .stdin(Stdio::null())
@@ -964,6 +996,67 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    mod appimage_library_path {
+        use super::*;
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        #[test]
+        fn removes_only_appimage_library_directories() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    Some(OsStr::new("/opt/custom/lib:/tmp/.mount_DSH/usr/lib:/tmp/.mount_DSH:/tmp/.mount_DSH-other/lib:")),
+                ),
+                Some(OsString::from("/opt/custom/lib:/tmp/.mount_DSH-other/lib:")),
+            );
+        }
+
+        #[test]
+        fn preserves_library_path_without_an_appimage_directory() {
+            let path = Some(OsStr::new("/opt/custom/lib"));
+            assert_eq!(
+                harness_library_path(None, path),
+                Some(OsString::from("/opt/custom/lib"))
+            );
+            assert_eq!(
+                harness_library_path(Some(OsStr::new("")), path),
+                Some(OsString::from("/opt/custom/lib"))
+            );
+        }
+
+        #[test]
+        fn preserves_an_unset_library_path() {
+            assert_eq!(
+                harness_library_path(Some(OsStr::new("/tmp/.mount_DSH")), None),
+                None
+            );
+        }
+
+        #[test]
+        fn clears_a_library_path_containing_only_appimage_directories() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    Some(OsStr::new("/tmp/.mount_DSH/usr/lib"))
+                ),
+                Some(OsString::new()),
+            );
+        }
+
+        #[test]
+        fn preserves_non_utf8_user_library_paths() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    Some(OsStr::from_bytes(b"/opt/\xff/lib:/tmp/.mount_DSH/usr/lib"))
+                ),
+                Some(OsString::from_vec(b"/opt/\xff/lib".to_vec())),
+            );
+        }
+    }
 
     #[test]
     fn occupied_port_advances_to_a_free_port() {
