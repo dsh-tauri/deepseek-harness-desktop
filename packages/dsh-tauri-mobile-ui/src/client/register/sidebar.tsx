@@ -121,6 +121,7 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
   }]))
   const navbarHost = document.createElement('div')
   navbarHost.setAttribute('data-dsh-mobile-navbar-host', '')
+  let navbar: HTMLElement | null = null
   const listeners = new Set<() => void>()
   const notify = (): void => listeners.forEach(listener => listener())
   const subscribe = (listener: () => void): (() => void) => {
@@ -152,6 +153,9 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
 
   const clearGesture = (): void => {
     const current = gesture
+    // Flush the last drag position before restoring CSS transitions, including same-frame releases.
+    if (current !== null && snapshot.dragging)
+      current.frame.querySelector('[class$="_centerCol"]')?.getBoundingClientRect()
     gesture = null
     if (current?.source === 'pointer' && current.state.axis === 'x'
       && typeof current.frame.hasPointerCapture === 'function'
@@ -230,6 +234,8 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
       resetGesture()
     const center = snapshot.mobile ? frame?.querySelector<HTMLElement>('[class$="_centerCol"]') : null
     if (center) {
+      if (navbar !== null && navbar.parentNode === null && !navbarHost.hasChildNodes())
+        navbarHost.append(navbar)
       if (center.firstElementChild !== navbarHost)
         center.prepend(navbarHost)
     }
@@ -254,7 +260,10 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
     root.toggleAttribute('data-dsh-mobile-sidebar-dragging', snapshot.mobile && snapshot.dragging)
     if (snapshot.mobile) {
       root.style.setProperty(SIDEBAR_PROPERTIES[0], `${snapshot.width}px`)
-      root.style.setProperty(SIDEBAR_PROPERTIES[1], `${snapshot.offset}px`)
+      if (snapshot.dragging)
+        root.style.setProperty(SIDEBAR_PROPERTIES[1], `${snapshot.offset}px`)
+      else
+        root.style.removeProperty(SIDEBAR_PROPERTIES[1])
     }
     else {
       restoreProperties()
@@ -274,11 +283,11 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
     syncDom()
     notify()
   }
-  const setOpen = (open: boolean, report = true): void => {
+  const setOpen = (open: boolean): void => {
     if (!snapshot.mobile || controller.isDisposed())
       return
     const wasOpen = snapshot.open
-    const changed = open !== wasOpen || snapshot.dragging
+    const changed = open !== wasOpen
     clearGesture()
     if (open && !wasOpen) {
       focusDrawerOnOpen = true
@@ -291,7 +300,7 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
     publish({ ...snapshot, open, dragging: false, offset: open ? snapshot.width : 0 })
     if (!open && wasOpen)
       restoreFocusTarget()
-    if (changed && report)
+    if (changed)
       safeReportCollapsed(!open)
   }
   // keep:function `reconcileFrame` 属于 publish → syncDom → reconcileFrame 环，声明式函数才能在环内前向引用。
@@ -502,7 +511,7 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
     const layoutChanged = records.some((record) => {
       if (record.type === 'attributes')
         return record.target instanceof Element && record.target.matches(`${LAYOUT_SELECTOR}, [data-sidebar-collapsed], [data-dsh-mobile-sidebar]`)
-      if (record.target instanceof Element && record.target.matches('[class$="_frame"], [class$="_centerCol"]'))
+      if (record.target === navbarHost || (record.target instanceof Element && record.target.matches('[class$="_frame"], [class$="_centerCol"]')))
         return true
       if (focusedDrawer !== null && !focusedDrawer.element.isConnected)
         return true
@@ -522,6 +531,8 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
     subtree: true,
   })
   controller.add(() => {
+    if (navbar !== null && navbar.parentNode === null && !navbarHost.hasChildNodes())
+      navbarHost.append(navbar)
     listeners.clear()
     clearGesture()
     suppressedClickTarget = null
@@ -552,7 +563,7 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
       return (
         <>
           {host && createPortal(
-            <nav data-dsh-mobile-topbar aria-label={locale.text('navbar.label')}>
+            <nav ref={(element) => { navbar = element }} data-dsh-mobile-topbar aria-label={locale.text('navbar.label')}>
               <Icon
                 as={LayoutSideContentLeft}
                 size={12}
@@ -560,6 +571,7 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
                 role="button"
                 tabIndex={0}
                 focusable="true"
+                onPointerDown={event => event.currentTarget.blur()}
                 aria-label={locale.text(current.open ? 'toggle.close' : 'toggle.open')}
                 aria-expanded={current.open}
                 onClick={toggle}
@@ -573,6 +585,7 @@ export const registerMobileSidebar = defineRegister<ClientContext>((controller, 
                 role="button"
                 tabIndex={0}
                 focusable="true"
+                onPointerDown={event => event.currentTarget.blur()}
                 aria-label={locale.text('session.new')}
                 aria-disabled={current.starting}
                 aria-busy={current.starting}

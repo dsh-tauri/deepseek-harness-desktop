@@ -370,6 +370,7 @@ fn local_core_uses_pnpm(app_handle: &AppHandle) -> bool {
 ///
 /// 返回更新后的版本号。失败返回错误（附进程输出尾部，便于排查）。
 pub async fn update_local_core(app_handle: AppHandle) -> Result<String, String> {
+    crate::service::workflow::instances::require_exclusive_profile()?;
     let Some(core) = local_core(&app_handle) else {
         return Err("CORE_LOCAL_NOT_FOUND: no local core to update".to_string());
     };

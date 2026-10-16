@@ -1,10 +1,7 @@
 //! 活动预打包核心的运行时自愈：补齐插件入口并检查原生依赖（含 ABI 兼容性）。
 //!
-//! dsh 的 loader 以核心安装目录作为裸包解析根，而 profile 中的插件实际位于
-//! `$DSH_HOME/profiles/<profile>/node_modules`，应用内置插件则位于安装包资源目录。
-//! 核心版本切换只移动 `dependencies/dsh`，不会自动重建这些入口，因此每次启动都要
-//! 在启动 dsh 前按当前核心重新建立安全的目录链接。用户自行安装的 local 核心不归
-//! 桌面端管理，明确跳过本模块。
+//! 用户插件由各自 profile 解析；共享核心只链接安装包内置插件，避免跨档案覆盖入口。
+//! 用户自行安装的 local 核心不归桌面端管理，明确跳过本模块。
 //!
 //! 除了入口链接，启动前还要确认核心的原生模块能真正被当前 Node 运行时加载：
 //! 预打包核心的原生模块（`fs-ext` 这类 node-gyp 包）在 pkg 构建期编译，ABI 只与
@@ -211,6 +208,73 @@ impl NativeProbe {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimePreparation {
+    Ready,
+    Defer,
+}
+
+pub(crate) struct RuntimeRequiredPlugin<'a> {
+    pub name: &'a str,
+    pub source: Option<PathBuf>,
+    pub version: Option<&'a crate::config::manifest::PluginVersion>,
+}
+
+pub(crate) struct RuntimePreparationPaths<'a> {
+    pub source: CoreSource,
+    pub base: &'a Path,
+    pub core_root: &'a Path,
+    pub node: &'a Path,
+    pub profile: &'a Path,
+    pub profiles: &'a Path,
+    pub resources: Option<&'a Path>,
+    pub core_version: Option<&'a str>,
+    pub required_plugins: Option<&'a [RuntimeRequiredPlugin<'a>]>,
+}
+
+pub(crate) fn prepare_active_runtime_at(
+    paths: &RuntimePreparationPaths<'_>,
+) -> Result<RuntimePreparation, String> {
+    if paths.source != CoreSource::App {
+        return Ok(RuntimePreparation::Defer);
+    }
+    if !paths.core_root.is_dir() {
+        return Err(format!(
+            "CORE_RUNTIME_NOT_FOUND: bundled core directory is missing: {}",
+            paths.core_root.display()
+        ));
+    }
+    if !paths.node.is_file() {
+        return Err(format!(
+            "CORE_RUNTIME_NODE_NOT_FOUND: Node.js runtime is missing: {}",
+            paths.node.display()
+        ));
+    }
+    let linked = link_required_plugins_at(paths)?;
+    let pruned = match prune_stale_core_packages_at(paths.profile, paths.core_root) {
+        Ok(ready) => ready,
+        Err(error) => {
+            log::warn!("{error}");
+            false
+        }
+    };
+    if !linked || !pruned || paths.core_version.is_none_or(str::is_empty) {
+        return Ok(RuntimePreparation::Defer);
+    }
+    let key = native_probe_stamp_key_at(paths.node, paths.core_root, paths.core_version);
+    if let Some(key) = key.as_deref() {
+        if let Some((stored, platform, arch)) = read_native_probe_stamp_at(paths.base) {
+            if stored == key {
+                log::debug!(
+                    "Bundled core native dependencies are ready for {platform}:{arch} (cached)"
+                );
+                return Ok(RuntimePreparation::Ready);
+            }
+        }
+    }
+    Ok(RuntimePreparation::Defer)
+}
+
 /// 在启动预打包核心前修复其插件入口并验证原生依赖（含 Node ABI 兼容性）。
 ///
 /// 该函数是幂等的：已有正确链接和可加载的原生模块不会触发写入或联网。原生包
@@ -225,41 +289,37 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
 
     let core_root = crate::config::get_dsh_install_path(app_handle);
     let node = crate::config::get_node_binary_path(app_handle);
-    if !core_root.is_dir() {
-        return Err(format!(
-            "CORE_RUNTIME_NOT_FOUND: bundled core directory is missing: {}",
-            core_root.display()
-        ));
+    let base = crate::config::get_base_dir(app_handle);
+    let profile = crate::service::plugin::profile_dir(app_handle);
+    let profiles = crate::config::get_dsh_data_path(app_handle).join("profiles");
+    let resources = crate::config::manifest::resource_root(app_handle);
+    let core_version = crate::service::core::active_version(app_handle);
+    let presets = crate::service::plugin::load_presets(app_handle);
+    let required_plugins: Vec<_> = presets
+        .iter()
+        .filter(|preset| preset.internal)
+        .map(|preset| RuntimeRequiredPlugin {
+            name: crate::service::plugin::installed_name(preset),
+            source: crate::service::plugin::bundled_plugin_dir(app_handle, &preset.id),
+            version: preset.version.as_ref(),
+        })
+        .collect();
+    let manifest_known = crate::config::manifest::with_manifest(app_handle, |_| ()).is_some();
+    let paths = RuntimePreparationPaths {
+        source: CoreSource::App,
+        base: &base,
+        core_root: &core_root,
+        node: &node,
+        profile: &profile,
+        profiles: &profiles,
+        resources: resources.as_deref(),
+        core_version: core_version.as_deref(),
+        required_plugins: manifest_known.then_some(required_plugins.as_slice()),
+    };
+    if prepare_active_runtime_at(&paths)? == RuntimePreparation::Ready {
+        return Ok(());
     }
-    if !node.is_file() {
-        return Err(format!(
-            "CORE_RUNTIME_NODE_NOT_FOUND: Node.js runtime is missing: {}",
-            node.display()
-        ));
-    }
-
-    link_required_plugins(app_handle, &core_root)?;
-
-    // 档案里的核心包残留必须在 dsh 启动前清掉：Node 从 profile 目录向上查找裸包时
-    // 会先命中它，核心自带的正确版本反而被跳过。清理失败不影响后续原生探测。
-    if let Err(e) = prune_stale_core_packages(app_handle, &core_root) {
-        log::warn!("{e}");
-    }
-
-    // 已核验过的运行时直接放行：跳过平台/架构探测与原生模块探测两个 node 子进程
-    // （issue #766）。指纹失配、戳缺失或不可解析时一律走原探测路径；指纹本身不完整
-    // （`None`）时既不比对也不落盘。
-    let stamp_key = native_probe_stamp_key(app_handle, &node, &core_root);
-    if let Some(key) = stamp_key.as_deref() {
-        if let Some((stored, platform, arch)) = read_native_probe_stamp(app_handle) {
-            if stored == key {
-                log::debug!(
-                    "Bundled core native dependencies are ready for {platform}:{arch} (cached)"
-                );
-                return Ok(());
-            }
-        }
-    }
+    let stamp_key = native_probe_stamp_key_at(&node, &core_root, core_version.as_deref());
 
     let target = detect_node_target(&node, &core_root).await?;
     let mut probe = probe_native_modules(&node, &core_root).await;
@@ -270,7 +330,7 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
             target.arch
         );
         if let Some(key) = stamp_key.as_deref() {
-            write_native_probe_stamp(app_handle, key, &target);
+            write_native_probe_stamp_at(&base, key, &target);
         }
         return Ok(());
     }
@@ -372,16 +432,24 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
 /// 既有清理（上游 `removeLinkProjections` 与桌面端 `remove_legacy_profile_module_fallback`）
 /// 都只认符号链接、且要求 `.dsh-module-fallback` 源目录仍然存在；用户「无视风险切换」
 /// 升级核心时档案不重建，残留因此在 Node 的逐级查找里长期抢先命中，症状与病因脱钩。
-fn prune_stale_core_packages(app_handle: &AppHandle, core_root: &Path) -> Result<(), String> {
-    let profile = crate::service::plugin::profile_dir(app_handle);
-    let Some(declared) = crate::service::plugin::declared_packages(app_handle) else {
+fn prune_stale_core_packages_at(profile: &Path, core_root: &Path) -> Result<bool, String> {
+    let declared = std::fs::read_to_string(profile.join("package.json"))
+        .ok()
+        .and_then(|raw| {
+            serde_json::from_str::<crate::service::plugin::ProfilePackageJson>(&raw).ok()
+        });
+    let Some(manifest) = declared else {
         log::warn!(
             "CORE_PLUGIN_STALE_CORE_DECLARED_UNKNOWN: {} is unreadable, skipping cleanup",
             profile.display()
         );
-        return Ok(());
+        return Ok(false);
     };
-    prune_stale_core_entries(&profile, &core_root.join("node_modules"), &declared)
+    let mut declared: HashSet<_> = manifest.dependencies.into_keys().collect();
+    if let Some(profile) = manifest.dsh.and_then(|dsh| dsh.profile) {
+        declared.extend(profile.bundles);
+    }
+    prune_stale_core_entries(profile, &core_root.join("node_modules"), &declared)
 }
 
 /// 逐个比对档案与锚点的同名核心包版本，清除版本错配且档案未声明的条目。
@@ -389,15 +457,21 @@ fn prune_stale_core_entries(
     profile_root: &Path,
     anchor_node_modules: &Path,
     declared: &HashSet<String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let profile_node_modules = profile_root.join("node_modules");
     let scope = profile_node_modules.join(CORE_PACKAGE_SCOPE);
+    if std::fs::symlink_metadata(&scope)
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    {
+        return Ok(true);
+    }
     let Some(scope_root) = containment_root(&scope, profile_root) else {
-        return Ok(());
+        return Ok(false);
     };
+    let mut ready = true;
     let entries = match std::fs::read_dir(&scope) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(e) => {
             return Err(format!(
                 "CORE_PLUGIN_STALE_CORE_SCAN_FAILED: {}: {e}",
@@ -430,14 +504,17 @@ fn prune_stale_core_entries(
                 path.display(),
                 scope.display()
             );
+            ready = false;
             continue;
         }
         let Some(profile_version) = read_package_version(&path.join("package.json")) else {
+            ready = false;
             continue;
         };
         let Some(anchor_version) =
             read_package_version(&anchor_node_modules.join(&name).join("package.json"))
         else {
+            ready = false;
             continue;
         };
         if profile_version == anchor_version {
@@ -445,13 +522,14 @@ fn prune_stale_core_entries(
         }
         if let Err(e) = remove_core_package_residue(&path) {
             log::warn!("{e}");
+            ready = false;
             continue;
         }
         log::info!(
             "CORE_PLUGIN_STALE_CORE_PRUNED: {name} {profile_version} (profile) != {anchor_version} (anchor), removed"
         );
     }
-    Ok(())
+    Ok(ready)
 }
 
 /// 解析 scope 的真实位置，并确认它既不是重定向入口、也仍留在档案目录内。
@@ -536,9 +614,9 @@ fn remove_core_package_residue(path: &Path) -> Result<(), String> {
     })
 }
 
-/// 从活动 profile 与应用内置清单收集需要在核心根下解析的包，并逐个建立入口。
-fn link_required_plugins(app_handle: &AppHandle, core_root: &Path) -> Result<(), String> {
-    let core_node_modules = core_root.join("node_modules");
+/// 共享核心只保留内置插件入口，并移除旧版投射的档案插件链接（issue #993）。
+fn link_required_plugins_at(paths: &RuntimePreparationPaths<'_>) -> Result<bool, String> {
+    let core_node_modules = paths.core_root.join("node_modules");
     std::fs::create_dir_all(&core_node_modules).map_err(|e| {
         format!(
             "CORE_PLUGIN_NODE_MODULES_CREATE_FAILED: {}: {e}",
@@ -546,85 +624,123 @@ fn link_required_plugins(app_handle: &AppHandle, core_root: &Path) -> Result<(),
         )
     })?;
 
-    let presets = crate::service::plugin::load_presets(app_handle);
-    // 被核心吸收的内置插件（上限已被超越）不再链接到核心根：与启动退役、自愈的
-    // 判定同源，避免为已卸载插件留下悬空入口。
-    let core_version = crate::service::core::active_version(app_handle);
-    let internal: Vec<_> = presets
+    let internal: Vec<_> = paths
+        .required_plugins
+        .unwrap_or_default()
         .iter()
-        .filter(|preset| preset.internal && !preset.unsupported_on(core_version.as_deref()))
+        .filter(|plugin| {
+            !plugin
+                .version
+                .is_some_and(|version| version.unsupported_on(paths.core_version))
+        })
         .collect();
-    let internal_ids: HashSet<String> = internal
+    let internal_ids = internal
         .iter()
-        .map(|preset| crate::service::plugin::installed_name(preset).to_string())
+        .map(|plugin| plugin.name.to_string())
         .collect();
-
-    // 内置插件必须始终从当前安装包资源（debug 时为 workspace 源码）取源，不能信任
-    // profile 中旧版本遗留的 link 路径。这样应用升级后旧 link 会被精确替换。
-    for preset in internal {
-        let name = crate::service::plugin::installed_name(preset);
-        let Some(source) = crate::service::plugin::bundled_plugin_dir(app_handle, &preset.id)
-        else {
+    let mut ready = paths.required_plugins.is_some();
+    for plugin in internal {
+        let source = plugin.source.as_deref().and_then(|source| {
+            if source.is_absolute() {
+                Some(source.to_path_buf())
+            } else {
+                paths.resources.map(|root| root.join(source))
+            }
+        });
+        let Some(source) = source else {
             log::warn!(
-                "CORE_PLUGIN_BUNDLE_MISSING: bundled source unavailable for {name}, skipping core link"
+                "CORE_PLUGIN_BUNDLE_MISSING: bundled source unavailable for {}, skipping core link",
+                plugin.name
             );
+            ready = false;
             continue;
         };
-        ensure_package_link(name, &source, &core_node_modules)?;
+        ready &= ensure_package_link(plugin.name, &source, &core_node_modules)?;
     }
 
-    let profile = crate::service::plugin::profile_dir(app_handle);
-    let manifest_path = profile.join("package.json");
-    let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
-        return Ok(());
+    Ok(remove_profile_plugin_links(&core_node_modules, paths.profiles, &internal_ids)? && ready)
+}
+
+fn remove_profile_plugin_links(
+    core_modules: &Path,
+    profiles: &Path,
+    internal_ids: &HashSet<String>,
+) -> Result<bool, String> {
+    let entries = match std::fs::read_dir(profiles) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(format!("CORE_PLUGIN_PROFILES_READ_FAILED: {error}")),
     };
-    let manifest = serde_json::from_str::<serde_json::Value>(&raw)
-        .map_err(|e| format!("CORE_PLUGIN_PROFILE_MANIFEST_INVALID: {manifest_path:?}: {e}"))?;
-
-    let mut names = HashSet::new();
-    if let Some(dependencies) = manifest.get("dependencies").and_then(|v| v.as_object()) {
-        names.extend(dependencies.keys().cloned());
-    }
-    if let Some(bundles) = manifest
-        .get("dsh")
-        .and_then(|v| v.get("profile"))
-        .and_then(|v| v.get("bundles"))
-        .and_then(|v| v.as_array())
-    {
-        names.extend(bundles.iter().filter_map(|v| v.as_str().map(str::to_owned)));
-    }
-
-    // Core 自有依赖（尤其 @deepseek-ai/*）由发行包自己提供，不能被 profile 中同名
-    // 条目覆盖。internal 已按当前资源处理，剩余名字才从 profile 入口解析。
-    for name in names {
-        if internal_ids.contains(&name) || !is_safe_package_name(&name) {
+    let mut ready = true;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("CORE_PLUGIN_PROFILE_READ_FAILED: {error}"))?;
+        if !entry
+            .file_type()
+            .map_err(|error| format!("CORE_PLUGIN_PROFILE_STAT_FAILED: {error}"))?
+            .is_dir()
+            || entry.file_name() == "node_modules"
+        {
             continue;
         }
-        let source = profile.join("node_modules").join(&name);
-        if !source.join("package.json").is_file() {
-            if read_package_name(&core_node_modules.join(&name).join("package.json"))
-                .ok()
-                .flatten()
-                .as_deref()
-                == Some(name.as_str())
-            {
+        let manifest_path = entry.path().join("package.json");
+        let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
+            ready = false;
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            ready = false;
+            continue;
+        };
+        let mut names = HashSet::new();
+        if let Some(dependencies) = manifest
+            .get("dependencies")
+            .and_then(|value| value.as_object())
+        {
+            names.extend(dependencies.keys().map(String::as_str));
+        }
+        if let Some(bundles) = manifest
+            .pointer("/dsh/profile/bundles")
+            .and_then(|value| value.as_array())
+        {
+            names.extend(bundles.iter().filter_map(|value| value.as_str()));
+        }
+        for name in names {
+            if internal_ids.contains(name) || !is_safe_package_name(name) {
                 continue;
             }
-            log::warn!(
-                "CORE_PLUGIN_PROFILE_ENTRY_MISSING: {} is referenced by {}, source {} is unavailable",
-                name,
-                manifest_path.display(),
-                source.display()
-            );
-            continue;
+            let destination = core_modules.join(name);
+            let metadata = match std::fs::symlink_metadata(&destination) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    ready = false;
+                    continue;
+                }
+            };
+            let file_type = metadata.file_type();
+            #[cfg(windows)]
+            let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
+            #[cfg(not(windows))]
+            let is_link = file_type.is_symlink();
+            if !is_link {
+                continue;
+            }
+            let source = entry.path().join("node_modules").join(name);
+            match (source.canonicalize(), destination.canonicalize()) {
+                (Ok(source), Ok(target)) if source == target => {
+                    ensure_non_link_directory(destination.parent().unwrap(), core_modules)?;
+                    remove_link_only(&destination)?;
+                }
+                (Ok(_), Ok(_)) => {}
+                _ => ready = false,
+            }
         }
-        ensure_package_link(&name, &source, &core_node_modules)?;
     }
-    Ok(())
+    Ok(ready)
 }
 
 /// 为 npm 包名建立目录链接；真实目录/文件从不覆盖，避免误删核心自有依赖。
-fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result<(), String> {
+fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result<bool, String> {
     if !is_safe_package_name(name) {
         return Err(format!("CORE_PLUGIN_NAME_INVALID: {name}"));
     }
@@ -664,12 +780,19 @@ fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result
         }
     };
     if let Some(metadata) = existing {
-        if !metadata.file_type().is_symlink() {
+        let file_type = metadata.file_type();
+        #[cfg(windows)]
+        let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
+        #[cfg(not(windows))]
+        let is_link = file_type.is_symlink();
+        if !is_link {
             log::debug!(
                 "CORE_PLUGIN_ENTRY_OCCUPIED: keeping core-owned entry {}",
                 destination.display()
             );
-            return Ok(());
+            return Ok(file_type.is_dir()
+                && read_package_name(&destination.join("package.json"))
+                    .is_ok_and(|package_name| package_name.as_deref() == Some(name)));
         }
         let matches = std::fs::read_link(&destination)
             .ok()
@@ -683,7 +806,7 @@ fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result
             })
             .unwrap_or(false);
         if matches {
-            return Ok(());
+            return Ok(true);
         }
         remove_link_only(&destination)?;
     }
@@ -700,7 +823,7 @@ fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result
         destination.display(),
         source.display()
     );
-    Ok(())
+    Ok(destination.canonicalize().ok().as_deref() == Some(source.as_path()))
 }
 
 /// 校验并创建 scope 目录；目录本身不能是链接，防止目的地逃逸核心根。
@@ -716,7 +839,16 @@ fn ensure_non_link_directory(path: &Path, root: &Path) -> Result<(), String> {
     for component in relative.components() {
         current.push(component.as_os_str());
         match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+            Ok(metadata)
+                if {
+                    let file_type = metadata.file_type();
+                    #[cfg(windows)]
+                    let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
+                    #[cfg(not(windows))]
+                    let is_link = file_type.is_symlink();
+                    is_link
+                } =>
+            {
                 return Err(format!(
                     "CORE_PLUGIN_DESTINATION_PARENT_LINK: {}",
                     current.display()
@@ -811,7 +943,8 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
     // `\??\G:\...`，UNC 路径映射为 `\??\UNC\server\share\...`。
     // dunce::simplified 去掉 canonicalize 产生的 verbatim（`\\?\`）前缀，
     // 避免双重前缀导致内核解析失败。
-    let simplified = dunce::simplified(source);
+    let source = source.canonicalize()?;
+    let simplified = dunce::simplified(&source);
     let print_name = simplified.to_string_lossy().replace('/', "\\");
     let substitute_name = if print_name.starts_with("\\\\") {
         format!(r"\??\UNC\{}", print_name.trim_start_matches('\\'))
@@ -991,8 +1124,8 @@ fn read_package_version(path: &Path) -> Option<String> {
 }
 
 /// 结论戳文件路径：放在依赖根下。清空依赖目录（等价于重新装配）会一并清掉它。
-fn native_probe_stamp_path(app_handle: &AppHandle) -> PathBuf {
-    crate::config::get_base_dir(app_handle).join(NATIVE_PROBE_STAMP_FILE)
+fn native_probe_stamp_path_at(base: &Path) -> PathBuf {
+    base.join(NATIVE_PROBE_STAMP_FILE)
 }
 
 /// 原生依赖探测的输入指纹：node 身份 + 核心目录与版本 + `node_modules` 前两层条目
@@ -1004,7 +1137,11 @@ fn native_probe_stamp_path(app_handle: &AppHandle) -> PathBuf {
 ///
 /// 任何让指纹**不完整**的情况（目录读不到、条目数超过兜底上限）都返回 `None`：
 /// 不完整的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
-fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path) -> Option<String> {
+fn native_probe_stamp_key_at(
+    node: &Path,
+    core_root: &Path,
+    core_version: Option<&str>,
+) -> Option<String> {
     use std::fmt::Write as _;
 
     let mut key = String::new();
@@ -1017,7 +1154,7 @@ fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path)
         key,
         "\ncore={}\nversion={}",
         core_root.display(),
-        crate::service::core::active_version(app_handle).unwrap_or_default()
+        core_version.unwrap_or_default()
     );
 
     let modules = probe_stamp_modules_digest(&core_root.join("node_modules"))?;
@@ -1179,8 +1316,8 @@ fn file_modified_nanos(meta: &std::fs::Metadata) -> String {
 }
 
 /// 读取结论戳；文件缺失、不可解析或字段不全时返回 None（视为无戳）
-fn read_native_probe_stamp(app_handle: &AppHandle) -> Option<(String, String, String)> {
-    let raw = std::fs::read_to_string(native_probe_stamp_path(app_handle)).ok()?;
+fn read_native_probe_stamp_at(base: &Path) -> Option<(String, String, String)> {
+    let raw = std::fs::read_to_string(native_probe_stamp_path_at(base)).ok()?;
     let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
     Some((
         value.get("key")?.as_str()?.to_string(),
@@ -1190,8 +1327,8 @@ fn read_native_probe_stamp(app_handle: &AppHandle) -> Option<(String, String, St
 }
 
 /// 写结论戳：只在探测确认 Ready 后调用。写失败不影响启动，只降级为「下次仍探测」。
-fn write_native_probe_stamp(app_handle: &AppHandle, key: &str, target: &NodeTarget) {
-    let path = native_probe_stamp_path(app_handle);
+fn write_native_probe_stamp_at(base: &Path, key: &str, target: &NodeTarget) {
+    let path = native_probe_stamp_path_at(base);
     if let Some(parent) = path.parent() {
         if let Err(error) = std::fs::create_dir_all(parent) {
             log::debug!(
@@ -1697,6 +1834,173 @@ fn command_output_tail(output: &std::process::Output) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn early_preparation_requires_shared_links_pruning_and_same_node_stamp() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path().join("dependencies");
+        let core = base.join("dsh");
+        let node = base.join("node");
+        let profiles = root.path().join("profiles");
+        let profile = profiles.join("tauri");
+        let resources = root.path().join("resources");
+        let source = resources.join("node_modules/dsh-tauri");
+        for dir in [&core, &profile, &source] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(&node, "not an executable").unwrap();
+        std::fs::write(profile.join("package.json"), "{}").unwrap();
+        std::fs::write(source.join("package.json"), r#"{"name":"dsh-tauri"}"#).unwrap();
+        let required = [RuntimeRequiredPlugin {
+            name: "dsh-tauri",
+            source: Some(PathBuf::from("node_modules/dsh-tauri")),
+            version: None,
+        }];
+        let mut paths = RuntimePreparationPaths {
+            source: CoreSource::App,
+            base: &base,
+            core_root: &core,
+            node: &node,
+            profile: &profile,
+            profiles: &profiles,
+            resources: Some(&resources),
+            core_version: Some("2.0.0"),
+            required_plugins: Some(&required),
+        };
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        let destination = core.join("node_modules/dsh-tauri");
+        assert_eq!(
+            destination.canonicalize().unwrap(),
+            source.canonicalize().unwrap()
+        );
+        let stamp = |paths: &RuntimePreparationPaths<'_>| {
+            let key =
+                native_probe_stamp_key_at(paths.node, paths.core_root, paths.core_version).unwrap();
+            write_native_probe_stamp_at(
+                paths.base,
+                &key,
+                &NodeTarget {
+                    platform: "win32".into(),
+                    arch: "x64".into(),
+                },
+            );
+        };
+        stamp(&paths);
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Ready
+        );
+        std::fs::write(&node, "a different Node runtime").unwrap();
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        stamp(&paths);
+
+        let name = "@deepseek-ai/dsh-api";
+        let anchor = core.join("node_modules").join(name);
+        let stale = profile.join("node_modules").join(name);
+        std::fs::create_dir_all(&anchor).unwrap();
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(anchor.join("package.json"), r#"{"version":"2.0.0"}"#).unwrap();
+        std::fs::write(stale.join("package.json"), r#"{"version":"1.0.0"}"#).unwrap();
+        stamp(&paths);
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Ready
+        );
+        assert!(!stale.exists());
+        paths.required_plugins = None;
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        paths.required_plugins = Some(&required);
+        std::fs::write(profile.join("package.json"), "invalid").unwrap();
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        std::fs::write(profile.join("package.json"), "{}").unwrap();
+        std::fs::write(native_probe_stamp_path_at(&base), r#"{"key":"incomplete"}"#).unwrap();
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        stamp(&paths);
+        paths.source = CoreSource::Local;
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        paths.source = CoreSource::App;
+        let invalid = [RuntimeRequiredPlugin {
+            name: "../escape",
+            source: Some(source.clone()),
+            version: None,
+        }];
+        paths.required_plugins = Some(&invalid);
+        assert!(prepare_active_runtime_at(&paths)
+            .unwrap_err()
+            .starts_with("CORE_PLUGIN_NAME_INVALID:"));
+        remove_link_only(&destination).unwrap();
+        assert!(source.is_dir());
+
+        paths.required_plugins = Some(&required);
+        std::fs::write(&destination, "core-owned file").unwrap();
+        stamp(&paths);
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "core-owned file"
+        );
+        std::fs::remove_file(&destination).unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        let package = destination.join("package.json");
+        let marker = destination.join("core-owned.txt");
+        std::fs::write(&marker, "keep").unwrap();
+        for manifest in [
+            None,
+            Some("invalid"),
+            Some("{}"),
+            Some(r#"{"name":"other"}"#),
+        ] {
+            if let Some(raw) = manifest {
+                std::fs::write(&package, raw).unwrap();
+            }
+            stamp(&paths);
+            assert_eq!(
+                prepare_active_runtime_at(&paths).unwrap(),
+                RuntimePreparation::Defer
+            );
+            assert_eq!(std::fs::read_to_string(&package).ok().as_deref(), manifest);
+            assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep");
+        }
+        let manifest = r#"{"name":"dsh-tauri","version":"9.0.0"}"#;
+        std::fs::write(&package, manifest).unwrap();
+        std::fs::remove_file(native_probe_stamp_path_at(&base)).unwrap();
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        stamp(&paths);
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Ready
+        );
+        assert_ne!(
+            destination.canonicalize().unwrap(),
+            source.canonicalize().unwrap()
+        );
+        assert_eq!(std::fs::read_to_string(&package).unwrap(), manifest);
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep");
+    }
+
     /// 以生产同款方式执行探测脚本（落盘成 `.mjs` 再交给 node），保证测试覆盖的
     /// 正是运行时那条路径——`node -e` 会截断多行脚本，测出来的是假绿。
     fn run_probe_script(node: &std::path::Path, cwd: &std::path::Path) -> std::process::Output {
@@ -1761,10 +2065,8 @@ mod tests {
     /// 早先的 512 上限时同样如此 —— 那段规模正是这次改动才开始能缓存的。
     #[test]
     fn probe_stamp_detects_in_place_addon_overwrite_beyond_legacy_cap() {
-        let modules = std::env::temp_dir().join(format!(
-            "dsh-probe-stamp-overwrite-{}",
-            std::process::id()
-        ));
+        let modules =
+            std::env::temp_dir().join(format!("dsh-probe-stamp-overwrite-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&modules);
         let release = modules.join("sharp/build/Release");
         std::fs::create_dir_all(&release).unwrap();
@@ -1795,10 +2097,8 @@ mod tests {
     /// 读不到」与「上次也没读到」得到同一个摘要，从而跳过一次本该做的探测。
     #[test]
     fn probe_stamp_requires_readable_artifact_metadata() {
-        let dir = std::env::temp_dir().join(format!(
-            "dsh-probe-stamp-artifact-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("dsh-probe-stamp-artifact-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let addon = dir.join("sharp.node");
@@ -1830,10 +2130,8 @@ mod tests {
     /// 会漏掉它并跳过探测。
     #[test]
     fn probe_stamp_detects_in_place_overwrite_below_nested_artifact_directory() {
-        let modules = std::env::temp_dir().join(format!(
-            "dsh-probe-stamp-nested-{}",
-            std::process::id()
-        ));
+        let modules =
+            std::env::temp_dir().join(format!("dsh-probe-stamp-nested-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&modules);
         let nested = modules.join("sharp/prebuilds/win32-x64");
         std::fs::create_dir_all(&nested).unwrap();
@@ -1879,7 +2177,9 @@ mod tests {
         );
 
         let mut full = Vec::new();
-        assert!(collect_probe_stamp_entries(&dir, &mut full, NATIVE_PROBE_STAMP_MAX_ENTRIES).is_some());
+        assert!(
+            collect_probe_stamp_entries(&dir, &mut full, NATIVE_PROBE_STAMP_MAX_ENTRIES).is_some()
+        );
         assert_eq!(full.len(), 100);
 
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1893,7 +2193,8 @@ mod tests {
     /// （`FileType::is_symlink()` 为真），正是这里要覆盖的形态。
     #[test]
     fn probe_stamp_rejects_a_directory_symlink_it_cannot_descend() {
-        let root = std::env::temp_dir().join(format!("dsh-probe-stamp-link-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("dsh-probe-stamp-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let real = root.join("pkg/prebuilds/real");
         std::fs::create_dir_all(&real).unwrap();
@@ -1914,7 +2215,7 @@ mod tests {
             &root.join("pkg/prebuilds"),
             "pkg/prebuilds",
             &mut out,
-            NATIVE_PROBE_STAMP_MAX_ENTRIES
+            NATIVE_PROBE_STAMP_MAX_ENTRIES,
         )
         .is_none();
         // 先断开链接再删树：`remove_dir_all` 会跟随 junction 去删目标（这里恰好是同一棵树，
@@ -1923,7 +2224,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(rejected);
     }
-
 
     fn probe_stamp_entries(dir: &Path) -> Vec<String> {
         let mut out = Vec::new();
@@ -1941,6 +2241,72 @@ mod tests {
             .join("\n");
         assert_eq!(probe_stamp_digest(&wide).len(), "sha256:".len() + 64);
         assert_ne!(probe_stamp_digest(&wide), probe_stamp_digest("pkg-0=1"));
+    }
+
+    #[test]
+    fn profile_plugin_links_do_not_survive_in_shared_core() {
+        fn package(modules: &Path, name: &str, version: &str) {
+            let dir = modules.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("package.json"),
+                serde_json::json!({"name": name, "version": version}).to_string(),
+            )
+            .unwrap();
+        }
+        let root = tempfile::tempdir().unwrap();
+        let profiles = root.path().join("profiles");
+        let modules = root.path().join("core/node_modules");
+        for (id, version) in [("a", "1.0.0"), ("b", "2.0.0")] {
+            let profile = profiles.join(id);
+            std::fs::create_dir_all(&profile).unwrap();
+            std::fs::write(profile.join("package.json"), r#"{"dependencies":{"same-plugin":"*","@scope/plugin":"*","dsh-tauri":"*","core-owned":"*"}}"#).unwrap();
+            for name in ["same-plugin", "@scope/plugin", "dsh-tauri", "core-owned"] {
+                package(&profile.join("node_modules"), name, version);
+            }
+        }
+        std::fs::create_dir_all(modules.join("@scope")).unwrap();
+        for (name, id) in [
+            ("same-plugin", "a"),
+            ("@scope/plugin", "b"),
+            ("dsh-tauri", "a"),
+        ] {
+            create_directory_link(
+                &profiles
+                    .join(id)
+                    .join("node_modules")
+                    .join(name)
+                    .canonicalize()
+                    .unwrap(),
+                &modules.join(name),
+            )
+            .unwrap();
+        }
+        package(&modules, "core-owned", "9.0.0");
+        let internal = HashSet::from(["dsh-tauri".to_string()]);
+        remove_profile_plugin_links(&modules, &profiles, &internal).unwrap();
+        remove_profile_plugin_links(&modules, &profiles, &internal).unwrap();
+        assert!(std::fs::symlink_metadata(modules.join("same-plugin")).is_err());
+        assert!(std::fs::symlink_metadata(modules.join("@scope/plugin")).is_err());
+        assert_eq!(
+            read_package_version(&modules.join("dsh-tauri/package.json")).as_deref(),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            read_package_version(&modules.join("core-owned/package.json")).as_deref(),
+            Some("9.0.0")
+        );
+        assert_eq!(
+            read_package_version(&profiles.join("a/node_modules/same-plugin/package.json"))
+                .as_deref(),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            read_package_version(&profiles.join("b/node_modules/same-plugin/package.json"))
+                .as_deref(),
+            Some("2.0.0")
+        );
+        remove_link_only(&modules.join("dsh-tauri")).unwrap();
     }
 
     #[test]
@@ -2043,7 +2409,8 @@ mod tests {
     fn create_directory_junction_accepts_mixed_separators_and_is_idempotent() {
         let root = std::env::temp_dir().join(format!("dsh-junction-direct-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let source = root.join("@scope/package");
+        std::fs::create_dir_all(root.join("src-tauri")).unwrap();
+        let source = root.join("src-tauri/../@scope/package");
         std::fs::create_dir_all(&source).unwrap();
         std::fs::write(source.join("package.json"), r#"{"name":"dsh-tauri"}"#).unwrap();
         let destination = root.join("node_modules").join("dsh-tauri");
@@ -2052,6 +2419,10 @@ mod tests {
         let canonical_source = source.canonicalize().unwrap();
         create_directory_junction(&source, &destination)
             .unwrap_or_else(|e| panic!("junction must be creatable without privileges: {e}"));
+        let manifest = std::fs::read_to_string(destination.join("package.json"));
+        remove_link_only(&destination).unwrap();
+        assert_eq!(manifest.unwrap(), r#"{"name":"dsh-tauri"}"#);
+        create_directory_junction(&source, &destination).unwrap();
 
         let metadata = std::fs::symlink_metadata(&destination).unwrap();
         assert!(

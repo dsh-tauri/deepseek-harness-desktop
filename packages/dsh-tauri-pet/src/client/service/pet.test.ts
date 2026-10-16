@@ -7,12 +7,15 @@ import {
   choosePet,
   clearPetSelection,
   createPetSession,
+  deletePet,
   enablePet,
   importPetArchive,
+  importPetRepository,
   loadForceXwayland,
   loadPetCatalog,
   loadPetOverlaySupported,
   loadPetStatus,
+  loadPetUpdates,
   openCommunityShare,
   resizePet,
   setPetDragProbability,
@@ -21,6 +24,7 @@ import {
   togglePetAutonomy,
   togglePetInteraction,
   togglePetThrow,
+  updatePetRepository,
 } from './pet'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
@@ -64,6 +68,7 @@ function resetStore(): void {
     fetchRevision: 0,
     catalogLoaded: false,
     presetPets: [],
+    petUpdates: [],
     chatPets: [],
     codexPets: [],
     prefills: {},
@@ -174,6 +179,39 @@ describe('pet service native command contracts', () => {
     expect(store.pet.status).toEqual(status)
   })
 
+  it('delete forwards the id, adopts the authoritative status and reloads every list', async () => {
+    const cleared = { ...status, active_pet: '', enabled: false, visible: false }
+    const chat = [{ id: 'chat-a', name: 'Chat', source: 'chat' }]
+    const presets = [{ id: 'builtin', name: 'Built in' }]
+    invoke.mockResolvedValueOnce(cleared).mockResolvedValueOnce(cleared).mockResolvedValueOnce(chat).mockResolvedValueOnce([]).mockResolvedValueOnce(presets)
+    expect(await deletePet({ id: 'chat:chat-a' })).toEqual({ ok: true })
+    expect(invoke.mock.calls).toEqual([
+      ['delete_pet', { id: 'chat:chat-a' }],
+      ['get_pet_status'],
+      ['list_pets', { source: 'chat' }],
+      ['list_pets', { source: 'codex' }],
+      ['list_preset_pets'],
+    ])
+    expect(store.pet.$state).toMatchObject({ status: cleared, catalogLoaded: true, chatPets: chat, codexPets: [], presetPets: presets })
+  })
+
+  it('delete reports success and drops the card when the catalog refresh fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    store.pet.setCatalog({
+      presets: [{ id: 'builtin', name: 'Built in' }],
+      chat: [{ id: 'chat:chat-a', name: 'Chat', source: 'chat' }],
+      codex: [{ id: 'codex-a', name: 'Codex', source: 'codex' }],
+    })
+    invoke.mockResolvedValueOnce(status).mockRejectedValueOnce(new Error('catalog down'))
+    expect(await deletePet({ id: 'chat:chat-a' })).toEqual({ ok: true })
+    expect(store.pet.$state).toMatchObject({
+      status,
+      presetPets: [{ id: 'builtin', name: 'Built in' }],
+      chatPets: [],
+      codexPets: [{ id: 'codex-a', name: 'Codex', source: 'codex' }],
+    })
+  })
+
   it('import forwards archive strings before refreshing only the Codex list', async () => {
     const codex = [{ id: 'imported', name: 'Imported', source: 'codex' }]
     invoke.mockResolvedValueOnce(codex[0]).mockResolvedValueOnce(codex)
@@ -181,6 +219,87 @@ describe('pet service native command contracts', () => {
     expect(invoke.mock.calls).toEqual([['import_pet', { name: 'pet.zip', data: 'base64' }], ['list_pets', { source: 'codex' }]])
     expect(store.pet.codexPets).toEqual(codex)
     expect(store.pet.catalogLoaded).toBe(false)
+  })
+
+  it.each(['owner/pet-repo', ' https://github.com/owner/pet-repo/ '])('repository registration normalizes %s and refreshes remote presets without selecting or reloading Chat', async (repository) => {
+    const remote = { id: 'owner/pet-repo', name: 'Remote', image: 'https://raw.githubusercontent.com/owner/pet-repo/main/cover.gif', kind: 'dsh' as const }
+    const presets = [{ id: 'builtin', name: 'Built in' }, remote]
+    const chat = [{ id: 'chat:existing', name: 'Existing', source: 'chat' as const }]
+    store.pet.setCatalog({ presets: [presets[0]], chat, codex: [{ id: 'codex', name: 'Codex', source: 'codex' }] })
+    store.pet.setStatus(status)
+    invoke.mockResolvedValueOnce(remote).mockResolvedValueOnce(presets)
+    expect(await importPetRepository({ repository })).toEqual({ ok: true })
+    expect(invoke.mock.calls).toEqual([
+      ['import_pet_repository', { repository: 'owner/pet-repo' }],
+      ['list_preset_pets'],
+    ])
+    expect(store.pet.presetPets).toEqual(presets)
+    expect(store.pet.chatPets).toEqual(chat)
+    expect(store.pet.status).toEqual(status)
+    expect(store.pet.codexPets).toEqual([{ id: 'codex', name: 'Codex', source: 'codex' }])
+  })
+
+  it.each(['', 'owner', 'owner/repo/tree/main', 'https://github.com.evil/owner/repo', 'http://github.com/owner/repo', 'owner/..', 'owner/repo?x=1', '-owner/repo'])('invalid repository %s fails before invoke', async (repository) => {
+    expect(await importPetRepository({ repository })).toEqual({ ok: false, error: 'PET_REPOSITORY_INVALID' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it.each(['import_pet_repository', 'list_preset_pets'])('repository failure at %s preserves preset cache and selection', async (failingCommand) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const presets = [{ id: 'builtin', name: 'Built in', image: 'https://example.com/cover.gif' }]
+    store.pet.setPresetPets(presets)
+    store.pet.setStatus(status)
+    invoke.mockImplementation(async (command) => {
+      if (command === failingCommand)
+        throw new Error('repository unavailable')
+      return { id: 'owner/repo', name: 'Remote' }
+    })
+    expect(await importPetRepository({ repository: 'owner/repo' })).toEqual({ ok: false, error: 'repository unavailable' })
+    expect(invoke.mock.calls).toEqual(failingCommand === 'import_pet_repository'
+      ? [['import_pet_repository', { repository: 'owner/repo' }]]
+      : [['import_pet_repository', { repository: 'owner/repo' }], ['list_preset_pets']])
+    expect(store.pet.presetPets).toEqual(presets)
+    expect(store.pet.status).toEqual(status)
+  })
+
+  it('update checks store native IDs and replacement clears only the updated flag without changing selection', async () => {
+    store.pet.setPresetPets([{ id: 'pet', name: 'Old', remote: true }, { id: 'other', name: 'Other' }])
+    store.pet.setStatus(status)
+    invoke.mockResolvedValueOnce(['pet', 'other']).mockResolvedValueOnce({ id: 'pet', name: 'New', image: 'pinned.gif' })
+    expect(await loadPetUpdates()).toEqual({ ok: true })
+    expect(store.pet.petUpdates).toEqual(['pet', 'other'])
+    expect(await updatePetRepository({ id: 'pet' })).toEqual({ ok: true })
+    expect(invoke.mock.calls).toEqual([['check_pet_updates'], ['update_pet_repository', { id: 'pet' }]])
+    expect(store.pet.presetPets).toEqual([{ id: 'pet', name: 'New', image: 'pinned.gif', remote: true }, { id: 'other', name: 'Other' }])
+    expect(store.pet.petUpdates).toEqual(['other'])
+    expect(store.pet.status).toEqual(status)
+  })
+
+  it('a delayed update check cannot restore flags after replacing a preset', async () => {
+    store.pet.setPresetPets([{ id: 'pet', name: 'Old', remote: true }])
+    let resolve!: (ids: string[]) => void
+    invoke.mockReturnValueOnce(new Promise<string[]>((done) => {
+      resolve = done
+    })).mockResolvedValueOnce({ id: 'pet', name: 'New' })
+    const pending = loadPetUpdates()
+    expect(await updatePetRepository({ id: 'pet' })).toEqual({ ok: true })
+    resolve(['pet'])
+    expect(await pending).toEqual({ ok: true })
+    expect(store.pet.petUpdates).toEqual([])
+    expect(store.pet.presetPets[0].name).toBe('New')
+  })
+
+  it('failed updates preserve the old card, selection and retry flag', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const presets = [{ id: 'pet', name: 'Old', remote: true }]
+    store.pet.setPresetPets(presets)
+    store.pet.setPetUpdates(['pet'])
+    store.pet.setStatus(status)
+    invoke.mockRejectedValue(new Error('download refused'))
+    expect(await updatePetRepository({ id: 'pet' })).toEqual({ ok: false, error: 'download refused' })
+    expect(store.pet.presetPets).toEqual(presets)
+    expect(store.pet.petUpdates).toEqual(['pet'])
+    expect(store.pet.status).toEqual(status)
   })
 
   it('community share opens the Codex pets site through the external URL command', async () => {
@@ -214,6 +333,7 @@ describe('pet service native command contracts', () => {
     { label: 'toggle pet throw', action: () => togglePetThrow({ enabled: true }) },
     { label: 'resize pet', action: () => resizePet({ size: 140 }) },
     { label: 'import pet', action: () => importPetArchive({ name: 'bad.zip', data: 'bad' }) },
+    { label: 'delete pet', action: () => deletePet({ id: 'chat:chat-a' }) },
     { label: 'open community share', action: openCommunityShare },
   ])('$label preserves error messages and logging labels without changing cached values', async ({ label, action }) => {
     const error = new Error('native refused')

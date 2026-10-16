@@ -46,6 +46,7 @@
 ## Características
 
 - 🪶 **Escritorio nativo** — Tauri 2 + React 19 + HeroUI 3, con la interfaz local de Harness integrada.
+- 📱 **Conexión remota** — Escaneá un QR desde Android / iOS para conectarte al DSH de tu computadora por LAN o un túnel público de Cloudflare.
 - 🔄 **Gestión del runtime** — Instalá dependencias, elegí versiones del núcleo y accedé a actualizaciones del escritorio y del núcleo.
 - 🔀 **Soporte para distintos motores** — Usá DSH / Codex / Claude en una misma interfaz, con sus herramientas nativas.
 - 🧩 **Gestión de plugins** — 13 plugins integrados; instalación desde directorios locales, desactivación de integrados y gestión de plugins comunitarios.
@@ -70,7 +71,7 @@ Plugins propios distribuidos con los recursos del escritorio:
 - [DSH Tauri Pet](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-pet) — Ajustes de mascotas y estados de actividad
 - [DSH Tauri Rightclick Menu](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-rightclick) — Menús contextuales de sesiones, workspaces y texto
 - [DSH Tauri Model](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-model) — Selección de modelos, parámetros y configuración automática
-- [DSH Tauri SSH](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh) — Conexiones Harness remotas y sincronización por SSH
+- [DSH Tauri Remote](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-remote) — Conexiones Harness remotas y sincronización por SSH, además de compartir el Harness local por LAN o túnel público
 - [DSH Tauri Notification](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notification) — Notificaciones de conversaciones y acciones
 
 ## Preajustes opcionales
@@ -81,7 +82,6 @@ El asistente ofrece los siguientes plugins comunitarios para instalar a demanda.
 - [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — Barra lateral del editor por sesión
 - [Billion Context](https://github.com/ranxianglei/billion-context) — Compresión de contexto y restauración del historial
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — Retroceso de conversación y backups del workspace
-- [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) — Acceso remoto, túneles y conexión de bots
 - [DSH IM](https://github.com/xmanrui/dsh-im) — Canales IM y gestión de bots
 
 Pedí preajustes nuevos o actualizados mediante [Issues](https://github.com/dsh-tauri/deepseek-harness-desktop/issues). Las versiones disponibles siguen las reglas de compatibilidad del manifiesto.
@@ -113,6 +113,17 @@ brew install dsh-tauri/desktop/deepseek-harness
 - Solo afecta descargas del runtime/núcleo, actualizaciones y metadatos de plugins; no cambia peticiones de modelos ni subprocesos de plugins.
 - Vacío hereda la configuración del sistema/entorno. Los cambios se aplican a nuevas peticiones; reintentá las descargas fallidas.
 - SOCKS5H resuelve los nombres por el proxy; las conexiones de loopback siguen directas.
+
+## Soporte móvil
+
+**DSH Mobile** accede al Harness de tu computadora por LAN o un túnel público; no ejecuta el núcleo en el teléfono.
+
+- **Android**: descargá un APK desde [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases).
+- **iOS**: instalá la beta mediante la [invitación de TestFlight](https://testflight.apple.com/join/kYXkpnp1), según la aprobación y los cupos disponibles. Los IPA sin firmar de Releases requieren tu propia firma.
+
+Activá la opción de compartir en la barra superior del escritorio y escaneá el QR para emparejar. La computadora, Harness y el túnel deben seguir en línea. El acceso no es de solo lectura; no publiques QR ni códigos de acceso. Consultá la [guía de acceso remoto móvil en inglés](https://dshtauri.mintlify.site/en/guides/mobile-remote-access).
+
+La app se mantiene solo hasta que se lance un servicio móvil oficial. Los detalles de desarrollo están en la [especificación móvil](docs/specs/native.md).
 
 ## Runtime
 
@@ -151,6 +162,13 @@ Consultá la [guía en inglés](<./docs/DEVELOPMENT.md>) o la [guía en chino](<
 
 > [!NOTE]
 > **Seguridad** — `dsh` puede ejecutar código en tu máquina. Solo para aprender / investigar / probar; usalo en un entorno confiable y aislado.
+
+## Recomendaciones de la comunidad
+
+- [dsh-tauri-notify-webhook](https://github.com/iuuuuuuuu/dsh-tauri-notify-webhook) - Reenvía notificaciones a webhook, correo (SMTP) o pushplus cuando una tarea se detiene de forma anormal o finaliza por @iuuuuuuuu
+- [dsh-pdf-reader](https://github.com/SkanderBog/dsh-pdf-reader) - Lectura de PDF página por página, OCR local, citas, búsqueda y recorte visual por @SkanderBog
+- [dsh-context-manager](https://github.com/SkanderBog/dsh-context-manager) - Revisá el contexto antes de aplicarlo y elegí, por grupo de historial completo, qué conservar, resumir u omitir del contenido anterior por @SkanderBog
+- [@ryuu-64/dsh-find-all](https://github.com/Ryuu-64/dsh-find-all) - Ctrl+F en la conversación actual para buscar en el historial guardado por @Ryuu-64
 
 ## Relacionados
 

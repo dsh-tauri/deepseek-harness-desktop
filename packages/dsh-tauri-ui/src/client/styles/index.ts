@@ -297,6 +297,9 @@ const TAILWINDCSS_GENERATED = `
   .h-\\[4px\\] {
     height: 4px;
   }
+  .h-\\[6px\\] {
+    height: 6px;
+  }
   .h-\\[8px\\] {
     height: 8px;
   }
@@ -506,9 +509,6 @@ const TAILWINDCSS_GENERATED = `
   }
   .w-\\[min\\(760px\\,100\\%\\)\\]\\! {
     width: min(760px, 100%) !important;
-  }
-  .w-\\[min\\(calc\\(var\\(--dsh-composer-card-max-width\\)_\\+_2_\\*_var\\(--dsh-composer-side-clearance\\)\\)\\,100\\%\\)\\] {
-    width: min(calc(var(--dsh-composer-card-max-width) + 2 * var(--dsh-composer-side-clearance)), 100%);
   }
   .w-\\[var\\(--dsh-settings-rail-width\\)\\] {
     width: var(--dsh-settings-rail-width);
@@ -1177,6 +1177,9 @@ const TAILWINDCSS_GENERATED = `
   .pb-\\[9px\\] {
     padding-bottom: 9px;
   }
+  .pb-\\[12px\\] {
+    padding-bottom: 12px;
+  }
   .pb-\\[16px\\] {
     padding-bottom: 16px;
   }
@@ -1332,6 +1335,10 @@ const TAILWINDCSS_GENERATED = `
     --tw-font-weight: var(--font-weight-semibold);
     font-weight: var(--font-weight-semibold);
   }
+  .tracking-\\[2px\\] {
+    --tw-tracking: 2px;
+    letter-spacing: 2px;
+  }
   .\\[overflow-wrap\\:anywhere\\] {
     overflow-wrap: anywhere;
   }
@@ -1380,9 +1387,6 @@ const TAILWINDCSS_GENERATED = `
   .text-\\[var\\(--dsw-alias-state-warning-primary\\,var\\(--dsw-alias-label-tertiary\\)\\)\\] {
     color: var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-tertiary));
   }
-  .text-brand {
-    color: var(--dsw-alias-brand-primary);
-  }
   .text-business {
     color: var(--dsw-alias-state-business-primary);
   }
@@ -1421,6 +1425,9 @@ const TAILWINDCSS_GENERATED = `
   }
   .lowercase {
     text-transform: lowercase;
+  }
+  .uppercase {
+    text-transform: uppercase;
   }
   .tabular-nums {
     --tw-numeric-spacing: tabular-nums;
@@ -1476,6 +1483,10 @@ const TAILWINDCSS_GENERATED = `
     --tw-shadow: var(--dsw-elevation-prominent);
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
+  .ring {
+    --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
   .outline {
     outline-style: var(--tw-outline-style);
     outline-width: 1px;
@@ -1514,6 +1525,11 @@ const TAILWINDCSS_GENERATED = `
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
     transition-duration: var(--tw-duration, var(--default-transition-duration));
   }
+  .transition-\\[width\\] {
+    transition-property: width;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
   .transition-colors {
     transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
@@ -1527,6 +1543,10 @@ const TAILWINDCSS_GENERATED = `
   .duration-150 {
     --tw-duration: 150ms;
     transition-duration: 150ms;
+  }
+  .duration-200 {
+    --tw-duration: 200ms;
+    transition-duration: 200ms;
   }
   .duration-\\[120ms\\] {
     --tw-duration: 120ms;
@@ -1542,15 +1562,6 @@ const TAILWINDCSS_GENERATED = `
   }
   .\\[--detail-gutter\\:24px\\] {
     --detail-gutter: 24px;
-  }
-  .\\[--dsh-chat-content-width\\:748px\\] {
-    --dsh-chat-content-width: 748px;
-  }
-  .\\[--dsh-composer-card-max-width\\:calc\\(var\\(--dsh-chat-content-width\\)_\\+_32px\\)\\] {
-    --dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
-  }
-  .\\[--dsh-composer-side-clearance\\:16px\\] {
-    --dsh-composer-side-clearance: 16px;
   }
   .\\[--dsh-scrollbar-thumb-border\\:2px\\] {
     --dsh-scrollbar-thumb-border: 2px;
@@ -1949,6 +1960,15 @@ const TAILWINDCSS_GENERATED = `
       @media (hover: hover) {
         &:not(*:disabled) {
           background-color: transparent;
+        }
+      }
+    }
+  }
+  .hover\\:not-disabled\\:text-error {
+    &:hover {
+      @media (hover: hover) {
+        &:not(*:disabled) {
+          color: var(--dsw-alias-state-error-primary);
         }
       }
     }
@@ -2777,6 +2797,10 @@ const TAILWINDCSS_GENERATED = `
   syntax: "*";
   inherits: false;
 }
+@property --tw-tracking {
+  syntax: "*";
+  inherits: false;
+}
 @property --tw-ordinal {
   syntax: "*";
   inherits: false;
@@ -2983,6 +3007,7 @@ const TAILWINDCSS_GENERATED = `
       --tw-border-style: solid;
       --tw-leading: initial;
       --tw-font-weight: initial;
+      --tw-tracking: initial;
       --tw-ordinal: initial;
       --tw-slashed-zero: initial;
       --tw-numeric-figure: initial;

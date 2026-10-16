@@ -1,5 +1,5 @@
 import type { DesktopApp } from '../support/desktop'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -137,6 +137,114 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
 
     const shellErrors = await browser.execute(readPageErrors)
     expect(shellErrors, '壳层出现报错').toEqual([])
+  }, ASSEMBLY_TIMEOUT_MS)
+
+  it('TC-DSK-L3-993 原生窗口继承档案、复用同档案核心且切换与关闭不重启其他核心', async () => {
+    const windows: string[] = []
+    async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+      return browser.execute(async (command, args) => {
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: Record<string, unknown>) => Promise<T> } }).__TAURI_INTERNALS__
+        return bridge.invoke(command, args)
+      }, command, args)
+    }
+    async function activeProfile() {
+      const profiles = await invoke<{ id: string, active: boolean }[]>('get_profiles')
+      const active = profiles.find(profile => profile.active)
+      expect(active, '当前原生窗口必须有活动档案').toBeDefined()
+      return active!.id
+    }
+    async function openWindow() {
+      const before = await browser.getWindowHandles()
+      await invoke('create_app_window')
+      await browser.waitUntil(async () => (await browser.getWindowHandles()).some(handle => !before.includes(handle)), { timeout: 30_000, timeoutMsg: '原生新窗口未创建' })
+      const handle = (await browser.getWindowHandles()).find(handle => !before.includes(handle))!
+      windows.push(handle)
+      await browser.switchToWindow(handle)
+      await browser.$(SHELL_ROOT).waitForExist({ timeout: 30_000 })
+      return handle
+    }
+    async function closeWindow(handle: string) {
+      const { protocol, hostname, port, path } = browser.options
+      // WDIO 的 closeWindow 回包会触发未等待的自动切窗，绕过该命令事件。
+      const response = await fetch(`${protocol}://${hostname}:${port}${(path ?? '').replace(/\/+$/, '')}/session/${encodeURIComponent(browser.sessionId)}/window`, { method: 'DELETE', signal: AbortSignal.timeout(30_000) })
+      const result = await response.json()
+      expect(response.ok, `关闭原生窗口 ${handle} HTTP ${response.status}: ${JSON.stringify(result)}`).toBe(true)
+      expect(result, `关闭原生窗口 ${handle} 协议失败`).toEqual({ value: expect.any(Array) })
+      await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(handle), { timeout: 30_000, timeoutMsg: `原生窗口 ${handle} 未销毁` })
+    }
+    async function healthy() {
+      return (await invoke<{ status: string }>('proxy_health_check')).status
+    }
+    let clonedProfile: string | undefined
+    let switchedProfile = false
+    await browser.switchToWindow('main')
+    const originalProfile = await activeProfile()
+    const originalRuntime = await invoke<{ service_url: string }>('get_runtime_info')
+    expect(await healthy(), '原窗口核心必须已就绪').toMatch(/^healthy - \d+\/\d+ client modules ready$/)
+    const profilesRoot = join(app!.home, 'home', '.dsh.dev', 'profiles')
+    const originalMarkerPath = join(profilesRoot, originalProfile, '.harness.pid')
+    const originalMarker = readFileSync(originalMarkerPath, 'utf8')
+    try {
+      const clone = await invoke<{ id: string }>('clone_profile', { sourceId: originalProfile, name: 'native-window-993' })
+      clonedProfile = clone.id
+      const second = await openWindow()
+      expect(await activeProfile(), '新窗口必须继承发起窗口档案').toBe(originalProfile)
+      expect((await invoke<{ service_url: string }>('get_runtime_info')).service_url, '同档案新窗口必须复用服务端口').toBe(originalRuntime.service_url)
+      await invoke('set_active_profile', { id: clone.id })
+      switchedProfile = true
+      await invoke('launch_harness')
+      await browser.waitUntil(async () => {
+        const result = await browser.execute(async () => {
+          const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ status: string }> } }).__TAURI_INTERNALS__
+          return bridge.invoke('proxy_health_check').then(value => value.status.startsWith('healthy - '), (error: unknown) => {
+            if (String(error).startsWith('HARNESS_NOT_READY:'))
+              return false
+            throw error
+          })
+        })
+        return result
+      }, { timeout: ASSEMBLY_TIMEOUT_MS, timeoutMsg: '第二档案核心未就绪' })
+      expect(await activeProfile(), '切换应只改变第二窗口档案').toBe(clone.id)
+      const secondRuntime = await invoke<{ service_url: string }>('get_runtime_info')
+      expect(secondRuntime.service_url, '不同档案必须使用独立服务端口').not.toBe(originalRuntime.service_url)
+      const clonedMarkerPath = join(profilesRoot, clone.id, '.harness.pid')
+      const clonedMarker = readFileSync(clonedMarkerPath, 'utf8')
+      expect(clonedMarker.split('\n')[0], '不同档案必须持有不同核心进程').not.toBe(originalMarker.split('\n')[0])
+      const third = await openWindow()
+      await invoke('launch_harness')
+      expect(await activeProfile(), '第三窗口必须继承第二窗口档案').toBe(clone.id)
+      expect((await invoke<{ service_url: string }>('get_runtime_info')).service_url, '第二档案的窗口必须复用核心端口').toBe(secondRuntime.service_url)
+      expect(readFileSync(clonedMarkerPath, 'utf8'), '同档案新窗口不得重启已有核心').toBe(clonedMarker)
+      await browser.switchToWindow('main')
+      expect(await activeProfile(), '其他窗口切档案不得改变原窗口档案').toBe(originalProfile)
+      expect((await invoke<{ service_url: string }>('get_runtime_info')).service_url, '其他窗口切档案不得改变原核心端口').toBe(originalRuntime.service_url)
+      expect(readFileSync(originalMarkerPath, 'utf8'), '其他窗口切档案不得重启原核心').toBe(originalMarker)
+      expect(await healthy(), '第二档案启动后原核心必须仍健康').toMatch(/^healthy - /)
+      await browser.switchToWindow(third)
+      await closeWindow(third)
+      await browser.switchToWindow(second)
+      expect(await healthy(), '关闭同档案的非最后窗口不得停止核心').toMatch(/^healthy - /)
+      await closeWindow(second)
+      await browser.switchToWindow('main')
+      await browser.waitUntil(async () => !existsSync(clonedMarkerPath), { timeout: 30_000, timeoutMsg: '关闭档案最后窗口后核心 PID 标记未回收' })
+      expect(readFileSync(originalMarkerPath, 'utf8'), '关闭其他档案窗口不得重启原核心').toBe(originalMarker)
+      expect(await healthy(), '关闭其他档案最后窗口后原核心必须仍健康').toMatch(/^healthy - /)
+    }
+    finally {
+      for (const handle of windows.reverse()) {
+        if ((await browser.getWindowHandles()).includes(handle)) {
+          await browser.switchToWindow(handle)
+          await closeWindow(handle)
+        }
+      }
+      await browser.switchToWindow('main')
+      if (switchedProfile)
+        await invoke('set_active_profile', { id: originalProfile })
+      if (clonedProfile) {
+        await browser.waitUntil(async () => !existsSync(join(profilesRoot, clonedProfile!, '.harness.pid')), { timeout: 30_000, timeoutMsg: '测试档案核心未完成关闭回收' })
+        await invoke('remove_profile', { id: clonedProfile })
+      }
+    }
   }, ASSEMBLY_TIMEOUT_MS)
 
   it('persists appearance through the native bridge and restores defaults', async () => {

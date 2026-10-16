@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { OverlaysProvider, useOverlay } from '@overlastic/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopUpdateDialog } from './update'
@@ -41,6 +41,7 @@ function openDialog() {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
   client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
   desktopUpdater.updateInfo = {
     currentVersion: '0.21.1',
@@ -54,8 +55,14 @@ beforeEach(() => {
   desktopUpdater.downloadAndOpen.mockReset()
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    await vi.runOnlyPendingTimersAsync()
+  })
   cleanup()
+  client.clear()
+  vi.clearAllTimers()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 

@@ -8,6 +8,8 @@ export type ReadinessTimeout = 'inactivity' | 'absolute'
 export interface ReadinessProbeResult {
   healthy: boolean
   notOwned: boolean
+  bootHtml?: string
+  bootOrigin?: string
   /**
    * 服务端口尚未被监听（本地门禁直接判定，探测几乎零成本）。
    *
@@ -203,7 +205,7 @@ export async function waitForActivityTask<T>({
   let value: T | undefined
   let failure: unknown
 
-  void task.then(
+  const completion = task.then(
     (result) => {
       value = result
       settled = true
@@ -242,14 +244,17 @@ export async function waitForActivityTask<T>({
         reason: snapshot.reason,
       }
     }
-    await wait(boundedWait(
-      intervalMs,
-      now(),
-      startedAt,
-      lastActivityAt,
-      inactivityTimeoutMs,
-      absoluteTimeoutMs,
-    ))
+    await Promise.race([
+      completion,
+      wait(boundedWait(
+        intervalMs,
+        now(),
+        startedAt,
+        lastActivityAt,
+        inactivityTimeoutMs,
+        absoluteTimeoutMs,
+      )),
+    ])
   }
 
   return {

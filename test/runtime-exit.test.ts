@@ -47,6 +47,11 @@ describe('runtime exit acceptance', () => {
     expect(runtimeExitMessageKey(undefined)).toBe('errors.process_exited_without_code')
   })
 
+  it.each([2147483651, -2147483645])('uses native crash wording for breakpoint exit code %s', (code) => {
+    expect(isNativeCrashCode(code)).toBe(true)
+    expect(runtimeExitMessageKey(code)).toBe('errors.process_exited_native_crash')
+  })
+
   it('uses the native crash wording only for Windows NTSTATUS exit codes', () => {
     // 0xC0000005 访问违例：实测用户机器上 Harness 跑满 12 小时后被原生层打死，
     // 日志里没有任何 JS 异常，旧文案只报裸数字，容易被当成堆耗尽。

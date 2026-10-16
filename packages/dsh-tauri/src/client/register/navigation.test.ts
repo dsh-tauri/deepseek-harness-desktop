@@ -14,15 +14,16 @@ const CMD_NEW_SESSION = 'dsh://session:new'
 const CMD_ADD_WORKSPACE = 'dsh://workspace:add'
 
 /** 父窗口桥假实现：只保留 dispatch（宿主 → iframe 命令）。 */
-function stubHost(): { dispatch: (data: unknown) => void } {
+function stubHost(): { post: ReturnType<typeof vi.fn>, dispatch: (data: unknown) => void } {
   const listeners = new Set<(event: MessageEvent) => void>()
-  const parent = { postMessage: () => {} }
+  const parent = { postMessage: vi.fn() }
   vi.stubGlobal('window', {
     parent,
     addEventListener: (_type: string, handler: (event: MessageEvent) => void) => listeners.add(handler),
     removeEventListener: (_type: string, handler: (event: MessageEvent) => void) => listeners.delete(handler),
   })
   return {
+    post: parent.postMessage,
     dispatch: (data) => {
       for (const handler of [...listeners])
         handler({ source: parent, data } as unknown as MessageEvent)
@@ -40,6 +41,50 @@ afterEach(() => {
 })
 
 describe('navigationFeature', () => {
+  it('waits for the existing target, opens it once and acknowledges without creating a session', async () => {
+    const host = stubHost()
+    let ids: string[] = []
+    let complete!: () => void
+    const openSession = vi.fn(() => new Promise<void>((resolve) => {
+      complete = resolve
+    }))
+    const startSession = vi.fn()
+    const dispose = navigationFeature.call(ctxWithServices({
+      sessions: { list: { getSnapshot: () => ({ ids }), subscribe: vi.fn() } },
+      uiWorkspace: { openSession, startSession },
+    }))
+    host.dispatch({ type: 'dsh://session:open', sessionId: 'target' })
+    expect(openSession).not.toHaveBeenCalled()
+    ids = ['target', 'current']
+    host.dispatch({ type: 'dsh://session:open', sessionId: 'target' })
+    host.dispatch({ type: 'dsh://session:open', sessionId: 'target' })
+    expect(host.post).not.toHaveBeenCalled()
+    complete()
+    await vi.waitFor(() => expect(host.post).toHaveBeenCalledExactlyOnceWith({ type: 'dsh://session:opened', sessionId: 'target' }, '*'))
+    host.dispatch({ type: 'dsh://session:open', sessionId: 'target' })
+    expect(host.post.mock.calls).toEqual([
+      [{ type: 'dsh://session:opened', sessionId: 'target' }, '*'],
+      [{ type: 'dsh://session:opened', sessionId: 'target' }, '*'],
+    ])
+    expect(openSession.mock.calls).toEqual([['target']])
+    expect(startSession).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  it('reports a failed open and allows retrying the same session', async () => {
+    const host = stubHost()
+    const openSession = vi.fn().mockRejectedValueOnce(new Error('load failed')).mockResolvedValue(undefined)
+    const dispose = navigationFeature.call(ctxWithServices({
+      sessions: { list: { getSnapshot: () => ({ ids: ['target'] }), subscribe: vi.fn() } },
+      uiWorkspace: { openSession },
+    }))
+    host.dispatch({ type: 'dsh://session:open', sessionId: 'target' })
+    await vi.waitFor(() => expect(host.post).toHaveBeenCalledWith({ type: 'dsh://session:opened', sessionId: 'target', error: 'Error: load failed' }, '*'))
+    host.dispatch({ type: 'dsh://session:open', sessionId: 'target' })
+    await vi.waitFor(() => expect(openSession).toHaveBeenCalledTimes(2))
+    dispose()
+  })
+
   it('dsh://session:new 走官方 startSession，其它 type 不触发', async () => {
     const startSession = vi.fn()
     const host = stubHost()

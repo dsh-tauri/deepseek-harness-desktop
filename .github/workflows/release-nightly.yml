@@ -330,6 +330,7 @@ jobs:
             echo '- **macOS (Intel)**: 下载 `x64.dmg`'
             echo '- **Windows**: 下载 `.exe`'
             echo '- **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）'
+            echo '- **Linux (ARM64)**: 下载 `aarch64.AppImage` 或 `arm64.deb`（基于 Ubuntu 24.04 / glibc 2.39 构建，不保证兼容更旧系统）'
             echo
             echo '> 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 Node.js 运行时、pnpm'
             echo '> 与打包好的 dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，'

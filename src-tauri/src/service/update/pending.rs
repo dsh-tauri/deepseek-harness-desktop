@@ -107,7 +107,10 @@ pub fn launch_pending_installer(app_handle: &AppHandle) {
     // 退出路径虽已调过 stop_on_exit，但那份保障依赖调用方顺序与 `setting.installed`
     // 门槛；自动更新是「用安装器替换本应用」的场景，停服必须由交付点自己保证（幂等，
     // 重复调用只是 no-op）。
-    workflow::stop_for_installer(app_handle);
+    if let Err(error) = workflow::stop_for_installer(app_handle) {
+        log::error!("UPDATE_STOP_FAILED: refusing installer handoff: {error}");
+        return;
+    }
     if let Err(error) = super::install::open_installer_now(app_handle, &pending.path) {
         log::warn!("UPDATE_OPEN: failed to launch pending installer on exit: {error}");
     }

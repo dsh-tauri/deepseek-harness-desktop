@@ -46,6 +46,7 @@
 ## Features
 
 - 🪶 **Native desktop** — Tauri 2 + React 19 + HeroUI 3, embedding the local Harness UI.
+- 📱 **Remote connection** — Scan a QR code in the Android / iOS app to connect to your computer's DSH over LAN or a Cloudflare public tunnel.
 - 🔄 **Runtime management** — Install dependencies, select core versions, and access desktop/core updates.
 - 🔀 **Multi-backend support** — Use DSH / Codex / Claude in one interface, powered by their native tools.
 - 🧩 **Plugin management** — 13 built-in plugins, plus local-directory installs, built-in disabling, community plugin installation, upgrades, removal, and error details.
@@ -70,7 +71,7 @@ First-party plugins distributed with desktop resources:
 - [DSH Tauri Pet](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-pet) — Desktop pet and activity state settings
 - [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-rightclick) — Session, workspace, and text context menus
 - [DSH Tauri Model](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-model) — Model selection, parameters, and automatic configuration
-- [DSH Tauri SSH](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-ssh) — Remote Harness connections and sync over SSH
+- [DSH Tauri Remote](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-remote) — Remote Harness connections and sync over SSH, plus sharing the local Harness over LAN or a public tunnel
 - [DSH Tauri Notification](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-notification) — Conversation notifications and actions
 
 ## Optional presets
@@ -81,7 +82,6 @@ Setup offers the following community plugins for installation on demand.
 - [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — Per-session editor sidebar
 - [Billion Context](https://github.com/ranxianglei/billion-context) — Context compression and history restoration
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — Conversation rewind and workspace backups
-- [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) — Remote access, tunnels, and bot connections
 - [DSH IM](https://github.com/xmanrui/dsh-im) — IM channels and bot management
 
 Request new or updated presets via [Issues](https://github.com/dsh-tauri/deepseek-harness-desktop/issues). Available versions follow the manifest's core compatibility rules.
@@ -113,6 +113,17 @@ brew install dsh-tauri/desktop/deepseek-harness
 - Applies only to desktop runtime/core downloads, update checks, and plugin metadata—not model requests or plugin subprocess networking.
 - Leave empty to inherit system/environment settings. Saved changes apply to new requests; retry failed downloads afterward.
 - SOCKS5H resolves destination names through the proxy; loopback connections stay direct.
+
+## Mobile support
+
+**DSH Mobile** accesses Harness on your computer over LAN or a public tunnel; it does not run a core on the phone.
+
+- **Android**: download an APK from [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases).
+- **iOS**: install the beta through the [TestFlight invitation](https://testflight.apple.com/join/kYXkpnp1), subject to approval and available slots. Unsigned IPAs in Releases require your own signing.
+
+Enable sharing from **Share** in the desktop's top bar, then scan the QR code to pair. Keep the computer, Harness, and any tunnel online. Access is not read-only; keep QR and access codes private. See the [mobile remote access guide](https://dshtauri.mintlify.site/en/guides/mobile-remote-access).
+
+The app is maintained only until an official mobile service launches. Development details are in the [mobile specification](docs/specs/native.md).
 
 ## Runtime
 
@@ -151,6 +162,13 @@ See the [English development guide](<./docs/DEVELOPMENT.md>) or [Chinese develop
 
 > [!NOTE]
 > **Security** — `dsh` can execute code locally. For learning / research / testing only; run it in a trusted, isolated environment.
+
+## Community Picks
+
+- [dsh-tauri-notify-webhook](https://github.com/iuuuuuuuu/dsh-tauri-notify-webhook) - Forward notifications to webhook, email (SMTP) or pushplus when a task stops abnormally or finishes by @iuuuuuuuu
+- [dsh-pdf-reader](https://github.com/SkanderBog/dsh-pdf-reader) - Page-by-page PDF reading, local OCR, citations, search and visual cropping by @SkanderBog
+- [dsh-context-manager](https://github.com/SkanderBog/dsh-context-manager) - Review context before applying, and choose per full-history group to keep, summarize or omit earlier content by @SkanderBog
+- [@ryuu-64/dsh-find-all](https://github.com/Ryuu-64/dsh-find-all) - Ctrl+F in the current conversation to find saved history by @Ryuu-64
 
 ## Related
 

@@ -4,7 +4,6 @@
 use crate::config;
 use crate::service::download;
 use crate::service::download::Installable;
-use tauri::Manager;
 
 use super::process::{has_owned_process, stop, terminate_stale_harness_processes};
 
@@ -17,6 +16,8 @@ pub async fn install(
     app_handle: &tauri::AppHandle,
     mut dsh_latest: Option<download::LatestDshPkg>,
 ) -> Result<bool, String> {
+    let _transition = super::process::acquire_core_transition().await?;
+    super::instances::require_exclusive_profile()?;
     log::info!("Starting installation process");
     // dsh 任务实际下载解压时置 true
     let mut dsh_updated = false;
@@ -36,16 +37,16 @@ pub async fn install(
     // 枚举/结束涉及 powershell 枚举与 taskkill（同步阻塞），移出 Tokio 线程。
     {
         let handle = app_handle.clone();
+        let profile = crate::service::profile::active_profile(app_handle);
         tauri::async_runtime::spawn_blocking(move || {
-            terminate_stale_harness_processes(&handle);
+            super::instances::scope_sync(profile, || terminate_stale_harness_processes(&handle))
         })
         .await
-        .map_err(|e| format!("STOP_FAILED: {e}"))?;
+        .map_err(|e| format!("STOP_FAILED: {e}"))??;
     }
 
-    let window = app_handle
-        .get_webview_window("main")
-        .ok_or("Failed to get main window")?;
+    let window = crate::utils::operation_window(app_handle)
+        .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
     log::debug!("Main window obtained");
     // 依赖任务清单的唯一构造点在下载层，安装流程与映射回写共用同一组任务。
     let tasks = download::tasks();
@@ -228,4 +229,29 @@ pub async fn install(
     );
 
     Ok(dsh_updated)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn installation_holds_core_transition_before_checks_and_shared_file_changes() {
+        let source = include_str!("install.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let transition = source
+            .find("let _transition = super::process::acquire_core_transition().await?;")
+            .unwrap();
+        for effect in [
+            "super::instances::require_exclusive_profile()?",
+            "if has_owned_process()",
+            "download::ensure_extract",
+        ] {
+            assert!(
+                transition < source.find(effect).unwrap(),
+                "{effect} must be serialized with launch"
+            );
+        }
+        assert!(!source.contains("drop(_transition)"));
+    }
 }

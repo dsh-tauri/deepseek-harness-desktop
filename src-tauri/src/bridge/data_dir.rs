@@ -12,22 +12,28 @@ use tauri::AppHandle;
 use crate::service::data_dir;
 
 // stop 会删掉本通道标记；不可读的先拒绝，已记录的 PID 留到停服后复核。
-fn reject_unreadable_markers(recorded: [data_dir::HarnessMarker; 2]) -> Result<(), String> {
+fn reject_unreadable_markers(
+    recorded: impl IntoIterator<Item = data_dir::HarnessMarker>,
+) -> Result<(), String> {
     use data_dir::HarnessMarker;
     recorded
         .into_iter()
-        .zip(crate::config::HARNESS_PID_MARKER_NAMES)
-        .try_for_each(|(marker, name)| match marker {
+        .enumerate()
+        .try_for_each(|(index, marker)| match marker {
             HarnessMarker::Invalid => Err(format!(
-                "DATA_DIR_HARNESS_MARKER_INVALID: {name} 读不出来，无法确认 Harness 是否已退出，请先退出所有实例再重试"
+                "DATA_DIR_HARNESS_MARKER_INVALID: {} 读不出来，无法确认 Harness 是否已退出，请先退出所有实例再重试",
+                crate::config::HARNESS_PID_MARKER_NAMES[index % 2]
             )),
             HarnessMarker::Missing | HarnessMarker::Pid(_) => Ok(()),
         })
 }
 
 // DSH_HOME 仍然共享；只报告另一个通道的存活进程，不能替用户结束它。
-fn confirm_harness_stopped(recorded: [data_dir::HarnessMarker; 2]) -> Result<(), String> {
-    reject_unreadable_markers(recorded)?;
+fn confirm_harness_stopped(
+    recorded: impl IntoIterator<Item = data_dir::HarnessMarker>,
+) -> Result<(), String> {
+    let recorded: Vec<_> = recorded.into_iter().collect();
+    reject_unreadable_markers(recorded.clone())?;
     for marker in recorded {
         if let data_dir::HarnessMarker::Pid(pid) = marker {
             if data_dir::process_alive(pid) {
@@ -93,42 +99,56 @@ pub async fn preview_data_dir_migration(
 /// 任务结束，期间任何安装 / 备份 / 核心切换请求都会排队等待。
 #[tauri::command]
 pub async fn migrate_data_dir(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     parent: String,
     leaf: String,
 ) -> Result<data_dir::MigrationOutcome, String> {
-    let transition = crate::service::workflow::acquire_core_transition().await?;
-    let operation = crate::service::plugin::acquire_operation_lock().await;
-    // 标记要在 `stop()` 之前读：停成功时它会顺手删掉标记，删掉之后就再也查不出
-    // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。
-    let recorded = data_dir::harness_markers(&crate::config::get_dsh_data_path(&app_handle));
-    reject_unreadable_markers(recorded)?;
-    crate::service::workflow::stop(app_handle.clone()).await?;
-    confirm_harness_stopped(recorded)?;
-    let app = app_handle.clone();
-    let result = data_dir::migrate(app, PathBuf::from(parent), leaf).await;
-    drop(transition);
-    drop(operation);
-    result
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let transition = crate::service::workflow::acquire_core_transition().await?;
+        crate::service::workflow::instances::require_exclusive_profile()?;
+        let operation = crate::service::plugin::acquire_operation_lock().await;
+        // 标记要在 `stop()` 之前读：停成功时它会顺手删掉标记，删掉之后就再也查不出
+        // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。
+        let recorded =
+            data_dir::all_harness_markers(&crate::config::get_dsh_data_path(&app_handle));
+        reject_unreadable_markers(recorded.clone())?;
+        crate::service::workflow::stop(app_handle.clone()).await?;
+        confirm_harness_stopped(recorded)?;
+        let app = app_handle.clone();
+        let result = data_dir::migrate(app, PathBuf::from(parent), leaf).await;
+        drop(transition);
+        drop(operation);
+        result
+    })
+    .await
 }
 
 /// 回滚到旧目录备份（`backup` 为空时按「会话数优先、时间戳其次」自动挑选）。
 #[tauri::command]
 pub async fn rollback_data_dir(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     backup: Option<String>,
 ) -> Result<data_dir::MigrationOutcome, String> {
-    let transition = crate::service::workflow::acquire_core_transition().await?;
-    let operation = crate::service::plugin::acquire_operation_lock().await;
-    let recorded = data_dir::harness_markers(&crate::config::get_dsh_data_path(&app_handle));
-    reject_unreadable_markers(recorded)?;
-    crate::service::workflow::stop(app_handle.clone()).await?;
-    confirm_harness_stopped(recorded)?;
-    let app = app_handle.clone();
-    let result = data_dir::rollback(app, backup.map(PathBuf::from)).await;
-    drop(transition);
-    drop(operation);
-    result
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let transition = crate::service::workflow::acquire_core_transition().await?;
+        crate::service::workflow::instances::require_exclusive_profile()?;
+        let operation = crate::service::plugin::acquire_operation_lock().await;
+        let recorded =
+            data_dir::all_harness_markers(&crate::config::get_dsh_data_path(&app_handle));
+        reject_unreadable_markers(recorded.clone())?;
+        crate::service::workflow::stop(app_handle.clone()).await?;
+        confirm_harness_stopped(recorded)?;
+        let app = app_handle.clone();
+        let result = data_dir::rollback(app, backup.map(PathBuf::from)).await;
+        drop(transition);
+        drop(operation);
+        result
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -145,10 +145,10 @@
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-model"
       },
       {
-        "id": "dsh-tauri-ssh",
-        "spec": "dsh-tauri-ssh",
-        "name": "DSH Tauri SSH",
-        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh"
+        "id": "dsh-tauri-remote",
+        "spec": "dsh-tauri-remote",
+        "name": "DSH Tauri Remote",
+        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-remote"
       },
       {
         "id": "dsh-tauri-notification",
@@ -223,29 +223,6 @@
         "recommended": true,
         "checked": false,
         "version": "latest"
-      },
-      {
-        "id": "@wenbin_wb/dsh-bridge",
-        "spec": "@wenbin_wb/dsh-bridge",
-        "name": "DSH Bridge",
-        "description": "DeepSeek Harness 多通道远程访问与安全守护插件 | 局域网扫码直连、Cloudflare / 自建公网隧道、微信 / QQ / 飞书 / Telegram 机器人全生命周期对话 | 内置全协议访问安全认证、后台防篡改与容灾保命体系",
-        "repo": "https://github.com/wenbin-wb/dsh-bridge",
-        "recommended": false,
-        "checked": false,
-        "version": [
-          {
-            "version": "^2.11.0",
-            "dsh": "^0.1.5-rc.1"
-          },
-          {
-            "version": "^2.11.3",
-            "dsh": "^0.1.7-rc.1"
-          },
-          {
-            "version": "latest",
-            "dsh": "^0.2.0-rc.1"
-          }
-        ]
       },
       {
         "id": "@xmanrui/dsh-im",

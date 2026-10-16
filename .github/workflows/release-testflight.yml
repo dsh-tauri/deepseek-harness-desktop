@@ -1,0 +1,226 @@
+name: Release iOS TestFlight
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Immutable upstream main-ancestor commit SHA to release
+        required: true
+        type: string
+    secrets:
+      APPLE_TEAM_ID:
+        required: false
+      IOS_DISTRIBUTION_CERTIFICATE:
+        required: false
+      IOS_DISTRIBUTION_CERTIFICATE_PASSWORD:
+        required: false
+      IOS_PROVISIONING_PROFILE:
+        required: false
+      APP_STORE_CONNECT_API_KEY:
+        required: false
+      APP_STORE_CONNECT_KEY_ID:
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        required: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-distribution
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.repository == 'dsh-tauri/deepseek-harness-desktop' &&
+      (inputs.source_ref != '' || github.ref == 'refs/heads/main')
+    name: Sign and upload iOS TestFlight
+    runs-on: macos-26
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - name: Checkout trusted upstream main
+        uses: actions/checkout@v7
+        with:
+          repository: dsh-tauri/deepseek-harness-desktop
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate and checkout immutable official source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SOURCE_REF" ]]; then
+            [[ "$EVENT_NAME" == workflow_dispatch ]] || { echo '::error::source_ref is required'; exit 1; }
+            SOURCE_REF="$DISPATCH_SHA"
+          fi
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::source_ref must be a full immutable commit SHA'; exit 1; }
+          [[ "$(git cat-file -t "$SOURCE_REF")" == commit ]]
+          git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/main
+          git checkout --detach "$SOURCE_REF"
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_REF" ]]
+          echo "SOURCE_SHA=$SOURCE_REF" >> "$GITHUB_ENV"
+
+      - name: Setup verified Xcode 26.4.1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: 26.4.1
+
+      - name: Verify selected toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun swift --version
+          [[ "$(xcodebuild -version | head -n 1)" == 'Xcode 26.4.1' ]]
+          developer_dir="$(xcode-select -p)"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx:/usr/lib/swift" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Normalize marketing version and stamp unique build before prebuild
+        run: |
+          set -euo pipefail
+          BUILD_NUMBER="$(python3 - <<'PY'
+          import runpy, time
+          helper = runpy.run_path('.github/scripts/ios-testflight.py')
+          print(helper['build_number'](time.time()))
+          PY
+          )"
+          export BUILD_NUMBER
+          node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs');
+          const semver = require('semver');
+          const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          if (app.expo.version !== version) throw new Error('app.json and package.json versions must match');
+          const parsed = semver.parse(version);
+          if (!parsed || `${parsed.version}${parsed.build.length ? '+' + parsed.build.join('.') : ''}` !== version) throw new Error('Version must be canonical SemVer');
+          if (app.expo.ios?.bundleIdentifier !== 'com.dshtauri.dshbridge') throw new Error('Unexpected iOS bundle ID');
+          const marketing = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+          app.expo.version = marketing;
+          app.expo.ios.buildNumber = process.env.BUILD_NUMBER;
+          fs.writeFileSync('app.json', `${JSON.stringify(app, null, 2)}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `VERSION=${version}\nIOS_VERSION=${marketing}\nBUILD_NUMBER=${process.env.BUILD_NUMBER}\n`);
+          NODE
+          echo 'Build number: 10-second ticks since 2020-01-01 UTC, split 4.2.2; serialized jobs hold a full tick for reruns (valid through 2051-09-09).' >> "$GITHUB_STEP_SUMMARY"
+          sleep 10
+
+      - name: Generate iOS project
+        run: pnpm exec expo prebuild --platform ios --no-install
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          pod install
+          ruby -S gem install --user-install --no-document xcodeproj --version 1.27.0
+          ruby -e "gem 'xcodeproj', '= 1.27.0'; require 'xcodeproj'"
+
+      - name: Install and validate temporary distribution credentials
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_DISTRIBUTION_CERTIFICATE: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE }}
+          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: python3 .github/scripts/ios-testflight.py install
+
+      - name: Configure signing only on the application target
+        run: |
+          set -euo pipefail
+          ruby <<'RUBY'
+          gem 'xcodeproj', '= 1.27.0'
+          require 'xcodeproj'
+          projects = Dir.glob('ios/*.xcodeproj')
+          abort 'Expected one generated app project' unless projects.length == 1
+          project = Xcodeproj::Project.open(projects.first)
+          targets = project.targets.select { |target| target.product_type == 'com.apple.product-type.application' }
+          abort 'Expected one app target without extensions' unless targets.length == 1 && project.targets.none? { |target| target.product_type == 'com.apple.product-type.app-extension' }
+          targets.first.build_configurations.each do |config|
+            settings = config.build_settings
+            settings['CODE_SIGN_STYLE'] = 'Manual'
+            settings['DEVELOPMENT_TEAM'] = ENV.fetch('SIGNING_TEAM')
+            settings['CODE_SIGN_IDENTITY'] = ENV.fetch('SIGNING_IDENTITY')
+            settings['CODE_SIGN_IDENTITY[sdk=iphoneos*]'] = ENV.fetch('SIGNING_IDENTITY')
+            settings['PROVISIONING_PROFILE_SPECIFIER'] = ENV.fetch('PROFILE_UUID')
+            settings['PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]'] = ENV.fetch('PROFILE_UUID')
+          end
+          project.save
+          RUBY
+
+      - name: Archive signed device Release app once
+        run: |
+          set -euo pipefail
+          workspaces=(ios/*.xcworkspace)
+          [[ ${#workspaces[@]} -eq 1 && -d "${workspaces[0]}" ]] || { echo '::error::Expected one generated workspace'; exit 1; }
+          scheme="$(basename "${workspaces[0]}" .xcworkspace)"
+          xcodebuild -workspace "${workspaces[0]}" -scheme "$scheme" \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$SIGNING_ROOT/derived-data" \
+            -archivePath "$SIGNING_ROOT/DSH.xcarchive" archive
+
+      - name: Export signed App Store IPA without rebuilding
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive -archivePath "$SIGNING_ROOT/DSH.xcarchive" \
+            -exportOptionsPlist "$SIGNING_ROOT/ExportOptions.plist" \
+            -exportPath "$SIGNING_ROOT/export"
+
+      - name: Verify IPA bundle, JavaScript, signature and distribution profile
+        run: python3 .github/scripts/ios-testflight.py verify
+
+      - name: Preserve verified signed IPA before upload
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-testflight-${{ env.VERSION }}-${{ env.BUILD_NUMBER }}
+          path: ${{ env.SIGNING_ROOT }}/artifact/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload the same IPA to App Store Connect
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          export API_PRIVATE_KEYS_DIR="$SIGNING_ROOT/private_keys"
+          xcrun altool --upload-app --type ios --file "$IPA_PATH" \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          {
+            echo "Uploaded signed IPA for $VERSION ($BUILD_NUMBER), commit $SOURCE_SHA."
+            echo 'Upload accepted; optional external Beta review automation runs next.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Submit external Beta review and enable automatic tester notifications
+        if: vars.IOS_BETA_REVIEW_ENABLED == 'true'
+        timeout-minutes: 35
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          TESTFLIGHT_BETA_GROUP_ID: ${{ vars.TESTFLIGHT_BETA_GROUP_ID }}
+        run: python3 .github/scripts/ios-beta-review.py
+
+      - name: Always remove temporary signing material
+        if: always()
+        run: |
+          if [[ -n "${SIGNING_ROOT:-}" ]]; then
+            python3 .github/scripts/ios-testflight.py cleanup
+          fi

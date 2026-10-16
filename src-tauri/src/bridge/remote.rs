@@ -6,19 +6,23 @@ use tauri::{AppHandle, Manager};
 fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
     if !matches!(
         method,
-        "GET /api/tauri/ssh/machines"
-            | "POST /api/tauri/ssh/machines"
-            | "DELETE /api/tauri/ssh/machines"
-            | "POST /api/tauri/ssh/machines/connect"
-            | "POST /api/tauri/ssh/machines/disconnect"
-            | "GET /api/tauri/ssh/machines/events"
-            | "POST /api/tauri/ssh/machines/install"
-            | "POST /api/tauri/ssh/machines/test"
-            | "GET /api/tauri/ssh/session/role"
-            | "GET /api/tauri/ssh/settings"
-            | "POST /api/tauri/ssh/settings"
-            | "POST /api/tauri/ssh/sync/apply"
-            | "GET /api/tauri/ssh/sync/preview"
+        "GET /api/tauri/remote/machines"
+            | "POST /api/tauri/remote/machines"
+            | "DELETE /api/tauri/remote/machines"
+            | "POST /api/tauri/remote/machines/connect"
+            | "POST /api/tauri/remote/machines/disconnect"
+            | "GET /api/tauri/remote/machines/events"
+            | "POST /api/tauri/remote/machines/install"
+            | "POST /api/tauri/remote/machines/test"
+            | "GET /api/tauri/remote/session/role"
+            | "GET /api/tauri/remote/settings"
+            | "POST /api/tauri/remote/settings"
+            | "POST /api/tauri/remote/sync/apply"
+            | "GET /api/tauri/remote/sync/preview"
+            | "GET /api/tauri/remote/access"
+            | "POST /api/tauri/remote/access"
+            | "POST /api/tauri/remote/access/tunnel"
+            | "DELETE /api/tauri/remote/access/tunnel"
     ) {
         return Err(format!("REMOTE_METHOD_INVALID: {method}"));
     }
@@ -99,12 +103,16 @@ async fn remote_request(
 
 #[tauri::command]
 pub async fn remote(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     method: String,
     payload: Option<Value>,
 ) -> Result<Value, String> {
     let (method, path) = remote_method(&method)?;
-    let port = crate::config::get_store_dat_setting(&app_handle).port;
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    let port = crate::service::workflow::instances::scope_sync(profile, || {
+        crate::service::workflow::instances::port(&app_handle)
+    });
     remote_request(port, method, path, payload).await
 }
 
@@ -126,7 +134,7 @@ fn sanitize_label_part(raw: &str) -> String {
 }
 
 /// 校验隧道 URL：仅接受 `127.0.0.1` host 的明文 http（隧道由引擎建在
-/// `127.0.0.1:<port>`，见插件 `SshLink`；与 capability `remote.urls`
+/// `127.0.0.1:<port>`，见插件 `RemoteLink`；与 capability `remote.urls`
 /// `http://127.0.0.1:*` 精确对齐——`localhost`/`[::1]` 过守卫却命不中
 /// capability，弹窗会静默退化为无 IPC 的纯 web，故在命令侧一并拒绝）。
 fn validate_loopback_http_url(raw: &str) -> Result<tauri::Url, String> {
@@ -174,18 +182,34 @@ fn open_window_args(machine_id: &str, url: &str) -> Result<(String, Option<tauri
     Ok((label, parsed_url))
 }
 
-/// 打开（已开则聚焦）`remote-<machineId>` 弹窗窗口，加载壳层应用。
+fn profile_window_label(profile: &str, machine_id: &str) -> String {
+    let profile: String = profile
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!(
+        "{REMOTE_WINDOW_LABEL_PREFIX}{profile}--{}",
+        sanitize_label_part(machine_id)
+    )
+}
+
+/// 打开（已开则聚焦）当前档案的远端窗口。
 ///
 /// 壳不自存机器状态：前端按窗口 label 自解析目标机器并切换（机器状态经
-/// `/api/tauri/ssh/machines` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
+/// `/api/tauri/remote/machines` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
 /// 重复建窗）；失败返回带前缀的可读错误，由调用方（S4 面板按钮）呈现。
 #[tauri::command]
-pub fn remote_open_window(
+pub async fn remote_open_window(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     machine_id: String,
     url: String,
 ) -> Result<(), String> {
-    let (label, _validated_url) = open_window_args(&machine_id, &url)?;
+    let (_, _validated_url) = open_window_args(&machine_id, &url)?;
+    let _transition = crate::service::workflow::acquire_core_transition().await?;
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    let label = profile_window_label(&profile, &machine_id);
     // 已有窗口：聚焦即可（再次「打开」同一机器的语义）。
     if let Some(existing) = app_handle.get_webview_window(&label) {
         let _ = existing.set_focus();
@@ -195,8 +219,17 @@ pub fn remote_open_window(
     // 桥脚本按窗口注入、（Windows）WebView2 共用数据目录等，远端窗口与本体
     // 唯一区别是连接的后端。label 即机器寻址：前端 remote-<id> 自切换。
     let title = format!("DSH Remote · {machine_id}");
-    crate::desktop::builder::build_shell_window(&app_handle, label, &title)
+    crate::service::workflow::instances::bind_window(&label, &profile);
+    let mut route = tauri::Url::parse("http://localhost/").expect("static URL");
+    route
+        .query_pairs_mut()
+        .append_pair("remoteMachineId", &machine_id);
+    let path = format!("index.html#{}", route.query().unwrap_or_default());
+    crate::desktop::builder::build_shell_window(&app_handle, label.clone(), &title, path.into())
         .map(|_| ())
+        .inspect_err(|_| {
+            crate::service::workflow::instances::release_window(&label);
+        })
         .map_err(|err| format!("REMOTE_WINDOW_FAILED: {err}"))
 }
 
@@ -206,6 +239,22 @@ mod tests {
     use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    #[test]
+    fn remote_windows_are_isolated_by_profile() {
+        assert_ne!(
+            super::profile_window_label("a", "machine"),
+            super::profile_window_label("b", "machine")
+        );
+        assert_eq!(
+            super::profile_window_label("a", "machine"),
+            super::profile_window_label("a", "machine")
+        );
+        assert_ne!(
+            super::profile_window_label("a-b", "machine"),
+            super::profile_window_label("a_b", "machine")
+        );
+    }
 
     async fn response_server(
         status: &str,
@@ -251,21 +300,25 @@ mod tests {
     }
 
     #[test]
-    fn remote_whitelist_accepts_all_thirteen_generated_endpoints() {
+    fn remote_whitelist_accepts_all_seventeen_generated_endpoints() {
         for method in [
-            "GET /api/tauri/ssh/machines",
-            "POST /api/tauri/ssh/machines",
-            "DELETE /api/tauri/ssh/machines",
-            "POST /api/tauri/ssh/machines/connect",
-            "POST /api/tauri/ssh/machines/disconnect",
-            "GET /api/tauri/ssh/machines/events",
-            "POST /api/tauri/ssh/machines/install",
-            "POST /api/tauri/ssh/machines/test",
-            "GET /api/tauri/ssh/session/role",
-            "GET /api/tauri/ssh/settings",
-            "POST /api/tauri/ssh/settings",
-            "POST /api/tauri/ssh/sync/apply",
-            "GET /api/tauri/ssh/sync/preview",
+            "GET /api/tauri/remote/machines",
+            "POST /api/tauri/remote/machines",
+            "DELETE /api/tauri/remote/machines",
+            "POST /api/tauri/remote/machines/connect",
+            "POST /api/tauri/remote/machines/disconnect",
+            "GET /api/tauri/remote/machines/events",
+            "POST /api/tauri/remote/machines/install",
+            "POST /api/tauri/remote/machines/test",
+            "GET /api/tauri/remote/session/role",
+            "GET /api/tauri/remote/settings",
+            "POST /api/tauri/remote/settings",
+            "POST /api/tauri/remote/sync/apply",
+            "GET /api/tauri/remote/sync/preview",
+            "GET /api/tauri/remote/access",
+            "POST /api/tauri/remote/access",
+            "POST /api/tauri/remote/access/tunnel",
+            "DELETE /api/tauri/remote/access/tunnel",
         ] {
             let (verb, path) = remote_method(method).expect("generated endpoint must be allowed");
             assert_eq!(format!("{verb} {path}"), method);
@@ -277,18 +330,21 @@ mod tests {
         for method in [
             "",
             "GET",
-            "get /api/tauri/ssh/machines",
-            "PUT /api/tauri/ssh/machines",
-            "GET /api/tauri/ssh/machines/connect",
-            "POST /api/tauri/ssh/machines/events",
-            "GET /api/tauri/ssh/machines?machineId=m1",
-            "GET /api/tauri/ssh/machines/../settings",
-            "GET /api/tauri/ssh/machines/",
-            "GET  /api/tauri/ssh/machines",
-            "GET /api/tauri/ssh/machines\n",
-            "GET http://127.0.0.1:3080/api/tauri/ssh/machines",
-            "GET https://example.com/api/tauri/ssh/machines",
-            "GET //example.com/api/tauri/ssh/machines",
+            "get /api/tauri/remote/machines",
+            "PUT /api/tauri/remote/machines",
+            "GET /api/tauri/remote/machines/connect",
+            "POST /api/tauri/remote/machines/events",
+            "GET /api/tauri/remote/machines?machineId=m1",
+            "GET /api/tauri/remote/machines/../settings",
+            "GET /api/tauri/remote/machines/",
+            "GET  /api/tauri/remote/machines",
+            "GET /api/tauri/remote/machines\n",
+            "PUT /api/tauri/remote/access",
+            "GET /api/tauri/remote/access/tunnel",
+            "POST /api/tauri/remote/access?x=1",
+            "GET http://127.0.0.1:3080/api/tauri/remote/machines",
+            "GET https://example.com/api/tauri/remote/machines",
+            "GET //example.com/api/tauri/remote/machines",
             "GET /api/other",
         ] {
             assert_eq!(
@@ -301,7 +357,7 @@ mod tests {
     #[tokio::test]
     async fn remote_get_forwards_encoded_primitive_query_without_body() {
         let (port, server) = response_server("200 OK", "", r#"{"events":[]}"#).await;
-        let (verb, path) = remote_method("GET /api/tauri/ssh/machines/events").unwrap();
+        let (verb, path) = remote_method("GET /api/tauri/remote/machines/events").unwrap();
         let result = remote_request(
             port,
             verb,
@@ -319,7 +375,7 @@ mod tests {
             .nth(1)
             .unwrap();
         let url = tauri::Url::parse(&format!("http://127.0.0.1{target}")).unwrap();
-        assert_eq!(url.path(), "/api/tauri/ssh/machines/events");
+        assert_eq!(url.path(), "/api/tauri/remote/machines/events");
         let query: std::collections::BTreeMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(
             query,
@@ -335,8 +391,8 @@ mod tests {
     #[tokio::test]
     async fn remote_mutations_forward_json_body_and_preserve_http_verb() {
         for method in [
-            "POST /api/tauri/ssh/machines/connect",
-            "DELETE /api/tauri/ssh/machines",
+            "POST /api/tauri/remote/machines/connect",
+            "DELETE /api/tauri/remote/machines",
         ] {
             let (port, server) = response_server("200 OK", "", r#"{"ok":true}"#).await;
             let (verb, path) = remote_method(method).unwrap();
@@ -360,8 +416,8 @@ mod tests {
     #[tokio::test]
     async fn remote_absent_or_null_payload_sends_no_query_or_body() {
         for method in [
-            "GET /api/tauri/ssh/machines",
-            "POST /api/tauri/ssh/machines/install",
+            "GET /api/tauri/remote/machines",
+            "POST /api/tauri/remote/machines/install",
         ] {
             for payload in [None, Some(Value::Null)] {
                 let (port, server) = response_server("200 OK", "", "null").await;
@@ -386,7 +442,7 @@ mod tests {
             ("201 Created", "not JSON"),
         ] {
             let (port, server) = response_server(status, "", body).await;
-            let (verb, path) = remote_method("POST /api/tauri/ssh/settings").unwrap();
+            let (verb, path) = remote_method("POST /api/tauri/remote/settings").unwrap();
             let result = remote_request(port, verb, path, None).await;
             server.await.unwrap();
             assert_eq!(result.unwrap(), Value::Null);
@@ -397,7 +453,7 @@ mod tests {
     async fn remote_missing_api_is_distinct_from_other_http_failures() {
         for (status, expected) in [("404 Not Found", "404"), ("405 Method Not Allowed", "405")] {
             let (port, server) = response_server(status, "", r#"{"error":"disabled"}"#).await;
-            let (verb, path) = remote_method("GET /api/tauri/ssh/settings").unwrap();
+            let (verb, path) = remote_method("GET /api/tauri/remote/settings").unwrap();
             let result = remote_request(port, verb, path, None).await;
             server.await.unwrap();
             assert_eq!(
@@ -419,7 +475,7 @@ mod tests {
             ("", "HTTP 500"),
         ] {
             let (port, server) = response_server("500 Internal Server Error", "", body).await;
-            let (verb, path) = remote_method("POST /api/tauri/ssh/machines/test").unwrap();
+            let (verb, path) = remote_method("POST /api/tauri/remote/machines/test").unwrap();
             let result = remote_request(port, verb, path, None).await;
             server.await.unwrap();
             assert_eq!(
@@ -434,7 +490,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let (verb, path) = remote_method("GET /api/tauri/ssh/machines").unwrap();
+        let (verb, path) = remote_method("GET /api/tauri/remote/machines").unwrap();
         let error = remote_request(port, verb, path, None).await.unwrap_err();
         assert!(
             error.starts_with("REMOTE_REQUEST_FAILED:"),
@@ -452,7 +508,7 @@ mod tests {
         ] {
             let (port, server) =
                 response_server("302 Found", &format!("Location: {location}\r\n"), "").await;
-            let (verb, path) = remote_method("GET /api/tauri/ssh/machines").unwrap();
+            let (verb, path) = remote_method("GET /api/tauri/remote/machines").unwrap();
             let result = remote_request(port, verb, path, None).await;
             server.await.unwrap();
             assert_eq!(result.unwrap_err(), "REMOTE_REQUEST_FAILED: HTTP 302");
@@ -465,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_invalid_get_payload_is_rejected_before_connecting() {
-        let (verb, path) = remote_method("GET /api/tauri/ssh/machines/events").unwrap();
+        let (verb, path) = remote_method("GET /api/tauri/remote/machines/events").unwrap();
         for payload in [json!([]), json!({"machineId": {"nested": true}})] {
             let error = remote_request(0, verb.clone(), path, Some(payload))
                 .await

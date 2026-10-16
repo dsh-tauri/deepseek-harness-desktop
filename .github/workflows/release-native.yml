@@ -1,0 +1,200 @@
+name: Release Mobile Apps (Native)
+on:
+  workflow_run:
+    workflows: ['Build & Release']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 目标 release tag（例如 v0.21.0）；必须从该 tag 的提交触发
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-native-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Mobile Release
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      should_build: ${{ steps.release.outputs.should_build }}
+      tag: ${{ steps.release.outputs.tag }}
+      source_ref: ${{ steps.release.outputs.source_ref }}
+    steps:
+      - name: Checkout triggering commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          pkg_version="$(node --input-type=commonjs -p "require('./package.json').version")"
+          manual=false
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            manual=true
+          fi
+          tag="$TAG_INPUT"
+
+          emit() {
+            echo "should_build=$1" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "source_ref=$2" >> "$GITHUB_OUTPUT"
+          }
+          skip() {
+            emit false ''
+            echo "::warning::$1"
+            exit 0
+          }
+          fail() {
+            if [ "$manual" = true ]; then
+              echo "::error::$1"
+              exit 1
+            fi
+            skip "$1; skipping the mobile build"
+          }
+          if [ "$EVENT_NAME" = 'workflow_run' ]; then
+            case "$TRIGGER_EVENT" in
+              push|pull_request) ;;
+              *) skip 'the triggering run is not a desktop version release' ;;
+            esac
+            published="$(gh run view "$RUN_ID" --json jobs --jq '.jobs[] | select(.name == "Publish GitHub Release") | .conclusion')"
+            [ "$published" = 'success' ] || skip 'the desktop release was not published'
+          fi
+
+          if [ -z "$tag" ] && [[ "$RUN_HEAD_BRANCH" == v* ]]; then
+            tag="$RUN_HEAD_BRANCH"
+          fi
+          if [ -z "$tag" ]; then
+            tag="v$pkg_version"
+          fi
+
+          gh release view "$tag" >/dev/null 2>&1 \
+            || fail "release $tag does not exist"
+          tag_commit="$(git rev-parse --verify --quiet "${tag}^{commit}" || true)"
+          if [ -z "$tag_commit" ]; then
+            fail "cannot resolve tag $tag locally"
+          fi
+          if [ "$manual" = true ] && [ "$(git rev-parse HEAD)" != "$tag_commit" ]; then
+            fail "tag $tag points at $tag_commit but this run is dispatched from $(git rev-parse HEAD); dispatch this workflow from the $tag ref"
+          fi
+          if ! git cat-file -e "${tag_commit}:app.json" 2>/dev/null; then
+            fail "tag $tag points at $tag_commit, which predates the native Android pipeline"
+          fi
+
+          echo "mobile release target: $tag from $tag_commit"
+          emit true "$tag_commit"
+
+  build:
+    name: Build Android APK
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-android.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+  build-ios:
+    name: Build unsigned iOS IPA
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-ios.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+
+  testflight:
+    name: Sign iOS IPA and upload TestFlight
+    needs: prepare
+    if: >-
+      github.repository == 'dsh-tauri/deepseek-harness-desktop' &&
+      vars.IOS_TESTFLIGHT_ENABLED == 'true' &&
+      needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/release-testflight.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+    secrets:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      IOS_DISTRIBUTION_CERTIFICATE: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE }}
+      IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+      APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+
+  publish:
+    name: Publish Mobile Assets
+    needs: [prepare, build, build-ios]
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+       needs.build-ios.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: android-apk-${{ needs.build.outputs.version }}
+          path: release
+
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ios-ipa-${{ needs.build-ios.outputs.version }}
+          path: release
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SIGNING_MODE: ${{ needs.build.outputs.signing }}
+        run: |
+          set -euo pipefail
+          apk="release/Deepseek.Harness.Android_${VERSION}.apk"
+          [ -f "$apk" ] || { echo "::error::$apk was not downloaded"; exit 1; }
+          ipa="release/Deepseek.Harness.iOS_${VERSION}_unsigned.ipa"
+          [ -f "$ipa" ] || { echo "::error::$ipa was not downloaded"; exit 1; }
+          gh release upload "$RELEASE_TAG" "$apk" "$ipa" release/SHA256SUMS-Android.txt release/SHA256SUMS-iOS.txt release/THIRD_PARTY_NOTICES.md --clobber
+          {
+            echo "### Mobile release assets"
+            echo
+            echo "- asset: \`Deepseek.Harness.Android_${VERSION}.apk\`"
+            echo "- signing: \`${SIGNING_MODE}\`"
+            echo "- iOS: unsigned IPA; requires signing before installation"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$SIGNING_MODE" == 'debug' ]]; then
+            echo '> [!WARNING]' >> "$GITHUB_STEP_SUMMARY"
+            echo '> 该 APK 使用 Android 开发证书，仅供评估，不能用于生产分发；配置四个 ANDROID_* 签名 secret 后重跑本 workflow 可覆盖为正式签名。' >> "$GITHUB_STEP_SUMMARY"
+          fi

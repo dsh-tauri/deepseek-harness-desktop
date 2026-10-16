@@ -8,6 +8,8 @@ metadata:
 
 完成后提交 PR，并等待 CI 完成，reviewbot 的意见不重要，但提出的严重问题要处理。
 
+假如用户要求截图，请先查看仓库根目录下的 [docs/specs/screenshot.md](../../docs/specs/screenshot.md)，按规范生成、上传并在 PR 中引用截图。
+
 可能相关的上下文：
 
 ## DSH 核心位置

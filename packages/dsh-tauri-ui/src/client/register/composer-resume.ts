@@ -33,6 +33,7 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
   let unwatchSession: (() => void) | undefined
   let patch: { button: HTMLButtonElement, icon: ComposerIconState } | undefined
   let pending = false
+  let pendingFrame: number | undefined
 
   // 审核失败不给普通「继续」：同一会话重放被拒上下文只会再次 400，按钮必须写明
   // 会改写历史。文案从实时快照现算，任何缓存都会在切会话后说错话。
@@ -90,6 +91,16 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
     restore(card)
   }
 
+  // 流式输出每帧都在改 DOM：observer 与三路订阅统一排进下一帧，一帧只 reconcile 一次。
+  function schedule(): void {
+    if (pendingFrame === undefined) {
+      pendingFrame = requestAnimationFrame(() => {
+        pendingFrame = undefined
+        reconcile()
+      })
+    }
+  }
+
   function unwatch(): void {
     unwatchEvents?.()
     unwatchEvents = undefined
@@ -104,12 +115,12 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
       unwatch()
       const next = sessionId === undefined ? undefined : bindingOf(sessionId)
       if (typeof next?.eventSource?.subscribe === 'function')
-        unwatchEvents = next.eventSource.subscribe(reconcile)
+        unwatchEvents = next.eventSource.subscribe(schedule)
       if (typeof next?.session?.subscribe === 'function')
-        unwatchSession = next.session.subscribe(reconcile)
+        unwatchSession = next.session.subscribe(schedule)
     }
     binding = sessionId === undefined ? undefined : bindingOf(sessionId)
-    reconcile()
+    schedule()
   }
 
   async function resume(): Promise<void> {
@@ -121,11 +132,15 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
     pending = false
     if (!outcome.ok) {
       console.warn(`[${PLUGIN_ID}] 会话继续失败: ${outcome.error ?? 'unknown'}`)
-      reconcile()
+      schedule()
     }
   }
 
   controller.add(sessionsList.subscribe(refresh))
+  controller.add(() => {
+    if (pendingFrame !== undefined)
+      cancelAnimationFrame(pendingFrame)
+  })
   controller.add(ctx.locale.subscribe(() => {
     if (patch !== undefined)
       paintResumeIcon(patch.button, resumeLabel())
@@ -141,7 +156,7 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
     event.stopPropagation()
     void resume()
   }, { capture: true })
-  controller.observe(document.body, () => reconcile(), {
+  controller.observe(document.body, schedule, {
     attributeFilter: ['d', 'disabled'],
     attributes: true,
     childList: true,

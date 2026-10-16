@@ -9,7 +9,7 @@ import { mcpScopeDir, normalizeMcpScope } from '../../../../service/mcp.utils'
 export default defineEventHandler<EventHandlerRequest, Promise<McpCheckResult | { error: string }>>(async (event) => {
   const deps = getServerOptions<ExtensionRouteDeps>(event)
   const body = await readBody<McpCheckBody>(event, { type: 'json' })
-  if (typeof body?.id !== 'string') {
+  if (typeof body?.id !== 'string' || (body.scope !== undefined && body.scope !== 'global' && body.scope !== 'profile')) {
     event.res.status = 400
     return { error: 'id is required' }
   }

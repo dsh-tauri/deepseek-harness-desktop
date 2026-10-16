@@ -4,9 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use super::portable_path_cmd;
 use super::escape_path_ps1;
 use super::escape_path_sh;
+use super::portable_path_cmd;
 #[cfg(not(windows))]
 use super::templates::SH_USER_DSH_PRECEDENCE;
 use super::templates::{
@@ -526,6 +526,8 @@ goto :npm_node_dir_ready
 :npm_node_from_path
 for /f "delims=" %%c in ('where node 2^>nul') do if not defined NPM_NODE_DIR set "NPM_NODE_DIR=%%~dpc"
 :npm_node_dir_ready
+rem Issue #1042: version-manager launchers are not the actual Node installation.
+for /f "delims=" %%c in ('""%NODE%" -p "process.execPath" 2^>nul"') do if exist "%%c" set "NPM_NODE_DIR=%%~dpc"
 for %%c in (
   "%NPM_NODE_DIR%node_modules\npm\bin\{cli_file}"
   "%NPM_NODE_DIR%lib\node_modules\npm\bin\{cli_file}"
@@ -555,13 +557,10 @@ for /f "delims=" %%p in ('where {shim_name} 2^>nul') do (
   )
 )
 if not defined USER_NPM goto :no_npm
-if defined DSH_NPM_SHIM_CHAIN goto :npm_append_user
-set "DSH_NPM_SHIM_CHAIN=1"
-goto :npm_forward_user
-:npm_append_user
-if not "%DSH_NPM_SHIM_CHAIN:~15,1%"=="" goto :npm_reentry_limit
-set "DSH_NPM_SHIM_CHAIN=%DSH_NPM_SHIM_CHAIN%1"
+if not defined DSH_NPM_SHIM_CHAIN goto :npm_forward_user
+for %%c in ("%DSH_NPM_SHIM_CHAIN:;=" "%") do if /i "%%~c"=="%USER_NPM%" goto :npm_reentry_limit
 :npm_forward_user
+set "DSH_NPM_SHIM_CHAIN=%DSH_NPM_SHIM_CHAIN%;%USER_NPM%"
 rem Forward by invoking the target directly, never through `call`: the extra
 rem interpretation layer re-expands %* and mangles already-escaped arguments.
 "%USER_NPM%" %*
@@ -573,7 +572,7 @@ if not exist "%NPM_CLI%" goto :no_npm
 exit /b %ERRORLEVEL%
 
 :npm_reentry_limit
-1>&2 echo [{shim_name}] NPM_REENTRY_LIMIT: Recursive forwarding exceeded 16 calls.
+1>&2 echo [{shim_name}] NPM_REENTRY_LIMIT: Recursive forwarding revisited the same command.
 exit /b 1
 
 :no_npm
@@ -657,6 +656,11 @@ if ($node -eq 'node') {{
     $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
     if ($nodeCommand) {{ $nodePath = $nodeCommand.Source }}
 }}
+# Issue #1042: resolve the installation behind a version-manager launcher.
+try {{
+    $actualNode = & $node -p 'process.execPath' 2>$null
+    if ($LASTEXITCODE -eq 0 -and $actualNode -is [string] -and (Test-Path -LiteralPath $actualNode -PathType Leaf)) {{ $nodePath = $actualNode }}
+}} catch {{}}
 $npmNodeDir = $null
 if ($nodePath -and $nodePath -ne 'node') {{ $npmNodeDir = Split-Path -Parent $nodePath }}
 $cli = $null
@@ -680,8 +684,19 @@ if (-not $cli) {{
         Where-Object {{ $_.Source -and -not $_.Source.StartsWith($selfDir, [System.StringComparison]::OrdinalIgnoreCase) }} |
         Select-Object -First 1
     if ($userCommand) {{
-        & $userCommand.Source @args
-        exit $LASTEXITCODE
+        $chainBefore = $env:DSH_NPM_SHIM_CHAIN
+        if ($chainBefore -and $chainBefore.Split(';') -contains $userCommand.Source) {{
+            [Console]::Error.WriteLine('[{shim_name}] NPM_REENTRY_LIMIT: Recursive forwarding revisited the same command.')
+            exit 1
+        }}
+        try {{
+            $env:DSH_NPM_SHIM_CHAIN = $chainBefore + ';' + $userCommand.Source
+            & $userCommand.Source @args
+            $forwardExitCode = $LASTEXITCODE
+        }} finally {{
+            $env:DSH_NPM_SHIM_CHAIN = $chainBefore
+        }}
+        exit $forwardExitCode
     }}
     Write-Error '[{shim_name}] npm cli not found. Please run DeepSeek Harness Desktop to install it first.'
     exit 1
@@ -780,8 +795,7 @@ mod tests {
             assert!(content.contains(&format!("\"%SELF_PREFIX%\\{shim_name}.exe\"")));
             assert!(content.contains("\"%NODE%\" \"%NPM_CLI%\" %*"));
             assert!(content.contains("DSH_NPM_SHIM_CHAIN"));
-            assert!(content
-                .contains("if not \"%DSH_NPM_SHIM_CHAIN:~15,1%\"==\"\" goto :npm_reentry_limit"));
+            assert!(content.contains("if /i \"%%~c\"==\"%USER_NPM%\" goto :npm_reentry_limit"));
             let same_dir = content
                 .find(&format!("%NPM_NODE_DIR%node_modules\\npm\\bin\\{cli_file}"))
                 .expect("same-dir cli candidate");
@@ -1015,6 +1029,236 @@ mod tests {
         assert!(stdout.contains("ARG=[--version]"), "{stdout}");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    async fn run_npm_shim_fixture(
+        shim: &Path,
+        node: &Path,
+        path: &std::ffi::OsStr,
+    ) -> std::process::Output {
+        std::fs::write(
+            shim.parent().unwrap().join("git.cmd"),
+            "@echo off\r\nexit /b 1\r\n",
+        )
+        .unwrap();
+        let system_root = std::env::var_os("SystemRoot").unwrap();
+        let system32 = PathBuf::from(system_root).join("System32");
+        let mut command = if shim.extension().unwrap() == "ps1" {
+            let mut command = tokio::process::Command::new(
+                system32.join("WindowsPowerShell/v1.0/powershell.exe"),
+            );
+            command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]);
+            command
+        } else {
+            let mut command = tokio::process::Command::new(system32.join("cmd.exe"));
+            command.args(["/d", "/c"]);
+            command
+        };
+        use std::os::windows::process::CommandExt;
+        command.as_std_mut().creation_flags(0x08000000);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            command
+                .arg(shim)
+                .arg("--version")
+                .current_dir(shim.parent().unwrap())
+                .env("DSH_NODE", node)
+                .env("PATH", path)
+                .env_remove("DSH_NPM_SHIM_CHAIN")
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("npm shim must terminate within 15 seconds")
+        .unwrap()
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn npm_shims_find_cli_at_actual_node_path_without_bundled_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
+        let shim_dir = root.join("desktop bin");
+        let manager_dir = root.join("manager bin");
+        let actual_dir = root.join("node version");
+        for path in [&shim_dir, &manager_dir, &actual_dir] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        let actual_node = actual_dir.join("node.exe");
+        std::fs::write(&actual_node, "fixture").unwrap();
+        let node = manager_dir.join("node.cmd");
+        std::fs::write(
+            &node,
+            format!(
+                "@echo off\r\nif \"%~1\"==\"-p\" (\r\n  echo {}\r\n  exit /b 0\r\n)\r\necho CLI=[%~1] ARG=[%~2]\r\nexit /b 37\r\n",
+                actual_node.display()
+            ),
+        )
+        .unwrap();
+        let system32 = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let path = std::env::join_paths([&shim_dir, &manager_dir, &system32]).unwrap();
+        let paths = shim_paths_for(&root.join("missing app"));
+        for (name, cmd, ps1) in [
+            (
+                "npx",
+                build_npx_cmd_shim(&paths),
+                build_npx_ps1_shim(&paths),
+            ),
+            (
+                "npm",
+                build_npm_cmd_shim(&paths),
+                build_npm_ps1_shim(&paths),
+            ),
+        ] {
+            let cli = actual_dir
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join(format!("{name}-cli.js"));
+            std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+            std::fs::write(&cli, "fixture").unwrap();
+            std::fs::write(
+                manager_dir.join(format!("{name}.cmd")),
+                format!("@echo off\r\necho FORWARDER\r\n{name} %*\r\n"),
+            )
+            .unwrap();
+            for (extension, content) in [("cmd", cmd), ("ps1", ps1)] {
+                let shim = shim_dir.join(format!("{name}.{extension}"));
+                std::fs::write(&shim, content).unwrap();
+                let output = run_npm_shim_fixture(&shim, &node, &path).await;
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                assert_eq!(
+                    output.status.code(),
+                    Some(37),
+                    "{shim:?}: {stdout} / {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    stdout.contains(&format!("CLI=[{}] ARG=[--version]", cli.display())),
+                    "{shim:?}: {stdout}"
+                );
+                assert!(!stdout.contains("FORWARDER"), "{shim:?}: {stdout}");
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn npm_shims_stop_forwarding_when_the_same_candidate_reenters() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
+        let shim_dir = root.join("desktop bin");
+        let user_dir = root.join("user bin");
+        std::fs::create_dir_all(&shim_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        let node = root.join("node.cmd");
+        std::fs::write(&node, "@echo off\r\nexit /b 1\r\n").unwrap();
+        let system32 = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let path = std::env::join_paths([&shim_dir, &user_dir, &system32]).unwrap();
+        let paths = shim_paths_for(&root.join("missing app"));
+        for (name, cmd, ps1) in [
+            (
+                "npx",
+                build_npx_cmd_shim(&paths),
+                build_npx_ps1_shim(&paths),
+            ),
+            (
+                "npm",
+                build_npm_cmd_shim(&paths),
+                build_npm_ps1_shim(&paths),
+            ),
+        ] {
+            std::fs::write(
+                user_dir.join(format!("{name}.cmd")),
+                format!("@echo off\r\necho FORWARDER\r\n{name} %*\r\n"),
+            )
+            .unwrap();
+            for (extension, content) in [("cmd", cmd), ("ps1", ps1)] {
+                let shim = shim_dir.join(format!("{name}.{extension}"));
+                std::fs::write(&shim, content).unwrap();
+                let output = run_npm_shim_fixture(&shim, &node, &path).await;
+                assert_eq!(
+                    output.status.code(),
+                    Some(1),
+                    "{shim:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stdout)
+                        .matches("FORWARDER")
+                        .count(),
+                    1,
+                    "{shim:?}"
+                );
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains("NPM_REENTRY_LIMIT"),
+                    "{shim:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn npm_shims_allow_forwarding_to_a_different_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
+        let shim_dir = root.join("desktop bin");
+        let first_dir = root.join("first user bin");
+        let second_dir = root.join("second user bin");
+        for path in [&shim_dir, &first_dir, &second_dir] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        let node = root.join("node.cmd");
+        std::fs::write(&node, "@echo off\r\nexit /b 1\r\n").unwrap();
+        let system32 = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let path = std::env::join_paths([&shim_dir, &first_dir, &second_dir, &system32]).unwrap();
+        let next_path = std::env::join_paths([&shim_dir, &second_dir, &system32]).unwrap();
+        let paths = shim_paths_for(&root.join("missing app"));
+        for (name, cmd, ps1) in [
+            (
+                "npx",
+                build_npx_cmd_shim(&paths),
+                build_npx_ps1_shim(&paths),
+            ),
+            (
+                "npm",
+                build_npm_cmd_shim(&paths),
+                build_npm_ps1_shim(&paths),
+            ),
+        ] {
+            std::fs::write(
+                first_dir.join(format!("{name}.cmd")),
+                format!(
+                    "@echo off\r\nset \"PATH={}\"\r\n{name} %*\r\n",
+                    next_path.to_string_lossy()
+                ),
+            )
+            .unwrap();
+            std::fs::write(
+                second_dir.join(format!("{name}.cmd")),
+                "@echo off\r\necho TARGET=[%~1]\r\nexit /b 37\r\n",
+            )
+            .unwrap();
+            for (extension, content) in [("cmd", cmd), ("ps1", ps1)] {
+                let shim = shim_dir.join(format!("{name}.{extension}"));
+                std::fs::write(&shim, content).unwrap();
+                let output = run_npm_shim_fixture(&shim, &node, &path).await;
+                assert_eq!(
+                    output.status.code(),
+                    Some(37),
+                    "{shim:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stdout).trim(),
+                    "TARGET=[--version]",
+                    "{shim:?}"
+                );
+            }
+        }
     }
 
     /// 真实执行生成的 `npx.ps1`：DSH_NODE 指向的目录没有 npm 时回落到捆绑 cli。

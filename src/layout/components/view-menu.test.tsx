@@ -29,6 +29,7 @@ vi.mock('@/store', () => ({ store }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'macos' }))
 vi.mock('@tanstack/react-query', () => ({
+  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQuery: () => ({ data: [] }),
   useQueryClient: () => ({ ensureQueryData: () => Promise.resolve('dsh-tauri') }),
 }))
@@ -148,6 +149,30 @@ afterEach(() => {
 
 afterAll(() => {
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent })
+})
+
+describe('shell remote share availability', () => {
+  it.each(['starting', 'preinstall', 'error'])('hides remote sharing while the local service is %s', (status) => {
+    store.harness.status = status
+    render(<Webview />)
+    expect(screen.queryByRole('button', { name: 'remote.share' })).toBeNull()
+  })
+
+  it('hides remote sharing when local health is lost and restores it after recovery', () => {
+    const view = render(<Webview />)
+    expect(screen.getByRole('button', { name: 'remote.share' })).not.toBeNull()
+    store.harness.serviceHealthy = false
+    view.rerender(<Webview />)
+    expect(screen.queryByRole('button', { name: 'remote.share' })).toBeNull()
+    store.harness.serviceHealthy = true
+    view.rerender(<Webview />)
+    expect(screen.getByRole('button', { name: 'remote.share' })).not.toBeNull()
+  })
+
+  it('keeps remote sharing independent of SSH and LAN/tunnel settings while the service bridge is live', () => {
+    render(<Navbar onRemoteChange={vi.fn()} onToggleSidebar={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'remote.share' })).not.toBeNull()
+  })
 })
 
 describe('native View menu state', () => {

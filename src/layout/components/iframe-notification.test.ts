@@ -9,14 +9,20 @@ const mocks = vi.hoisted(() => ({
   requestPermission: vi.fn<() => Promise<NotificationPermission>>(),
   registerActionTypes: vi.fn(),
   sendNotification: vi.fn(),
+  openConfigDialog: vi.fn(),
+  toast: vi.fn(),
   onMessage: undefined as ((data: Record<string, unknown>) => void) | undefined,
 }))
 
 vi.mock('@choochmeque/tauri-plugin-notifications-api', () => mocks)
+vi.mock('@heroui/react', () => ({ toast: mocks.toast }))
+vi.mock('@overlastic/react', () => ({ useOverlay: () => mocks.openConfigDialog }))
+vi.mock('@/ui/dialog/config', () => ({ ConfigDialog: () => null }))
 vi.mock('@reause/core', () => ({
   useEventListener: vi.fn(),
   useWatch: vi.fn(),
   useTimeoutFn: () => ({ start: vi.fn(), stop: vi.fn() }),
+  useUnmountedRef: () => ({ current: false }),
 }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
@@ -60,6 +66,7 @@ beforeEach(() => {
   mocks.requestPermission.mockResolvedValue('granted')
   mocks.registerActionTypes.mockResolvedValue(undefined)
   mocks.sendNotification.mockResolvedValue(undefined)
+  mocks.openConfigDialog.mockResolvedValue(undefined)
   vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   renderToStaticMarkup(createElement(Iframe, {
@@ -70,6 +77,30 @@ beforeEach(() => {
 afterEach(() => {
   mocks.onMessage = undefined
   vi.restoreAllMocks()
+})
+
+describe('iframe desktop settings bridge', () => {
+  it('opens the existing application configuration from the validated frame message', async () => {
+    mocks.onMessage!({ type: 'dsh://desktop-settings:open', tab: 'plugins' })
+    await settle()
+    expect(mocks.openConfigDialog).toHaveBeenCalledExactlyOnceWith({ tab: 'application' })
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('does not treat normal dialog cancellation as a failure', async () => {
+    mocks.openConfigDialog.mockRejectedValue(undefined)
+    mocks.onMessage!({ type: 'dsh://desktop-settings:open' })
+    await settle()
+    expect(mocks.openConfigDialog).toHaveBeenCalledOnce()
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('reports a configuration opening failure', async () => {
+    mocks.openConfigDialog.mockRejectedValue(new Error('overlay unavailable'))
+    mocks.onMessage!({ type: 'dsh://desktop-settings:open' })
+    await settle()
+    expect(mocks.toast).toHaveBeenCalledExactlyOnceWith('messages.open_settings_failed', { variant: 'danger' })
+  })
 })
 
 describe('iframe native notification authorization', () => {

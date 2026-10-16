@@ -187,8 +187,14 @@ pub fn enable_notification_permissions(
             crate::config::get_dsh_service_url(crate::config::DSH_PORT),
             crate::config::get_dsh_service_url(crate::config::DSH_DEV_PORT),
         ];
-        let store_port = crate::config::get_store_dat_setting(parent.app_handle()).port;
-        let store_origin = crate::config::get_dsh_service_url(store_port);
+        let profile = crate::service::workflow::instances::window_profile(
+            parent.app_handle(),
+            parent.label(),
+        );
+        let port = crate::service::workflow::instances::scope_sync(profile, || {
+            crate::service::workflow::instances::port(parent.app_handle())
+        });
+        let store_origin = crate::config::get_dsh_service_url(port);
         if !origins.contains(&store_origin) {
             origins.push(store_origin);
         }

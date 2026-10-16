@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::config;
 use crate::service::cli;
@@ -36,7 +36,7 @@ use super::process::is_process_cleanup_failure;
 /// 命中条件：插件被 profile 清单引用（`dependencies` 键或 `dsh.profile.bundles`
 /// 列表，按实际 npm 包名 `installed_name`），但其包目录在 `node_modules` 下
 /// 缺少 `package.json`（目录不存在、被删、或只是残壳都不算就绪）。
-fn missing_plugin_ids(
+pub(super) fn missing_plugin_ids(
     presets: &[PreinstallPluginInfo],
     dependencies: &HashMap<String, String>,
     bundles: &[String],
@@ -152,9 +152,8 @@ async fn repair_with_pnpm_install(app_handle: &AppHandle, profile: &Path) -> Res
         .any(|arg| arg.as_os_str() == bundled.as_os_str());
     args.push(OsString::from("install"));
 
-    let window = app_handle
-        .get_webview_window("main")
-        .ok_or("WINDOW_NOT_FOUND: main window missing")?;
+    let window = crate::utils::operation_window(app_handle)
+        .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
     let envs = build_plugin_envs(app_handle, prefer_bundled);
     log::info!(
         "repairing profile node_modules via pnpm install in {}",

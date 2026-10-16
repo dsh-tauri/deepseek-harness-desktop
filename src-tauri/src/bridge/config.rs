@@ -9,8 +9,18 @@ use tauri::AppHandle;
 
 /// 当前桌面端配置
 #[tauri::command]
-pub async fn get_app_config(app_handle: AppHandle) -> Result<config::Setting, String> {
-    Ok(config::get_store_dat_setting(&app_handle))
+pub async fn get_app_config(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<config::Setting, String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let mut setting = config::get_store_dat_setting(&app_handle);
+        setting.active_profile = crate::service::profile::active_profile(&app_handle);
+        setting.port = crate::service::workflow::instances::port(&app_handle);
+        Ok(setting)
+    })
+    .await
 }
 
 /// 当前设置下 Harness 进程实际生效的 V8 old-space 上限（MB）。
@@ -47,6 +57,7 @@ pub fn is_dev_build() -> bool {
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_app_config(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     proxy_url: Option<String>,
     appearance: Option<config::Appearance>,
@@ -111,6 +122,12 @@ pub async fn update_app_config(
         if let Some(include) = backup_include_credentials {
             setting.backup_include_credentials = include;
         }
+    });
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    let mut setting = setting;
+    setting.active_profile = profile.clone();
+    setting.port = crate::service::workflow::instances::scope_sync(profile, || {
+        crate::service::workflow::instances::port(&app_handle)
     });
     Ok(setting)
 }

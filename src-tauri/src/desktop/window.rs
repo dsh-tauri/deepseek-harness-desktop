@@ -104,6 +104,9 @@ pub fn on_page_load(
         let parent = webview_window.clone();
         if let Err(e) = webview_window.with_webview(move |platform| {
             disable_external_drop(&platform);
+            if let Err(error) = crate::desktop::frontend_preload::install(&platform, &parent) {
+                log::warn!("FRONTEND_PRELOAD_UNAVAILABLE: {error}");
+            }
             if let Err(e) =
                 crate::desktop::notification::enable_notification_permissions(platform, parent)
             {
@@ -120,10 +123,83 @@ pub fn on_page_load(
 /// 异步命令（不占用主线程）是唯一安全的调用侧：`WebviewWindowBuilder::build()`
 /// 需要主线程事件循环回包，主线程调用会死锁（与 `pet::ensure_pet_window` 同约束）。
 #[tauri::command]
-pub async fn create_app_window(app_handle: AppHandle<Wry>) -> Result<(), String> {
-    crate::desktop::builder::build_extra_window(&app_handle)
+pub async fn create_app_window(
+    app_handle: AppHandle<Wry>,
+    window: WebviewWindow<Wry>,
+    session_id: Option<String>,
+    iframe_url: Option<String>,
+) -> Result<(), String> {
+    let _transition = crate::service::workflow::acquire_core_transition().await?;
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    let path = crate::service::workflow::instances::scope_sync(profile.clone(), || {
+        let origin =
+            config::get_dsh_service_url(crate::service::workflow::instances::port(&app_handle));
+        session_window_path(
+            session_id.as_deref(),
+            session_id.as_ref().map(|_| origin.as_str()),
+        )
+    })?;
+    let _ = iframe_url;
+    crate::desktop::builder::build_extra_window(&app_handle, path, &profile)
         .map(|_| ())
         .map_err(|error| format!("WINDOW_CREATE_FAILED: {error}"))
+}
+
+fn session_window_path(
+    session_id: Option<&str>,
+    iframe_url: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    let Some(session_id) = session_id else {
+        return Ok("index.html".into());
+    };
+    if session_id.trim().is_empty() || session_id.len() > 512 {
+        return Err("WINDOW_CREATE_FAILED: invalid sessionId".into());
+    }
+    let url = Url::parse(iframe_url.unwrap_or_default())
+        .map_err(|error| format!("WINDOW_CREATE_FAILED: invalid iframeUrl: {error}"))?;
+    if url.scheme() != "http"
+        || !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("WINDOW_CREATE_FAILED: iframeUrl must be a loopback HTTP origin".into());
+    }
+    let mut target = url.clone();
+    target
+        .query_pairs_mut()
+        .append_pair("sessionId", session_id)
+        .append_pair("iframeUrl", url.as_str());
+    Ok(format!("index.html#{}", target.query().unwrap_or_default()).into())
+}
+
+#[cfg(test)]
+mod session_window_tests {
+    use super::session_window_path;
+
+    #[test]
+    fn session_target_is_encoded_and_rejects_untrusted_urls() {
+        assert_eq!(
+            session_window_path(None, None).unwrap().to_str(),
+            Some("index.html")
+        );
+        assert_eq!(
+            session_window_path(Some("session &/?#"), Some("http://127.0.0.1:3080")).unwrap().to_str(),
+            Some("index.html#sessionId=session+%26%2F%3F%23&iframeUrl=http%3A%2F%2F127.0.0.1%3A3080%2F")
+        );
+        for url in [
+            "https://example.com",
+            "file:///x",
+            "http://localhost/api",
+            "http://u@localhost",
+            "http://localhost/?token=x",
+        ] {
+            assert!(session_window_path(Some("s1"), Some(url)).is_err());
+        }
+        assert!(session_window_path(Some(" "), Some("http://localhost:3080")).is_err());
+    }
 }
 
 /// 壳层导航栏「文件 → 退出」：与托盘「退出」同语义，走 `exit(0)` 完整退出
@@ -136,7 +212,7 @@ pub fn quit_app(app_handle: AppHandle<Wry>) {
 /// 壳层「帮助 → 切换开发者工具」：开/关调用方所在窗口的 WebView 检查器。
 ///
 /// 「切换」只能做到近似：只有 macOS 的 wkwebview 如实回报检查器状态；
-/// Windows 侧（wry 0.55 + WebView2）`is_devtools_open()` 恒为 false 且
+/// Windows 侧（wry 0.57 + WebView2）`is_devtools_open()` 恒为 false 且
 /// `close_devtools()` 是空实现，重复调用等价于再次打开/聚焦，不会误关。
 #[tauri::command]
 pub fn toggle_devtools(window: WebviewWindow<Wry>) {

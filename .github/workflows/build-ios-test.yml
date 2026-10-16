@@ -1,0 +1,23 @@
+name: Build iOS Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Commit, tag or branch to build; empty uses the dispatch ref
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ios-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-ipa:
+    uses: ./.github/workflows/build-ios.yml
+    with:
+      source_ref: ${{ inputs.source_ref }}

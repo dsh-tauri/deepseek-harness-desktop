@@ -68,6 +68,16 @@ export function postMcpCheck(body: Types.PostApiTauriExtensionMcpCheckBody, opti
   return ofetch<Types.PostApiTauriExtensionMcpCheckResponse>("/api/tauri/extension/mcp/check", { method: "post", body, ...options });
 }
 
+/** @method get */
+export function getMcpAuthorize(options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriExtensionMcpAuthorizeResponse>("/api/tauri/extension/mcp/authorize", { method: "get", ...options });
+}
+
+/** @method post */
+export function postMcpAuthorize(body: Types.PostApiTauriExtensionMcpAuthorizeBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriExtensionMcpAuthorizeResponse>("/api/tauri/extension/mcp/authorize", { method: "post", body, ...options });
+}
+
 /** @method post */
 export function postMcpCopy(body: Types.PostApiTauriExtensionMcpCopyBody, options?: FetchOptions) {
   return ofetch<Types.PostApiTauriExtensionMcpCopyResponse>("/api/tauri/extension/mcp/copy", { method: "post", body, ...options });

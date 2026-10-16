@@ -139,8 +139,9 @@ pub fn status(app_handle: &AppHandle) -> DataDirStatus {
     let data_dir = crate::config::get_dsh_data_path(app_handle);
     let default_dir = env::default_home();
     let env_override = env::read_user_home().ok().flatten().unwrap_or_default();
-    let backups: Vec<MigrationBackup> =
-        migrate::find_backups(app_handle, &data_dir).into_iter().collect();
+    let backups: Vec<MigrationBackup> = migrate::find_backups(app_handle, &data_dir)
+        .into_iter()
+        .collect();
     let rollback_available = !backups.is_empty();
     DataDirStatus {
         supported: !cfg!(debug_assertions),
@@ -197,11 +198,7 @@ fn entries_in(root: &Path) -> Result<Vec<DataDirEntry>, String> {
 /// 迁移预检：目标合法性、磁盘空间、来源（是否用户上次用过的位置）。
 ///
 /// 预检与真正迁移共用 `migrate::plan`，避免「预检说没问题、执行时才拒绝」的错位。
-pub fn preview(
-    app_handle: &AppHandle,
-    parent: &Path,
-    leaf: &str,
-) -> Result<MigrationPlan, String> {
+pub fn preview(app_handle: &AppHandle, parent: &Path, leaf: &str) -> Result<MigrationPlan, String> {
     let source = crate::config::get_dsh_data_path(app_handle);
     let target = join_leaf(parent, leaf)?;
     migrate::plan(app_handle, &source, &target)
@@ -272,7 +269,27 @@ pub(crate) fn harness_markers(root: &Path) -> [HarnessMarker; 2] {
     crate::config::HARNESS_PID_MARKER_NAMES.map(|name| harness_marker_at(&root.join(name)))
 }
 
-/// 无 `AppHandle` 版本：路径由调用方给出，便于用临时目录直接测三种分类。
+pub(crate) fn all_harness_markers(root: &Path) -> Vec<HarnessMarker> {
+    let mut markers = harness_markers(root).to_vec();
+    match std::fs::read_dir(root.join("profiles")) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry {
+                    Ok(entry) if entry.path().is_dir() => {
+                        markers.extend(harness_markers(&entry.path()))
+                    }
+                    Ok(_) => {}
+                    Err(_) => markers.push(HarnessMarker::Invalid),
+                }
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(_) => markers.push(HarnessMarker::Invalid),
+    }
+    markers
+}
+
+/// 无 AppHandle 的标记读取。
 fn harness_marker_at(marker: &Path) -> HarnessMarker {
     let text = match std::fs::read_to_string(marker) {
         Ok(text) => text,
@@ -295,7 +312,7 @@ fn harness_marker_at(marker: &Path) -> HarnessMarker {
 
 // 两个通道共享 DSH_HOME；任一仍在运行或标记不可读都不能迁移。
 pub(super) fn harness_stopped(root: &Path) -> bool {
-    harness_markers(root)
+    all_harness_markers(root)
         .into_iter()
         .all(|marker| match marker {
             HarnessMarker::Missing => true,
@@ -344,9 +361,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn profile_markers_block_migration_when_live_or_unreadable() {
+        let root = std::env::temp_dir().join(format!("dsh-profile-marker-{}", std::process::id()));
+        let profile = root.join("profiles").join("isolation-check");
+        std::fs::create_dir_all(&profile).unwrap();
+        let marker = profile.join(crate::config::HARNESS_PID_MARKER_NAMES[0]);
+        std::fs::write(&marker, format!("{}\n41000\n", std::process::id())).unwrap();
+        assert!(!harness_stopped(&root));
+        assert!(all_harness_markers(&root).contains(&HarnessMarker::Pid(std::process::id())));
+        std::fs::write(&marker, "invalid").unwrap();
+        assert!(!harness_stopped(&root));
+        std::fs::remove_file(marker).unwrap();
+        assert!(harness_stopped(&root));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn join_leaf_accepts_plain_names_only() {
         let parent = Path::new("D:\\");
-        assert_eq!(join_leaf(parent, "DSHHome").unwrap(), parent.join("DSHHome"));
+        assert_eq!(
+            join_leaf(parent, "DSHHome").unwrap(),
+            parent.join("DSHHome")
+        );
         assert_eq!(
             join_leaf(parent, " DSH Home ").unwrap(),
             parent.join("DSH Home")
@@ -421,7 +457,9 @@ mod tests {
         // 真正的读取错误仍要报出来，别把权限问题也当成空目录
         let file = root.with_extension("txt");
         std::fs::write(&file, "not a directory").unwrap();
-        assert!(entries_in(&file).unwrap_err().starts_with("DATA_DIR_READ: "));
+        assert!(entries_in(&file)
+            .unwrap_err()
+            .starts_with("DATA_DIR_READ: "));
         let _ = std::fs::remove_file(&file);
     }
 

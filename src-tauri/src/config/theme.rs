@@ -142,17 +142,15 @@ fn parse_theme_preference(content: &str) -> Option<DshTheme> {
 /// 可同步，无需（也无从）调用。
 #[cfg(target_os = "macos")]
 pub fn apply_window_theme(app_handle: &AppHandle, theme: DshTheme) {
-    let Some(window) = app_handle.get_webview_window("main") else {
-        log::debug!("apply_window_theme: main window not built yet");
-        return;
-    };
     let appearance = match theme {
         DshTheme::System => None,
         DshTheme::Light => Some(tauri::Theme::Light),
         DshTheme::Dark => Some(tauri::Theme::Dark),
     };
-    if let Err(err) = window.set_theme(appearance) {
-        log::warn!("[theme] failed to sync native window appearance: {err}");
+    for window in app_handle.webview_windows().into_values() {
+        if let Err(err) = window.set_theme(appearance) {
+            log::warn!("[theme] failed to sync native window appearance: {err}");
+        }
     }
 }
 
@@ -273,14 +271,26 @@ mod tests {
     #[test]
     fn window_background_follows_preference() {
         let rgba = |c: Option<tauri::webview::Color>| c.map(|c| (c.0, c.1, c.2, c.3));
-        assert_eq!(rgba(window_background(DshTheme::Light, None)), Some((0xFF, 0xFF, 0xFF, 0xFF)));
-        assert_eq!(rgba(window_background(DshTheme::Dark, None)), Some((0x15, 0x15, 0x17, 0xFF)));
         assert_eq!(
-            rgba(window_background(DshTheme::System, Some(tauri::Theme::Dark))),
+            rgba(window_background(DshTheme::Light, None)),
+            Some((0xFF, 0xFF, 0xFF, 0xFF))
+        );
+        assert_eq!(
+            rgba(window_background(DshTheme::Dark, None)),
             Some((0x15, 0x15, 0x17, 0xFF))
         );
         assert_eq!(
-            rgba(window_background(DshTheme::System, Some(tauri::Theme::Light))),
+            rgba(window_background(
+                DshTheme::System,
+                Some(tauri::Theme::Dark)
+            )),
+            Some((0x15, 0x15, 0x17, 0xFF))
+        );
+        assert_eq!(
+            rgba(window_background(
+                DshTheme::System,
+                Some(tauri::Theme::Light)
+            )),
             Some((0xFF, 0xFF, 0xFF, 0xFF))
         );
         assert_eq!(window_background(DshTheme::System, None), None);
@@ -294,15 +304,25 @@ mod tests {
             ("ui-theme:\n  preference: system\n", DshTheme::System),
         ];
         for (content, expected) in cases {
-            assert_eq!(parse_theme_preference(content), Some(expected), "content={content:?}");
+            assert_eq!(
+                parse_theme_preference(content),
+                Some(expected),
+                "content={content:?}"
+            );
         }
     }
 
     /// 未知取值与整段缺失都返回 `None`，由调用方回退 `DEFAULT_THEME`。
     #[test]
     fn rejects_unknown_and_missing_preference() {
-        assert_eq!(parse_theme_preference("ui-theme:\n  preference: blue\n"), None);
-        assert_eq!(parse_theme_preference("ui-theme:\n  density: compact\n"), None);
+        assert_eq!(
+            parse_theme_preference("ui-theme:\n  preference: blue\n"),
+            None
+        );
+        assert_eq!(
+            parse_theme_preference("ui-theme:\n  density: compact\n"),
+            None
+        );
         assert_eq!(parse_theme_preference("editor:\n  fontSize: 12\n"), None);
     }
 }

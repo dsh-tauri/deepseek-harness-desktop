@@ -5,6 +5,7 @@ import { HERO_WORKSPACE_EFFECT, IM_PANEL_EFFECT, LOCALE_EFFECT, NEW_SESSION_EFFE
 import { locale } from './locales'
 import { composerResumeFeature } from './register/composer-resume'
 import { registerContinueNotice } from './register/continue-notice'
+import { registerDesktopSettings } from './register/desktop-settings'
 import { heroWorkspaceFeature } from './register/hero-workspace'
 import { registerImPanel } from './register/im-panel'
 import { sidebarNewSessionFeature, ungroupedNewSessionFeature } from './register/new-session'
@@ -47,4 +48,5 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(composerResumeFeature, COMPOSER_RESUME_EFFECT)
   ctx.effect(registerContinueNotice, CONTINUE_NOTICE_EFFECT)
   ctx.effect(registerImPanel, IM_PANEL_EFFECT)
+  ctx.effect(registerDesktopSettings, `${PLUGIN_ID}: desktop settings`)
 }

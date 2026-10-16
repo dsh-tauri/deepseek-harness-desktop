@@ -17,6 +17,7 @@ export const pet = defineStore({
     /** 清单是否装载过（设置页首屏加载态判定）。 */
     catalogLoaded: false,
     presetPets: [] as PresetPetItem[],
+    petUpdates: [] as string[],
     chatPets: [] as PetListItem[],
     codexPets: [] as PetListItem[],
     /** 待注入的新会话草稿（sessionId → 文本）。 */
@@ -56,8 +57,25 @@ export const pet = defineStore({
     setForceXwayland(enabled: boolean): void {
       this.forceXwayland = enabled
     },
+    setPresetPets(list: PresetPetItem[]): void {
+      this.presetPets = list
+    },
+    setPetUpdates(ids: string[]): void {
+      this.petUpdates = ids
+    },
+    replacePresetPet(item: PresetPetItem): void {
+      this.presetPets = this.presetPets.map(pet => pet.id === item.id ? item : pet)
+      this.petUpdates = this.petUpdates.filter(id => id !== item.id)
+    },
     setCodexPets(list: PetListItem[]): void {
       this.codexPets = list
+    },
+    /** 摘掉已删除的条目；清单刷新失败时卡片不能继续留在列表里。 */
+    removePet(id: string): void {
+      this.presetPets = this.presetPets.filter(item => item.id !== id)
+      this.petUpdates = this.petUpdates.filter(item => item !== id)
+      this.chatPets = this.chatPets.filter(item => item.id !== id)
+      this.codexPets = this.codexPets.filter(item => item.id !== id)
     },
     setPrefill(sessionId: string, draft: string): void {
       this.prefills[sessionId] = draft

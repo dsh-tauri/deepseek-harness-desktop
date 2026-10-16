@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, statSync } from 'node:fs'
-import { basename, isAbsolute, join, resolve, sep } from 'node:path'
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 
 const MANIFEST_MAX_BYTES = 64 * 1024
 const SPRITESHEET_MAX_BYTES = 8 * 1024 * 1024
@@ -26,9 +26,9 @@ function checkId(id) {
   return true
 }
 
-function portableRelative(value) {
+function portableRelative(value, field = 'path') {
   if (typeof value !== 'string' || value.length === 0) {
-    fail('PET_PATH_INVALID: spritesheetPath must be a non-empty string')
+    fail(`PET_PATH_INVALID: ${field} must be a non-empty string`)
     return undefined
   }
   if (value.includes('\0') || value.includes('\\') || value.includes(':')) {
@@ -48,24 +48,193 @@ function portableRelative(value) {
   return normalized
 }
 
-function readBounded(path, limit, prefix) {
-  let stats
+function containedPath(directory, value, field, directoryOnly = false) {
+  const portable = portableRelative(value, field)
+  if (portable === undefined)
+    return undefined
   try {
-    stats = statSync(path)
+    const root = realpathSync(directory)
+    const candidate = realpathSync(resolve(directory, portable))
+    const inside = relative(root, candidate)
+    if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+      fail(`PET_PATH_INVALID: ${field} escapes the pet directory`)
+      return undefined
+    }
+    const stats = statSync(candidate)
+    if (directoryOnly ? !stats.isDirectory() : !stats.isFile()) {
+      fail(`PET_ASSET_READ_FAILED: ${field} must be a ${directoryOnly ? 'directory' : 'file'}`)
+      return undefined
+    }
+    return candidate
+  }
+  catch (error) {
+    fail(`PET_ASSET_READ_FAILED: ${field}: ${error.message}`)
+    return undefined
+  }
+}
+
+function readBounded(path, limit, prefix, read = true) {
+  if (path === undefined)
+    return undefined
+  try {
+    const stats = statSync(path)
+    if (!stats.isFile() || stats.size === 0 || stats.size > limit) {
+      fail(`${prefix}: ${path} must be a non-empty file of at most ${limit} bytes`)
+      return undefined
+    }
+    if (!read)
+      return stats.size
+    const bytes = readFileSync(path)
+    if (bytes.length > limit) {
+      fail(`${prefix}: ${path} exceeds the ${limit} byte limit`)
+      return undefined
+    }
+    return bytes
   }
   catch (error) {
     fail(`${prefix}: failed to read ${path}: ${error.message}`)
     return undefined
   }
-  if (!stats.isFile()) {
-    fail(`${prefix}: ${path} is not a file`)
-    return undefined
+}
+
+function parseJsonc(bytes) {
+  const text = bytes.toString('utf8').replace(/^\uFEFF/, '')
+  const stripped = text.replace(/"(?:\\[\s\S]|[^"\\])*"|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g, token => token.startsWith('"') ? token : ' ')
+  return JSON.parse(stripped.replace(/"(?:\\[\s\S]|[^"\\])*"|,\s*(?=[}\]])/g, token => token.startsWith('"') ? token : ''))
+}
+
+function object(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function animationNames(config) {
+  const names = new Set()
+  function slot(value, field, empty = false) {
+    const entries = typeof value === 'string' ? [value] : value
+    if (!Array.isArray(entries) || (!empty && entries.length === 0)) {
+      fail(`PET_CONFIG_INVALID: ${field} must be a string or ${empty ? '' : 'non-empty '}string array`)
+      return
+    }
+    for (const name of entries) {
+      if (portableRelative(name, field) === undefined || name.includes('/')) {
+        fail(`PET_CONFIG_INVALID: ${field} must contain plain animation names`)
+        continue
+      }
+      names.add(name)
+    }
   }
-  if (stats.size > limit) {
-    fail(`${prefix}: ${path} exceeds the ${limit} byte limit`)
-    return undefined
+  function motions(value, field) {
+    if (!object(value)) {
+      fail(`PET_CONFIG_INVALID: ${field} must be an object`)
+      return
+    }
+    for (const [motion, entry] of Object.entries(value))
+      slot(entry, `${field}.${motion}`)
   }
-  return readFileSync(path)
+  if (config.motions !== undefined)
+    motions(config.motions, 'motions')
+  if (config.animations !== undefined) {
+    const pools = config.animations
+    if (!object(pools)) {
+      fail('PET_CONFIG_INVALID: animations must be an object')
+      return names
+    }
+    for (const key of ['idle', 'turn', 'drag', 'clicks']) {
+      if (pools[key] !== undefined)
+        slot(pools[key], `animations.${key}`, true)
+    }
+    if (pools.motions !== undefined)
+      motions(pools.motions, 'animations.motions')
+    if (pools.moves !== undefined) {
+      if (!object(pools.moves) || !Array.isArray(pools.moves.actions)) {
+        fail('PET_CONFIG_INVALID: animations.moves.actions must be an array')
+      }
+      else {
+        for (const action of pools.moves.actions)
+          slot(action?.name, 'animations.moves.actions.name')
+      }
+    }
+    if (pools.categories !== undefined) {
+      if (!Array.isArray(pools.categories)) {
+        fail('PET_CONFIG_INVALID: animations.categories must be an array')
+      }
+      else {
+        for (const category of pools.categories)
+          slot(category?.actions, 'animations.categories.actions', true)
+      }
+    }
+    if (pools.events !== undefined) {
+      if (!object(pools.events)) {
+        fail('PET_CONFIG_INVALID: animations.events must be an object')
+      }
+      else {
+        for (const [event, slots] of Object.entries(pools.events)) {
+          if (!Array.isArray(slots)) {
+            fail(`PET_CONFIG_INVALID: animations.events.${event} must be an array`)
+          }
+          else {
+            for (const value of slots)
+              slot(value, `animations.events.${event}`, true)
+          }
+        }
+      }
+    }
+  }
+  if (names.size === 0)
+    fail('PET_CONFIG_INVALID: motions or animations must reference at least one video')
+  return names
+}
+
+function validateVideo(directory, manifest) {
+  if (!object(manifest.ext) || manifest.ext.default !== 'webm' || (manifest.ext.mac !== undefined && !['webm', 'mov'].includes(manifest.ext.mac)))
+    fail('PET_MANIFEST_INVALID: ext.default must be webm and ext.mac must be webm or mov')
+  if (manifest.size !== undefined && (typeof manifest.size !== 'number' || !Number.isFinite(manifest.size) || manifest.size <= 0 || manifest.size > 4096))
+    fail('PET_MANIFEST_INVALID: size must be a finite number greater than 0 and at most 4096')
+  const configBytes = readBounded(containedPath(directory, manifest.configPath, 'configPath'), 1024 * 1024, 'PET_CONFIG_READ_FAILED')
+  let config
+  if (configBytes !== undefined) {
+    try {
+      config = parseJsonc(configBytes)
+      if (!object(config))
+        fail('PET_CONFIG_INVALID: config must be a JSONC object')
+    }
+    catch (error) {
+      fail(`PET_CONFIG_INVALID: ${error.message}`)
+    }
+  }
+  const preview = readBounded(containedPath(directory, manifest.previewPath, 'previewPath'), 8 * 1024 * 1024, 'PET_PREVIEW_READ_FAILED')
+  if (preview !== undefined) {
+    if (preview.length < 13 || !['GIF87a', 'GIF89a'].includes(preview.subarray(0, 6).toString('ascii'))) {
+      fail('PET_PREVIEW_INVALID: preview must have a GIF87a or GIF89a header')
+    }
+    else {
+      const width = preview.readUInt16LE(6)
+      const height = preview.readUInt16LE(8)
+      if (width === 0 || width > 4096 || width !== height)
+        fail('PET_PREVIEW_INVALID: GIF must be square with dimensions 1..4096')
+      else
+        notes.push(`GIF preview ${width}x${height} (header only)`)
+    }
+  }
+  const videoRoot = containedPath(directory, manifest.uriPath, 'uriPath', true)
+  const macRoot = manifest.macUriPath === undefined ? undefined : containedPath(directory, manifest.macUriPath, 'macUriPath', true)
+  if (manifest.macUriPath !== undefined && manifest.ext?.mac !== 'mov')
+    fail('PET_MANIFEST_INVALID: macUriPath requires ext.mac mov')
+  if (manifest.ext?.mac === 'mov' && manifest.macUriPath === undefined)
+    fail('PET_MANIFEST_INVALID: ext.mac mov requires macUriPath')
+  if (object(config)) {
+    const names = animationNames(config)
+    for (const name of names) {
+      if (videoRoot !== undefined)
+        readBounded(containedPath(directory, `${manifest.uriPath}/${name}.webm`, `video ${name}`), 512 * 1024 * 1024, 'PET_VIDEO_READ_FAILED', false)
+      if (macRoot !== undefined)
+        readBounded(containedPath(directory, `${manifest.macUriPath}/${name}.mov`, `mac video ${name}`), 512 * 1024 * 1024, 'PET_VIDEO_READ_FAILED', false)
+    }
+    notes.push(`video configuration references ${names.size} animation(s)`)
+  }
+  if (manifest.macUriPath === undefined)
+    notes.push('macOS unsupported by this package: macUriPath is absent')
+  notes.push('static package checks only; video decoding, alpha and macOS playback are NOT verified')
 }
 
 function grid(declared, width, height) {
@@ -166,7 +335,7 @@ function main() {
     notes.push(`${directory} is not a direct child of a "pets" directory; the host enumerates only <DSH_HOME>/pets/*`)
   }
 
-  const manifestBytes = readBounded(join(directory, 'pet.json'), MANIFEST_MAX_BYTES, 'PET_MANIFEST_READ_FAILED')
+  const manifestBytes = readBounded(containedPath(directory, 'pet.json', 'pet.json'), MANIFEST_MAX_BYTES, 'PET_MANIFEST_READ_FAILED')
   if (manifestBytes === undefined) {
     report()
     return
@@ -187,6 +356,16 @@ function main() {
   }
 
   checkId(manifest.id)
+  for (const field of ['displayName', 'description', 'kind']) {
+    if (manifest[field] !== undefined && manifest[field] !== null && typeof manifest[field] !== 'string')
+      fail(`PET_MANIFEST_INVALID: ${field} must be a string`)
+  }
+  if (manifest.kind === 'dsh') {
+    notes.push(`id resolves to chat:${manifest.id}`)
+    validateVideo(directory, manifest)
+    report()
+    return
+  }
 
   let declared
   if (manifest.spriteVersionNumber !== undefined && manifest.spriteVersionNumber !== null) {
@@ -202,37 +381,7 @@ function main() {
     report()
     return
   }
-  const relativePath = portableRelative(manifest.spritesheetPath)
-  if (relativePath === undefined) {
-    report()
-    return
-  }
-
-  let root
-  try {
-    root = realpathSync(directory)
-  }
-  catch (error) {
-    fail(`PET_ASSET_READ_FAILED: failed to resolve ${directory}: ${error.message}`)
-    report()
-    return
-  }
-
-  let assetPath
-  try {
-    assetPath = realpathSync(resolve(directory, relativePath))
-  }
-  catch (error) {
-    fail(`PET_ASSET_READ_FAILED: failed to resolve asset: ${error.message}`)
-    report()
-    return
-  }
-  if (!assetPath.startsWith(root + sep)) {
-    fail('PET_PATH_INVALID: spritesheetPath escapes the pet directory')
-    report()
-    return
-  }
-
+  const assetPath = containedPath(directory, manifest.spritesheetPath, 'spritesheetPath')
   const assetBytes = readBounded(assetPath, SPRITESHEET_MAX_BYTES, 'PET_ASSET_READ_FAILED')
   if (assetBytes === undefined) {
     report()
@@ -253,7 +402,7 @@ function report() {
     console.log(`note: ${note}`)
   }
   if (problems.length === 0) {
-    console.log('ok: pet satisfies the host contract')
+    console.log('ok: static pet package validation passed (media decoding and alpha not verified)')
     process.exitCode = 0
     return
   }

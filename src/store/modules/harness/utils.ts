@@ -80,10 +80,10 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => reject(new Error('health check timeout')), 8000)
     })
-    const resultPromise = invoke<string>('proxy_health_check')
+    const resultPromise = invoke<string | { status: string, boot_html: string, service_url: string }>('proxy_health_check')
     const result = await Promise.race([resultPromise, timeoutPromise])
-
-    const lower = result.toLowerCase()
+    const status = typeof result === 'string' ? result : result.status
+    const lower = status.toLowerCase()
     if (lower.startsWith('healthy')) {
       // 正常路径不写日志：就绪轮询每 1s 成功一次，成功噪音只会盖住真正有用的
       // 失败重试行。
@@ -91,24 +91,22 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
         healthy: true,
         notOwned: false,
         phase: 'client-modules',
-        reason: result,
+        reason: status,
+        ...(typeof result === 'string' ? {} : { bootHtml: result.boot_html, bootOrigin: result.service_url }),
       }
     }
-    console.warn('[Harness] health check returned:', result)
+    console.warn('[Harness] health check returned:', status)
     return {
       healthy: false,
       notOwned: false,
       phase: 'client-modules',
-      reason: result,
+      reason: status,
     }
   }
   catch (err) {
     const message = String(err)
     if (message.includes('HARNESS_NOT_OWNED')) {
-      // dsh 进程已退出（典型如插件冲突导致启动即崩溃），继续等只会白白耗完
-      // 当前阶段 deadline，让调用方立刻结束并展示日志里的真实错误。
-      // 运行期崩溃走的是另一条路径（handleProcessExit），这里能到就说明还在启动轮询里。
-      console.warn('[Harness] dsh process exited before readiness, failing fast')
+      console.warn('[Harness] no owned dsh process, failing health check')
       return {
         healthy: false,
         notOwned: true,

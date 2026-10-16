@@ -32,12 +32,13 @@ import { TaskManagerDialog } from '@/ui/dialog/task-manager'
 import { DesktopUpdateDialog } from '@/ui/dialog/update'
 import { writeClipboardText } from '@/utils/clipboard'
 import { toast } from '@/utils/toast'
+import { RemoteShare } from './remote-share'
 import { RemoteSwitcher } from './remote-switcher'
 
 /**
  * 壳层窗口顶部导航栏（44px，常驻）：
  *
- *   [侧边栏(展开/收起)] [文件][运行][帮助][更新可用] [ 空白拖拽区 ] [本地/远端] [最小化][最大化][后台化(X)]
+ *   [侧边栏(展开/收起)] [文件][运行][帮助][更新可用] [ 空白拖拽区 ] [远程][本地/远端] [最小化][最大化][后台化(X)]
  *
  * - 侧边栏：经 postMessage 操控 iframe 内的 dsh 应用
  *   （`dsh://sidebar:toggle`，由 dsh-tauri 插件的 `client/register/sidebar.ts`
@@ -47,7 +48,9 @@ import { RemoteSwitcher } from './remote-switcher'
  *   左侧控件只在「dsh-tauri 插件已启用（已安装）」且传入 `onToggleSidebar` 时渲染，
  *   原生桥缺席时控件没有可靠接收方，避免出现点了没反应的死按钮。
  * - 本地 / 远端：`RemoteSwitcher` 固定在右侧，SSH 功能未启用时
- *   自身不渲染（见 `remote-switcher.tsx`）；macOS 上其左侧是「更新可用」chip。
+ *   自身不渲染（见 `remote-switcher.tsx`）。
+ * - 远程：`RemoteShare` 紧邻切换器左侧，入站分享（局域网 / 公网隧道）与 SSH 开关无关，
+ *   与切换器共用服务可用门槛（见 `remote-share.tsx`）；齿轮入口经 `onOpenRemoteAccess` 定位到本机访问页。
  * - 文件：新建窗口（Tauri 再开一个 webview）/ 新聊天、打开文件夹（经协议调用 dsh 官方
  *   「新建会话」「添加工作区」，接收方是 dsh-tauri 的 `client/register/navigation.ts`）/
  *   关闭（隐藏到托盘）/ 退出（完整退出）。两条依赖 iframe 的项在回调缺席时禁用。
@@ -237,6 +240,8 @@ export interface NavbarProps {
   onOpenMachineManager?: () => void
   /** 同步到远端：向 iframe 发 `dsh://settings:open` 定位同步分区（与机器管理同级） */
   onOpenSyncToRemote?: () => void
+  /** 本机访问：远程分享弹层的齿轮入口，向 iframe 发 `dsh://settings:open` 定位远程插件的「远程访问」分区 */
+  onOpenRemoteAccess?: () => void
   /** 打开文件夹：向 iframe 发 `dsh://workspace:add`（dsh 官方「添加工作区」）；传入时该项可用 */
   onOpenFolder?: () => void
   /** 显示键盘快捷键：向 iframe 发 `dsh://shortcuts:open`，弹官方 `shortcuts.open` 弹层（官方蒙版）；传入时该项可用 */
@@ -244,7 +249,7 @@ export interface NavbarProps {
   onViewCommand?: (command: DshViewCommand) => void
 }
 
-export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onViewCommand, onOpenMachineManager, onOpenSyncToRemote }: NavbarProps) {
+export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onViewCommand, onOpenMachineManager, onOpenSyncToRemote, onOpenRemoteAccess }: NavbarProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const isFullscreen = useMacOSFullscreen()
@@ -842,8 +847,11 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
           同参数的 `background` / `backdrop-filter` 过渡（见 `getOverlayMarkedStyle`）。 */}
       <div className="absolute" style={dshStyle.marked || {}} />
 
-      {/* 「本地」/ 远端机器切换器：SSH 功能启用后才出现（未启用时组件自身不渲染），
-          固定在右侧，与左侧的文件/运行/帮助菜单分列两端（macOS 上左侧是「更新可用」chip）。 */}
+      {/* 右侧控件：入站分享（远程）排在本地/远端切换器之前；切换器在 SSH 未启用时自身不渲染。 */}
+      <If cond={onToggleSidebar != null}>
+        <RemoteShare onManage={onOpenRemoteAccess} />
+      </If>
+
       <RemoteSwitcher onChange={onRemoteChange} visible={onToggleSidebar != null} onManage={onOpenMachineManager} onSync={onOpenSyncToRemote} />
 
       <If cond={!IS_MACOS}>

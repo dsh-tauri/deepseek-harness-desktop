@@ -4,11 +4,17 @@ import { stripJsonc } from '../scripts/bundle-metadata.mjs'
 
 const manifest = JSON.parse(stripJsonc(
   readFileSync(new URL('../src-tauri/resources/manifest.jsonc', import.meta.url), 'utf8'),
-)) as { plugins: { preset: { id: string }[] } }
+)) as { plugins: { 'preset': { id: string }[], 'built-in': { id: string }[], 'depercated': string[] } }
 
 const presets = manifest.plugins.preset
 
 describe('community plugin presets', () => {
+  it('removes DSH Bridge from install presets without marking existing installs for removal', () => {
+    expect(presets.map(plugin => plugin.id)).not.toContain('@wenbin_wb/dsh-bridge')
+    expect(manifest.plugins['built-in'].map(plugin => plugin.id)).not.toContain('@wenbin_wb/dsh-bridge')
+    expect(manifest.plugins.depercated).not.toContain('@wenbin_wb/dsh-bridge')
+  })
+
   it('keeps DSH IM optional without the recommended badge', () => {
     expect(presets.filter(plugin => plugin.id === '@xmanrui/dsh-im')).toMatchObject([
       { spec: '@xmanrui/dsh-im', recommended: false, checked: false },

@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ConnectionHost } from '../types'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { gate } from './gate'
 
+const cleanups: Array<() => void | Promise<void>> = []
 const request = {} as IncomingMessage
 const response = {} as ServerResponse
 let host: ConnectionHost
@@ -10,12 +12,12 @@ let host: ConnectionHost
 /** 最小 connection 面：两道闸门都记账，用于断言是否调用了原实现。 */
 function makeHost(rejection: 401 | 403 | undefined) {
   const calls: string[] = []
-  const connection: ConnectionHost['connection'] = {
-    requestRejection: () => {
+  const connection = {
+    requestRejection: (_request: IncomingMessage) => {
       calls.push('requestRejection')
       return rejection
     },
-    authorizeIndex: () => {
+    authorizeIndex: (_request: IncomingMessage, _response: ServerResponse) => {
       calls.push('authorizeIndex')
       return false
     },
@@ -28,12 +30,120 @@ beforeEach(() => {
   vi.stubEnv('DSH_TAURI_EMBEDDED', undefined)
 })
 
-afterEach(() => {
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse())
+    await cleanup()
+  vi.restoreAllMocks()
   vi.stubEnv('DSH_TAURI_EMBEDDED', undefined)
   vi.unstubAllEnvs()
 })
 
+function modernService() {
+  const lifetime = new AbortController()
+  const browserPeer = { id: 'browser', signal: lifetime.signal }
+  const apiPeer = { id: 'api', signal: new AbortController().signal }
+  class Connection extends Service {
+    browserPeer = browserPeer
+    calls = 0
+    disposed = false
+    admit(req: IncomingMessage) {
+      this.calls += 1
+      if (req.headers?.origin === 'evil')
+        return { rejection: 403 as const }
+      return req.headers?.cookie === 'api' ? { peer: apiPeer } : { rejection: 401 as const }
+    }
+
+    requestRejection(req: IncomingMessage) {
+      const admission = this.admit(req)
+      return 'rejection' in admission ? admission.rejection : undefined
+    }
+
+    admitConnection(req: IncomingMessage) {
+      const admission = this.admit(req)
+      return 'rejection' in admission ? admission : { ...admission, release: async () => {} }
+    }
+  }
+  const context = new Context()
+  const connection = new Connection(context, 'connection')
+  cleanups.push(() => context.fiber.dispose())
+  return { context, connection, browserPeer, apiPeer, lifetime, Connection }
+}
+
+function attach(connection: unknown) {
+  const detach = gate.attach({ connection } as ConnectionHost)
+  cleanups.push(detach)
+  return detach
+}
+
+describe('gate.attach modern admission', () => {
+  beforeEach(() => vi.stubEnv('DSH_TAURI_EMBEDDED', '1'))
+
+  it('admits the existing browser peer for HTTP and connection upgrade', async () => {
+    const { connection, browserPeer } = modernService()
+    attach(connection)
+    expect(connection.admit(request)).toEqual({ peer: browserPeer })
+    const upgrade = connection.admitConnection(request)
+    expect(upgrade).toMatchObject({ peer: browserPeer, release: expect.any(Function) })
+    if ('release' in upgrade)
+      await upgrade.release()
+    expect(browserPeer.signal.aborted).toBe(false)
+    expect(connection.requestRejection(request)).toBeUndefined()
+  })
+
+  it('preserves API identity and Host/Origin rejection', () => {
+    const { connection, apiPeer } = modernService()
+    attach(connection)
+    expect(connection.admit({ headers: { cookie: 'api' } } as IncomingMessage)).toEqual({ peer: apiPeer })
+    expect(connection.admit({ headers: { origin: 'evil' } } as IncomingMessage)).toEqual({ rejection: 403 })
+    expect(connection.calls).toBe(2)
+  })
+
+  it('preserves service disposal rejection before the browser peer signal aborts', () => {
+    const { connection, browserPeer } = modernService()
+    attach(connection)
+    connection.disposed = true
+    expect(browserPeer.signal.aborted).toBe(false)
+    expect(connection.admit(request)).toEqual({ rejection: 401 })
+    expect(connection.requestRejection(request)).toBe(401)
+  })
+
+  it('does not revive a disposed browser peer through admission or requestRejection', () => {
+    const { connection, lifetime } = modernService()
+    attach(connection)
+    lifetime.abort()
+    expect(connection.admit(request)).toEqual({ rejection: 401 })
+    expect(connection.admitConnection(request)).toEqual({ rejection: 401 })
+    expect(connection.requestRejection(request)).toBe(401)
+  })
+
+  it('uses each Cordis access receiver and restores inherited property shape', () => {
+    const { connection, context, Connection } = modernService()
+    const instanceBefore = Object.getOwnPropertyDescriptors(connection)
+    const prototypeBefore = Object.getOwnPropertyDescriptors(Connection.prototype)
+    const detach = attach(context.connection)
+    expect(context.connection.admit(request)).toEqual({ peer: connection.browserPeer })
+    expect(context.extend().connection.admit(request)).toEqual({ peer: connection.browserPeer })
+    expect(connection.calls).toBe(2)
+    detach()
+    cleanups.pop()
+    const instanceAfter = Object.getOwnPropertyDescriptors(connection)
+    instanceAfter.calls = instanceBefore.calls!
+    expect(instanceAfter).toEqual(instanceBefore)
+    expect(Object.getOwnPropertyDescriptors(Connection.prototype)).toEqual(prototypeBefore)
+    expect(connection.admit(request)).toEqual({ rejection: 401 })
+  })
+})
+
 describe('gate.attach without the carrier marker', () => {
+  it.each([undefined, '0', 'true'])('does not change modern admission for marker %s', (marker) => {
+    vi.stubEnv('DSH_TAURI_EMBEDDED', marker)
+    const { connection } = modernService()
+    const original = connection.admit
+    attach(connection)
+    expect(connection.admit).toBe(original)
+    expect(connection.admit(request)).toEqual({ rejection: 401 })
+  })
+
   it('leaves both gates untouched', () => {
     const { connection } = makeHost(401)
     const rejection = connection.requestRejection
@@ -106,14 +216,15 @@ describe('gate.attach with the carrier marker', () => {
     const detach = gate.attach(host)
 
     expect(warn).not.toHaveBeenCalled()
-    const { connection } = host
-    expect(connection.authorizeIndex(request, response)).toBe(true)
+    expect(host.connection.authorizeIndex!(request, response)).toBe(true)
     detach()
-    expect(connection.authorizeIndex).toBe(authorizeIndex)
+    expect(host.connection.authorizeIndex).toBe(authorizeIndex)
   })
 
   it('restores both gates on detach', () => {
     const { connection } = makeHost(401)
+    Object.defineProperty(connection, 'requestRejection', { enumerable: false })
+    const descriptors = Object.getOwnPropertyDescriptors(connection)
     const rejection = connection.requestRejection
     const authorize = connection.authorizeIndex
 
@@ -121,6 +232,7 @@ describe('gate.attach with the carrier marker', () => {
 
     expect(connection.requestRejection).toBe(rejection)
     expect(connection.authorizeIndex).toBe(authorize)
+    expect(Object.getOwnPropertyDescriptors(connection)).toEqual(descriptors)
   })
 
   it('stays inert and warns when the core lacks the gates', () => {

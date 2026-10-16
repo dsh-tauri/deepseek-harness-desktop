@@ -769,18 +769,15 @@ pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), 
             "UPDATE_CHANNEL_UNSUPPORTED: nightly builds do not install stable updates".into(),
         );
     }
-    // 更新前先停下本应用持有的 Harness 服务：安装器在安装时会强杀桌面端进程
-    // （CheckIfAppIsRunning → taskkill），跳过正常退出路径的 stop_on_exit，导致
-    // Harness 子进程变成孤儿继续占用配置端口。若此刻不提前停掉，更新后新实例
-    // 启动会撞上 EADDRINUSE（旧 Harness 仍占着端口），表现为「更新后进不去」。
-    // 提前停止 → 端口释放并清掉 .harness.pid 标记，更新后启动即可绑定原端口。
-    // 仅在确有持有进程时才停（stop 在无持有进程时也会短暂等待端口释放，白耗
-    // 约 0.8s）；停止失败只告警不阻断——它是避免端口冲突的辅助手段，打开失败
-    // 另有 UPDATE_OPEN 的错误提示。
-    if workflow::has_owned_process() {
-        if let Err(e) = workflow::stop(app_handle.clone()).await {
-            log::warn!("Failed to stop Harness before opening installer: {}", e);
-        }
+    let _transition = workflow::acquire_core_transition().await?;
+    for profile in workflow::instances::profiles() {
+        workflow::instances::scope(profile, async {
+            if workflow::has_owned_process() {
+                workflow::stop(app_handle.clone()).await?;
+            }
+            Ok::<(), String>(())
+        })
+        .await?;
     }
     open_installer_now(app_handle, &path)?;
     // 安装包已交给系统 → 清除「待安装」标记，避免退出应用时重复拉起安装器。
@@ -801,6 +798,35 @@ pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn immediate_installer_stops_every_profile_before_handoff_and_propagates_failure() {
+        let source = include_str!("install.rs");
+        let opening = source
+            .split("pub async fn open_installer(")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let transition = opening
+            .find("workflow::acquire_core_transition().await?")
+            .unwrap();
+        let profiles = opening
+            .find("for profile in workflow::instances::profiles()")
+            .unwrap();
+        let scope = opening
+            .find("workflow::instances::scope(profile, async {")
+            .unwrap();
+        let stop = opening
+            .find("workflow::stop(app_handle.clone()).await?")
+            .unwrap();
+        let handoff = opening
+            .find("open_installer_now(app_handle, &path)?")
+            .unwrap();
+        assert!(transition < profiles && profiles < scope && scope < stop && stop < handoff);
+        assert!(opening[stop..handoff].contains(".await?;"));
+    }
 
     #[test]
     fn prune_installers_keeps_up_to_five() {

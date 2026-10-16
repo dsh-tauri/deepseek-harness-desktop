@@ -78,27 +78,6 @@ pub(crate) fn unresolved_entries_message(entries: &[UnresolvedPatchEntry]) -> St
     format!("{PATCH_ENTRY_UNRESOLVED}: {payload}")
 }
 
-/// 启动前预检：补丁层引用了装不出来的包时，用可操作的错误替代 loader 的裸堆栈。
-///
-/// 只在「必然被挂载」的条目上阻断（见模块说明）：这类条目本来就会让本次启动失败，
-/// 提前报错不改变结果，只是把原因说清楚并给出恢复入口。
-pub(crate) fn preflight_active_patch_entries(app_handle: &AppHandle) -> Result<(), String> {
-    let profile = super::installed::profile_dir(app_handle);
-    let dsh_home = crate::config::get_dsh_data_path(app_handle);
-    let install_anchor = crate::service::core::active_dsh_binary(app_handle);
-    let entries = scan_unresolved_entries_in(&profile, &dsh_home, Some(&install_anchor));
-    if entries.is_empty() {
-        return Ok(());
-    }
-    let names = entries
-        .iter()
-        .map(|entry| format!("{}:{} {}", entry.layer, entry.line, entry.name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    log::error!("{PATCH_ENTRY_UNRESOLVED}: {names}");
-    Err(unresolved_entries_message(&entries))
-}
-
 /// 从「当前档案层 + home 层」移除解析不到的 `insert` 条目并返回备份路径。
 pub(crate) fn strip_active_unresolved_entries(
     app_handle: &AppHandle,

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feat/mobile-sidebar]
+    branches: [main, native, feat/mobile-sidebar]
 
 permissions:
   contents: read
@@ -40,6 +40,28 @@ jobs:
           skip_after_successful_duplicate: true
           paths_ignore: '["**/docs/**", "**/*.md"]'
 
+  native:
+    name: Native typecheck and unit tests
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check native subproject
+        run: pnpm run typecheck:native
+
+      - name: Native unit test
+        run: pnpm run test:native
+
   # 单元测试（vitest）+ 类型检查 + lint：
   unit:
     name: Unit Tests (vitest)
@@ -55,6 +77,29 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install AppImage regression tools
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
+
+      - name: Test AppImage repacking
+        run: |
+          for seed in 1 2 3 4 5; do
+            node node_modules/vitest/vitest.mjs run --project unit test/appimage-host-libs.test.ts --sequence.shuffle --sequence.seed="$seed"
+          done
+
+      - name: Test iOS signing and Beta review guards without credentials
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ios_*.py' -v
+
+      - name: Install alpha.3 core for desktop admission regression
+        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-admission" --no-audit --no-fund @deepseek-ai/dsh@0.2.1-alpha.3
+
+      - name: Test desktop admission against alpha.3 gateway
+        env:
+          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-admission/node_modules/@deepseek-ai/dsh/lib/bin.js
+        run: |
+          for seed in 301 302 303 304 305; do
+            node node_modules/vitest/vitest.mjs run --project unit packages/dsh-tauri/src/host/service/gate.runtime.test.ts --sequence.shuffle --sequence.seed="$seed" || exit $?
+          done
 
       - name: Type check sources before generating declarations
         run: pnpm run typecheck
@@ -137,10 +182,18 @@ jobs:
           # 0.1.6 起上游改了设置侧栏分区名与未分组 chip 等文案，另需一轮 e2e 适配。
           npm install --no-audit --no-fund @deepseek-ai/dsh@0.1.5-rc.2
 
+      # dsh-tauri-remote 的入站暴露用例按当前内核（dsh-h3 设置分区与面板）写就，
+      # 与 extension-panel 同口径：legacy 内核排除，改由「Host and migrated plugin contracts」批次跑。
       - name: Plugin L2 test (legacy core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts --exclude test/e2e/plugins/dsh-tauri-scheduler.e2e.ts --exclude test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts
+        run: |
+          node node_modules/vitest/vitest.mjs run --project plugin \
+            --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-scheduler.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-remote-access.e2e.ts \
+            --exclude test/e2e/plugins/dsh-tauri-remote-panel.e2e.ts
 
       - name: Mobile settings composition (legacy core)
         env:
@@ -164,7 +217,7 @@ jobs:
       - name: Host and migrated plugin contracts (current core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts
+        run: node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-host-and-core-contract.e2e.ts test/e2e/plugins/dsh-tauri-model.e2e.ts test/e2e/plugins/dsh-tauri-worktree.e2e.ts test/e2e/plugins/dsh-tauri-experimental.e2e.ts test/e2e/plugins/dsh-tauri-remote-access.e2e.ts test/e2e/plugins/dsh-tauri-remote-panel.e2e.ts
 
       - name: Unified scheduler host and right-sidebar contracts (current core)
         id: scheduler_contracts
@@ -281,6 +334,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'

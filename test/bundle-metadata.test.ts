@@ -55,7 +55,8 @@ describe('bundle asset names', () => {
 
   it('mirrors the packaged core asset layout', () => {
     expect(bundleMetadata.dshAssetName('windows', 'x64')).toBe('deepseek-harness-pkg-windows.zip')
-    expect(bundleMetadata.dshAssetName('linux', 'arm64')).toBe('deepseek-harness-pkg-linux.zip')
+    expect(bundleMetadata.dshAssetName('linux', 'x64')).toBe('deepseek-harness-pkg-linux.zip')
+    expect(bundleMetadata.dshAssetName('linux', 'arm64')).toBe('deepseek-harness-pkg-linux-arm64.zip')
     expect(bundleMetadata.dshAssetName('macos', 'arm64')).toBe('deepseek-harness-pkg-macos-arm64.zip')
     expect(bundleMetadata.dshAssetName('macos', 'x64')).toBe('deepseek-harness-pkg-macos-x64.zip')
   })

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { PropsWithChildren } from 'react'
-import type { SshMachineRow } from './use-remote'
+import type { RemoteMachineRow } from './use-remote'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement, StrictMode } from 'react'
@@ -13,14 +13,14 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => windowInfo }))
 
 let client: QueryClient
-let rows: SshMachineRow[]
+let rows: RemoteMachineRow[]
 let enabled: boolean
 let listError: unknown
 let eventItems: { seq: number, line: string }[]
 let connect: (id: string) => Promise<{ tunnelBaseUrl: string }>
 const disconnect = vi.fn(async (_id: string) => ({}))
 
-function machineOf(partial: Partial<SshMachineRow> = {}): SshMachineRow {
+function machineOf(partial: Partial<RemoteMachineRow> = {}): RemoteMachineRow {
   return { id: 'm1', name: 'alpha', state: 'disconnected', ...partial }
 }
 
@@ -49,6 +49,7 @@ beforeEach(() => {
   listError = undefined
   eventItems = []
   windowInfo.label = 'main'
+  window.location.hash = ''
   Object.assign(window, { __TAURI_INTERNALS__: {} })
   disconnect.mockClear()
   connect = vi.fn(async (id: string) => {
@@ -58,15 +59,15 @@ beforeEach(() => {
   invoke.mockReset().mockImplementation(async (command: string, args: { method: string, payload: { machineId: string, sinceSeq?: number } }) => {
     expect(command).toBe('remote')
     switch (args.method) {
-      case 'GET /api/tauri/ssh/machines':
+      case 'GET /api/tauri/remote/machines':
         if (listError !== undefined)
           throw listError
         return { enabled, items: rows, discovered: [] }
-      case 'GET /api/tauri/ssh/machines/events':
+      case 'GET /api/tauri/remote/machines/events':
         return { items: eventItems.filter(item => item.seq >= (args.payload.sinceSeq ?? 0)) }
-      case 'POST /api/tauri/ssh/machines/connect':
+      case 'POST /api/tauri/remote/machines/connect':
         return connect(args.payload.machineId)
-      case 'POST /api/tauri/ssh/machines/disconnect':
+      case 'POST /api/tauri/remote/machines/disconnect':
         return disconnect(args.payload.machineId)
       default:
         throw new Error(`Unexpected method: ${args.method}`)
@@ -82,6 +83,22 @@ afterEach(() => {
 })
 
 describe('useRemote 查询、降级与启动寻址', () => {
+  it('session windows retain the target remote machine and can switch back to local', async () => {
+    windowInfo.label = 'window-2'
+    window.location.hash = new URLSearchParams({ sessionId: 'target', iframeUrl: 'http://127.0.0.1:4001/' }).toString()
+    rows = [machineOf({ state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
+    const { result } = await ready()
+    await waitFor(() => expect(result.current.activeId).toBe('m1'))
+    expect(result.current.activeTunnelUrl).toBe('http://127.0.0.1:4001')
+    expect(connect).not.toHaveBeenCalled()
+    act(() => result.current.backToLocal())
+    await act(async () => {
+      await result.current.refresh()
+    })
+    expect(result.current.activeId).toBeNull()
+    expect(result.current.activeTunnelUrl).toBe('')
+  })
+
   it('刷新失败保留列表并降级，恢复后可用', async () => {
     const { result } = await ready()
     expect(result.current.machines.map(row => row.name)).toEqual(['alpha'])
@@ -138,7 +155,7 @@ describe('useRemote 查询、降级与启动寻址', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(6000)
     })
-    const lists = invoke.mock.calls.filter(call => call[1].method === 'GET /api/tauri/ssh/machines')
+    const lists = invoke.mock.calls.filter(call => call[1].method === 'GET /api/tauri/remote/machines')
     expect(lists).toHaveLength(4)
     unmount()
     await act(async () => {
@@ -160,6 +177,16 @@ describe('useRemote 查询、降级与启动寻址', () => {
     await waitFor(() => expect(result.current.available).toBe(true))
     expect(result.current.machines.map(row => row.name)).toEqual(['alpha'])
     expect(invoke.mock.calls.filter(call => call[1].method.endsWith('/machines'))).toHaveLength(2)
+  })
+
+  it.each(['remote-776562--m1', 'remote-7461757269--m1'])('profile-scoped window %s reads its explicit machine target', async (label) => {
+    windowInfo.label = label
+    window.location.hash = new URLSearchParams({ remoteMachineId: 'machine--with spaces' }).toString()
+    rows = [machineOf({ id: 'machine--with spaces', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
+    const { result } = await ready()
+    await waitFor(() => expect(result.current.activeId).toBe('machine--with spaces'))
+    expect(result.current.activeTunnelUrl).toBe('http://127.0.0.1:4001')
+    expect(connect).not.toHaveBeenCalled()
   })
 
   it('remote-窗口已连接目标直接切换', async () => {
@@ -335,7 +362,7 @@ describe('useRemote 切换和连接进度', () => {
       await client.refetchQueries({ queryKey: queryKeys.remoteEvents })
     })
     await waitFor(() => expect(result.current.connectLog).toEqual(['ssh ok', 'download', 'started']))
-    expect(invoke).toHaveBeenCalledWith('remote', { method: 'GET /api/tauri/ssh/machines/events', payload: { machineId: 'm1', sinceSeq: 2 } })
+    expect(invoke).toHaveBeenCalledWith('remote', { method: 'GET /api/tauri/remote/machines/events', payload: { machineId: 'm1', sinceSeq: 2 } })
     rows = [machineOf({ state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
     await act(async () => {
       release({ tunnelBaseUrl: 'http://127.0.0.1:4001' })

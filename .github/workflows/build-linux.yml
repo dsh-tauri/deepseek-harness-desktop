@@ -22,9 +22,16 @@ permissions:
 
 jobs:
   build:
-    name: Build (linux)
-    # 22.04 的 glibc/WebKitGTK 产物兼容 Ubuntu 22.04 及更新版本。
-    runs-on: ubuntu-22.04
+    name: Build (linux-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - name: Checkout repository
@@ -97,7 +104,7 @@ jobs:
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
         with:
-          name: release-linux
+          name: release-linux-${{ matrix.arch }}
           path: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb

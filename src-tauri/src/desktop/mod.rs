@@ -5,8 +5,7 @@ pub mod builder;
 pub mod compat;
 pub mod deep_link;
 pub mod frame_log;
-#[cfg(target_os = "linux")]
-pub mod linux_tray;
+pub(crate) mod frontend_preload;
 pub mod notification;
 pub mod paste;
 pub mod payload;
@@ -14,6 +13,8 @@ pub mod pet;
 pub mod pet_autonomy;
 pub mod pet_mouse;
 pub mod plugin_boot;
+#[cfg(all(windows, any(not(debug_assertions), test)))]
+pub(crate) mod single_instance;
 pub mod startup;
 #[cfg(windows)]
 pub mod tauri_internals;

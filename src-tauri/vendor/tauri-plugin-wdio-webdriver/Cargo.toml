@@ -151,14 +151,14 @@ features = [
 ]
 
 [target.'cfg(target_os = "windows")'.dependencies.webview2-com]
-version = "0.38"
+version = "0.39"
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
-version = "0.61"
+version = "0.62"
 features = [
     "Win32_System_Com",
     "Win32_System_WinRT",
 ]
 
 [target.'cfg(target_os = "windows")'.dependencies.windows-core]
-version = "0.61"
+version = "0.62"

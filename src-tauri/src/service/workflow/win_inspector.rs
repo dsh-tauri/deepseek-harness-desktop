@@ -48,7 +48,7 @@ mod imp {
     ///
     /// 自愈保证：删除后若数组为空，序列化结果自然是 `[]`（而非纯注释/空——那是
     /// YAML `null`，`parsePatchList` 会抛「必须是顶层数组」直接崩掉启动）。
-    fn prune_legacy_patch_entry(profile: &Path) -> Result<(), String> {
+    pub(super) fn apply_at(profile: &Path) -> Result<(), String> {
         let patch_path = profile.join("cordis.patch.yml");
         let existing = match fs::read_to_string(&patch_path) {
             Ok(s) => s,
@@ -132,7 +132,7 @@ mod imp {
 
     /// 清理 profile 的遗留注入行（幂等）。
     pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
-        prune_legacy_patch_entry(&profile_dir(app_handle))
+        apply_at(&profile_dir(app_handle))
     }
 
     #[cfg(test)]
@@ -154,13 +154,13 @@ mod imp {
             )
             .unwrap();
 
-            prune_legacy_patch_entry(&dir).unwrap();
+            apply_at(&dir).unwrap();
             let out = std::fs::read_to_string(&patch).unwrap();
             assert!(!out.contains("win-terminal-inspector"));
             assert!(!out.contains("insert:"));
             assert!(out.contains("some-row"));
 
-            prune_legacy_patch_entry(&dir).unwrap();
+            apply_at(&dir).unwrap();
             let again = std::fs::read_to_string(&patch).unwrap();
             assert_eq!(out, again);
 
@@ -180,12 +180,12 @@ mod imp {
             )
             .unwrap();
 
-            prune_legacy_patch_entry(&dir).unwrap();
+            apply_at(&dir).unwrap();
             let out = std::fs::read_to_string(&patch).unwrap();
             assert!(!out.contains("win-terminal-inspector"));
             assert!(out.contains("[]\n"));
 
-            prune_legacy_patch_entry(&dir).unwrap();
+            apply_at(&dir).unwrap();
             let again = std::fs::read_to_string(&patch).unwrap();
             assert_eq!(out, again);
 
@@ -200,7 +200,7 @@ mod imp {
             let content = "- id: some-row\n  config:\n    a: 1\n";
             std::fs::write(&patch, content).unwrap();
 
-            prune_legacy_patch_entry(&dir).unwrap();
+            apply_at(&dir).unwrap();
             assert_eq!(std::fs::read_to_string(&patch).unwrap(), content);
 
             std::fs::remove_dir_all(&dir).ok();
@@ -226,6 +226,10 @@ mod imp {
         Ok(())
     }
 
+    pub(super) fn apply_at(_profile: &std::path::Path) -> Result<(), String> {
+        Ok(())
+    }
+
     /// 非 Windows 无 Git Bash bin 目录。
     pub fn git_bash_bin_dirs() -> Vec<std::path::PathBuf> {
         Vec::new()
@@ -235,6 +239,10 @@ mod imp {
 /// 清理 profile 中遗留的 Windows 终端检查插件注入行（仅 Windows 生效，幂等）。
 pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
     imp::apply(app_handle)
+}
+
+pub(crate) fn apply_at(profile: &std::path::Path) -> Result<(), String> {
+    imp::apply_at(profile)
 }
 
 /// 本机 Git Bash 的 bin 目录（供服务 PATH 注入）。

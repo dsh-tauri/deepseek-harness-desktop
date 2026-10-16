@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -140,20 +142,68 @@ describe('appimage host-interface library exclusion (#620)', () => {
   })
 })
 
-describe('linux release workflow wires the appimage fix', () => {
+describe('appimage GTK backend selection (#789)', () => {
+  it.skipIf(process.platform !== 'linux').each([false, true])('repacks GTK hook (bundled host library: %s), preserves backends, and is idempotent', (bundledHostLibrary) => {
+    const work = mkdtempSync(join(tmpdir(), 'dsh-appimage-'))
+    try {
+      const tree = join(work, 'AppDir')
+      mkdirSync(join(tree, 'apprun-hooks'), { recursive: true })
+      mkdirSync(join(tree, 'usr/lib'), { recursive: true })
+      mkdirSync(join(tree, 'usr/bin'), { recursive: true })
+      writeFileSync(join(tree, 'AppRun'), '#!/bin/sh\nexit 0\n')
+      writeFileSync(join(tree, 'AppRun.wrapped'), '#!/bin/sh\nexit 0\n')
+      writeFileSync(join(tree, 'usr/bin/app'), '#!/bin/sh\nexit 0\n')
+      chmodSync(join(tree, 'usr/bin/app'), 0o755)
+      writeFileSync(join(tree, 'usr/lib/libwebkit2gtk-4.1.so.0'), 'keep WebKit')
+      if (bundledHostLibrary)
+        writeFileSync(join(tree, 'usr/lib/libwayland-client.so.0'), 'drop host library')
+      writeFileSync(join(tree, 'apprun-hooks/linuxdeploy-plugin-gtk.sh'), 'export GTK_THEME=Adwaita\nexport GDK_BACKEND=x11 # upstream override\nexport GTK_DATA_PREFIX="$APPDIR"\n')
+      const image = join(work, 'test.AppImage')
+      execFileSync('mksquashfs', [tree, image, '-noappend', '-quiet', '-no-progress'], { stdio: 'inherit' })
+      execFileSync('bash', [fixScriptPath, ...(bundledHostLibrary ? ['--require-removal'] : []), image], { stdio: 'inherit' })
+      const output = join(work, 'unpacked')
+      execFileSync('unsquashfs', ['-d', output, image], { stdio: 'ignore' })
+      const hook = join(output, 'apprun-hooks/linuxdeploy-plugin-gtk.sh')
+      expect(readFileSync(hook, 'utf8')).toBe('export GTK_THEME=Adwaita\nexport GTK_DATA_PREFIX="$APPDIR"\n')
+      for (const backend of ['', 'wayland', 'x11', 'x11,wayland']) {
+        execFileSync('bash', ['-c', 'source "$1"; test "$GDK_BACKEND" = "$2" && test "$GTK_THEME" = Adwaita', '_', hook, backend], {
+          env: { ...process.env, GDK_BACKEND: backend },
+          stdio: 'inherit',
+        })
+      }
+      const fixed = readFileSync(image)
+      execFileSync('bash', [fixScriptPath, image], { stdio: 'inherit' })
+      expect(readFileSync(image)).toEqual(fixed)
+      expect(bashExitCode([fixScriptPath, '--require-removal', image])).toBe(1)
+    }
+    finally {
+      rmSync(work, { recursive: true, force: true })
+    }
+  })
+
+  it('does not discard explicit GDK_BACKEND values at runtime', () => {
+    const startup = readFileSync(fileURLToPath(new URL('../src-tauri/src/lib.rs', import.meta.url)), 'utf8')
+    expect(startup).not.toContain('std::env::remove_var("GDK_BACKEND")')
+  })
+})
+
+describe.each([
+  ['release', linuxWorkflow],
+  ['unsigned', readFileSync(fileURLToPath(new URL('../.github/workflows/build-test.yml', import.meta.url)), 'utf8').split('  linux:')[1].split('  windows:')[0]],
+])('linux %s workflow wires the appimage fix', (_name, workflow) => {
   it('installs squashfs-tools for mksquashfs', () => {
-    expect(linuxWorkflow).toContain('squashfs-tools')
+    expect(workflow).toContain('squashfs-tools')
   })
 
   it('runs the fix with --require-removal for every built AppImage', () => {
-    expect(linuxWorkflow).toContain('scripts/fix-appimage-host-libs.sh --require-removal')
-    expect(linuxWorkflow).toContain('find src-tauri/target/release/bundle/appimage -name \'*.AppImage\'')
+    expect(workflow).toContain('scripts/fix-appimage-host-libs.sh --require-removal')
+    expect(workflow).toContain('find src-tauri/target/release/bundle/appimage -name \'*.AppImage\'')
   })
 
   it('runs the fix after the bundle and before uploading artifacts', () => {
-    const bundleIndex = linuxWorkflow.indexOf('pnpm tauri build --bundles appimage,deb')
-    const fixIndex = linuxWorkflow.indexOf('scripts/fix-appimage-host-libs.sh --require-removal')
-    const uploadIndex = linuxWorkflow.indexOf('actions/upload-artifact')
+    const bundleIndex = workflow.indexOf('pnpm tauri build --bundles appimage,deb')
+    const fixIndex = workflow.indexOf('scripts/fix-appimage-host-libs.sh --require-removal')
+    const uploadIndex = workflow.indexOf('actions/upload-artifact')
 
     expect(bundleIndex).toBeGreaterThan(-1)
     expect(fixIndex).toBeGreaterThan(-1)

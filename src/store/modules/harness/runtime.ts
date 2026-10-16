@@ -42,6 +42,7 @@ export function runtimeExitMessageKey(exitCode: number | null | undefined): stri
 
 /** Windows NTSTATUS 形态的原生退出码：0xC0000005 访问违例 / 0xC0000409 栈缓冲溢出等。 */
 const NATIVE_CRASH_CODES = new Set([
+  0x80000003,
   0xC0000005,
   0xC0000409,
   0xC0000374,
@@ -49,7 +50,7 @@ const NATIVE_CRASH_CODES = new Set([
   0xC00000FD,
 ])
 
-/** 退出码是否为 Windows 原生崩溃（不是 JS 层异常，也不是 V8 堆耗尽）。 */
+/** 退出码是否为 Windows 原生崩溃；具体原因仍需日志判断。 */
 export function isNativeCrashCode(exitCode: number | null | undefined): boolean {
   return exitCode != null && NATIVE_CRASH_CODES.has(exitCode >>> 0)
 }

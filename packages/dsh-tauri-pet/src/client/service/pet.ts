@@ -2,10 +2,13 @@ import type { ClientAdapter } from 'dsh-tauri/client'
 import type { PetActionResult, PetListItem, PetStatus, PresetPetItem } from './pet.types'
 import { invoke } from 'dsh-tauri/client'
 import {
+  CMD_CHECK_PET_UPDATES,
+  CMD_DELETE_PET,
   CMD_GET_FORCE_XWAYLAND,
   CMD_GET_PET_OVERLAY_SUPPORTED,
   CMD_GET_PET_STATUS,
   CMD_IMPORT_PET,
+  CMD_IMPORT_PET_REPOSITORY,
   CMD_LIST_PETS,
   CMD_LIST_PRESET_PETS,
   CMD_OPEN_EXTERNAL_URL,
@@ -16,6 +19,7 @@ import {
   CMD_SET_PET_ENABLED,
   CMD_SET_PET_SIZE,
   CMD_SET_PET_THROW_ENABLED,
+  CMD_UPDATE_PET_REPOSITORY,
   PET_COMMUNITY_URL,
   PET_HATCH_PROMPT,
 } from '../constants'
@@ -209,11 +213,55 @@ export async function togglePetThrow(input: { enabled: boolean }): Promise<PetAc
   })
 }
 
+export async function loadPetUpdates(): Promise<PetActionResult> {
+  return guard('check pet updates', async () => {
+    const presets = store.pet.$state.presetPets
+    const ids = await invoke<string[]>(CMD_CHECK_PET_UPDATES)
+    if (presets === store.pet.$state.presetPets)
+      store.pet.setPetUpdates(ids)
+    return { ok: true }
+  })
+}
+
+export async function updatePetRepository(input: { id: string }): Promise<PetActionResult> {
+  return guard('update pet repository', async () => {
+    const item = await invoke<PresetPetItem>(CMD_UPDATE_PET_REPOSITORY, { id: input.id })
+    store.pet.replacePresetPet({ ...item, remote: true })
+    return { ok: true }
+  })
+}
+
+export async function importPetRepository(input: { repository: string }): Promise<PetActionResult> {
+  const match = /^(?:https:\/\/github\.com\/)?([a-z\d](?:[a-z\d-]{0,37}[a-z\d])?)\/([\w.-]{1,100})\/?$/i.exec(input.repository.trim())
+  if (!match || match[2] === '.' || match[2] === '..')
+    return { ok: false, error: 'PET_REPOSITORY_INVALID' }
+  return guard('import pet repository', async () => {
+    await invoke<PresetPetItem>(CMD_IMPORT_PET_REPOSITORY, { repository: `${match[1]}/${match[2]}` })
+    store.pet.setPresetPets(await invoke<PresetPetItem[]>(CMD_LIST_PRESET_PETS))
+    return { ok: true }
+  })
+}
+
 /** Action：导入宠物压缩包（base64），成功后刷新 Codex 清单。 */
 export async function importPetArchive(input: { name: string, data: string }): Promise<PetActionResult> {
   return guard('import pet', async () => {
     await invoke<PetListItem>(CMD_IMPORT_PET, { name: input.name, data: input.data })
     store.pet.setCodexPets(await invoke<PetListItem[]>(CMD_LIST_PETS, { source: 'codex' }))
+    return { ok: true }
+  })
+}
+
+/**
+ * Action：删除用户导入的宠物（来源限定 id 删目录，预设 id 反注册远端条目）。
+ *
+ * 先本地摘掉卡片再重装清单：删除已经落定，清单刷新失败不能把这次删除报成失败——
+ * 用户会重试一个已经不存在的 id，而卡片还留在列表里。
+ */
+export async function deletePet(input: { id: string }): Promise<PetActionResult> {
+  return guard('delete pet', async () => {
+    store.pet.setStatus(await invoke<PetStatus>(CMD_DELETE_PET, { id: input.id }))
+    store.pet.removePet(input.id)
+    await loadPetCatalog()
     return { ok: true }
   })
 }

@@ -7,6 +7,7 @@ import type { KernelActions } from '../components/slot-contract'
 import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getBackends, postSessions } from '../apis'
+import { backendFromIdentity, kernelFromList } from '../service/kernel-identity'
 import { kernelStore } from '../store/modules/kernel-store'
 import { kernel } from './kernel'
 
@@ -60,6 +61,16 @@ function fixture(options: { hero?: boolean, sidebar?: boolean, hover?: boolean, 
   if (options.model === true)
     register({ name: 'conversation.input.model', locale: 'model', inject: () => ({}) }, options.unknownModel === true ? UnknownModel : ModelSelect)
   let state: SessionListState = { ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }
+  function publishProjection(sessionId: string, identity: unknown, phase: 'ready' | 'error' = 'ready', error: unknown = null): void {
+    state = {
+      ...state,
+      projectionsBySession: {
+        ...state.projectionsBySession,
+        [sessionId]: { values: identity === undefined ? {} : { bridgeKernel: identity }, state: phase, error },
+      },
+    } as SessionListState
+  }
+  const getSnapshot = vi.fn(() => state)
   const openSession = vi.fn()
   const startSession = vi.fn()
   const officialCreate = vi.fn(async () => 'official-new')
@@ -72,7 +83,7 @@ function fixture(options: { hero?: boolean, sidebar?: boolean, hover?: boolean, 
   })
   const sessions: Record<string, unknown> = {
     ...(options.create === false ? {} : { create: officialCreate }),
-    list: { getSnapshot: () => state, subscribe: () => () => {} },
+    list: { getSnapshot, subscribe: () => () => {} },
     refresh: vi.fn(async () => {}),
     ...(options.refresh === false ? {} : { refreshProjections }),
     binding: vi.fn(),
@@ -136,7 +147,7 @@ function fixture(options: { hero?: boolean, sidebar?: boolean, hover?: boolean, 
       throw new Error('sidebar kernel actions unavailable')
     return read()
   }
-  return { core, slots, ctx, sessions, uiWorkspace, navigation, beginNavigation, officialCreate, openSession, refreshProjections, slotDisposers, hero, sidebar, dispose }
+  return { core, slots, ctx, sessions, uiWorkspace, navigation, beginNavigation, officialCreate, openSession, refreshProjections, publishProjection, getSnapshot, slotDisposers, hero, sidebar, dispose }
 }
 
 beforeEach(() => {
@@ -200,7 +211,7 @@ describe('kernel registration and lifecycle', () => {
     await Promise.resolve()
     expect(feature.core.entries('conversation.input.model')).toHaveLength(1)
     expect((feature.core.entriesOfSlot('conversation.input.model')[0]?.component as ComponentType)?.name).toBe('UnknownModel')
-    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] slot decoration unavailable; the official renderer capability is unverified', undefined)
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-kernel] slot decoration unavailable; the official renderer capability is unverified')
     expect(feature.openSession).not.toHaveBeenCalled()
   })
 
@@ -440,14 +451,98 @@ describe('kernel registration and lifecycle', () => {
     expect(postSessions).not.toHaveBeenCalled()
   })
 
-  it('a resolved projection read with no kernel key warns once and never assumes a DeepSeek identity', async () => {
+  it('a resolved projection read without a snapshot stays silent and never assumes a DeepSeek identity', async () => {
     const feature = fixture()
     feature.refreshProjections.mockImplementation(async () => {})
     await feature.sidebar().ensureProjection('archived-session')
     await feature.sidebar().ensureProjection('archived-session')
-    expect(console.warn).toHaveBeenCalledTimes(1)
-    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] session kernel identity unavailable: archived-session', undefined)
+    expect(console.warn).not.toHaveBeenCalled()
+    expect(feature.refreshProjections).toHaveBeenCalledTimes(2)
+    expect(backendFromIdentity(kernelFromList(feature.getSnapshot(), 'archived-session' as SessionId))).toBeUndefined()
     expect(feature.openSession).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['missing', undefined, undefined],
+    ['DeepSeek', null, 'dsh'],
+    ['Codex', { ...BINDING, sessionId: 'session-a' }, 'codex'],
+    ['Claude', { ...BINDING, backend: 'claude', sessionId: 'session-a' }, 'claude'],
+  ] as const)('a successful %s projection stays silent and preserves its identity', async (_, identity, backend) => {
+    const feature = fixture()
+    feature.refreshProjections.mockImplementation(async id => feature.publishProjection(id, identity))
+    await feature.sidebar().ensureProjection('session-a')
+    await feature.sidebar('sidebar.session.row.hover').ensureProjection('session-a')
+    await feature.hero().ensureProjection('session-a')
+    expect(feature.refreshProjections.mock.calls).toEqual([['session-a'], ['session-a'], ['session-a']])
+    const projected = kernelFromList(feature.getSnapshot(), 'session-a' as SessionId)
+    expect(projected).toEqual(identity)
+    expect(backendFromIdentity(projected)).toBe(backend)
+    expect(console.warn).not.toHaveBeenCalled()
+    expect(feature.sessions.binding).not.toHaveBeenCalled()
+    expect(feature.sessions.retain).not.toHaveBeenCalled()
+    expect(feature.openSession).not.toHaveBeenCalled()
+    expect(postSessions).not.toHaveBeenCalled()
+    expect(feature.officialCreate).not.toHaveBeenCalled()
+  })
+
+  it('a malformed binding warns once per session without an undefined argument', async () => {
+    const feature = fixture()
+    feature.refreshProjections.mockImplementation(async id => feature.publishProjection(id, { backend: 'codex' }))
+    await feature.sidebar().ensureProjection('session-a')
+    await feature.hero().ensureProjection('session-a')
+    await feature.sidebar().ensureProjection('session-b')
+    expect(vi.mocked(console.warn).mock.calls).toEqual([
+      ['[dsh-tauri-kernel] session kernel identity unavailable: session-a'],
+      ['[dsh-tauri-kernel] session kernel identity unavailable: session-b'],
+    ])
+    expect(backendFromIdentity(kernelFromList(feature.getSnapshot(), 'session-a' as SessionId))).toBeUndefined()
+  })
+
+  it.each([undefined, null, BINDING])('a resolved error snapshot reports its cause even with cached identity %j', async (identity) => {
+    const feature = fixture()
+    const reason = Object.assign(new Error('projection request failed'), { code: 'session/not-found' })
+    feature.refreshProjections.mockImplementation(async id => feature.publishProjection(id, identity, 'error', reason))
+    await feature.sidebar().ensureProjection('session-a')
+    await feature.hero().ensureProjection('session-a')
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-kernel] session projection read failed: session-a', reason)
+    expect(feature.openSession).not.toHaveBeenCalled()
+  })
+
+  it('a rejected projection refresh reports its original error once', async () => {
+    const feature = fixture()
+    const reason = new Error('projection read rejected')
+    feature.refreshProjections.mockRejectedValue(reason)
+    await feature.sidebar().ensureProjection('session-a')
+    await feature.hero().ensureProjection('session-a')
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-kernel] session projection read failed: session-a', reason)
+  })
+
+  it('a failed projection after a silent missing identity still warns', async () => {
+    const feature = fixture()
+    feature.refreshProjections.mockImplementation(async id => feature.publishProjection(id, undefined))
+    await feature.sidebar().ensureProjection('session-a')
+    expect(console.warn).not.toHaveBeenCalled()
+    const reason = new Error('later projection failure')
+    feature.refreshProjections.mockRejectedValue(reason)
+    await feature.sidebar().ensureProjection('session-a')
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-kernel] session projection read failed: session-a', reason)
+  })
+
+  it.each(['resolve', 'reject'] as const)('a late projection %s after disposal cannot inspect or warn', async (outcome) => {
+    const feature = fixture()
+    const pending = deferred<void>()
+    feature.refreshProjections.mockReturnValue(pending.promise)
+    const task = feature.sidebar().ensureProjection('session-a')
+    expect(feature.refreshProjections).toHaveBeenCalledExactlyOnceWith('session-a')
+    feature.dispose()
+    feature.getSnapshot.mockClear()
+    if (outcome === 'resolve')
+      pending.resolve(undefined)
+    else
+      pending.reject(new Error('late failure'))
+    await task
+    expect(feature.getSnapshot).not.toHaveBeenCalled()
+    expect(console.warn).not.toHaveBeenCalled()
   })
 
   it('disposed UI callbacks cannot start detection or projection work', async () => {
@@ -469,7 +564,7 @@ describe('kernel registration and lifecycle', () => {
     await feature.sidebar().ensureProjection('archived-session')
     await feature.sidebar().ensureProjection('archived-session')
     expect(console.warn).toHaveBeenCalledTimes(1)
-    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] sessions.refreshProjections unavailable; session kernel identity is unknown', undefined)
+    expect(console.warn).toHaveBeenCalledWith('[dsh-tauri-kernel] sessions.refreshProjections unavailable; session kernel identity is unknown')
     expect(feature.openSession).not.toHaveBeenCalled()
   })
 })

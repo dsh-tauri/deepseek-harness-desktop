@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 use crate::config;
-use crate::config::manifest::{PluginEntry, PluginVersion};
+use crate::config::manifest::{Manifest, PluginEntry, PluginVersion};
 
 /// 插件静态信息，对应清单中的条目
 #[derive(Debug, Clone)]
@@ -314,14 +314,16 @@ fn find_bundled_in_root(root: &std::path::Path, id: &str) -> Option<PathBuf> {
 /// git、无需构建期打包；仓库里不存在该 id 时回落随包目录，让开发与发布共用一套
 /// 兜底逻辑。
 pub(crate) fn bundled_plugin_dir(app_handle: &AppHandle, id: &str) -> Option<PathBuf> {
+    bundled_plugin_dir_from(app_handle.path().resource_dir().ok().as_deref(), id)
+}
+
+pub(crate) fn bundled_plugin_dir_from(resources: Option<&Path>, id: &str) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
     if let Some(dir) = dev_plugin_dir(id) {
         return Some(dir);
     }
-    if let Ok(dir) = app_handle.path().resource_dir() {
-        if let Some(candidate) = find_bundled_in_root(&dir, id) {
-            return Some(candidate);
-        }
+    if let Some(candidate) = resources.and_then(|root| find_bundled_in_root(root, id)) {
+        return Some(candidate);
     }
     let resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
     let deployed = resources.join("node_modules").join(id);
@@ -346,8 +348,8 @@ struct PluginPackageJson {
 /// 在两处各存一份、升级时互相漂移。debug 的 dev 发现与 release 的随包清单最终都落到
 /// 同一个 `package.json`，两种构建因此得到同值。读取失败（目录缺失、JSON 损坏、
 /// 描述为空）返回 `None`，调用方沿用清单登记的空描述——不阻断启动。
-fn bundled_plugin_description(app_handle: &AppHandle, id: &str) -> Option<String> {
-    let dir = bundled_plugin_dir(app_handle, id)?;
+fn bundled_plugin_description(resources: Option<&Path>, id: &str) -> Option<String> {
+    let dir = bundled_plugin_dir_from(resources, id)?;
     let raw = std::fs::read_to_string(dir.join("package.json")).ok()?;
     package_json_description(&raw)
 }
@@ -442,30 +444,35 @@ pub(crate) fn load_presets(app_handle: &AppHandle) -> Vec<PreinstallPluginInfo> 
     let Some(manifest) = config::manifest::read(app_handle) else {
         return Vec::new();
     };
+    presets_from_manifest(&manifest, app_handle.path().resource_dir().ok().as_deref())
+}
+
+pub(crate) fn presets_from_manifest(
+    manifest: &Manifest,
+    resources: Option<&Path>,
+) -> Vec<PreinstallPluginInfo> {
     let mut plugins: Vec<PreinstallPluginInfo> = manifest
         .plugins
         .preset
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|entry| plugin_info(entry, false))
         .collect();
     let internal: Vec<PreinstallPluginInfo> = manifest
         .plugins
         .built_in
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|entry| plugin_info(entry, true))
         .collect();
     #[cfg(debug_assertions)]
     let internal = merge_dev_internal_plugins(internal);
-    let internal: Vec<PreinstallPluginInfo> = internal
-        .into_iter()
-        .map(|mut plugin| {
-            if let Some(description) = bundled_plugin_description(app_handle, &plugin.id) {
-                plugin.description = description;
-            }
-            plugin
-        })
-        .collect();
-    plugins.extend(internal);
+    plugins.extend(internal.into_iter().map(|mut plugin| {
+        if let Some(description) = bundled_plugin_description(resources, &plugin.id) {
+            plugin.description = description;
+        }
+        plugin
+    }));
     plugins
 }
 

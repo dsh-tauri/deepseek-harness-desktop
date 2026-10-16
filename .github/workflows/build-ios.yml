@@ -1,0 +1,164 @@
+name: iOS Native Build
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Commit, tag or branch to build; empty uses the caller ref
+        required: false
+        type: string
+        default: ''
+    outputs:
+      version:
+        description: Full package version used in the artifact name
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build unsigned iOS IPA
+    runs-on: macos-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: '1'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Setup Xcode
+        uses: ./.github/actions/setup-xcode
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Read version and normalize iOS marketing version
+        id: meta
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs');
+          const semver = require('semver');
+          const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          if (app.expo.version !== version) throw new Error('app.json expo.version must equal package.json version');
+          const parsed = semver.parse(version);
+          if (!parsed || `${parsed.version}${parsed.build.length ? '+' + parsed.build.join('.') : ''}` !== version) throw new Error('package version must be canonical SemVer');
+          const iosVersion = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+          const identifier = app.expo.ios?.bundleIdentifier;
+          const buildNumber = app.expo.ios?.buildNumber;
+          if (typeof identifier !== 'string' || identifier !== identifier.trim() || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(identifier)) throw new Error('Invalid iOS bundle identifier');
+          if (typeof buildNumber !== 'string' || buildNumber !== buildNumber.trim() || !/^\d+(?:\.\d+){0,2}$/.test(buildNumber)) throw new Error('Invalid iOS build number');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nios_version=${iosVersion}\nidentifier=${identifier}\nbuild_number=${buildNumber}\n`);
+          app.expo.version = iosVersion;
+          fs.writeFileSync('app.json', `${JSON.stringify(app, null, 2)}\n`);
+          NODE
+
+      - name: Generate iOS project
+        run: pnpm exec expo prebuild --platform ios --no-install
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install
+
+      - name: Build unsigned device Release app
+        run: |
+          set -euo pipefail
+          workspaces=(ios/*.xcworkspace)
+          if [[ ${#workspaces[@]} -ne 1 || ! -d "${workspaces[0]}" ]]; then
+            echo '::error::Expected one generated iOS workspace'
+            exit 1
+          fi
+          scheme="$(basename "${workspaces[0]}" .xcworkspace)"
+          xcodebuild \
+            -workspace "${workspaces[0]}" \
+            -scheme "$scheme" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ios-derived-data" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Package and verify unsigned IPA
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          IOS_VERSION: ${{ steps.meta.outputs.ios_version }}
+          BUNDLE_IDENTIFIER: ${{ steps.meta.outputs.identifier }}
+          BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          apps=("$RUNNER_TEMP/ios-derived-data/Build/Products/Release-iphoneos/"*.app)
+          if [[ ${#apps[@]} -ne 1 || ! -d "${apps[0]}" ]]; then
+            echo '::error::Expected one Release device app'
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ios-ipa/Payload" release
+          ditto "${apps[0]}" "$RUNNER_TEMP/ios-ipa/Payload/$(basename "${apps[0]}")"
+          export IPA_PATH="$PWD/release/Deepseek.Harness.iOS_${VERSION}_unsigned.ipa"
+          (cd "$RUNNER_TEMP/ios-ipa" && zip -qr "$IPA_PATH" Payload)
+          python3 <<'PY'
+          import json
+          import os
+          import plistlib
+          import zipfile
+          from pathlib import Path
+
+          with zipfile.ZipFile(os.environ['IPA_PATH']) as ipa:
+              assert ipa.testzip() is None, 'Corrupt IPA archive'
+              infos = [name for name in ipa.namelist() if name.startswith('Payload/') and name.endswith('.app/Info.plist') and name.count('/') == 2]
+              assert len(infos) == 1, 'IPA must contain exactly one app'
+              root = infos[0].removesuffix('Info.plist')
+              info = plistlib.loads(ipa.read(infos[0]))
+              assert info['CFBundleIdentifier'] == os.environ['BUNDLE_IDENTIFIER'], 'Incorrect iOS bundle identifier'
+              assert info['CFBundleShortVersionString'] == os.environ['IOS_VERSION'], 'Incorrect iOS marketing version'
+              assert info['CFBundleVersion'] == os.environ['BUILD_NUMBER'], 'Incorrect iOS build number'
+              assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS'], 'IPA must target physical iOS devices'
+              assert ipa.getinfo(root + info['CFBundleExecutable']).file_size > 0, 'Missing native executable'
+              assert ipa.getinfo(root + 'main.jsbundle').file_size > 0, 'IPA must embed a non-empty JavaScript bundle'
+              config = json.loads(ipa.read(root + 'EXConstants.bundle/app.config'))
+              assert config['version'] == os.environ['IOS_VERSION'], 'Embedded Expo version mismatch'
+              assert config['ios']['bundleIdentifier'] == os.environ['BUNDLE_IDENTIFIER'], 'Embedded Expo identifier mismatch'
+              assert config['extra']['thirdPartyNotices'] == Path('THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8'), 'IPA is missing the complete third-party notices'
+          print('Verified device IPA identifier, versions, executable, JavaScript bundle and third-party notices.')
+          PY
+          cp THIRD_PARTY_NOTICES.md release/THIRD_PARTY_NOTICES.md
+          (cd release && shasum -a 256 ./*.ipa ./THIRD_PARTY_NOTICES.md > SHA256SUMS-iOS.txt)
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-ipa-${{ steps.meta.outputs.version }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize unsigned build
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          IOS_VERSION: ${{ steps.meta.outputs.ios_version }}
+        run: |
+          echo '::notice::IPA 未签名，无 provisioning profile；真机安装前必须自行签名，不能直接安装或提交 App Store。'
+          {
+            echo '### iOS native build'
+            echo
+            echo "- asset: \`Deepseek.Harness.iOS_${VERSION}_unsigned.ipa\`"
+            echo "- iOS marketing version: \`${IOS_VERSION}\`"
+            echo '- signing: unsigned; no signing secrets used'
+            echo
+            echo '> 未签名 IPA 必须自行签名后才能安装到真机，不能直接安装或提交 App Store。'
+          } >> "$GITHUB_STEP_SUMMARY"

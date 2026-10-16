@@ -10,6 +10,7 @@
 //! 失败仅告警。
 
 pub(crate) mod composer;
+pub(crate) mod conversation_draft;
 pub(crate) mod llm_session;
 pub(crate) mod mcp_startup;
 pub(crate) mod mobile_composer;
@@ -34,10 +35,11 @@ use std::path::Path;
 /// 让编排层能看见哪一条出了问题。
 pub(crate) fn apply_all_at(core_dir: &Path) -> Result<(), String> {
     #[allow(clippy::type_complexity)]
-    let patches: [(&str, fn(&Path) -> Result<(), String>); 12] = [
+    let patches: [(&str, fn(&Path) -> Result<(), String>); 13] = [
         ("renderer", renderer::apply_at),
         ("mcp_startup", mcp_startup::apply_at),
         ("composer", composer::apply_at),
+        ("conversation_draft", conversation_draft::apply_at),
         ("mobile_composer", mobile_composer::apply_at),
         ("mobile_sidebar", mobile_sidebar::apply_at),
         ("session", session::apply_at),

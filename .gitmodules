@@ -46,3 +46,6 @@
 [submodule "source/relay-dsh-plugin-claude"]
 	path = source/relay-dsh-plugin-claude
 	url = https://github.com/yangbobo2021/relay-dsh-plugin-claude.git
+[submodule "soruce/dsh-bridge"]
+	path = soruce/dsh-bridge
+	url = https://github.com/wenbin-wb/dsh-bridge.git

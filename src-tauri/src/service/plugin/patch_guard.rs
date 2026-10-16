@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
 
+use super::patch_entries::{
+    scan_unresolved_entries_in, unresolved_entries_message, PATCH_ENTRY_UNRESOLVED,
+};
 use super::profile_dir;
 use crate::config;
 
@@ -74,6 +77,24 @@ pub(crate) fn patch_layer_paths(profile_dir: &Path, dsh_home: &Path) -> [PathBuf
         profile_dir.join(PATCH_FILENAME),
         dsh_home.join(PATCH_FILENAME),
     ]
+}
+
+pub(crate) fn preflight_at(
+    profile: &Path,
+    data_home: &Path,
+    install_anchor: Option<&Path>,
+) -> Result<(), String> {
+    let entries = scan_unresolved_entries_in(profile, data_home, install_anchor);
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let names = entries
+        .iter()
+        .map(|entry| format!("{}:{} {}", entry.layer, entry.line, entry.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    log::error!("{PATCH_ENTRY_UNRESOLVED}: {names}");
+    Err(unresolved_entries_message(&entries))
 }
 
 /// 解析补丁层：语法错误时返回 serde_yaml 的错误文本（含行列号）。
@@ -217,6 +238,53 @@ mod tests {
     YUNXIAO_ACCESS_TOKEN: !!js process.env.TOKEN ? process.env.TOKEN : (function () { return '' })()
 "#;
     const VALID_LAYER: &str = "- id: dsh-base\n  disabled: false\n";
+
+    #[test]
+    fn preflight_at_rereads_both_layers_and_uses_the_real_install_anchor_resolution() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let profile = home.join("profiles/probe");
+        std::fs::create_dir_all(&profile).unwrap();
+        let manifest = profile.join("package.json");
+        std::fs::write(
+            &manifest,
+            r#"{"dependencies":{"dsh-preflight-probe":"1.0.0"}}"#,
+        )
+        .unwrap();
+        let layer = "- insert:\n    - id: probe\n      name: dsh-preflight-probe\n";
+        let paths = patch_layer_paths(&profile, &home);
+        for path in &paths {
+            std::fs::write(path, layer).unwrap();
+        }
+
+        let error = preflight_at(&profile, &home, None).unwrap_err();
+        let payload: serde_json::Value = serde_json::from_str(
+            error
+                .strip_prefix("PATCH_LAYER_ENTRY_UNRESOLVED: ")
+                .unwrap(),
+        )
+        .unwrap();
+        let entries = payload["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        for (entry, path) in entries.iter().zip(&paths) {
+            assert_eq!(entry["layer"], path.display().to_string());
+            assert_eq!(entry["line"], 3);
+            assert_eq!(entry["name"], "dsh-preflight-probe");
+            assert_eq!(entry["declared"], true);
+            assert_eq!(std::fs::read_to_string(path).unwrap(), layer);
+        }
+
+        let anchor = temp.path().join("core/lib/bin.js");
+        let installed = temp.path().join("core/node_modules/dsh-preflight-probe");
+        std::fs::create_dir_all(&installed).unwrap();
+        let package = installed.join("package.json");
+        std::fs::write(&package, "{}\n").unwrap();
+        assert_eq!(preflight_at(&profile, &home, Some(&anchor)), Ok(()));
+        std::fs::remove_file(package).unwrap();
+        assert!(preflight_at(&profile, &home, Some(&anchor))
+            .unwrap_err()
+            .starts_with("PATCH_LAYER_ENTRY_UNRESOLVED: "));
+    }
 
     #[test]
     fn parse_error_reports_unquoted_js_expression() {

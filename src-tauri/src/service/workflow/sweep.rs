@@ -19,13 +19,32 @@ pub(super) fn harness_pid_path<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
 ) -> std::path::PathBuf {
     let channel = usize::from(app_handle.config().identifier == "dsh-tauri-nightly");
-    config::get_dsh_data_path(app_handle).join(config::HARNESS_PID_MARKER_NAMES[channel])
+    let root = config::get_dsh_data_path(app_handle);
+    let name = config::HARNESS_PID_MARKER_NAMES[channel];
+    match super::instances::current_profile() {
+        Some(profile) => root.join("profiles").join(profile).join(name),
+        None => root.join(name),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::harness_pid_path;
     use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn harness_markers_are_isolated_by_profile() {
+        let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+        let a = super::super::instances::scope_sync("marker-profile-a".into(), || {
+            harness_pid_path(app.handle())
+        });
+        let b = super::super::instances::scope_sync("marker-profile-b".into(), || {
+            harness_pid_path(app.handle())
+        });
+        assert_ne!(a, b);
+        assert_eq!(a.parent().unwrap().file_name().unwrap(), "marker-profile-a");
+        assert_eq!(a.file_name(), b.file_name());
+    }
 
     #[test]
     fn harness_pid_marker_is_isolated_by_channel() {
@@ -42,21 +61,24 @@ mod tests {
     }
 }
 
-/// 记录本次启动的 Harness PID 与端口，供下次启动清扫孤儿用。
-pub(super) fn persist_harness_pid(app_handle: &tauri::AppHandle, pid: u32, port: u16) {
-    let path = harness_pid_path(app_handle);
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    let _ = fs::write(&path, format!("{pid}\n{port}\n"));
-}
-
 /// 启动前清扫上次崩溃残留的孤儿 Harness。Unix 标记回收经端口与 PID 双重确认：
 /// - 标记进程已死 → 仅清理陈旧标记；
 /// - 端口占用者正是标记中的 PID → 本应用残留，结束其进程树并清标记；
 /// - 其余情况（标记不可解析、端口被其他程序占用、无法探测占用者）一律不动，
 ///   绝不凭端口猜进程、绝不杀未知进程。
 pub fn sweep_orphan_harness(app_handle: &tauri::AppHandle) {
+    if super::instances::current_profile().is_none() {
+        let root = config::get_dsh_data_path(app_handle).join("profiles");
+        if let Ok(entries) = fs::read_dir(root) {
+            for entry in entries.flatten().filter(|entry| entry.path().is_dir()) {
+                if let Some(profile) = entry.file_name().to_str() {
+                    super::instances::scope_sync(profile.into(), || {
+                        sweep_orphan_harness(app_handle)
+                    });
+                }
+            }
+        }
+    }
     if has_owned_process() {
         return;
     }
@@ -65,7 +87,10 @@ pub fn sweep_orphan_harness(app_handle: &tauri::AppHandle) {
     // Windows 按入口路径与转发链状态回收，不按共享标记结束另一个仍在运行的 dev 实例。
     // 启动期只做一次：本次启动已清扫过就跳过（重复枚举同一份进程快照没有新结论）。
     if take_startup_sweep() {
-        terminate_stale_harness_processes(app_handle);
+        if let Err(error) = terminate_stale_harness_processes(app_handle) {
+            super::process::retry_startup_sweep();
+            log::warn!("Startup Harness sweep failed: {error}");
+        }
     } else {
         log::debug!("Skipping orphan Harness sweep: already swept during this launch");
     }
@@ -103,7 +128,7 @@ pub fn sweep_orphan_harness(app_handle: &tauri::AppHandle) {
 /// - Windows：`netstat -ano` 解析；
 /// - Unix：`lsof -ti tcp:<port>`，不可用时返回 None。
 ///   返回 None 视为"无法确认"，调用方不会因此杀任何进程。
-fn port_owner_pid(port: u16) -> Option<u32> {
+pub(super) fn port_owner_pid(port: u16) -> Option<u32> {
     #[cfg(windows)]
     {
         // 打包版是 GUI 进程（无控制台）：netstat 是控制台子系统程序，直接运行会

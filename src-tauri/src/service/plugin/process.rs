@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::{Emitter, WebviewWindow};
+use tauri::{Emitter, Manager, WebviewWindow};
 
 use crate::utils::decode_process_line;
 
@@ -323,6 +323,7 @@ pub(crate) async fn run_plugin_process(
     window: &WebviewWindow,
     owner: ProcessOwner,
 ) -> Result<(i32, String), String> {
+    let profile = crate::service::profile::active_profile(window.app_handle());
     let process_guard = acquire_process_lock().await?;
     let captured = Arc::new(Mutex::new(String::new()));
 
@@ -339,22 +340,24 @@ pub(crate) async fn run_plugin_process(
 
         let handle = WaitableHandle(handle);
         let exit_code = tauri::async_runtime::spawn_blocking(move || {
-            let _process_guard = process_guard;
-            let _pid_guard = pid_guard;
-            use windows_sys::Win32::Foundation::CloseHandle;
-            use windows_sys::Win32::System::Threading::{
-                GetExitCodeProcess, WaitForSingleObject, INFINITE,
-            };
-            let handle = handle;
-            unsafe {
-                let wait = WaitForSingleObject(handle.0, INFINITE);
-                let mut code: u32 = 0;
-                if GetExitCodeProcess(handle.0, &mut code) == 0 {
-                    code = wait;
+            crate::service::workflow::instances::scope_sync(profile, || {
+                let _process_guard = process_guard;
+                let _pid_guard = pid_guard;
+                use windows_sys::Win32::Foundation::CloseHandle;
+                use windows_sys::Win32::System::Threading::{
+                    GetExitCodeProcess, WaitForSingleObject, INFINITE,
+                };
+                let handle = handle;
+                unsafe {
+                    let wait = WaitForSingleObject(handle.0, INFINITE);
+                    let mut code: u32 = 0;
+                    if GetExitCodeProcess(handle.0, &mut code) == 0 {
+                        code = wait;
+                    }
+                    CloseHandle(handle.0);
+                    code as i32
                 }
-                CloseHandle(handle.0);
-                code as i32
-            }
+            })
         })
         .await
         .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
@@ -393,9 +396,11 @@ pub(crate) async fn run_plugin_process(
         }
 
         let exit_code = tauri::async_runtime::spawn_blocking(move || {
-            let _process_guard = process_guard;
-            let _pid_guard = pid_guard;
-            child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(1)
+            crate::service::workflow::instances::scope_sync(profile, || {
+                let _process_guard = process_guard;
+                let _pid_guard = pid_guard;
+                child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(1)
+            })
         })
         .await
         .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
@@ -464,6 +469,22 @@ fn spawn_line_emitter<R: Read + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn blocking_plugin_task_retains_captured_profile() {
+        use crate::service::workflow::instances;
+        instances::scope("plugin-window-profile".into(), async {
+            let profile = instances::current_profile().unwrap();
+            let captured = tauri::async_runtime::spawn_blocking(move || {
+                instances::scope_sync(profile, instances::current_profile)
+            })
+            .await
+            .unwrap();
+            assert_eq!(captured.as_deref(), Some("plugin-window-profile"));
+        })
+        .await;
+        assert_eq!(instances::current_profile(), None);
+    }
 
     #[test]
     fn drain_captured_preserves_exact_output_and_clears_shared_buffer() {

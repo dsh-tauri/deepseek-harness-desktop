@@ -30,6 +30,7 @@ export type McpInput = Omit<McpRow, 'disabled'> & { disabled?: boolean }
 export interface McpCheckResult {
   ok: boolean
   detail?: string
+  requiresAuth?: boolean
 }
 
 export interface McpCheckOptions {

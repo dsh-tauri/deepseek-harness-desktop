@@ -165,8 +165,15 @@ describe('migration safety contract', () => {
       .filter(body => body.includes('workflow::stop'))
     expect(bodies.length).toBe(2)
     for (const body of bodies) {
-      const recorded = body.indexOf('let recorded = data_dir::harness_markers(&crate::config::get_dsh_data_path(&app_handle));')
-      const reject = body.indexOf('reject_unreadable_markers(recorded)?;')
+      const recorded = body.search(/let recorded\s*=\s*data_dir::all_harness_markers\(&crate::config::get_dsh_data_path\(&app_handle\)\);/)
+      const reject = body.indexOf('reject_unreadable_markers(recorded.clone())?;')
+      const transition = body.indexOf('acquire_core_transition().await?;')
+      const exclusive = body.indexOf('require_exclusive_profile()?;')
+      expect(body).toContain('window_profile(&app_handle, window.label())')
+      expect(body).toContain('instances::scope(profile, async move')
+      expect(transition).toBeGreaterThan(-1)
+      expect(exclusive).toBeGreaterThan(transition)
+      expect(recorded).toBeGreaterThan(exclusive)
       const stop = body.indexOf('crate::service::workflow::stop(app_handle.clone()).await?;')
       const confirm = body.indexOf('confirm_harness_stopped(recorded)?;')
       expect(recorded).toBeGreaterThan(-1)
@@ -180,7 +187,7 @@ describe('migration safety contract', () => {
     // 停之前那道检查必须放行「存活 PID」分支
     expect(bridge).toContain('HarnessMarker::Missing | HarnessMarker::Pid(_) => Ok(())')
     // 停之前那一步必须排在 `stop()` 前面，否则标记已经被删、什么都查不出
-    expect(bridge.indexOf('reject_unreadable_markers(recorded)?;')).toBeLessThan(bridge.indexOf('workflow::stop'))
+    expect(bridge.indexOf('reject_unreadable_markers(recorded.clone())?;')).toBeLessThan(bridge.indexOf('workflow::stop'))
     expect(bridge).toContain('DATA_DIR_HARNESS_RUNNING')
     expect(bridge).toContain('DATA_DIR_HARNESS_MARKER_INVALID')
     // 标记读不出来与标记不在必须分开：前者要先拒绝，否则 `stop()` 删掉标记后
@@ -191,7 +198,11 @@ describe('migration safety contract', () => {
     expect(module).toContain('pub(crate) enum HarnessMarker {')
     expect(module).toContain('pub(crate) fn harness_markers(root: &Path) -> [HarnessMarker; 2] {')
     expect(module).toContain('HARNESS_PID_MARKER_NAMES.map(|name| harness_marker_at(&root.join(name)))')
-    expect(module).toMatch(/harness_markers\(root\)\s*\.into_iter\(\)\s*\.all\(\|marker\| match marker \{/)
+    expect(module).toContain('pub(crate) fn all_harness_markers(root: &Path) -> Vec<HarnessMarker> {')
+    expect(module).toContain('let mut markers = harness_markers(root).to_vec();')
+    expect(module).toContain('std::fs::read_dir(root.join("profiles"))')
+    expect(module).toContain('markers.extend(harness_markers(&entry.path()))')
+    expect(module).toMatch(/all_harness_markers\(root\)\s*\.into_iter\(\)\s*\.all\(\|marker\| match marker \{/)
   })
 
   it('moves a non-empty rollback target aside instead of overwriting it', () => {

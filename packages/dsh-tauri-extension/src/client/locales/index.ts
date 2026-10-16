@@ -106,6 +106,13 @@ const zh = {
   scopeProfile: '当前 profile',
   checkLabel: '检查',
   checkRunning: '检查中…',
+  authorizeLabel: '前往验证',
+  authorizationRunning: '等待验证…',
+  authorizationRestartNeeded: '验证成功；如工具尚未连接，请重启 dsh 后生效。',
+  authorizationFailed: '验证失败，请重试。',
+  authorizationTimeout: '验证超时，请重试。',
+  authorizationUrlInvalid: '验证地址无效，必须使用 HTTPS。',
+  authorizationBrowserBlocked: '浏览器阻止了验证窗口，请允许弹出窗口后重试。',
   shadowedByGlobal: '全局层存在同名 id，此行不生效',
 }
 
@@ -216,6 +223,13 @@ const en: Record<LocaleKey, string> = {
   scopeProfile: 'This profile',
   checkLabel: 'Check',
   checkRunning: 'Checking…',
+  authorizeLabel: 'Authorize',
+  authorizationRunning: 'Waiting for authorization…',
+  authorizationRestartNeeded: 'Authorized; restart dsh if the tools have not connected yet.',
+  authorizationFailed: 'Authorization failed. Please try again.',
+  authorizationTimeout: 'Authorization timed out. Please try again.',
+  authorizationUrlInvalid: 'Invalid authorization URL; HTTPS is required.',
+  authorizationBrowserBlocked: 'The authorization window was blocked. Allow pop-ups and try again.',
   shadowedByGlobal: 'a global row with the same id wins — this row has no effect',
 }
 

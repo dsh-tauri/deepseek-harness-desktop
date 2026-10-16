@@ -1,7 +1,8 @@
-import type { CodexPetConfig, PetConfig } from 'dsh-pet-component'
+import type { CodexPetConfig, DshPetConfig, PetConfig } from 'dsh-pet-component'
 import { useUnmount, useWatch } from '@reause/core'
-import { invoke } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { useRef, useState } from 'react'
+import { useListen } from '@/hooks/use-listen'
 import { PET_CODEX_ASPECT, PET_DSH_ASPECT } from '../constants'
 import { reportPetIssue } from '../utils/log'
 
@@ -29,27 +30,29 @@ interface PresetPetItem {
   ext?: { default: string, mac?: string }
 }
 
-/** 导入的 Codex 宠物资源（Rust `get_pet_asset`，精灵图以 data URL 直接渲染）。 */
-interface PetAsset {
+type PetAsset = {
+  kind: 'codex'
   id: string
   spritesheet: string
   sprite_version_number: number
   columns: number
   rows: number
+} | {
+  kind: 'dsh'
+  id: string
+  config: DshPetConfig
+  uri: { default: string, mac?: string }
+  ext: { default: string, mac?: string }
+  size?: number
 }
 
-/**
- * 渲染一个宠物所需的全部参数 —— `<Pet>` 的渲染 props 加上窗口推导所需的比例。
- *
- * 两种来源走同一条出口：清单里的预设宠物（远端 dsh-pet 视频 / Codex 图集）与
- * 用户导入的 chat/codex 宠物（本地图集，Rust 侧转 data URL）。
- */
 export interface PetSource {
   /** 渲染器协议（显式指定，避免组件按 config 形状误判）。 */
   kind: 'dsh' | 'codex'
   config: string | PetConfig
   uri: string | { default: string, mac?: string }
   ext?: { default: string, mac?: string }
+  cache: boolean
   /** 画布比例（高 / 宽），窗口尺寸推导用。 */
   aspect: number
   /** 100% 档位的渲染宽度 px。 */
@@ -75,12 +78,29 @@ function presetSource(item: PresetPetItem): PetSource {
     config: item.config,
     uri: item.uri,
     ext: item.ext,
+    cache: true,
     aspect: kind === 'codex' ? PET_CODEX_ASPECT : PET_DSH_ASPECT,
     width: item.size ?? 220,
   }
 }
 
-function assetSource(asset: PetAsset): PetSource {
+export function assetSource(asset: PetAsset): PetSource {
+  if (asset.kind === 'dsh') {
+    const uri: PetSource['uri'] = {
+      default: `${convertFileSrc(asset.uri.default)}/{name}.{ext}`,
+    }
+    if (asset.uri.mac !== undefined)
+      uri.mac = `${convertFileSrc(asset.uri.mac)}/{name}.{ext}`
+    return {
+      kind: 'dsh',
+      config: asset.config,
+      uri,
+      ext: asset.ext,
+      cache: false,
+      aspect: PET_DSH_ASPECT,
+      width: asset.size ?? 220,
+    }
+  }
   const config: CodexPetConfig = {
     spriteVersionNumber: asset.sprite_version_number === 1 ? 1 : 2,
     columns: asset.columns,
@@ -90,6 +110,7 @@ function assetSource(asset: PetAsset): PetSource {
     kind: 'codex',
     config,
     uri: asset.spritesheet,
+    cache: true,
     aspect: PET_CODEX_ASPECT,
     width: 220,
   }
@@ -113,12 +134,18 @@ export function usePetSource(activePet: string): PetSourceState {
     error: string | null
   } | null>(null)
 
+  const [catalogRevision, setCatalogRevision] = useState(0)
+  useListen<string>('pet://catalog', ({ payload }) => {
+    if (payload === activePet)
+      setCatalogRevision(revision => revision + 1)
+  })
+
   const requestRef = useRef(0)
   useUnmount(() => {
     requestRef.current++
   })
 
-  useWatch(activePet, (id) => {
+  useWatch([activePet, catalogRevision], ([id]) => {
     const request = ++requestRef.current
     if (id === '')
       return

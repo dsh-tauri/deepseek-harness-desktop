@@ -15,19 +15,26 @@ use super::get_bin_dir;
 /// 捆绑安装；Unix GUI 额外检查 mise 标准数据目录，生成的 `pnpm` shim 也会
 /// 优先转发到探测出的精确路径。
 pub fn find_user_pnpm(app_handle: &AppHandle) -> Option<PathBuf> {
-    let dirs = user_pnpm_dirs(app_handle);
-    find_pnpm_in_dirs(&get_bin_dir(app_handle), &dirs)
+    #[cfg(unix)]
+    let home = app_handle.path().home_dir().ok();
+    #[cfg(not(unix))]
+    let home: Option<PathBuf> = None;
+    find_user_pnpm_from(&get_bin_dir(app_handle), home.as_deref())
+}
+
+pub(crate) fn find_user_pnpm_from(bin_dir: &Path, home_dir: Option<&Path>) -> Option<PathBuf> {
+    find_pnpm_in_dirs(bin_dir, &user_pnpm_dirs(home_dir))
 }
 
 /// Windows 直接创建进程时不能执行 `.cmd`/`.bat`；为无需 shell 的修复流程单独
 /// 查找原生 `pnpm.exe`，不改变常规 shim 对 `.cmd` 的既有优先级。
 #[cfg(windows)]
 pub(crate) fn find_user_pnpm_executable(app_handle: &AppHandle) -> Option<PathBuf> {
-    let dirs = user_pnpm_dirs(app_handle);
+    let dirs = user_pnpm_dirs(None);
     find_windows_executable_pnpm_in_dirs(&get_bin_dir(app_handle), &dirs)
 }
 
-fn user_pnpm_dirs(_app_handle: &AppHandle) -> Vec<PathBuf> {
+fn user_pnpm_dirs(_home_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> =
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
     #[cfg(windows)]
@@ -36,12 +43,11 @@ fn user_pnpm_dirs(_app_handle: &AppHandle) -> Vec<PathBuf> {
     {
         let mise_data = std::env::var_os("MISE_DATA_DIR").map(PathBuf::from);
         let xdg_data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from);
-        let home = _app_handle.path().home_dir().ok();
         append_unix_mise_dirs(
             &mut dirs,
             mise_data.as_deref(),
             xdg_data.as_deref(),
-            home.as_deref(),
+            _home_dir,
         );
     }
     dirs

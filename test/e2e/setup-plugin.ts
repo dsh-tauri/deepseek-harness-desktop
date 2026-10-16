@@ -48,6 +48,7 @@ const DEFAULT_ALSO = [
   'dsh-tauri-scheduler',
   'dsh-tauri-experimental',
   'dsh-tauri-model',
+  'dsh-tauri-remote',
 ].join(',')
 
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {

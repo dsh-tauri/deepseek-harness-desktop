@@ -319,14 +319,12 @@ static FIRST_INSTALL: OnceLock<bool> = OnceLock::new();
 /// 几何恢复/退出保存都会写 store 并创建文件，判定晚于它们会把首装误判为升级。
 /// 判定结果进程内缓存，之后任何时点读取都拿到本次启动的同一结论。
 pub fn detect_first_install<R: Runtime>(app_handle: &AppHandle<R>) -> bool {
-    *FIRST_INSTALL.get_or_init(|| {
-        app_handle
-            .path()
-            .app_data_dir()
-            // 目录解析失败按老用户处理（保守：不做引导，回落 web 档案老行为）
-            .map(|dir| !dir.join(store_dat_file_name()).exists())
-            .unwrap_or(false)
-    })
+    detect_first_install_at(app_handle.path().app_data_dir().ok().as_deref())
+}
+
+pub(crate) fn detect_first_install_at(app_data: Option<&std::path::Path>) -> bool {
+    *FIRST_INSTALL
+        .get_or_init(|| app_data.is_some_and(|dir| !dir.join(store_dat_file_name()).exists()))
 }
 
 /// 读取首装检测结果；尚未检测（或检测失败）时返回 `false`，保守按老用户处理。
@@ -344,7 +342,7 @@ pub(crate) fn unwrap_json_value(
         .unwrap_or(std::borrow::Cow::Borrowed(value))
 }
 
-fn setting_from_value(value: Option<&serde_json::Value>) -> Setting {
+pub(crate) fn setting_from_value(value: Option<&serde_json::Value>) -> Setting {
     let mut setting = value
         .and_then(|value| serde_json::from_value(unwrap_json_value(value).into_owned()).ok())
         .unwrap_or_default();

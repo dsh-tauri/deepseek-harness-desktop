@@ -10,7 +10,9 @@ export type GetApiTauriExtensionMcpResponse = { servers: { id: string; layer?: u
 export type PostApiTauriExtensionMcpResponse = { ok: false | true; id: string; restartNeeded: false | true } | { error: string };
 export type DeleteApiTauriExtensionMcpResponse = { ok: false | true; restartNeeded: false | true } | { error: string };
 export type PostApiTauriExtensionMcpToggleResponse = { ok: false | true; restartNeeded: false | true } | { error: string };
-export type PostApiTauriExtensionMcpCheckResponse = { ok: false | true; detail?: undefined | string } | { error: string };
+export type PostApiTauriExtensionMcpCheckResponse = { ok: false | true; detail?: undefined | string; requiresAuth?: undefined | false | true } | { error: string };
+export type PostApiTauriExtensionMcpAuthorizeResponse = { authorizationUrl: string; attemptId: string } | { error: string };
+export type GetApiTauriExtensionMcpAuthorizeResponse = { status: "error" | "pending" | "authorized"; error?: undefined | string } | { error: string };
 export type PostApiTauriExtensionMcpCopyResponse = { error: string; ok?: undefined; id?: undefined; scope?: undefined; restartNeeded?: undefined } | { ok: false | true; id: string; scope: "global" | "profile"; restartNeeded: false | true; error?: undefined };
 export type GetApiTauriExtensionImportScanResponse = { servers: { agent: "claude-code" | "codex" | "cursor" | "gemini"; name: string; transport: "stdio" | "streamable-http"; command?: undefined | string; args?: undefined | string[]; env?: undefined | { [key: string]: string }; url?: undefined | string; headers?: undefined | { [key: string]: string } }[]; existing: string[] } | { error: string };
 export type PostApiTauriExtensionImportApplyResponse = { ok: false | true; results: { name: string; ok: false | true; error?: undefined | string }[]; restartNeeded: false | true } | { error: string };
@@ -61,6 +63,10 @@ export interface PostApiTauriExtensionMcpToggleBody {
   scope?: undefined | "global" | "profile";
 }
 export interface PostApiTauriExtensionMcpCheckBody {
+  id: string;
+  scope?: undefined | "global" | "profile";
+}
+export interface PostApiTauriExtensionMcpAuthorizeBody {
   id: string;
   scope?: undefined | "global" | "profile";
 }

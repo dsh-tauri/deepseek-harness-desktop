@@ -6,6 +6,7 @@ import { defineService, DSH_HOME } from 'dsh-tauri'
 import { compact, isEmpty } from 'lodash-es'
 import { join } from 'pathe'
 import { MCP_PLUGIN, PATCH_FILE_NAME } from '../config/constants'
+import { mcpAuth } from './mcp-auth'
 import {
   insertListOf,
   loadPatch,
@@ -145,18 +146,7 @@ export const mcp = defineService({
     }
     if (row.url === undefined || !/^https?:\/\//.test(row.url))
       return { ok: false, detail: 'row has no http url' }
-    try {
-      const response = await fetch(row.url, {
-        headers: { accept: 'application/json, text/event-stream' },
-        signal: AbortSignal.timeout(options.timeoutMs ?? MCP_CHECK_TIMEOUT_MS),
-      })
-      return { ok: true, detail: `HTTP ${response.status}` }
-    }
-    catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const cause = (error as { cause?: { code?: unknown } }).cause?.code
-      return { ok: false, detail: cause !== undefined ? String(cause) : message }
-    }
+    return mcpAuth.check(row, options.timeoutMs ?? MCP_CHECK_TIMEOUT_MS)
   },
 })
 

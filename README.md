@@ -45,6 +45,7 @@
 ## 功能
 
 - 🪶 **原生桌面** — Tauri 2 + React 19 + Hero 3，内嵌本地 Harness 界面。
+- 📱 **远程连接** — Android / iOS 移动端扫码连接电脑上的 DSH，支持局域网与 Cloudflare 公网隧道。
 - 🔄 **运行时管理** — 安装依赖、选择内核版本，并提供桌面端与内核更新入口。
 - 🔀 **多内核支持** — 在同一界面畅用 DSH / Codex / Claude，发挥各自原生工具能力。
 - 🧩 **插件管理** — 13 个内置插件；支持本地路径安装、内置插件停用、社区插件安装、升级、卸载与错误查看。
@@ -69,7 +70,7 @@
 - [DSH Tauri Pet](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-pet) — 桌宠与活动状态设置
 - [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-rightclick) — 会话、工作区与正文右键菜单
 - [DSH Tauri Model](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-model) — 模型选择与参数、自动配置模型
-- [DSH Tauri SSH](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-ssh) — SSH 远端 Harness 连接与同步
+- [DSH Tauri Remote](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-remote) — SSH 远端 Harness 连接与同步，并把本机 Harness 分享到局域网或公网隧道
 - [DSH Tauri Notification](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-notification) — 原生级会话通知与交互操作
 
 ## 可选预设
@@ -80,7 +81,6 @@
 - [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — 按会话隔离的右编辑器侧栏
 - [Billion Context](https://github.com/ranxianglei/billion-context) — 上下文压缩与历史恢复
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — 对话回退与工作区备份
-- [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) — 远程访问、隧道接入
 - [DSH IM](https://github.com/xmanrui/dsh-im) — IM 渠道与机器人管理
 
 新增或更新预设请提交 [Issue](https://github.com/dsh-tauri/deepseek-harness-desktop/issues)；可用版本由清单中的内核兼容规则决定。
@@ -112,6 +112,17 @@ brew install dsh-tauri/desktop/deepseek-harness
 - 仅用于桌面端依赖/内核下载、更新检查及插件元数据，不修改模型请求或插件子进程的网络配置。
 - 留空沿用系统/环境代理；保存后对新请求生效，可重试失败的下载。
 - SOCKS5H 通过代理解析目标域名；本机回环连接始终直连。
+
+## 移动端支持
+
+**DSH Mobile** 通过局域网或公网隧道访问电脑上的 Harness，不在手机运行内核。
+
+- **Android**：从 [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases) 下载 APK。
+- **iOS**：通过 [TestFlight 邀请](https://testflight.apple.com/join/kYXkpnp1)安装测试版，以审核与名额为准；Release 中的未签名 IPA 需自行签名。
+
+在桌面顶部**远程**开启分享，手机扫码配对；电脑、Harness 与所用隧道须在线。远程访问并非只读，请勿公开二维码或访问码，详见[手机远程访问指南](https://dshtauri.mintlify.site/zh-CN/guides/mobile-remote-access)。
+
+移动端仅在官方移动服务推出前维护；开发说明见[移动端规范](docs/specs/native.md)。
 
 ## 运行方式
 
@@ -150,6 +161,13 @@ Windows 启动失败时会通过原生对话框显示具体错误。若出现 `S
 
 > [!NOTE]
 > **安全声明** — `dsh` 具备本地代码执行能力。仅供学习 / 研究 / 测试，请在可信、隔离的环境中使用。
+
+## 社区推荐
+
+- [dsh-tauri-notify-webhook](https://github.com/iuuuuuuuu/dsh-tauri-notify-webhook) - 任务异常停止或完成时把通知转发到 webhook、邮件（SMTP）或 pushplus by @iuuuuuuuu
+- [dsh-pdf-reader](https://github.com/SkanderBog/dsh-pdf-reader) - 按页 PDF 阅读、本地 OCR、引用、搜索和视觉裁剪 by @SkanderBog
+- [dsh-context-manager](https://github.com/SkanderBog/dsh-context-manager) - 应用前审阅上下文，并按完整历史组选择保留、总结或省略较早内容 by @SkanderBog
+- [@ryuu-64/dsh-find-all](https://github.com/Ryuu-64/dsh-find-all) - 在当前对话中按 Ctrl+F，查找已保存的历史内容 by @Ryuu-64
 
 ## 相关项目
 

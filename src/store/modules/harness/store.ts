@@ -1,5 +1,6 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import type { StartupPhase } from './readiness'
+import type { PolicyBlockedVersion } from '../preinstall'
+import type { ReadinessProbeResult, StartupPhase } from './readiness'
 import type {
   HarnessProcessExitedPayload,
   InstallerState,
@@ -11,14 +12,18 @@ import type {
   StartupError,
 } from './types'
 import type { PatchEntryStripReport, PatchQuarantineReport } from '@/types/plugin'
+import type { Profile } from '@/types/profile'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import i18next from 'i18next'
+import semver from 'semver'
 import { defineStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
+import { toast } from '@/utils/toast'
 import { harnessUpdater } from '../harness-updater'
+import { parseBlockedRefusal } from '../plugins'
 import { preinstall } from '../preinstall'
 import { recovery } from '../recovery'
 import { setting } from '../setting'
@@ -79,6 +84,7 @@ let pluginActivityReason = ''
 const restartFlight = new SingleFlight<void>()
 const iframeReloadGate = new BoundedReloadGate(IFRAME_RELOAD_MAX_ATTEMPTS)
 let iframeRefreshTimer: ReturnType<typeof setTimeout> | undefined
+let policyApprovalKey: string | undefined
 
 /**
  * 桌面外壳核心业务模块：安装/启动流程、服务生命周期（启动/健康检查/重启/停止）、
@@ -107,6 +113,8 @@ export const harness = defineStore({
     serviceUrl: 'http://127.0.0.1:3080',
     /** 带时间戳的 iframe 地址（boot 时生成一次，避免缓存） */
     iframeSrc: '',
+    frontendGeneration: 0,
+    frontendBootHtml: null as string | null,
     iframeLoaded: false,
     iframeError: false,
     /**
@@ -147,6 +155,11 @@ export const harness = defineStore({
     },
   },
   actions: {
+    resetFrontendPreload() {
+      this.frontendGeneration++
+      this.frontendBootHtml = null
+    },
+
     /** 首次挂载时自动启动（StrictMode 重复挂载下保证只执行一次） */
     startup() {
       if (bootStarted)
@@ -208,6 +221,7 @@ export const harness = defineStore({
       }
 
       const exitToken = ++bootToken
+      this.resetFrontendPreload()
       const message = i18next.t(runtimeExitMessageKey(payload.exitCode), {
         code: payload.exitCode,
       })
@@ -409,7 +423,7 @@ export const harness = defineStore({
     },
 
     /** 服务探测通过后的统一收尾；token 用于阻止旧启动流程覆盖新状态 */
-    async completeReadiness(token: number): Promise<boolean> {
+    async completeReadiness(token: number, probe?: ReadinessProbeResult): Promise<boolean> {
       if (token !== bootToken)
         return false
 
@@ -437,6 +451,7 @@ export const harness = defineStore({
 
       this.serviceUrl = readyInfo.service_url
       this.iframeSrc = generateTimestampedUrl(readyInfo.service_url)
+      this.frontendBootHtml = probe?.bootOrigin === readyInfo.service_url ? probe.bootHtml ?? null : null
       resetPortConflictRestarts()
       this.serviceHealthy = true
       this.serviceRunning = true
@@ -469,6 +484,12 @@ export const harness = defineStore({
 
     /** 拉起服务并等待健康检查通过，通过后才允许挂载 iframe */
     async launchAndWait(token?: number) {
+      const launchToken = token ?? ++bootToken
+      if (launchToken !== bootToken)
+        return
+      if (token === undefined)
+        this.resetFrontendPreload()
+      this.frontendBootHtml = null
       this.status = 'ready'
       this.installer = initialInstaller
       this.errorMsg = ''
@@ -486,17 +507,21 @@ export const harness = defineStore({
       this.startupReason = i18next.t('status.loading_process')
       try {
         await invoke('launch_harness')
+        if (launchToken !== bootToken)
+          return
         this.serviceRunning = true
         this.startupPhase = 'process-boot'
         this.startupReason = i18next.t('status.loading_process')
         // 后端遇到端口占用时会自动递增并持久化端口，启动后重新读取真实地址。
         const runtimeInfo = await invoke<{ service_url: string }>('get_runtime_info')
+        if (launchToken !== bootToken)
+          return
         this.serviceUrl = runtimeInfo.service_url
         this.iframeSrc = generateTimestampedUrl(runtimeInfo.service_url)
 
         const result = await pollHarnessReadiness(
           STARTUP_ABSOLUTE_TIMEOUT,
-          () => token === undefined || token === bootToken,
+          () => launchToken === bootToken,
           (probe) => {
             if (probe.phase) {
               this.startupPhase = probe.phase
@@ -504,7 +529,7 @@ export const harness = defineStore({
             this.startupReason = probe.reason ?? ''
           },
         )
-        if (token !== undefined && token !== bootToken) {
+        if (launchToken !== bootToken) {
           return
         }
         if (!result.healthy) {
@@ -523,10 +548,10 @@ export const harness = defineStore({
         // （auto_start）而提前返回，此刻端口若尚未落库，上面读到的 service_url 会是
         // 旧端口；健康检查通过意味着服务已在最终端口就绪，此时读取必然准确。
         // 避免 iframe 挂载到一个无人监听的地址（表现为首次加载失败、刷新后恢复）。
-        const readinessToken = token ?? bootToken
+        const readinessToken = launchToken
         readinessCommitToken = readinessToken
         try {
-          await this.completeReadiness(readinessToken)
+          await this.completeReadiness(readinessToken, result)
         }
         finally {
           if (readinessCommitToken === readinessToken)
@@ -543,6 +568,11 @@ export const harness = defineStore({
     /** 启动流程：检测环境/安装依赖 → 拉起服务 → 已安装时后台检查更新 */
     async boot() {
       const token = ++bootToken
+      this.resetFrontendPreload()
+      if (policyApprovalKey !== undefined) {
+        toast.close(policyApprovalKey)
+        policyApprovalKey = undefined
+      }
       iframeReloadGate.reset()
       if (iframeRefreshTimer !== undefined) {
         clearTimeout(iframeRefreshTimer)
@@ -565,6 +595,7 @@ export const harness = defineStore({
       recovery.clear()
       this.status = 'ready'
       let unlistenInstall: UnlistenFn | null = null
+      let policyApproval: { versions: PolicyBlockedVersion[], profile: string } | undefined
 
       try {
         // 事件监听失败（例如 IPC 自定义协议被 CSP 拦截、回退 postMessage 也异常）
@@ -605,6 +636,7 @@ export const harness = defineStore({
         this.startupReason = i18next.t('status.loading_internal')
         pluginActivitySequence++
         pluginActivityReason = i18next.t('status.internal_waiting')
+        const installProfile = (await invoke<Profile[]>('get_profiles')).find(item => item.active)?.id
         try {
           const result = await waitForActivityTask({
             task: invoke('ensure_internal_plugins'),
@@ -637,7 +669,23 @@ export const harness = defineStore({
           if (err instanceof Error && (err as StartupError).phase) {
             throw err
           }
-          throw startupError('plugin-install', String(err), 'failed')
+          if (token !== bootToken)
+            return
+          const message = err instanceof Error ? err.message : String(err)
+          const policyMessage = message.replace(/^INTERNAL_PLUGIN_INSTALL_FAILED: /, '')
+          const refusal = policyMessage.startsWith('PLUGIN_POLICY_BLOCKED:') && !policyMessage.includes('\n')
+            ? parseBlockedRefusal(policyMessage)
+            : null
+          if (refusal?.kind !== 'policy' || !Array.isArray(refusal.versions)
+            || !refusal.versions.every(item => item && typeof item.name === 'string' && item.name.trim() !== ''
+              && typeof item.version === 'string' && semver.valid(item.version))) {
+            throw startupError('plugin-install', message, 'failed')
+          }
+          const profiles = await invoke<Profile[]>('get_profiles')
+          const profile = profiles.find(item => item.active)?.id
+          if (!installProfile || profile !== installProfile)
+            throw startupError('plugin-install', message, 'failed')
+          policyApproval = { versions: refusal.versions, profile }
         }
         // 预装插件引导：首次安装、老版本升级（无指纹基线）或清单 plugins 节
         // 内容变更（社区新增推荐插件）时重新进入预设流程，装完/跳过后才拉起服务。
@@ -678,6 +726,45 @@ export const harness = defineStore({
       }
       finally {
         unlistenInstall?.()
+        if (policyApproval && token === bootToken) {
+          const { versions, profile } = policyApproval
+          let granting = false
+          const key = toast(i18next.t('plugins.blocked_policy_title', { name: versions.map(item => item.name).join('、') }), {
+            variant: 'warning',
+            timeout: 0,
+            sticky: true,
+            description: i18next.t('plugins.blocked_policy_desc', { blocked: versions.map(item => `${item.name}@${item.version}`).join('、') }),
+            actionProps: {
+              children: i18next.t('buttons.authorize'),
+              onPress: async () => {
+                if (granting || token !== bootToken || this.busyAction || preinstall.installing)
+                  return
+                granting = true
+                try {
+                  const profiles = await invoke<Profile[]>('get_profiles')
+                  if (token !== bootToken || profiles.find(item => item.active)?.id !== profile) {
+                    toast.close(key)
+                    return
+                  }
+                  if (!await preinstall.allowPolicyVersions(versions, profile)) {
+                    toast(i18next.t('plugins.authorize_failed'), { variant: 'danger', description: preinstall.error })
+                    return
+                  }
+                  toast.close(key)
+                  if (token === bootToken)
+                    await this.restart()
+                }
+                catch (error) {
+                  toast(i18next.t('plugins.authorize_failed'), { variant: 'danger', description: String(error) })
+                }
+                finally {
+                  granting = false
+                }
+              },
+            },
+          })
+          policyApprovalKey = key
+        }
       }
     },
 
@@ -699,12 +786,40 @@ export const harness = defineStore({
       this.serviceRunning = keepServiceRunning
     },
 
+    async switchProfile(id: string) {
+      if (this.busyAction)
+        return
+      this.busyAction = 'start'
+      ++bootToken
+      this.resetFrontendPreload()
+      const healthy = this.serviceHealthy
+      this.serviceHealthy = false
+      try {
+        await invoke<Profile>('set_active_profile', { id })
+      }
+      catch (error) {
+        this.serviceHealthy = healthy
+        this.busyAction = null
+        throw error
+      }
+      try {
+        this.serviceRunning = false
+        void hooks['config.dialog.hidden'].trigger()
+        await this.boot()
+      }
+      finally {
+        this.busyAction = null
+      }
+    },
+
     /** 重启服务：先强杀再拉起，最终回到就绪/错误态 */
     restart(): Promise<void> {
       return restartFlight.run(async () => {
         if (this.busyAction)
           return
         this.busyAction = 'restart'
+        ++bootToken
+        this.resetFrontendPreload()
         // 重启旧进程前先撤下旧 iframe；这样延迟到达的旧进程退出事件不会被
         // 误当成新一代启动失败。新进程通过 completeReadiness 后再恢复 healthy。
         this.serviceHealthy = false
@@ -783,6 +898,7 @@ export const harness = defineStore({
       if (this.busyAction)
         return
       ++bootToken
+      this.resetFrontendPreload()
       this.busyAction = 'repair'
       try {
         await repair()
@@ -803,7 +919,10 @@ export const harness = defineStore({
       finally {
         this.busyAction = null
       }
-      await this.restart()
+      if (action === 'safe-mode')
+        await this.start()
+      else
+        await this.restart()
     },
 
     /** 停止服务并回到停止态界面 */
@@ -811,6 +930,8 @@ export const harness = defineStore({
       if (this.busyAction)
         return
       this.busyAction = 'shutdown'
+      ++bootToken
+      this.resetFrontendPreload()
       // 停止服务后应用回到「已停止」态，配置弹窗已无意义，与 restart 一致地关闭它
       void hooks['config.dialog.hidden'].trigger()
       try {
@@ -872,8 +993,18 @@ let iframeWatch: { loaded: boolean, timer: ReturnType<typeof setTimeout> } | nul
 harness.$subscribe(() => {
   const { status, serviceHealthy, iframeLoaded, iframeError } = harness.$state
   const watching = status === 'ready' && serviceHealthy && !harness.iframeAlive && !iframeError
+  const context = {
+    status,
+    serviceHealthy,
+    serviceRunning: harness.serviceRunning,
+    iframeKey: harness.iframeKey,
+    iframeLoaded,
+    iframeAlive: harness.iframeAlive,
+    iframeError,
+  }
   if (!watching) {
     if (iframeWatch) {
+      console.warn('[Harness] iframe watchdog cancelled', context)
       clearTimeout(iframeWatch.timer)
       iframeWatch = null
     }
@@ -886,13 +1017,24 @@ harness.$subscribe(() => {
   if (iframeWatch) {
     clearTimeout(iframeWatch.timer)
   }
+  const timeoutMs = iframeLoaded ? IFRAME_FRAME_GRACE_TIMEOUT : IFRAME_LOAD_TIMEOUT
+  console.warn('[Harness] iframe watchdog armed', { ...context, timeoutMs })
   iframeWatch = {
     loaded: iframeLoaded,
     timer: setTimeout(() => {
       iframeWatch = null
-      console.warn('[Harness] iframe never confirmed a dsh document, showing retryable error')
+      console.warn('[Harness] iframe watchdog expired', {
+        status: harness.status,
+        serviceHealthy: harness.serviceHealthy,
+        serviceRunning: harness.serviceRunning,
+        iframeKey: harness.iframeKey,
+        iframeLoaded: harness.iframeLoaded,
+        iframeAlive: harness.iframeAlive,
+        iframeError: harness.iframeError,
+        timeoutMs,
+      })
       harness.iframeLoaded = false
       harness.iframeError = true
-    }, iframeLoaded ? IFRAME_FRAME_GRACE_TIMEOUT : IFRAME_LOAD_TIMEOUT),
+    }, timeoutMs),
   }
 })

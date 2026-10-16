@@ -158,7 +158,7 @@ export function dshAssetName(platform, arch) {
   if (platform === 'windows')
     return 'deepseek-harness-pkg-windows.zip'
   if (platform === 'linux')
-    return 'deepseek-harness-pkg-linux.zip'
+    return arch === 'arm64' ? 'deepseek-harness-pkg-linux-arm64.zip' : 'deepseek-harness-pkg-linux.zip'
   return arch === 'arm64' ? 'deepseek-harness-pkg-macos-arm64.zip' : 'deepseek-harness-pkg-macos-x64.zip'
 }
 

@@ -70,7 +70,7 @@ jobs:
 
       - name: Setup Xcode
         if: steps.check.outputs.should_run == 'true'
-        uses: $/.github/actions/setup-xcode
+        uses: ./.github/actions/setup-xcode
 
       - name: Setup Node.js and pnpm
         if: steps.check.outputs.should_run == 'true'

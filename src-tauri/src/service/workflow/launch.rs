@@ -5,63 +5,117 @@ use crate::config;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
-#[cfg(not(windows))]
-use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(not(windows))]
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
+use tauri::Manager;
 
-#[cfg(not(windows))]
-use super::process::set_owned_process;
-#[cfg(windows)]
-use super::process::set_owned_process_with_handle;
 #[cfg(unix)]
 use super::process::warn_if_inotify_watch_limit_low;
 use super::process::{
-    has_owned_process, on_owned_process_exit, stop, take_startup_sweep,
-    terminate_stale_harness_processes, LaunchGuard, LAUNCH_GUARD,
+    has_owned_process, launch_guard, on_owned_process_exit_at, register_owned_process, stop,
+    take_startup_sweep, terminate_stale_harness_processes, LaunchGuard, OwnedProcess,
+    HARNESS_PROCESS_EXITED_EVENT,
 };
 use super::status;
-use super::sweep::persist_harness_pid;
 #[cfg(windows)]
 use super::sweep::{dsh_bin_open_error, relaunch_marker_path, relaunch_via_shell_escape};
-use super::utils::{
-    is_port_in_use, rotate_service_log, spawn_output_readers, wait_for_port_release,
-};
+use super::utils::{append_log, rotate_service_log, spawn_output_readers, wait_for_port_release};
 use super::win_inspector;
 
 #[cfg(windows)]
-type SpawnResult = std::io::Result<(Option<std::fs::File>, Option<std::fs::File>, u32)>;
+type HarnessChild = std::sync::Arc<std::os::windows::io::OwnedHandle>;
 #[cfg(unix)]
-type SpawnResult = Result<
-    (
-        Option<std::process::ChildStdout>,
-        Option<std::process::ChildStderr>,
-        u32,
-    ),
-    String,
->;
+type HarnessChild = std::process::Child;
+
+pub(super) struct LaunchPlan {
+    pub(super) setting: config::Setting,
+    pub(super) profile: String,
+    pub(super) node: PathBuf,
+    pub(super) dsh_binary: PathBuf,
+    pub(super) core_dir: PathBuf,
+    pub(super) profile_root: PathBuf,
+    pub(super) dsh_home: PathBuf,
+    pub(super) base: PathBuf,
+    pub(super) bin_dir: PathBuf,
+    pub(super) pnpm_root: PathBuf,
+    pub(super) pnpm_binary: PathBuf,
+    pub(super) pid_path: PathBuf,
+    pub(super) resources: Option<PathBuf>,
+    pub(super) git_dir: Option<PathBuf>,
+    pub(super) user_pnpm: Option<PathBuf>,
+}
 
 /// 端口释放等待上限：刚结束/清扫过上个会话的残留 dsh 进程后，TCP 端口释放
 /// 存在短暂滞后（taskkill 返回 ≠ 端口已可复用）。等待窗口内端口回落为空闲则
 /// 复用配置端口；到期仍未释放才按“真占用”逐级递增。
 const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-/// 组装启动 Harness 的参数：`[--max-old-space-size] <dsh> --profile <档案>
-/// [--patch <补丁层>] --port <端口> --no-open`。
-///
-/// `--patch` 必须排在子命令参数之前（`dsh` 的选项收集器把第一个非选项参数之后
-/// 的内容整段透传给内层应用，排在后面的 `--patch` 会被判为 `unknown option`）。
+#[cfg(target_os = "linux")]
+fn harness_library_path(
+    appdir: Option<&std::ffi::OsStr>,
+    library_path: Option<&std::ffi::OsStr>,
+) -> Option<OsString> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let library_path = library_path?;
+    let Some(appdir) = appdir.filter(|path| !path.is_empty()) else {
+        return Some(library_path.to_os_string());
+    };
+    Some(
+        std::env::join_paths(
+            library_path
+                .as_bytes()
+                .split(|byte| matches!(*byte, b':' | b';'))
+                .map(|path| Path::new(std::ffi::OsStr::from_bytes(path)))
+                .filter(|path| !path.starts_with(Path::new(appdir))),
+        )
+        .expect("split Linux library paths contain no path separator"),
+    )
+}
+
+fn fatal_report_path(log_path: &Path) -> PathBuf {
+    static NEXT_REPORT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = NEXT_REPORT.fetch_add(1, Ordering::Relaxed);
+    log_path.with_file_name(format!(
+        "harness-fatal-{}-{timestamp}-{sequence}.json",
+        std::process::id()
+    ))
+}
+
+fn log_fatal_report(log_path: &PathBuf, report_path: &Path) {
+    if report_path.is_file() {
+        let line = format!("ERROR HARNESS_FATAL_REPORT: {}", report_path.display());
+        append_log(log_path, &line);
+        log::error!("{line}");
+    }
+}
+
 fn build_harness_args(
     dsh_binary: &Path,
     profile: &str,
     patch: Option<&Path>,
     port: u16,
     heap_mb: Option<u32>,
+    report_path: &Path,
 ) -> Vec<OsString> {
-    let mut args = Vec::with_capacity(9);
+    let mut args = Vec::with_capacity(12);
     args.extend(super::heap::heap_option_arg(heap_mb));
+    let mut directory = OsString::from("--report-directory=");
+    directory.push(report_path.parent().unwrap_or(Path::new(".")));
+    let mut filename = OsString::from("--report-filename=");
+    filename.push(report_path.file_name().unwrap_or_default());
+    args.extend([
+        OsString::from("--report-on-fatalerror"),
+        directory,
+        filename,
+    ]);
     args.extend([
         dsh_binary.as_os_str().to_os_string(),
         OsString::from("--profile"),
@@ -80,8 +134,29 @@ fn build_harness_args(
 }
 
 /// 从起始端口向上查找第一个空闲端口，绝不结束未知的端口占用进程。
-fn find_available_port(start: u16) -> Result<u16, String> {
-    find_available_port_by(start, is_port_in_use)
+fn find_available_port(start: u16, dsh_binary: &Path) -> Result<u16, String> {
+    find_available_port_by(start, |port| {
+        prepare_port(dsh_binary, port).map(|free| !free)
+    })
+}
+
+fn prepare_port(dsh_binary: &Path, port: u16) -> Result<bool, String> {
+    if !super::utils::is_port_in_use(port) {
+        return Ok(true);
+    }
+    #[cfg(windows)]
+    {
+        super::process::reclaim_orphan_port(dsh_binary, port)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dsh_binary;
+        log::warn!(
+            "PORT_OWNER: port={port} pid={:?} ownership=unknown",
+            super::sweep::port_owner_pid(port)
+        );
+        Ok(false)
+    }
 }
 
 /// 按调用方提供的占用判定查找第一个空闲端口。
@@ -91,11 +166,11 @@ fn find_available_port(start: u16) -> Result<u16, String> {
 /// 其他进程在两次探测之间占用。
 fn find_available_port_by(
     start: u16,
-    mut is_in_use: impl FnMut(u16) -> bool,
+    mut is_in_use: impl FnMut(u16) -> Result<bool, String>,
 ) -> Result<u16, String> {
     let mut port = start;
     loop {
-        if !is_in_use(port) {
+        if !is_in_use(port)? {
             return Ok(port);
         }
         log::warn!("Port {port} is occupied, trying the next port");
@@ -122,6 +197,7 @@ fn resolve_heal_port(configured: u16, heal_target: u16, heal_target_free: bool) 
 
 /// 检测并启动 Harness 服务
 pub async fn start(app_handle: tauri::AppHandle) -> Result<(), String> {
+    super::early::wait_preparation().await?;
     let setting = config::get_store_dat_setting(&app_handle);
     let node_binary_path = config::get_node_binary_path(&app_handle);
     // 活动核心的入口：本地核心存在时优先本地（需求 3），否则预打包
@@ -189,11 +265,7 @@ pub async fn restart(app_handle: tauri::AppHandle) -> Result<(), String> {
 /// tree）。上一轮被杀/崩溃的 dsh 若留下组合行，新 boot 会读到已含 bundle 行的
 /// 文件，再叠加同一批 patch → `duplicate loader entry`。spawn 前与「早期退出
 /// 重试」各调用一次，把竞态窗口关闭到最小；文件已是空根时静默跳过。
-fn reset_active_profile_root(app_handle: &tauri::AppHandle) {
-    let profile_root = crate::service::profile::profile_dir_of(
-        app_handle,
-        &crate::service::profile::active_profile(app_handle),
-    );
+fn reset_active_profile_root(profile_root: &Path) {
     if !profile_root.is_dir() {
         return;
     }
@@ -211,18 +283,200 @@ fn reset_active_profile_root(app_handle: &tauri::AppHandle) {
     }
 }
 
-/// 判断 dsh 早期退出是否命中「duplicate loader entry」竞态签名。
-///
-/// 竞态特征：exit code 1 且 stderr 含 `duplicate loader entry`（dsh-app-boot
-/// 的 Include 把重复 bundle 行叠加进根树时抛出的 TypeError 文本，实测
-/// `duplicate loader entry id: dsh-tauri-worktree`）。
-#[cfg(windows)]
-fn is_duplicate_loader_exit(exit_code: u32, stderr: &str) -> bool {
-    exit_code == 1 && stderr.contains("duplicate loader entry")
+fn wait_harness(
+    child: &mut HarnessChild,
+    timeout: Option<std::time::Duration>,
+) -> Result<Option<Option<i64>>, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, WaitForSingleObject, INFINITE,
+        };
+
+        let handle = child.as_raw_handle();
+        let millis = timeout.map_or(INFINITE, |value| value.as_millis() as u32);
+        match unsafe { WaitForSingleObject(handle, millis) } {
+            WAIT_TIMEOUT => Ok(None),
+            WAIT_OBJECT_0 => {
+                let mut code = 0;
+                Ok(Some(
+                    (unsafe { GetExitCodeProcess(handle, &mut code) } != 0)
+                        .then_some(i64::from(code)),
+                ))
+            }
+            _ => Err(format!(
+                "PROCESS_WAIT_FAILED: {}",
+                std::io::Error::last_os_error()
+            )),
+        }
+    }
+    #[cfg(unix)]
+    {
+        let Some(timeout) = timeout else {
+            return child
+                .wait()
+                .map(|exit| Some(exit.code().map(i64::from)))
+                .map_err(|error| format!("PROCESS_WAIT_FAILED: {error}"));
+        };
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(exit)) => return Ok(Some(exit.code().map(i64::from))),
+                Ok(None) if std::time::Instant::now() >= deadline => return Ok(None),
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                Err(error) => return Err(format!("PROCESS_WAIT_FAILED: {error}")),
+            }
+        }
+    }
+}
+
+fn supervise_harness(
+    mut on_exit: impl FnMut(u32, Option<i64>, Option<&Path>),
+    log_path: &PathBuf,
+    started: &mut Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+    guards: (LaunchGuard, tokio::sync::OwnedMutexGuard<()>),
+    mut spawn: impl FnMut(
+        &Path,
+    ) -> Result<
+        (
+            OwnedProcess,
+            HarnessChild,
+            std::io::Result<std::sync::mpsc::Receiver<bool>>,
+        ),
+        String,
+    >,
+    mut reset: impl FnMut(),
+    mut persist: impl FnMut(u32),
+) -> Result<(), String> {
+    let mut guards = Some(guards);
+    let mut previous_exit = None;
+    for attempt in 1..=3 {
+        let report_path = fatal_report_path(log_path);
+        let registered = register_owned_process(previous_exit.map(|(pid, _)| pid), || {
+            if previous_exit.is_some() {
+                reset();
+            }
+            let (owned, child, signature) = spawn(&report_path)?;
+            #[cfg(unix)]
+            let mut child = child;
+            let pid = owned.pid;
+            let signature = match signature {
+                Ok(signature) => {
+                    persist(pid);
+                    Ok(signature)
+                }
+                Err(error) => {
+                    let error = format!("PROCESS_START_FAILED: spawn output reader: {error}");
+                    #[cfg(windows)]
+                    let cleanup = {
+                        use std::os::windows::io::AsRawHandle;
+                        super::process::terminate_windows_process(
+                            pid,
+                            child.as_raw_handle(),
+                            super::process::kill_pid_tree,
+                        )
+                    };
+                    #[cfg(unix)]
+                    let cleanup = (|| {
+                        if child.try_wait()?.is_none() {
+                            // 线程耗尽时不依赖再创建外部 kill 进程；未 reap 的 PID 不会复用。
+                            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+                            if let Err(kill) = child.kill() {
+                                if child.try_wait()?.is_none() {
+                                    return Err(kill);
+                                }
+                            }
+                        }
+                        child.wait().map(|_| ())
+                    })()
+                    .map_err(|cleanup: std::io::Error| {
+                        format!("HARNESS_CLEANUP_FAILED: process {pid}: {cleanup}")
+                    });
+                    match cleanup {
+                        Ok(()) => return Err(error),
+                        Err(cleanup) => Err(format!("{error}; {cleanup}")),
+                    }
+                }
+            };
+            Ok((owned, (pid, child, signature)))
+        });
+        let (pid, mut child, signature) = match registered {
+            Ok(Some(process)) => process,
+            Ok(None) => return Err("STARTUP_CANCELLED: Harness launch was stopped".into()),
+            Err(error) => {
+                if let Some((pid, code)) = previous_exit {
+                    on_exit(pid, code, None);
+                }
+                return Err(error);
+            }
+        };
+        let signature = signature?;
+        log::info!("Harness process spawned and registered: pid={pid}, attempt={attempt}");
+        if let Some(started) = started.take() {
+            let _ = started.send(Ok(()));
+        }
+        let mut wait = |timeout| {
+            let result = wait_harness(&mut child, timeout);
+            if let Err(error) = &result {
+                log::error!(
+                    "{error}; terminating this Harness process before releasing its monitor"
+                );
+                #[cfg(windows)]
+                {
+                    use std::os::windows::io::AsRawHandle;
+                    super::process::terminate_windows_process(
+                        pid,
+                        child.as_raw_handle(),
+                        super::process::kill_pid_tree,
+                    )?;
+                }
+                #[cfg(unix)]
+                {
+                    super::process::kill_pid_tree(pid);
+                    child
+                        .wait()
+                        .map_err(|cleanup| format!("{error}; cleanup failed: {cleanup}"))?;
+                }
+                on_exit(pid, None, Some(&report_path));
+            }
+            result
+        };
+        let code = match wait(Some(std::time::Duration::from_millis(2500)))? {
+            Some(code) => code,
+            None => {
+                let (launch, transition) = guards.take().unwrap();
+                drop(launch);
+                drop(transition);
+                let code = wait(None)?.flatten();
+                on_exit(pid, code, Some(&report_path));
+                return Ok(());
+            }
+        };
+        // 子孙进程可能继承 stderr 写端；只等本轮签名，不能等无界 EOF。
+        let duplicate = matches!(
+            signature.recv_timeout(std::time::Duration::from_millis(250)),
+            Ok(true)
+        );
+        if code == Some(1) && duplicate && attempt < 3 {
+            log_fatal_report(log_path, &report_path);
+            log::warn!(
+                "DUPLICATE_LOADER_ENTRY: dsh exited early with duplicate loader entry \
+                 (pid={pid}, code=1); resetting profile root and relaunching (attempt {attempt}/3)"
+            );
+            previous_exit = Some((pid, code));
+            continue;
+        }
+        on_exit(pid, code, Some(&report_path));
+        return Ok(());
+    }
+    unreachable!()
 }
 
 /// 启动 Harness 服务进程
 pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
+    super::early::wait_preparation().await?;
     // 启动分段计时（issue #766）：只写日志，不改控制流。每段一行 `STARTUP_PHASE`，
     // `ms` 是本段耗时、`total` 是本次 launch 的累计耗时。启动慢的归因过去只能靠
     // 时间戳猜测（同一进程内 auto_start 与前端 invoke 并发交错），埋点后可直接
@@ -241,8 +495,19 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         *phase_started = now;
     };
     let mut setting = config::get_store_dat_setting(&app_handle);
+    setting.port = super::instances::port(&app_handle);
     let node_binary_path = config::get_node_binary_path(&app_handle);
-    let _transition_guard = super::process::acquire_core_transition().await?;
+    let transition = super::process::acquire_core_transition();
+    tokio::pin!(transition);
+    let _transition_guard = loop {
+        if launch_guard().load(Ordering::SeqCst) && has_owned_process() {
+            return Ok(());
+        }
+        tokio::select! {
+            guard = &mut transition => break guard?,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+        }
+    };
     let dsh_binary_path = crate::service::core::active_dsh_binary(&app_handle);
 
     log::debug!("Checking Node.js path: {:?}", node_binary_path);
@@ -265,14 +530,14 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         log::info!("Owned Harness process is already running, skipping launch");
         return Ok(());
     }
-    if LAUNCH_GUARD
+    if launch_guard()
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
         log::info!("Harness launch already in progress, skipping");
         return Ok(());
     }
-    let _launch_guard = LaunchGuard;
+    let _launch_guard = LaunchGuard(launch_guard());
     // 只有持有启动守卫的这条路径清扫残留：并发启动的其它调用已在守卫处返回，
     // 不会误杀刚拉起的进程。崩溃/强杀残留的孤儿 Harness 实例（不在
     // .harness.pid 标记中）持续占用配置端口与 dependencies/dsh 的文件句柄，
@@ -285,20 +550,25 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 一次全量枚举约 0.3–0.6s），因此只在尚未清扫时才执行。
     {
         let handle = app_handle.clone();
-        if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
-            if take_startup_sweep() {
-                terminate_stale_harness_processes(&handle);
-            } else {
-                log::debug!("Skipping pre-launch stale Harness sweep: already swept during this launch");
-            }
+        let profile = crate::service::profile::active_profile(&app_handle);
+        tauri::async_runtime::spawn_blocking(move || {
+            super::instances::scope_sync(profile, || {
+                if take_startup_sweep() {
+                    let result = terminate_stale_harness_processes(&handle);
+                    if result.is_err() {
+                        super::process::retry_startup_sweep();
+                    }
+                    result
+                } else {
+                    log::debug!(
+                        "Skipping pre-launch stale Harness sweep: already swept during this launch"
+                    );
+                    Ok(())
+                }
+            })
         })
         .await
-        {
-            log::warn!(
-                "failed to sweep stale Harness processes before launch at {}: {e}",
-                dsh_binary_path.display()
-            );
-        }
+        .map_err(|error| format!("HARNESS_SWEEP_FAILED: {error}"))??;
     }
 
     // 端口自愈：自动避让递增（配置端口被占 → 逐级顶高）遗留的非默认端口，
@@ -306,7 +576,17 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 端口只增不减、一路从 3080 漂到 3084+（issue #91）。先于
     // wait_for_port_release 探测：既然放弃旧端口，就无需等它释放。
     let heal_target = setting.manual_port.unwrap_or(config::default_port());
-    let healed_port = resolve_heal_port(setting.port, heal_target, !is_port_in_use(heal_target));
+    let entry = dsh_binary_path.clone();
+    let profile = crate::service::profile::active_profile(&app_handle);
+    let heal_target_free = tauri::async_runtime::spawn_blocking(move || {
+        super::instances::scope_sync(profile, || {
+            wait_for_port_release(heal_target, PORT_RELEASE_WAIT);
+            prepare_port(&entry, heal_target)
+        })
+    })
+    .await
+    .map_err(|error| format!("HARNESS_CLEANUP_FAILED: {error}"))??;
+    let healed_port = resolve_heal_port(setting.port, heal_target, heal_target_free);
     if healed_port != setting.port {
         log::info!(
             "Harness port healed from {} back to {} (no longer occupied)",
@@ -314,7 +594,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
             healed_port
         );
         setting.port = healed_port;
-        config::set_store_dat_setting(&app_handle, setting.clone());
+        super::instances::set_port(setting.port);
     }
 
     // 端口冲突时从当前值开始逐个递增，并持久化最终选择供所有调用方复用。
@@ -324,13 +604,19 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 一路漂移，表现为“端口持续累加 + 首次启动超时、刷新后恢复”）。先留出
     // 窗口等配置端口回落为空闲，再决定是否真的逐级递增。
     // 有界轮询是阻塞等待，交给阻塞线程池，避免占用启动所在的 Tokio 执行线程。
-    {
-        let port = setting.port;
-        let _ =
-            tauri::async_runtime::spawn_blocking(move || wait_for_port_release(port, PORT_RELEASE_WAIT))
-                .await;
-    }
-    let available_port = find_available_port(setting.port)?;
+    let port = setting.port;
+    let entry = dsh_binary_path.clone();
+    let profile = crate::service::profile::active_profile(&app_handle);
+    let available_port = tauri::async_runtime::spawn_blocking(move || {
+        super::instances::scope_sync(profile, || {
+            if port != heal_target {
+                wait_for_port_release(port, PORT_RELEASE_WAIT);
+            }
+            find_available_port(port, &entry)
+        })
+    })
+    .await
+    .map_err(|error| format!("HARNESS_CLEANUP_FAILED: {error}"))??;
     if available_port != setting.port {
         log::info!(
             "Harness port changed from {} to {} because the configured port is occupied",
@@ -338,8 +624,9 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
             available_port
         );
         setting.port = available_port;
-        config::set_store_dat_setting(&app_handle, setting.clone());
+        super::instances::set_port(setting.port);
     }
+    super::instances::set_port(setting.port);
     mark_phase("stale_sweep_and_port", &mut phase_started);
 
     // 构造环境变量：隔离的 $DSH_HOME + 隐私默认（关闭遥测）
@@ -418,6 +705,9 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 退级策略禁用「未分组」入口并告警。最佳努力且幂等：锚点缺失安全跳过。
     if let Err(e) = crate::service::patch::composer::apply(&app_handle) {
         log::warn!("composer workspace-less patch failed: {e}");
+    }
+    if let Err(e) = crate::service::patch::conversation_draft::apply(&app_handle) {
+        log::warn!("conversation draft compatibility patch failed: {e}");
     }
     if let Err(e) = crate::service::patch::mobile_composer::apply(&app_handle) {
         log::warn!("mobile composer patch failed: {e}");
@@ -538,6 +828,70 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
             node_binary_path.display()
         ));
     }
+    let profile = crate::service::profile::active_profile(&app_handle);
+    let plan = LaunchPlan {
+        setting,
+        profile_root: crate::service::profile::profile_dir_of(&app_handle, &profile),
+        profile,
+        node: node_binary_path,
+        dsh_binary: dsh_binary_path,
+        core_dir: crate::service::core::active_core_dir(&app_handle),
+        dsh_home,
+        base: config::get_base_dir(&app_handle),
+        bin_dir: crate::service::cli::get_bin_dir(&app_handle),
+        pnpm_root: config::get_pnpm_install_path(&app_handle),
+        pnpm_binary: config::get_pnpm_binary_path(&app_handle),
+        pid_path: super::sweep::harness_pid_path(&app_handle),
+        resources: app_handle.path().resource_dir().ok(),
+        git_dir: config::get_git_cmd_dir(&app_handle),
+        user_pnpm: crate::service::cli::find_user_pnpm(&app_handle),
+    };
+    let notifications = Arc::new(OnceLock::new());
+    let _ = notifications.set(app_handle);
+    launch_prepared(
+        plan,
+        (_launch_guard, _transition_guard),
+        notifications,
+        #[cfg(windows)]
+        None,
+    )
+    .await
+}
+
+pub(super) async fn launch_prepared(
+    plan: LaunchPlan,
+    guards: (LaunchGuard, tokio::sync::OwnedMutexGuard<()>),
+    notifications: Arc<OnceLock<tauri::AppHandle>>,
+    #[cfg(windows)] job: Option<Arc<super::win_spawn::ProcessJob>>,
+) -> Result<(), String> {
+    let prepared_started = std::time::Instant::now();
+    let mut phase_started = prepared_started;
+    let mark_phase = |name: &str, phase_started: &mut std::time::Instant| {
+        let now = std::time::Instant::now();
+        log::info!(
+            "STARTUP_PHASE: name={name} ms={} prepared_total={}",
+            now.duration_since(*phase_started).as_millis(),
+            now.duration_since(prepared_started).as_millis()
+        );
+        *phase_started = now;
+    };
+    let LaunchPlan {
+        setting,
+        profile: active_profile,
+        node: node_binary_path,
+        dsh_binary: dsh_binary_path,
+        core_dir,
+        profile_root,
+        dsh_home,
+        base,
+        bin_dir,
+        pnpm_root,
+        pnpm_binary,
+        pid_path,
+        resources,
+        git_dir,
+        user_pnpm,
+    } = plan;
     let mut envs: HashMap<String, String> = HashMap::new();
     envs.insert(
         "DSH_HOME".to_string(),
@@ -577,9 +931,9 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
             for dir in &git_dirs {
                 log::debug!("harness service PATH prepend: {}", dir.to_string_lossy());
             }
-            let mut paths = vec![crate::service::cli::get_bin_dir(&app_handle)];
+            let mut paths = vec![bin_dir.clone()];
             paths.push(node_dir.to_path_buf());
-            if let Some(git_dir) = config::get_git_cmd_dir(&app_handle) {
+            if let Some(git_dir) = git_dir {
                 log::debug!(
                     "harness service Git PATH prepend: {}",
                     git_dir.to_string_lossy()
@@ -597,13 +951,10 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // GUI 进程可能启动在 pnpm 安装之前，继承的 PATH 因而没有 npm 全局目录。
     // 直接注入探测到的绝对路径，避免 dsh-market 的 pnpm --version 落到自身 shim
     // 后又因 PATH 看不到真正的 pnpm（issue #139）。
-    if let Some(user_pnpm) = crate::service::cli::find_user_pnpm(&app_handle) {
+    if let Some(user_pnpm) = user_pnpm.as_deref() {
         // Unix mise shim 依赖调用路径中的 argv[0]；只做字面绝对化，不能解析
         // `pnpm -> mise` 链接。Windows 仍由同一辅助函数处理连接点与 `\\?\`。
-        if let Some(pnpm_value) = crate::service::cli::pnpm_env_value(
-            &user_pnpm,
-            &crate::service::cli::get_bin_dir(&app_handle),
-        ) {
+        if let Some(pnpm_value) = crate::service::cli::pnpm_env_value(user_pnpm, &bin_dir) {
             envs.insert("DSH_PNPM".to_string(), pnpm_value);
         }
     }
@@ -612,7 +963,16 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // homebrew pnpm）。与插件安装路径的 ensure_pnpm 版本感知一致，但启动阶段绝不
     // 触发下载；捆绑版未安装或与 store 不匹配时不注入（交由用户 pnpm）。探测被正常
     // 安装占住或探针自身失败只告警，只有进程清理未确认才终止启动。
-    match crate::service::plugin::harness_prefer_bundled_pnpm(&app_handle).await {
+    match crate::service::plugin::harness_prefer_bundled_pnpm_from(
+        &profile_root,
+        &pnpm_root,
+        &pnpm_binary,
+        user_pnpm.as_deref(),
+        &node_binary_path,
+        &bin_dir,
+    )
+    .await
+    {
         Ok(true) => {
             envs.insert("DSH_PREFER_BUNDLED_PNPM".to_string(), "1".to_string());
         }
@@ -637,10 +997,17 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 的 `dsh web` 不受影响（取代原先对核心 JS 打的 `--skip-auth` 磁盘补丁）。
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
 
+    // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
+    #[cfg(target_os = "linux")]
+    let library_path = harness_library_path(
+        std::env::var_os("APPDIR").as_deref(),
+        std::env::var_os("LD_LIBRARY_PATH").as_deref(),
+    );
+
     // 日志文件（前端日志面板读取）。
     // 每次真实启动前轮转：只保留最近 3 次启动的日志，旧文件后退为
     // `dsh-web.log.1` / `dsh-web.log.2`，避免单文件随多次启动无限增长。
-    let log_path = config::get_service_log_path(&app_handle);
+    let log_path = config::service_log_path_from(&base, Some(&active_profile));
     fs::create_dir_all(log_path.parent().unwrap_or(std::path::Path::new(".")))
         .map_err(|e| format!("LOG_DIR_MKDIR_FAILED: create log dir failed: {e}"))?;
     rotate_service_log(&log_path, 3);
@@ -656,7 +1023,11 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 是「补丁文件存在却应用不了就大声失败」，这里不改变契约，只把同一结果提前成
     // 一条可操作的错误（哪个文件、哪一行、哪个包），错误页据此给出「移除悬空条目」
     // 的一键恢复。必须在所有插件自愈之后：那些步骤会改变安装状态。
-    if let Err(e) = crate::service::plugin::preflight_active_patch_entries(&app_handle) {
+    if let Err(e) = crate::service::plugin::preflight_patch_entries_at(
+        &profile_root,
+        &dsh_home,
+        Some(&dsh_binary_path),
+    ) {
         log::error!("patch layer entry preflight failed: {e}");
         return Err(e);
     }
@@ -713,261 +1084,272 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // `duplicate loader entry id: dsh-tauri-worktree`）。spawn 前最后一刻重置
     // profile 根关闭常见窗口；回写恰好落在探测窗口内的残余竞态由下方
     // Windows 分支的「早期退出重试」兜底。
-    reset_active_profile_root(&app_handle);
+    reset_active_profile_root(&profile_root);
 
     // 本地插件热重载：把已挂载的本地路径插件源码目录折算成桌面端独占的补丁层，
     // 随启动以 `--patch` 注入核心 HMR（本地插件没有版本号可升级，改源码即时生效）。
     // 该层只在本次进程有效，每次启动都要按当前安装状态重算；没有本地插件时不传
     // `--patch`（指向不存在的文件会让核心在读取补丁层时直接失败）。
-    let hmr_patch = crate::service::plugin::local_plugin_hmr_sync(&app_handle);
+    let hmr_patch = crate::service::plugin::local_plugin_hmr_sync_at(
+        &base,
+        &profile_root,
+        resources.as_deref(),
+        setting.local_plugin_hmr,
+    );
     if let Some(path) = hmr_patch.as_deref() {
         log::info!("Injecting local plugin HMR layer: {}", path.display());
     }
 
-    // Windows 打包版是 GUI 进程（没有控制台）。直接以 CREATE_NO_WINDOW 启动
-    // node 会让 dsh 派生的子进程各自新建可见控制台窗口（频繁闪烁 cmd 黑窗），
-    // 因此 Windows 上改用“隐藏控制台”方式启动，见 win_spawn 模块。
-    let active_profile = crate::service::profile::active_profile(&app_handle);
-    let core_dir = crate::service::core::active_core_dir(&app_handle);
+    if let Some(parent) = pid_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let port = setting.port;
     mark_phase("pre_spawn_setup", &mut phase_started);
     super::startup::note_spawn();
-    let spawn_result: SpawnResult = {
-        #[cfg(windows)]
-        {
-            use std::io::{BufReader, Read};
-            use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_TIMEOUT};
-            use windows_sys::Win32::System::Threading::{
-                GetExitCodeProcess, WaitForSingleObject, INFINITE,
-            };
-
-            let args = build_harness_args(
-                &dsh_binary_path,
-                active_profile.as_str(),
-                hmr_patch.as_deref(),
-                setting.port,
-                heap_mb,
-            );
-
-            // 只负责 spawn 并返回管道/PID/句柄：探测与重试期间不登记、不挂
-            // 监视线程——只有最终采用的那个进程才登记，否则旧监视线程会通过
-            // `on_owned_process_exit` 把刚启动的新进程误当作已退出而回落状态。
-            let spawn_harness =
-                || -> std::io::Result<(std::fs::File, std::fs::File, u32, HANDLE)> {
-                    super::win_spawn::spawn_with_hidden_console_owned(
-                        &node_binary_path,
-                        &args,
-                        Some(&core_dir),
-                        &envs,
-                    )
-                };
-
-            // 早期退出重试：崩溃的上一轮 dsh 回写 `cordis.yml` 落在「新进程
-            // prepareProfile 重置之后、Include 读取之前」时，新 boot 会把已含
-            // bundle 组合行的 root 再叠加同一批 patch → `duplicate loader
-            // entry`（实测 exit code 1）。spawn 前重置只覆盖常见窗口，这里在
-            // spawn 后探测 ≤2.5s：命中签名则丢弃实例、重置 profile 根并重试
-            //（最多 3 次，第二次 boot 基于干净状态必然成功）；仍在运行则视为
-            // 健康立即放行登记。探测期间最长阻塞 2.5s，之后才返回给调用方。
-            let mut attempt = 0u32;
-            let mut outcome = spawn_harness();
-            loop {
-                attempt += 1;
-                let (stdout, stderr, pid, handle) = match outcome {
-                    Ok(spawned) => spawned,
-                    Err(error) => {
-                        // spawn 自身失败（非竞态）：保持 Err 交给下方 map 传播
-                        outcome = Err(error);
-                        break;
-                    }
-                };
-                let wait = unsafe { WaitForSingleObject(handle, 2500) };
-                if wait == WAIT_TIMEOUT {
-                    // 健康：进程仍在运行，交给下方登记 + 监视线程。
-                    outcome = Ok((stdout, stderr, pid, handle));
-                    break;
-                }
-                // 已提前退出：读 stderr 判断是否命中竞态签名。
-                let mut exit_code: u32 = 0;
-                let got_exit_code = unsafe { GetExitCodeProcess(handle, &mut exit_code) } != 0;
-                let mut stderr_text = String::new();
-                let mut stderr_reader = BufReader::new(stderr);
-                let _ = Read::read_to_string(&mut stderr_reader, &mut stderr_text);
-                let hit_duplicate =
-                    got_exit_code && is_duplicate_loader_exit(exit_code, &stderr_text);
-                if hit_duplicate && attempt < 3 {
-                    // 丢弃首个失败实例：从未登记，句柄由本分支关闭（此时没有
-                    // 监视线程，不存在重复 close）。
-                    drop(stdout);
-                    unsafe { CloseHandle(handle) };
-                    log::warn!(
-                        "DUPLICATE_LOADER_ENTRY: dsh exited early with duplicate loader entry \
-                         (pid={pid}, code={exit_code}); resetting profile root and relaunching \
-                         (attempt {attempt}/3)"
-                    );
-                    reset_active_profile_root(&app_handle);
-                    outcome = spawn_harness();
-                    continue;
-                }
-                // 非签名提前退出或重试耗尽：走正常路径——已捕获的 stderr 补写
-                // 日志避免失败原因丢失，句柄保持有效交给监视线程等待并关闭。
-                for line in stderr_text.lines() {
-                    log::warn!(target: "dsh", "{}", line);
-                }
-                outcome = Ok((stdout, stderr_reader.into_inner(), pid, handle));
-                break;
-            }
-
-            outcome.map(|(stdout, stderr, pid, handle)| {
-                // PID 与句柄作为整体一次登记，与退出清理（take 一并取出）配对
-                let handle_value = handle as usize;
-                set_owned_process_with_handle(pid, handle_value);
-                let exit_app_handle = app_handle.clone();
-                std::thread::spawn(move || unsafe {
-                    let process_handle = handle_value as HANDLE;
-                    WaitForSingleObject(process_handle, INFINITE);
-                    // 进程确已退出：清空持有 PID 并把 Status 从 Running 回落为
-                    // Stopped（原有实现只清 PID、状态永远停留在 Running）。
-                    // 仅当该 PID 仍是当前登记才取出——旧监视线程不会误清新进程。
-                    // take 返回值里的句柄由本线程负责关闭（不会与
-                    // terminate_owned_process 重复 close——进程已 exit，
-                    // 通常是本线程取走）。
-                    let owned = on_owned_process_exit(&exit_app_handle, pid, |owned| {
-                        let handle = owned.handle as HANDLE;
-                        let mut exit_code: u32 = 0;
-                        (GetExitCodeProcess(handle, &mut exit_code) != 0)
-                            .then_some(i64::from(exit_code))
-                    });
-                    if let Some(owned) = owned {
-                        let h = owned.handle as HANDLE;
-                        CloseHandle(h);
-                    }
-                });
-                (Some(stdout), Some(stderr), pid)
-            })
-        }
-        #[cfg(not(windows))]
-        {
-            use std::os::unix::process::CommandExt;
-            let mut cmd = Command::new(&node_binary_path);
-            cmd.args(build_harness_args(
-                &dsh_binary_path,
-                active_profile.as_str(),
-                hmr_patch.as_deref(),
-                setting.port,
-                heap_mb,
-            ));
-            cmd.envs(&envs)
-                .current_dir(&core_dir)
-                // 核心修正：提供一个空的 stdin 防止 setRawMode 报错
-                .stdin(Stdio::null())
-                // 使用管道捕获输出，以便在子线程中读取
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                // 独立进程组让停止操作只影响 Harness 及其后代。
-                .process_group(0);
-            let mut attempt = 0u32;
-            let mut child = 'attempts: loop {
-                attempt += 1;
-                match cmd.spawn() {
-                    Ok(mut child) => {
-                        let deadline =
-                            std::time::Instant::now() + std::time::Duration::from_millis(2500);
-                        loop {
-                            match child.try_wait() {
-                                Ok(Some(exit)) => {
-                                    let mut stderr_text = String::new();
-                                    if let Some(mut stderr) = child.stderr.take() {
-                                        let _ = stderr.read_to_string(&mut stderr_text);
-                                    }
-                                    if exit.code() == Some(1)
-                                        && stderr_text.contains("duplicate loader entry")
-                                        && attempt < 3
-                                    {
-                                        log::warn!(
-                                            "DUPLICATE_LOADER_ENTRY: dsh exited early with duplicate loader entry \
-                                             (pid={}, code=1); resetting profile root and relaunching \
-                                             (attempt {attempt}/3)",
-                                            child.id()
-                                        );
-                                        reset_active_profile_root(&app_handle);
-                                        cmd = Command::new(&node_binary_path);
-                                        cmd.args(build_harness_args(
-                                            &dsh_binary_path,
-                                            active_profile.as_str(),
-                                            hmr_patch.as_deref(),
-                                            setting.port,
-                                            heap_mb,
-                                        ));
-                                        cmd.envs(&envs)
-                                            .current_dir(&core_dir)
-                                            .stdin(Stdio::null())
-                                            .stdout(Stdio::piped())
-                                            .stderr(Stdio::piped())
-                                            .process_group(0);
-                                        continue 'attempts;
-                                    }
-                                    for line in stderr_text.lines() {
-                                        log::warn!(target: "dsh", "{}", line);
-                                    }
-                                    return Err(format!("Harness exited early: {exit}"));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("harness-startup".into())
+        .spawn(move || {
+            super::instances::scope_sync(active_profile.clone(), || {
+                let mut started = Some(started_tx);
+                let result = supervise_harness(
+                    |pid, code, report_path| {
+                        on_owned_process_exit_at(
+                            pid,
+                            |_| {
+                                if let Some(report_path) = report_path {
+                                    log_fatal_report(&log_path, report_path);
                                 }
-                                Ok(None) if std::time::Instant::now() >= deadline => break,
-                                Ok(None) => {
-                                    std::thread::sleep(std::time::Duration::from_millis(50))
+                                code
+                            },
+                            |payload| {
+                                if let Some(app) = notifications.get() {
+                                    status::emit_status(app);
+                                    super::instances::emit(
+                                        app,
+                                        HARNESS_PROCESS_EXITED_EVENT,
+                                        payload,
+                                    );
                                 }
-                                Err(error) => return Err(error.to_string()),
-                            }
+                            },
+                        );
+                    },
+                    &log_path,
+                    &mut started,
+                    guards,
+                    |report_path| {
+                        let args = build_harness_args(
+                            &dsh_binary_path,
+                            &active_profile,
+                            hmr_patch.as_deref(),
+                            port,
+                            heap_mb,
+                            report_path,
+                        );
+                        #[cfg(windows)]
+                        {
+                            use std::os::windows::io::{FromRawHandle, OwnedHandle};
+                            let spawned = if let Some(job) = job.as_deref() {
+                                super::win_spawn::spawn_with_hidden_console_in_job(
+                                    &node_binary_path,
+                                    &args,
+                                    Some(&core_dir),
+                                    &envs,
+                                    job,
+                                )
+                            } else {
+                                super::win_spawn::spawn_with_hidden_console_owned(
+                                    &node_binary_path,
+                                    &args,
+                                    Some(&core_dir),
+                                    &envs,
+                                )
+                            };
+                            let (stdout, stderr, pid, handle) = spawned
+                                .map_err(|error| format!("PROCESS_START_FAILED: {error}"))?;
+                            let handle = Arc::new(unsafe { OwnedHandle::from_raw_handle(handle) });
+                            let signature =
+                                spawn_output_readers(Some(stdout), Some(stderr), log_path.clone());
+                            Ok((
+                                OwnedProcess {
+                                    pid,
+                                    handle: handle.clone(),
+                                },
+                                handle,
+                                signature,
+                            ))
                         }
-                        break child;
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::CommandExt;
+                            let mut command = Command::new(&node_binary_path);
+                            command
+                                .args(args)
+                                .envs(&envs)
+                                .current_dir(&core_dir)
+                                .stdin(Stdio::null())
+                                .stdout(Stdio::piped())
+                                .stderr(Stdio::piped())
+                                .process_group(0);
+                            #[cfg(target_os = "linux")]
+                            if let Some(path) = &library_path {
+                                command.env("LD_LIBRARY_PATH", path);
+                            }
+                            let mut child = command
+                                .spawn()
+                                .map_err(|error| format!("PROCESS_START_FAILED: {error}"))?;
+                            let pid = child.id();
+                            let signature = spawn_output_readers(
+                                child.stdout.take(),
+                                child.stderr.take(),
+                                log_path.clone(),
+                            );
+                            Ok((OwnedProcess { pid }, child, signature))
+                        }
+                    },
+                    || reset_active_profile_root(&profile_root),
+                    |pid| {
+                        let _ = fs::write(&pid_path, format!("{pid}\n{port}\n"));
+                    },
+                );
+                if let Err(error) = result {
+                    log::error!("Harness startup supervisor failed: {error}");
+                    if let Some(started) = started.take() {
+                        let _ = started.send(Err(error));
                     }
-                    Err(error) => return Err(error.to_string()),
                 }
-            };
-            let pid = child.id();
-            let stdout = child.stdout.take();
-            let stderr = child.stderr.take();
-            set_owned_process(pid);
-            let exit_app_handle = app_handle.clone();
-            std::thread::spawn(move || {
-                let code = child.wait().ok().and_then(|status| status.code());
-                let _ = on_owned_process_exit(&exit_app_handle, pid, |_| code.map(i64::from));
             });
-            Ok((stdout, stderr, pid))
-        }
-    };
-
-    // 这一段包含 spawn、2.5s 存活探测与 `set_owned_process` 登记——登记写在 spawn 块
-    // 内部，无法单独切分，所以不再为「登记」另打一个只量到一行 log 的点。
-    mark_phase("spawn_probe_and_register", &mut phase_started);
-
-    match spawn_result {
-        Ok((stdout, stderr, pid)) => {
-            log::info!(
-                "Harness process started successfully: pid={pid}, port={}",
-                setting.port
-            );
-            // 记录 PID+端口供下次启动清扫崩溃残留的孤儿实例（见 sweep_orphan_harness）
-            persist_harness_pid(&app_handle, pid, setting.port);
-            spawn_output_readers(stdout, stderr, log_path);
-            Ok(())
-        }
-        Err(e) => {
-            log::error!("Failed to start process: {}", e);
-            Err(format!("PROCESS_START_FAILED: {e}"))
-        }
-    }
+        })
+        .map_err(|error| format!("PROCESS_START_FAILED: spawn startup supervisor: {error}"))?;
+    let result = started_rx
+        .await
+        .map_err(|error| format!("PROCESS_START_FAILED: startup supervisor ended: {error}"))?;
+    mark_phase("spawn_and_register", &mut phase_started);
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    mod appimage_library_path {
+        use super::*;
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        #[test]
+        fn removes_only_appimage_library_directories() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    Some(OsStr::new("/opt/custom/lib:/tmp/.mount_DSH/usr/lib:/tmp/.mount_DSH:/tmp/.mount_DSH-other/lib:")),
+                ),
+                Some(OsString::from("/opt/custom/lib:/tmp/.mount_DSH-other/lib:")),
+            );
+        }
+
+        #[test]
+        fn filters_semicolon_and_mixed_library_path_separators() {
+            for path in [
+                "/opt/custom/lib;/tmp/.mount_DSH/usr/lib",
+                "/tmp/.mount_DSH/usr/lib;/opt/custom/lib",
+                "/tmp/.mount_DSH/usr/lib:/opt/custom/lib;/tmp/.mount_DSH/usr/lib64",
+            ] {
+                assert_eq!(
+                    harness_library_path(
+                        Some(OsStr::new("/tmp/.mount_DSH")),
+                        Some(OsStr::new(path))
+                    ),
+                    Some(OsString::from("/opt/custom/lib")),
+                    "{path}",
+                );
+            }
+        }
+
+        #[test]
+        fn retains_empty_components_and_loader_tokens() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    Some(OsStr::new(";/tmp/.mount_DSH/usr/lib;;$ORIGIN/$LIB:;")),
+                ),
+                Some(OsString::from("::$ORIGIN/$LIB::")),
+            );
+        }
+
+        #[test]
+        fn filters_non_utf8_appimage_paths_without_removing_siblings() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::from_bytes(b"/tmp/.mount_\xff")),
+                    Some(OsStr::from_bytes(
+                        b"/tmp/.mount_\xff/usr/lib;/opt/\xfe/lib:/tmp/.mount_\xff-other/lib"
+                    )),
+                ),
+                Some(OsString::from_vec(
+                    b"/opt/\xfe/lib:/tmp/.mount_\xff-other/lib".to_vec()
+                )),
+            );
+        }
+
+        #[test]
+        fn preserves_library_path_without_an_appimage_directory() {
+            let path = Some(OsStr::new("/opt/custom/lib"));
+            assert_eq!(
+                harness_library_path(None, path),
+                Some(OsString::from("/opt/custom/lib"))
+            );
+            assert_eq!(
+                harness_library_path(Some(OsStr::new("")), path),
+                Some(OsString::from("/opt/custom/lib"))
+            );
+        }
+
+        #[test]
+        fn preserves_an_unset_library_path() {
+            assert_eq!(
+                harness_library_path(Some(OsStr::new("/tmp/.mount_DSH")), None),
+                None
+            );
+        }
+
+        #[test]
+        fn clears_a_library_path_containing_only_appimage_directories() {
+            for path in [
+                "/tmp/.mount_DSH/usr/lib",
+                "/tmp/.mount_DSH/usr/lib;/tmp/.mount_DSH/usr/lib64",
+                "",
+            ] {
+                assert_eq!(
+                    harness_library_path(
+                        Some(OsStr::new("/tmp/.mount_DSH")),
+                        Some(OsStr::new(path))
+                    ),
+                    Some(OsString::new()),
+                    "{path}",
+                );
+            }
+        }
+
+        #[test]
+        fn preserves_non_utf8_user_library_paths() {
+            assert_eq!(
+                harness_library_path(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    Some(OsStr::from_bytes(b"/opt/\xff/lib:/tmp/.mount_DSH/usr/lib"))
+                ),
+                Some(OsString::from_vec(b"/opt/\xff/lib".to_vec())),
+            );
+        }
+    }
+
     #[test]
     fn occupied_port_advances_to_a_free_port() {
         let mut checked = Vec::new();
         let selected = find_available_port_by(3080, |port| {
             checked.push(port);
-            port < 3082
+            Ok(port < 3082)
         })
         .expect("find next free port");
 
@@ -977,8 +1359,20 @@ mod tests {
 
     #[test]
     fn occupied_port_reports_exhaustion_at_max_port() {
-        let error = find_available_port_by(u16::MAX, |_| true).expect_err("port exhaustion");
+        let error = find_available_port_by(u16::MAX, |_| Ok(true)).expect_err("port exhaustion");
         assert!(error.starts_with("PORT_EXHAUSTED:"));
+    }
+
+    #[test]
+    fn confirmed_orphan_cleanup_failure_does_not_advance_port() {
+        let mut checked = Vec::new();
+        let error = find_available_port_by(3080, |port| {
+            checked.push(port);
+            Err("HARNESS_CLEANUP_FAILED: retained listener".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(error, "HARNESS_CLEANUP_FAILED: retained listener");
+        assert_eq!(checked, vec![3080]);
     }
 
     fn text_args(args: &[OsString]) -> Vec<String> {
@@ -999,10 +1393,14 @@ mod tests {
             Some(patch),
             3080,
             None,
+            Path::new("D:/app-data/logs/fatal.json"),
         );
         assert_eq!(
             text_args(&args),
             vec![
+                "--report-on-fatalerror".to_string(),
+                "--report-directory=D:/app-data/logs".to_string(),
+                "--report-filename=fatal.json".to_string(),
                 "D:/core/lib/bin.js".to_string(),
                 "--profile".to_string(),
                 "tauri".to_string(),
@@ -1016,6 +1414,58 @@ mod tests {
     }
 
     #[test]
+    fn fatal_report_flags_precede_the_script_path() {
+        let args = build_harness_args(
+            Path::new("D:/core/lib/bin.js"),
+            "tauri",
+            None,
+            3081,
+            None,
+            Path::new("D:/用户 data/logs/fatal.json"),
+        );
+        let text = text_args(&args);
+        assert_eq!(text[0], "--report-on-fatalerror");
+        assert_eq!(text[1], "--report-directory=D:/用户 data/logs");
+        assert_eq!(text[2], "--report-filename=fatal.json");
+        assert_eq!(text[3], "D:/core/lib/bin.js");
+    }
+
+    #[test]
+    fn fatal_report_paths_are_distinct_for_each_spawn_attempt() {
+        let log = Path::new("D:/用户 data/logs/dsh-web.log");
+        let first = fatal_report_path(log);
+        let second = fatal_report_path(log);
+        assert_eq!(first.parent(), Some(Path::new("D:/用户 data/logs")));
+        assert_eq!(first.extension(), Some(std::ffi::OsStr::new("json")));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn fatal_report_log_only_names_this_attempts_existing_file_without_reading_it() {
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join("dsh-web.log");
+        fs::write(&log, "existing error\n").unwrap();
+        let stale = fatal_report_path(&log);
+        fs::write(&stale, b"secret environment").unwrap();
+        let report = fatal_report_path(&log);
+        log_fatal_report(&log, &report);
+        assert_eq!(fs::read_to_string(&log).unwrap(), "existing error\n");
+        fs::create_dir(&report).unwrap();
+        log_fatal_report(&log, &report);
+        assert_eq!(fs::read_to_string(&log).unwrap(), "existing error\n");
+        fs::remove_dir(&report).unwrap();
+        fs::write(&report, b"\xffsecret environment").unwrap();
+        log_fatal_report(&log, &report);
+        assert_eq!(
+            fs::read_to_string(&log).unwrap(),
+            format!(
+                "existing error\nERROR HARNESS_FATAL_REPORT: {}\n",
+                report.display()
+            )
+        );
+    }
+
+    #[test]
     fn heap_option_stays_ahead_of_the_script_path() {
         let args = build_harness_args(
             Path::new("D:/core/lib/bin.js"),
@@ -1023,30 +1473,423 @@ mod tests {
             None,
             3081,
             Some(4096),
+            Path::new("D:/logs/fatal.json"),
         );
         let text = text_args(&args);
         assert_eq!(text[0], "--max-old-space-size=4096");
-        assert_eq!(text[1], "D:/core/lib/bin.js");
+        assert_eq!(text[1], "--report-on-fatalerror");
+        assert_eq!(text[4], "D:/core/lib/bin.js");
         assert!(!text.contains(&"--patch".to_string()));
     }
 
-    /// 「duplicate loader entry」竞态签名的判定：只认 exit code 1 + stderr 含
-    /// 该文本（实测失败日志：
-    /// `Error: dsh: plugin tree failed to load: failed to apply loader entry
-    /// include (cordis:include): duplicate loader entry id: dsh-tauri-worktree`）。
-    #[cfg(windows)]
+    struct SupervisedNode {
+        root: tempfile::TempDir,
+        instance: std::sync::Arc<super::super::instances::Instance>,
+        started: Option<tokio::sync::oneshot::Receiver<Result<(), String>>>,
+        finished: std::sync::mpsc::Receiver<Result<(), String>>,
+        worker: Option<std::thread::JoinHandle<()>>,
+        attempts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        spawned: std::sync::Arc<std::sync::Mutex<Option<OwnedProcess>>>,
+        resets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        transition: std::sync::Arc<tokio::sync::Mutex<()>>,
+    }
+
+    impl SupervisedNode {
+        fn new(script: &str) -> Self {
+            Self::with_reader_failure(script, 0)
+        }
+
+        fn with_reader_failure(script: &str, reader: usize) -> Self {
+            use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+
+            let node = config::get_local_node_path()
+                .expect("supported Node.js required for supervisor tests");
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().to_path_buf();
+            let script_path = path.join("fixture.cjs");
+            fs::write(&script_path, script).unwrap();
+            fs::create_dir_all(path.join("AppData/Local")).unwrap();
+            fs::create_dir_all(path.join("AppData/Roaming")).unwrap();
+            let envs: HashMap<String, String> = HashMap::from([
+                ("HOME".into(), path.to_string_lossy().into_owned()),
+                ("USERPROFILE".into(), path.to_string_lossy().into_owned()),
+                (
+                    "APPDATA".into(),
+                    path.join("AppData/Roaming").to_string_lossy().into_owned(),
+                ),
+                (
+                    "LOCALAPPDATA".into(),
+                    path.join("AppData/Local").to_string_lossy().into_owned(),
+                ),
+                ("DSH_E2E_HOME".into(), path.to_string_lossy().into_owned()),
+                ("NODE_OPTIONS".into(), String::new()),
+                ("NODE_PATH".into(), String::new()),
+            ]);
+            let profile = format!("supervisor-{}", path.file_name().unwrap().to_string_lossy());
+            let instance = super::super::instances::instance_of(&profile);
+            instance.launching.store(true, Ordering::SeqCst);
+            *instance.status.lock().unwrap() = status::Status::Starting;
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let resets = Arc::new(AtomicUsize::new(0));
+            let transition = Arc::new(tokio::sync::Mutex::new(()));
+            let guards = (
+                LaunchGuard(instance.launching.clone()),
+                transition.clone().try_lock_owned().unwrap(),
+            );
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (finished_tx, finished) = std::sync::mpsc::channel();
+            let spawned = Arc::new(Mutex::new(None));
+            let spawned_process = spawned.clone();
+            let spawn_count = attempts.clone();
+            let reset_count = resets.clone();
+            let worker = std::thread::spawn(move || {
+                let log = path.join("dsh-web.log");
+                let mut started = Some(started_tx);
+                let result = super::super::utils::with_output_reader_failure(reader, || {
+                    super::super::instances::scope_sync(profile, || {
+                        supervise_harness(
+                            |pid, code, report_path| {
+                                on_owned_process_exit_at(
+                                    pid,
+                                    |_| {
+                                        if let Some(report_path) = report_path {
+                                            log_fatal_report(&log, report_path);
+                                        }
+                                        code
+                                    },
+                                    |_| {},
+                                );
+                            },
+                            &log,
+                            &mut started,
+                            guards,
+                            |_| {
+                                if spawn_count.fetch_add(1, Ordering::SeqCst) > 0
+                                    && !fs::read_to_string(path.join("cordis.yml"))
+                                        .unwrap()
+                                        .ends_with("\n[]\n")
+                                {
+                                    return Err("FIXTURE_PROFILE_NOT_RESET: stale root".into());
+                                }
+                                if path.join("fail-next-spawn").exists() {
+                                    return Err(
+                                        "PROCESS_START_FAILED: fixture retry spawn failure".into(),
+                                    );
+                                }
+                                fs::write(path.join("cordis.yml"), "- stale-loader-entry\n")
+                                    .unwrap();
+                                #[cfg(windows)]
+                                {
+                                    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+                                    let (stdout, stderr, pid, handle) =
+                                        super::super::win_spawn::spawn_with_hidden_console_owned(
+                                            &node,
+                                            &[script_path.clone().into_os_string()],
+                                            Some(&path),
+                                            &envs,
+                                        )
+                                        .map_err(
+                                            |error| format!("PROCESS_START_FAILED: {error}"),
+                                        )?;
+                                    let handle =
+                                        Arc::new(unsafe { OwnedHandle::from_raw_handle(handle) });
+                                    let owned = OwnedProcess {
+                                        pid,
+                                        handle: handle.clone(),
+                                    };
+                                    *spawned_process.lock().unwrap() = Some(owned.clone());
+                                    let signature = spawn_output_readers(
+                                        Some(stdout),
+                                        Some(stderr),
+                                        log.clone(),
+                                    );
+                                    Ok((owned, handle, signature))
+                                }
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::process::CommandExt;
+                                    let mut child = Command::new(&node)
+                                        .arg(&script_path)
+                                        .envs(&envs)
+                                        .current_dir(&path)
+                                        .stdin(Stdio::null())
+                                        .stdout(Stdio::piped())
+                                        .stderr(Stdio::piped())
+                                        .process_group(0)
+                                        .spawn()
+                                        .map_err(|error| {
+                                            format!("PROCESS_START_FAILED: {error}")
+                                        })?;
+                                    let pid = child.id();
+                                    *spawned_process.lock().unwrap() = Some(OwnedProcess { pid });
+                                    let signature = spawn_output_readers(
+                                        child.stdout.take(),
+                                        child.stderr.take(),
+                                        log.clone(),
+                                    );
+                                    Ok((OwnedProcess { pid }, child, signature))
+                                }
+                            },
+                            || {
+                                reset_count.fetch_add(1, Ordering::SeqCst);
+                                reset_active_profile_root(&path);
+                            },
+                            |pid| fs::write(path.join("harness.pid"), pid.to_string()).unwrap(),
+                        )
+                    })
+                });
+                if let Some(started) = started.take() {
+                    let _ = started.send(result.clone());
+                }
+                finished_tx.send(result).unwrap();
+            });
+            Self {
+                root,
+                instance,
+                started: Some(started_rx),
+                finished,
+                worker: Some(worker),
+                attempts,
+                spawned,
+                resets,
+                transition,
+            }
+        }
+
+        fn acknowledge(&mut self) {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        self.started.take().unwrap(),
+                    )
+                    .await
+                })
+                .expect("spawn acknowledgement must not wait for the startup probe")
+                .expect("supervisor must send acknowledgement")
+                .expect("fixture must spawn and register");
+        }
+
+        fn wait_until(&self, check: impl Fn() -> bool) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+            while !check() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "supervisor fixture condition timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        fn cancel(&self) -> Result<(), String> {
+            let owned = {
+                let mut slot = self
+                    .instance
+                    .process
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                self.instance.launching.store(false, Ordering::SeqCst);
+                slot.take()
+            };
+            if let Some(owned) = owned {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::io::AsRawHandle;
+                    super::super::process::terminate_windows_process(
+                        owned.pid,
+                        owned.handle.as_raw_handle(),
+                        super::super::process::kill_pid_tree,
+                    )?;
+                }
+                #[cfg(unix)]
+                super::super::process::kill_pid_tree(owned.pid);
+            }
+            Ok(())
+        }
+
+        fn finish(&mut self) -> Result<(), String> {
+            let result = self
+                .finished
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("supervisor must finish and reap its child");
+            self.worker.take().unwrap().join().unwrap();
+            result
+        }
+    }
+
+    impl Drop for SupervisedNode {
+        fn drop(&mut self) {
+            let _ = self.cancel();
+            if let Some(worker) = self.worker.take().filter(|worker| worker.is_finished()) {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn assert_reader_failure_is_reaped(reader: usize) {
+        let mut fixture = SupervisedNode::with_reader_failure("setTimeout(()=>{},60000)", reader);
+        let error = fixture.finish().unwrap_err();
+        assert_eq!(
+            error,
+            "PROCESS_START_FAILED: spawn output reader: injected output reader spawn failure"
+        );
+        assert_eq!(
+            fixture.started.take().unwrap().blocking_recv().unwrap(),
+            Err(error)
+        );
+        assert_eq!(fixture.attempts.load(Ordering::SeqCst), 1);
+        assert!(fixture.instance.process.lock().unwrap().is_none());
+        assert!(!fixture.root.path().join("harness.pid").exists());
+        assert!(!fixture.instance.launching.load(Ordering::SeqCst));
+        assert!(fixture.transition.try_lock().is_ok());
+        let spawned = fixture.spawned.lock().unwrap();
+        let owned = spawned.as_ref().expect("fixture must create a real child");
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            assert_eq!(
+                unsafe {
+                    windows_sys::Win32::System::Threading::WaitForSingleObject(
+                        owned.handle.as_raw_handle(),
+                        0,
+                    )
+                },
+                windows_sys::Win32::Foundation::WAIT_OBJECT_0,
+                "failed reader setup must confirm the exact process exited"
+            );
+        }
+        #[cfg(unix)]
+        {
+            let mut status = 0;
+            assert_eq!(unsafe { libc::kill(owned.pid as libc::pid_t, 0) }, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            assert_eq!(
+                unsafe { libc::waitpid(owned.pid as libc::pid_t, &mut status, libc::WNOHANG) },
+                -1
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+        }
+    }
+
     #[test]
-    fn duplicate_loader_exit_signature_matches_observed_error() {
-        let stderr = "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): duplicate loader entry id: dsh-tauri-worktree\nTypeError: duplicate loader entry id: dsh-tauri-worktree\n    at EntryGroup.update (...)";
-        assert!(is_duplicate_loader_exit(1, stderr));
-        // 其他退出码、无关错误或没有该文本的启动失败不命中
-        assert!(!is_duplicate_loader_exit(0, stderr));
-        assert!(!is_duplicate_loader_exit(2, stderr));
-        assert!(!is_duplicate_loader_exit(
-            1,
-            "Error: EADDRINUSE: address already in use"
-        ));
-        assert!(!is_duplicate_loader_exit(1, ""));
+    fn supervisor_reaps_child_when_first_output_reader_spawn_fails() {
+        assert_reader_failure_is_reaped(1);
+    }
+
+    #[test]
+    fn supervisor_reaps_child_when_second_output_reader_spawn_fails() {
+        assert_reader_failure_is_reaped(2);
+    }
+
+    #[test]
+    fn supervisor_acknowledges_before_probe_and_drains_both_full_pipes() {
+        let mut fixture = SupervisedNode::new(
+            "const fs=require('fs'); const chunk='x'.repeat(1024)+'\\n'; for(let i=0;i<512;i++){fs.writeSync(1,'OUT:'+chunk);fs.writeSync(2,'ERR:'+chunk)} fs.writeSync(1,'STDOUT_DONE\\n');fs.writeSync(2,'STDERR_DONE\\n');setTimeout(()=>{},10000)",
+        );
+        fixture.acknowledge();
+        let pid = fixture
+            .instance
+            .process
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .pid;
+        assert_eq!(
+            fs::read_to_string(fixture.root.path().join("harness.pid")).unwrap(),
+            pid.to_string()
+        );
+        assert!(fixture.instance.launching.load(Ordering::SeqCst));
+        assert!(fixture.transition.try_lock().is_err());
+        let log = fixture.root.path().join("dsh-web.log");
+        fixture.wait_until(|| {
+            fs::read_to_string(&log)
+                .is_ok_and(|text| text.contains("STDOUT_DONE") && text.contains("STDERR_DONE"))
+        });
+        let output = fs::read_to_string(log).unwrap();
+        assert_eq!(output.matches("OUT:").count(), 512);
+        assert_eq!(output.matches("ERR:").count(), 512);
+        fixture.wait_until(|| {
+            !fixture.instance.launching.load(Ordering::SeqCst)
+                && fixture.transition.try_lock().is_ok()
+        });
+        assert!(fixture.instance.process.lock().unwrap().is_some());
+        fixture.cancel().unwrap();
+        fixture.finish().unwrap();
+        assert!(fixture.instance.process.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn supervisor_retries_only_duplicate_code_one_at_most_twice() {
+        for (script, attempts, resets) in [
+            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)", 3, 2),
+            ("require('fs').writeSync(2,'Error: EADDRINUSE\\n');process.exit(1)", 1, 0),
+            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)", 1, 0),
+        ] {
+            let mut fixture = SupervisedNode::new(script);
+            fixture.acknowledge();
+            fixture.finish().unwrap();
+            assert_eq!(fixture.attempts.load(Ordering::SeqCst), attempts, "{script}");
+            assert_eq!(fixture.resets.load(Ordering::SeqCst), resets, "{script}");
+            assert!(fixture.instance.process.lock().unwrap().is_none());
+            assert!(!fixture.instance.launching.load(Ordering::SeqCst));
+            assert_eq!(*fixture.instance.status.lock().unwrap(), status::Status::Stopped);
+            assert!(fixture.transition.try_lock().is_ok());
+        }
+    }
+
+    #[test]
+    fn supervisor_releases_ownership_and_guards_when_retry_spawn_fails() {
+        let mut fixture = SupervisedNode::new(
+            "const fs=require('fs');fs.writeFileSync('fail-next-spawn','1');fs.writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)",
+        );
+        fixture.acknowledge();
+        assert_eq!(
+            fixture.finish().unwrap_err(),
+            "PROCESS_START_FAILED: fixture retry spawn failure"
+        );
+        assert_eq!(fixture.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.resets.load(Ordering::SeqCst), 1);
+        assert!(fixture.instance.process.lock().unwrap().is_none());
+        assert_eq!(
+            *fixture.instance.status.lock().unwrap(),
+            status::Status::Stopped
+        );
+        fixture.wait_until(|| {
+            !fixture.instance.launching.load(Ordering::SeqCst)
+                && fixture.transition.try_lock().is_ok()
+        });
+    }
+
+    #[test]
+    fn stopping_during_probe_cancels_retry_without_invalidating_monitor_handle() {
+        let mut fixture = SupervisedNode::new(
+            "require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');setTimeout(()=>{},10000)",
+        );
+        fixture.acknowledge();
+        let log = fixture.root.path().join("dsh-web.log");
+        fixture.wait_until(|| {
+            fs::read_to_string(&log).is_ok_and(|text| text.contains("duplicate loader entry"))
+        });
+        assert!(fixture.instance.launching.load(Ordering::SeqCst));
+        fixture.cancel().unwrap();
+        if let Err(error) = fixture.finish() {
+            assert_eq!(error, "STARTUP_CANCELLED: Harness launch was stopped");
+        }
+        assert_eq!(fixture.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.resets.load(Ordering::SeqCst), 0);
+        assert!(fixture.instance.process.lock().unwrap().is_none());
+        assert!(!fixture.instance.launching.load(Ordering::SeqCst));
+        assert!(fixture.transition.try_lock().is_ok());
     }
 
     /// 端口自愈（issue #91）：自动避让递增遗留的非默认端口，在回落目标空闲时

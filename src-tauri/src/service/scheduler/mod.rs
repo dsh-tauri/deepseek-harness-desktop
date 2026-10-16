@@ -20,25 +20,33 @@ async fn scheduler_permanent_loop(app_handle: AppHandle) {
     let mut interval = time::interval(Duration::from_secs(5));
 
     loop {
-        let current_status = status::get_status();
-        let port = crate::config::get_store_dat_setting(&app_handle).port;
-        let is_dsh_running =
-            crate::service::workflow::has_owned_process() && utils::is_dsh_running(port).await;
-        log::trace!("DSH status check: dsh_running={}", is_dsh_running);
-        if is_dsh_running && current_status != Status::Running {
-            status::set_status(Status::Running);
-            status::emit_status(&app_handle);
-        }
-        if !crate::service::workflow::has_owned_process() && current_status == Status::Running {
-            log::warn!(
+        for profile in crate::service::workflow::instances::profiles() {
+            crate::service::workflow::instances::scope(profile, async {
+                let current_status = status::get_status();
+                let port = crate::service::workflow::instances::port(&app_handle);
+                let is_dsh_running = crate::service::workflow::has_owned_process()
+                    && utils::is_dsh_running(port).await;
+                log::trace!("DSH status check: dsh_running={}", is_dsh_running);
+                if is_dsh_running && current_status != Status::Running {
+                    status::set_status(Status::Running);
+                    status::emit_status(&app_handle);
+                }
+                if !crate::service::workflow::has_owned_process()
+                    && current_status == Status::Running
+                {
+                    log::warn!(
                 "DSH status check: no owned process yet status Running; resetting to Stopped"
             );
-            status::set_status(Status::Stopped);
-            status::emit_status(&app_handle);
+                    status::set_status(Status::Stopped);
+                    status::emit_status(&app_handle);
+                }
+
+                // 已安装插件文件监控：指纹变化（防抖后）推送 `dsh-plugins-updated`
+                crate::service::plugin::watch::check_and_emit(&app_handle);
+            })
+            .await;
         }
         crate::config::check_and_emit_theme(&app_handle);
-        // 已安装插件文件监控：指纹变化（防抖后）推送 `dsh-plugins-updated`
-        crate::service::plugin::watch::check_and_emit(&app_handle);
         interval.tick().await;
     }
 }

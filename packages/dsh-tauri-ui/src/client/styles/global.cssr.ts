@@ -87,6 +87,9 @@ export default c([
       fontSize: '12px',
     }),
   ]),
+  c('[data-dsh-dock-fallback]', {
+    display: 'none !important',
+  }),
   c('[data-dsh-toggle-cluster], .nArs4W_toggleCluster', {
     top: '6px !important',
     right: '6px !important',
@@ -155,6 +158,9 @@ export default c([
   c('[data-chat-flow] > [data-chat-anchor-key]:not([hidden])', {
     contentVisibility: 'auto',
     containIntrinsicSize: 'auto 320px',
+    // issue #1085: 为 outside 列表标记扩展绘制盒，负外边距保持正文位置。
+    paddingLeft: '24px',
+    marginLeft: '-24px',
   }),
   c('[data-chat-flow-key]:has(> [data-slot="conversation.chat.node"] > [data-dsh-tauri-ui-continue-notice])', {
     display: 'none !important',

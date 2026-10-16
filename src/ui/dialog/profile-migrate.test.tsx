@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { PropsWithOverlays } from '@overlastic/react'
 import { OverlaysProvider, useOverlay } from '@overlastic/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { mockIPC } from '@tauri-apps/api/mocks'
@@ -52,8 +53,12 @@ let analysis: ReturnType<typeof fixtures>
 let client: QueryClient
 let calls: Record<string, unknown[]>
 
+function TrackedDialog(props: PropsWithOverlays) {
+  return <div data-testid="migration-overlay"><ProfileMigrateDialog {...props} /></div>
+}
+
 function Launcher() {
-  const open = useOverlay(ProfileMigrateDialog)
+  const open = useOverlay(TrackedDialog)
   function handleOpen() {
     void open().catch(() => {})
   }
@@ -79,6 +84,7 @@ async function openDialog() {
 async function submit() {
   fireEvent.click(screen.getByText('profiles.migrate_confirm'))
   await waitFor(() => expect(calls.migrate).toBeDefined())
+  await waitFor(() => expect(screen.queryByTestId('migration-overlay')).toBeNull())
 }
 
 beforeEach(() => {

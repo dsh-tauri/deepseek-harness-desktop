@@ -34,6 +34,8 @@ readonly EXCLUDED_LIBS=(
 # 与 linuxdeploy 产出的 squashfs 对齐（实测 zstd / 128K block / 单一 root id）。
 readonly SQUASHFS_COMPRESSION=zstd
 readonly SQUASHFS_BLOCK_SIZE=131072
+readonly GTK_HOOK=apprun-hooks/linuxdeploy-plugin-gtk.sh
+readonly GDK_OVERRIDE_PATTERN='^[[:space:]]*export[[:space:]]+GDK_BACKEND=x11([[:space:]]+#.*)?[[:space:]]*$'
 
 # 在镜像中扫描 squashfs 4.0 superblock：magic "hsqs"，版本字段 s_major/s_minor == 4/0，
 # block_size 为 2 的幂且在 [4096, 1048576]，compression 在 1..6，block_log 与 block_size 自洽。
@@ -157,6 +159,13 @@ for lib in "${EXCLUDED_LIBS[@]}"; do
   done < <(find "$tree" -name "$lib" -print)
 done
 
+hook_changed=0
+# #789：在启动钩子处删除上游强制值，保留用户的 GDK_BACKEND 与其余 GTK 环境。
+if [ -f "$tree/$GTK_HOOK" ] && grep -Eq "$GDK_OVERRIDE_PATTERN" "$tree/$GTK_HOOK"; then
+  sed -Ei "/$GDK_OVERRIDE_PATTERN/d" "$tree/$GTK_HOOK"
+  hook_changed=1
+fi
+
 if [ "${#removed[@]}" -eq 0 ]; then
   if [ "$require_removal" -eq 1 ]; then
     echo "fix-appimage-host-libs: none of the host-interface libs were bundled, but" >&2
@@ -164,12 +173,19 @@ if [ "${#removed[@]}" -eq 0 ]; then
     echo "  is no longer happening, or the bundler changed. Re-verify before dropping the fix." >&2
     exit 1
   fi
-  echo "fix-appimage-host-libs: none of the host-interface libs were bundled, nothing to do"
-  exit 0
+  if [ "$hook_changed" -eq 0 ]; then
+    echo "fix-appimage-host-libs: no host-interface libs or forced GTK backend, nothing to do"
+    exit 0
+  fi
 fi
 
-echo "fix-appimage-host-libs: removed from AppDir:"
-printf '  %s\n' "${removed[@]}"
+if [ "${#removed[@]}" -gt 0 ]; then
+  echo "fix-appimage-host-libs: removed from AppDir:"
+  printf '  %s\n' "${removed[@]}"
+fi
+if [ "$hook_changed" -eq 1 ]; then
+  echo "fix-appimage-host-libs: removed GTK hook's forced GDK_BACKEND=x11"
+fi
 
 head -c "$offset" "$work/in.AppImage" > "$work/out.AppImage"
 mksquashfs "$tree" "$work/fs.squashfs" \
@@ -205,6 +221,14 @@ for lib in "${EXCLUDED_LIBS[@]}"; do
     verdict=1
   fi
 done
+if [ -f "$verified/$GTK_HOOK" ] && grep -Eq "$GDK_OVERRIDE_PATTERN" "$verified/$GTK_HOOK"; then
+  echo "fix-appimage-host-libs: verification failed, GTK hook still forces GDK_BACKEND=x11" >&2
+  verdict=1
+fi
+if [ "$hook_changed" -eq 1 ] && [ ! -f "$verified/$GTK_HOOK" ]; then
+  echo "fix-appimage-host-libs: verification failed, GTK hook is missing" >&2
+  verdict=1
+fi
 for required in AppRun AppRun.wrapped; do
   if [ ! -e "$verified/$required" ]; then
     echo "fix-appimage-host-libs: verification failed, $required is missing" >&2

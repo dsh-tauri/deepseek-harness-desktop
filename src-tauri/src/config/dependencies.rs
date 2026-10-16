@@ -4,7 +4,7 @@
 //! 的**安装根**记在映射表里：
 //!
 //! - 路径 → 使用该根（可为任意绝对路径，或 `resources/...` 令牌，见
-//!   [`super::manifest::resolve_location`]）；
+//!   [`super::manifest::resolve_location_from`]）；
 //! - `null` → 由系统环境满足，桌面端不托管该依赖；
 //! - 键缺失 → 尚未探测，按清单的 `managedRoot` 默认托管根解析。
 //!
@@ -91,7 +91,7 @@ fn read_mapping_cached(path: &Path) -> DependencyMapping {
     mapping
 }
 
-fn read_mapping_at(path: &Path) -> DependencyMapping {
+pub(crate) fn read_mapping_at(path: &Path) -> DependencyMapping {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return DependencyMapping::default();
     };
@@ -167,16 +167,32 @@ pub fn mapped<R: Runtime>(app: &AppHandle<R>, key: &str) -> Option<Option<PathBu
 
 /// 清单声明的默认托管根（映射未记录或为系统时使用）
 pub fn managed_root<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
-    let declared = manifest::dependency_spec(app, key).and_then(|spec| spec.managed_root);
-    match declared {
-        Some(raw) => manifest::resolve_location(app, &raw),
-        None => super::runtime::get_base_dir(app).join(default_managed_root(key)),
+    let base = super::runtime::get_base_dir(app);
+    let resources = manifest::resource_root(app);
+    manifest::with_manifest(app, |manifest| {
+        managed_root_from(&base, resources.as_deref(), Some(manifest), key)
+    })
+    .unwrap_or_else(|| managed_root_from(&base, resources.as_deref(), None, key))
+}
+
+pub(crate) fn managed_root_from(
+    base: &Path,
+    resources: Option<&Path>,
+    manifest: Option<&manifest::Manifest>,
+    key: &str,
+) -> PathBuf {
+    match manifest
+        .and_then(|manifest| manifest.dependencies.get(key))
+        .and_then(|spec| spec.managed_root.as_deref())
+    {
+        Some(raw) => manifest::resolve_location_from(base, resources, raw),
+        None => base.join(default_managed_root(key)),
     }
 }
 
 /// 当前生效的依赖根：映射指定的根优先，否则回落清单默认托管根
 ///
-/// 映射表里的值同样按 [`manifest::resolve_location`] 解析：绝对路径原样使用（任意
+/// 映射表里的值同样按 [`manifest::resolve_location_from`] 解析：绝对路径原样使用（任意
 /// 位置），`$AppData/...` / `$Resources/...` 指向数据目录 / 安装包资源根。因此本地
 /// 捆绑 / 切换内核只需在映射表里写 `"dsh": "$Resources/dsh"` 或任意绝对路径，不必
 /// 改动清单或重装。
@@ -189,16 +205,35 @@ pub fn managed_root<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
 /// 进而转去联网下载。此时回落到清单托管根——普通安装的托管根与记录值本就同路，
 /// 悬空回落不影响既有行为。
 pub fn active_root<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
-    let overridable = manifest::dependency_spec(app, key).is_none_or(|spec| spec.overridable);
+    let base = super::runtime::get_base_dir(app);
+    let resources = manifest::resource_root(app);
+    let mapping = read_mapping(app);
+    manifest::with_manifest(app, |manifest| {
+        active_root_from(&base, resources.as_deref(), Some(manifest), &mapping, key)
+    })
+    .unwrap_or_else(|| active_root_from(&base, resources.as_deref(), None, &mapping, key))
+}
+
+pub(crate) fn active_root_from(
+    base: &Path,
+    resources: Option<&Path>,
+    manifest: Option<&manifest::Manifest>,
+    mapping: &DependencyMapping,
+    key: &str,
+) -> PathBuf {
+    let overridable = manifest
+        .and_then(|manifest| manifest.dependencies.get(key))
+        .is_none_or(|spec| spec.overridable);
     if overridable {
-        if let Some(Some(recorded)) = mapped(app, key) {
-            let resolved = manifest::resolve_location(app, &recorded.to_string_lossy());
+        if let Some(Some(recorded)) = mapping.get(key) {
+            let resolved =
+                manifest::resolve_location_from(base, resources, &recorded.to_string_lossy());
             if resolved.exists() {
                 return resolved;
             }
         }
     }
-    managed_root(app, key)
+    managed_root_from(base, resources, manifest, key)
 }
 
 /// 随包资源构建的随包核心根（`$Resources/dsh`）；非随包构建为 None。
@@ -218,12 +253,15 @@ pub fn bundled_core_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
 
 /// 入口相对路径（相对依赖根）：清单 `dependencies.<key>.entry`，未声明时用内置默认
 pub fn entry_relative<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
-    let declared = manifest::dependency_spec(app, key)
-        .and_then(|spec| spec.entry.resolve().map(str::to_string));
-    match declared {
-        Some(raw) => split_entry(&raw),
-        None => split_entry(default_entry(key)),
-    }
+    manifest::with_manifest(app, |manifest| entry_relative_from(Some(manifest), key))
+        .unwrap_or_else(|| entry_relative_from(None, key))
+}
+
+pub(crate) fn entry_relative_from(manifest: Option<&manifest::Manifest>, key: &str) -> PathBuf {
+    let declared = manifest
+        .and_then(|manifest| manifest.dependencies.get(key))
+        .and_then(|spec| spec.entry.resolve());
+    split_entry(declared.unwrap_or_else(|| default_entry(key)))
 }
 
 /// 当前生效的依赖入口绝对路径（不校验存在性）
@@ -319,6 +357,58 @@ mod tests {
     }
 
     #[test]
+    fn root_resolution_preserves_mapping_and_manifest_precedence() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("data");
+        let resources = dir.path().join("resources");
+        std::fs::create_dir_all(resources.join("mapped")).unwrap();
+        let mut manifest = manifest::parse(
+            r#"{"dependencies":{"dsh":{"managedRoot":"$AppData/default-core","overridable":true,"entry":"lib\\bin.js"}}}"#,
+        )
+        .unwrap();
+        let mut mapping = DependencyMapping::default();
+        let resolve = |manifest: Option<&manifest::Manifest>, mapping: &DependencyMapping| {
+            active_root_from(&base, Some(&resources), manifest, mapping, DEP_DSH)
+        };
+        assert_eq!(
+            resolve(Some(&manifest), &mapping),
+            base.join("default-core")
+        );
+        mapping.set(DEP_DSH, None);
+        assert_eq!(
+            resolve(Some(&manifest), &mapping),
+            base.join("default-core")
+        );
+        mapping.set(DEP_DSH, Some("$Resources/missing".into()));
+        assert_eq!(
+            resolve(Some(&manifest), &mapping),
+            base.join("default-core")
+        );
+        mapping.set(DEP_DSH, Some("$Resources/mapped".into()));
+        assert_eq!(resolve(Some(&manifest), &mapping), resources.join("mapped"));
+        manifest.dependencies.get_mut(DEP_DSH).unwrap().overridable = false;
+        assert_eq!(
+            resolve(Some(&manifest), &mapping),
+            base.join("default-core")
+        );
+        assert_eq!(resolve(None, &mapping), resources.join("mapped"));
+        mapping.set(DEP_DSH, Some("$AppData/missing".into()));
+        assert_eq!(resolve(None, &mapping), base.join("dependencies/dsh"));
+        assert_eq!(
+            managed_root_from(&base, None, Some(&manifest), DEP_DSH),
+            base.join("default-core")
+        );
+        assert_eq!(
+            entry_relative_from(Some(&manifest), DEP_DSH),
+            PathBuf::from("lib").join("bin.js")
+        );
+        assert_eq!(
+            entry_relative_from(None, DEP_PNPM),
+            PathBuf::from("bin").join("pnpm.cjs")
+        );
+    }
+
+    #[test]
     fn entry_split_accepts_both_separators() {
         assert_eq!(
             split_entry("bin/pnpm.cjs"),
@@ -365,10 +455,26 @@ mod tests {
         let base = PathBuf::from("C:/app-data");
         let resources = PathBuf::from("C:/app-resources");
         for (key, root, entry) in [
-            (DEP_NODE, default_managed_root(DEP_NODE), default_entry(DEP_NODE)),
-            (DEP_PNPM, default_managed_root(DEP_PNPM), default_entry(DEP_PNPM)),
-            (DEP_DSH, default_managed_root(DEP_DSH), default_entry(DEP_DSH)),
-            (DEP_GIT, default_managed_root(DEP_GIT), default_entry(DEP_GIT)),
+            (
+                DEP_NODE,
+                default_managed_root(DEP_NODE),
+                default_entry(DEP_NODE),
+            ),
+            (
+                DEP_PNPM,
+                default_managed_root(DEP_PNPM),
+                default_entry(DEP_PNPM),
+            ),
+            (
+                DEP_DSH,
+                default_managed_root(DEP_DSH),
+                default_entry(DEP_DSH),
+            ),
+            (
+                DEP_GIT,
+                default_managed_root(DEP_GIT),
+                default_entry(DEP_GIT),
+            ),
         ] {
             let spec = manifest.dependencies.get(key).expect("spec should exist");
             let declared = spec.managed_root.as_deref().expect("managedRoot");

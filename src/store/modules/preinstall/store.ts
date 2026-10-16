@@ -164,11 +164,11 @@ export const preinstall = defineStore({
      * 一个写 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`），但形状一致：只提交
      * 用户勾选的精确 `包名@版本`，失败按普通安装失败展示并回到可重试态。
      */
-    async allowPolicyVersions(versions: PolicyBlockedVersion[]): Promise<boolean> {
+    async allowPolicyVersions(versions: PolicyBlockedVersion[], expectedProfile?: string): Promise<boolean> {
       if (this.installing || versions.length === 0)
         return false
       try {
-        await invoke('allow_plugin_policy_versions', { versions })
+        await invoke('allow_plugin_policy_versions', { versions, ...(expectedProfile === undefined ? {} : { expectedProfile }) })
         this.policyBlocked = []
         return true
       }

@@ -4,6 +4,8 @@ import { guard } from 'dsh-tauri'
 import restart from './routes/host/restart/post'
 import importApply from './routes/import/apply/post'
 import importScan from './routes/import/scan/get'
+import mcpAuthorizeStatus from './routes/mcp/authorize/get'
+import mcpAuthorize from './routes/mcp/authorize/post'
 import mcpCheck from './routes/mcp/check/post'
 import mcpCopy from './routes/mcp/copy/post'
 import mcpRemove from './routes/mcp/delete'
@@ -36,6 +38,8 @@ export const server = defineWebServer<ExtensionRouteDeps>((app) => {
   app.delete('/api/tauri/extension/mcp', mcpRemove)
   app.post('/api/tauri/extension/mcp/toggle', mcpToggle)
   app.post('/api/tauri/extension/mcp/check', mcpCheck)
+  app.post('/api/tauri/extension/mcp/authorize', mcpAuthorize)
+  app.get('/api/tauri/extension/mcp/authorize', mcpAuthorizeStatus)
   app.post('/api/tauri/extension/mcp/copy', mcpCopy)
 
   app.get('/api/tauri/extension/import/scan', importScan)

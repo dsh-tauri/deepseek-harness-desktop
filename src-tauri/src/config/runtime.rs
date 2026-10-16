@@ -19,15 +19,19 @@ use super::{detect_region, Region};
 /// 全新 scratch home，不覆盖就会反复重下；指向稳定目录即可让首次下载在后续
 /// 运行中复用（清空该目录即回到「首次装配」状态，用于测启动 setup 流程）。
 pub fn get_base_dir<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
-    if let Some(dir) = env::var_os(DOWNLOAD_CACHE_ENV_VAR) {
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
+    base_dir_from(|| {
+        app_handle
+            .path()
+            .app_data_dir()
+            .expect("Failed to resolve app data directory")
+    })
+}
+
+pub(crate) fn base_dir_from(app_data: impl FnOnce() -> PathBuf) -> PathBuf {
+    if let Some(dir) = env::var_os(DOWNLOAD_CACHE_ENV_VAR).filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir);
     }
-    let base = app_handle
-        .path()
-        .app_data_dir()
-        .expect("Failed to resolve app data directory");
+    let base = app_data();
     if cfg!(debug_assertions) {
         base.join(APP_DATA_DEV_DIR_NAME)
     } else {
@@ -70,22 +74,24 @@ pub fn get_node_download_url() -> Result<String, String> {
 }
 
 /// Harness 发行版资产文件名（按平台与架构）
-fn dsh_pkg_asset_filename() -> Result<String, String> {
-    let arch = env::consts::ARCH;
-    let os = env::consts::OS;
-
+fn dsh_pkg_asset_filename(os: &str, arch: &str) -> Result<String, String> {
     match (os, arch) {
         ("windows", _) => Ok("deepseek-harness-pkg-windows.zip".to_string()),
         ("macos", "aarch64") => Ok("deepseek-harness-pkg-macos-arm64.zip".to_string()),
         ("macos", "x86_64") => Ok("deepseek-harness-pkg-macos-x64.zip".to_string()),
-        ("linux", _) => Ok("deepseek-harness-pkg-linux.zip".to_string()),
+        ("linux", "x86_64") => Ok("deepseek-harness-pkg-linux.zip".to_string()),
+        ("linux", "aarch64") => Ok("deepseek-harness-pkg-linux-arm64.zip".to_string()),
         _ => Err(format!("Unsupported platform: {} {}", os, arch)),
     }
 }
 
 /// 打包的 DeepSeek Harness 发行版下载地址（GitHub 官方直连，首选源）
 pub fn get_dsh_download_url() -> Result<String, String> {
-    Ok(format!("{}{}", DSH_CORE_URL, dsh_pkg_asset_filename()?))
+    Ok(format!(
+        "{}{}",
+        DSH_CORE_URL,
+        dsh_pkg_asset_filename(env::consts::OS, env::consts::ARCH)?
+    ))
 }
 
 /// 为任意 GitHub Release 资产 URL 生成全部镜像兜底地址
@@ -107,7 +113,11 @@ pub fn get_dsh_download_url_for_tag(tag: &str) -> Result<String, String> {
         "releases/latest/download/",
         &format!("releases/download/{tag}/"),
     );
-    Ok(format!("{}{}", base, dsh_pkg_asset_filename()?))
+    Ok(format!(
+        "{}{}",
+        base,
+        dsh_pkg_asset_filename(env::consts::OS, env::consts::ARCH)?
+    ))
 }
 
 /// 在 PATH 及常见安装目录中查找 node 可执行文件（不校验版本）
@@ -155,42 +165,92 @@ fn is_executable(_path: &Path) -> bool {
     true
 }
 
-/// 运行 `node --version` 并捕获输出
-///
-/// Windows 打包版是 GUI 进程（没有控制台），必须以 CREATE_NO_WINDOW 启动
-/// node.exe，否则每次版本检查都会闪现一个黑色 cmd 窗口。
-fn node_version_output(node: &Path) -> Option<std::process::Output> {
+fn node_version_output(node: &Path, args: &[&str]) -> Option<std::process::Output> {
+    #[cfg(windows)]
+    if let Some(output) = crate::service::workflow::early::probe_output(node, args, true) {
+        return output.ok();
+    }
+    let mut command = std::process::Command::new(node);
+    // 版本查询不应执行用户的 preload；真实服务仍沿用其 NODE_OPTIONS。
+    command.args(args).env_remove("NODE_OPTIONS");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        std::process::Command::new(node)
-            .arg("--version")
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .output()
-            .ok()
+        command.creation_flags(0x08000000);
     }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new(node)
-            .arg("--version")
-            .output()
-            .ok()
-    }
+    command.output().ok()
 }
 
-/// 获取指定 Node.js 二进制的版本号（例如 "22.22.0"）
-pub fn get_node_version_of_path(node: &Path) -> Option<String> {
-    let output = node_version_output(node)?;
+fn probe_node_version(node: &Path) -> Option<(String, Option<PathBuf>)> {
+    if let Some(output) = node_version_output(
+        node,
+        &[
+            "-p",
+            "JSON.stringify([process.versions.node,process.execPath])",
+        ],
+    ) {
+        if output.status.success() {
+            if let Ok((version, actual)) =
+                serde_json::from_slice::<(String, PathBuf)>(&output.stdout)
+            {
+                if semver::Version::parse(&version).is_ok() && actual.is_absolute() {
+                    return Some((version, Some(actual)));
+                }
+            }
+        }
+    }
+    let output = node_version_output(node, &["--version"])?;
     if !output.status.success() {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let version = stdout.trim().trim_start_matches('v');
-    if version.is_empty() {
-        None
-    } else {
-        Some(version.to_string())
+    (!version.is_empty()).then(|| (version.to_string(), None))
+}
+
+type NodeVersionIdentity = (PathBuf, u64, std::time::SystemTime);
+
+static NODE_VERSION_CACHE: std::sync::Mutex<Option<(NodeVersionIdentity, String)>> =
+    std::sync::Mutex::new(None);
+
+fn cached_node_version(
+    node: &Path,
+    cache: &std::sync::Mutex<Option<(NodeVersionIdentity, String)>>,
+    probe: impl FnOnce() -> Option<(String, Option<PathBuf>)>,
+) -> Option<String> {
+    let identity = || {
+        let path = dunce::canonicalize(node).ok()?;
+        let meta = fs::metadata(&path).ok()?;
+        meta.is_file()
+            .then_some((path, meta.len(), meta.modified().ok()?))
+    };
+    // ponytail: 串行版本探测；多运行时高并发时再按文件身份分锁。
+    let mut guard = cache.lock().unwrap_or_else(|error| error.into_inner());
+    let Some(key) = identity() else {
+        drop(guard);
+        return probe().map(|(version, _)| version);
+    };
+    if let Some((cached_key, version)) = guard.as_ref() {
+        if cached_key == &key {
+            return Some(version.clone());
+        }
     }
+    let (version, actual) = probe()?;
+    // 静态转发器可不改自身文件就切换 Node，只有实际执行文件一致才可复用版本。
+    if actual
+        .and_then(|path| dunce::canonicalize(path).ok())
+        .as_ref()
+        == Some(&key.0)
+        && identity().as_ref() == Some(&key)
+    {
+        *guard = Some((key, version.clone()));
+    }
+    Some(version)
+}
+
+/// 获取指定 Node.js 二进制的版本号（例如 "22.22.0"）
+pub fn get_node_version_of_path(node: &Path) -> Option<String> {
+    cached_node_version(node, &NODE_VERSION_CACHE, || probe_node_version(node))
 }
 
 /// 检测本地是否存在版本兼容的 Node.js 环境，返回其二进制路径
@@ -222,15 +282,19 @@ pub fn set_prefer_bundled_node_runtime(prefer: bool) {
 
 /// 已安装的捆绑运行时 node 二进制（未安装时返回 None）
 pub fn bundled_node_binary(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
-    let runtime_dir = get_node_install_path(app_handle);
-    let entry = dependencies::entry_relative(app_handle, dependencies::DEP_NODE);
-    let direct_path = runtime_dir.join(&entry);
+    bundled_node_binary_from(
+        &get_node_install_path(app_handle),
+        &dependencies::entry_relative(app_handle, dependencies::DEP_NODE),
+    )
+}
+
+pub(crate) fn bundled_node_binary_from(runtime_dir: &Path, entry: &Path) -> Option<PathBuf> {
+    let direct_path = runtime_dir.join(entry);
     if direct_path.exists() {
         return Some(direct_path);
     }
-    // 只有在直接路径不存在时才进行开销较大的递归搜索（解压可能多套一层目录）
     let bin_name = entry.file_name()?.to_string_lossy().into_owned();
-    search_node_binary(&runtime_dir, &bin_name)
+    search_node_binary(&runtime_dir.to_path_buf(), &bin_name)
 }
 
 /// Node.js 二进制路径
@@ -238,12 +302,23 @@ pub fn bundled_node_binary(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
 /// 优先级：ABI 探测要求捆绑运行时（原生模块不匹配时的兜底）> 映射表（`null` =
 /// 系统环境 / 路径 = 指定根）> 未记录时沿用「本地版本兼容优先」> 已安装的捆绑运行时。
 pub fn get_node_binary_path(app_handle: &tauri::AppHandle) -> PathBuf {
-    let runtime_dir = get_node_install_path(app_handle);
-    let target = runtime_dir.join(dependencies::entry_relative(
-        app_handle,
-        dependencies::DEP_NODE,
-    ));
-    let bundled = bundled_node_binary(app_handle);
+    node_binary_path_from(
+        &get_node_install_path(app_handle),
+        &dependencies::entry_relative(app_handle, dependencies::DEP_NODE),
+        matches!(
+            dependencies::mapped(app_handle, dependencies::DEP_NODE),
+            Some(Some(_))
+        ),
+    )
+}
+
+pub(crate) fn node_binary_path_from(
+    runtime_dir: &Path,
+    entry: &Path,
+    pinned_managed: bool,
+) -> PathBuf {
+    let target = runtime_dir.join(entry);
+    let bundled = bundled_node_binary_from(runtime_dir, entry);
 
     if prefer_bundled_node_runtime() {
         if let Some(bundled) = bundled.clone() {
@@ -258,11 +333,6 @@ pub fn get_node_binary_path(app_handle: &tauri::AppHandle) -> PathBuf {
         );
     }
 
-    // 映射显式指定了托管根：该根下的运行时优先（缺失时才回落到系统环境）。
-    let pinned_managed = matches!(
-        dependencies::mapped(app_handle, dependencies::DEP_NODE),
-        Some(Some(_))
-    );
     if pinned_managed {
         if let Some(bundled) = bundled.clone() {
             log::debug!("Using mapped Node.js runtime root: {}", bundled.display());
@@ -372,6 +442,9 @@ pub fn find_system_git_binary() -> Option<PathBuf> {
 /// 运行 Git 并捕获输出；GUI 进程下禁止闪现控制台窗口。
 #[cfg(windows)]
 fn git_output(binary: &Path, arg: &str) -> Option<std::process::Output> {
+    if let Some(output) = crate::service::workflow::early::probe_output(binary, &[arg], false) {
+        return output.ok();
+    }
     use std::os::windows::process::CommandExt;
 
     std::process::Command::new(binary)
@@ -416,22 +489,26 @@ fn git_binary_works(binary: &Path) -> bool {
 }
 
 /// 返回桌面端应注入子进程 PATH 的已选 Git `cmd` 目录。
-#[cfg(windows)]
 pub fn get_git_cmd_dir<R: Runtime>(app_handle: &AppHandle<R>) -> Option<PathBuf> {
-    if let Some(system_git) = find_system_git_binary() {
-        return system_git.parent().map(Path::to_path_buf);
-    }
-    let bundled = get_mingit_binary_path(app_handle);
-    if bundled.is_file() && git_binary_works(&bundled) {
-        return bundled.parent().map(Path::to_path_buf);
-    }
-    None
+    git_cmd_dir_from(|| get_mingit_binary_path(app_handle))
 }
 
-/// 非 Windows 平台依赖系统 Git，不额外注入目录。
-#[cfg(not(windows))]
-pub fn get_git_cmd_dir<R: Runtime>(_app_handle: &AppHandle<R>) -> Option<PathBuf> {
-    None
+pub(crate) fn git_cmd_dir_from(_bundled: impl FnOnce() -> PathBuf) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        if let Some(system_git) = find_system_git_binary() {
+            return system_git.parent().map(Path::to_path_buf);
+        }
+        let bundled = _bundled();
+        if bundled.is_file() && git_binary_works(&bundled) {
+            return bundled.parent().map(Path::to_path_buf);
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 /// 当前环境是否已有可供插件 Git 依赖使用的 Git。
@@ -478,6 +555,10 @@ pub(crate) fn user_home_dir() -> Option<PathBuf> {
 /// - debug 子进程由 launch 显式收到同一个 `~/.dsh.dev`，开发版与生产版的会话、档案、
 ///   插件与主题因此互不干扰。
 pub fn get_dsh_data_path<R: Runtime>(_app_handle: &AppHandle<R>) -> PathBuf {
+    dsh_data_path_from_env()
+}
+
+pub(crate) fn dsh_data_path_from_env() -> PathBuf {
     let dir_name = if cfg!(debug_assertions) {
         DSH_HOME_DEV_DIR_NAME
     } else {
@@ -498,12 +579,23 @@ pub fn get_dsh_data_path<R: Runtime>(_app_handle: &AppHandle<R>) -> PathBuf {
 /// debug 构建写入独立的 `dsh-web.dev.log`：开发版每次启动都会轮转日志，若与
 /// 生产共用同一个文件，会把正在运行的生产版日志记录轮转覆盖掉。
 pub fn get_service_log_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
+    service_log_path_from(
+        &get_base_dir(app_handle),
+        crate::service::workflow::instances::current_profile().as_deref(),
+    )
+}
+
+pub(crate) fn service_log_path_from(base: &Path, profile: Option<&str>) -> PathBuf {
     let name = if cfg!(debug_assertions) {
         "dsh-web.dev.log"
     } else {
         "dsh-web.log"
     };
-    get_base_dir(app_handle).join("logs").join(name)
+    let logs = base.join("logs");
+    match profile {
+        Some(profile) => logs.join(profile).join(name),
+        None => logs.join(name),
+    }
 }
 
 /// 捆绑的 Node.js 版本号
@@ -552,15 +644,7 @@ pub fn is_runtime_compatible(app_handle: &tauri::AppHandle) -> bool {
     if !node.exists() {
         return false;
     }
-    let output = match node_version_output(&node) {
-        Some(out) => out,
-        None => return false,
-    };
-    if !output.status.success() {
-        return false;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    is_supported_node_version(stdout.trim())
+    get_node_version_of_path(&node).is_some_and(|version| is_supported_node_version(&version))
 }
 
 /// 从打包的 Harness 清单读取 dsh 版本（界面展示用）
@@ -619,6 +703,335 @@ pub fn runtime_info<R: Runtime>(app: &AppHandle<R>, port: u16) -> RuntimeInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_directory_preserves_build_split_and_cache_short_circuit() {
+        let override_dir = env::var_os(DOWNLOAD_CACHE_ENV_VAR).filter(|dir| !dir.is_empty());
+        let base = base_dir_from(|| {
+            assert!(
+                override_dir.is_none(),
+                "cache override must not resolve AppData"
+            );
+            PathBuf::from("app-data")
+        });
+        let expected = override_dir.map(PathBuf::from).unwrap_or_else(|| {
+            if cfg!(debug_assertions) {
+                PathBuf::from("app-data").join(APP_DATA_DEV_DIR_NAME)
+            } else {
+                PathBuf::from("app-data")
+            }
+        });
+        assert_eq!(base, expected);
+    }
+
+    #[test]
+    fn bundled_node_resolution_preserves_direct_and_nested_layouts() {
+        let root = tempfile::tempdir().unwrap();
+        let entry = PathBuf::from("bin").join("node");
+        assert_eq!(bundled_node_binary_from(root.path(), &entry), None);
+        let nested = root.path().join("unpacked").join("node.exe");
+        fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        fs::write(&nested, b"fixture").unwrap();
+        assert_eq!(bundled_node_binary_from(root.path(), &entry), Some(nested));
+        let direct = root.path().join(&entry);
+        fs::create_dir_all(direct.parent().unwrap()).unwrap();
+        fs::write(&direct, b"fixture").unwrap();
+        assert_eq!(
+            bundled_node_binary_from(root.path(), &entry),
+            Some(direct.clone())
+        );
+        assert_eq!(node_binary_path_from(root.path(), &entry, true), direct);
+    }
+
+    #[test]
+    fn service_log_path_keeps_profile_and_build_filename() {
+        let base = Path::new("app-data");
+        let name = if cfg!(debug_assertions) {
+            "dsh-web.dev.log"
+        } else {
+            "dsh-web.log"
+        };
+        assert_eq!(
+            service_log_path_from(base, None),
+            base.join("logs").join(name)
+        );
+        assert_eq!(
+            service_log_path_from(base, Some("profile-a")),
+            base.join("logs").join("profile-a").join(name)
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn git_cmd_dir_does_not_resolve_bundled_on_unix() {
+        assert_eq!(
+            git_cmd_dir_from(|| panic!("system Git needs no bundled path")),
+            None
+        );
+    }
+
+    #[test]
+    fn node_version_cache_runs_probe_once_for_the_same_resolved_file() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root.path().join("node");
+        fs::write(&node, b"fixture").unwrap();
+        let cache = std::sync::Mutex::new(None);
+        let calls = std::cell::Cell::new(0);
+        for path in [&node, &root.path().join(".").join("node")] {
+            assert_eq!(
+                cached_node_version(path, &cache, || {
+                    calls.set(calls.get() + 1);
+                    Some(("24.0.0".into(), Some(node.clone())))
+                }),
+                Some("24.0.0".into())
+            );
+        }
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn node_version_cache_merges_concurrent_probes_of_the_same_file() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root.path().join("node");
+        fs::write(&node, b"fixture").unwrap();
+        let cache = std::sync::Mutex::new(None);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let barrier = std::sync::Barrier::new(4);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    assert_eq!(
+                        cached_node_version(&node, &cache, || {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            Some(("24.0.0".into(), Some(node.clone())))
+                        }),
+                        Some("24.0.0".into())
+                    );
+                });
+            }
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn node_version_cache_invalidates_when_size_mtime_or_path_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root.path().join("node");
+        fs::write(&node, b"first").unwrap();
+        let cache = std::sync::Mutex::new(None);
+        let calls = std::cell::Cell::new(0);
+        let probe = |path: &Path| {
+            calls.set(calls.get() + 1);
+            Some((format!("24.0.{}", calls.get()), Some(path.to_path_buf())))
+        };
+        assert_eq!(
+            cached_node_version(&node, &cache, || probe(&node)),
+            Some("24.0.1".into())
+        );
+        let original_modified = fs::metadata(&node).unwrap().modified().unwrap();
+        fs::write(&node, b"replacement").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&node)
+            .unwrap()
+            .set_modified(original_modified)
+            .unwrap();
+        assert_eq!(
+            cached_node_version(&node, &cache, || probe(&node)),
+            Some("24.0.2".into())
+        );
+        let modified = fs::metadata(&node).unwrap().modified().unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&node)
+            .unwrap()
+            .set_modified(modified + std::time::Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            cached_node_version(&node, &cache, || probe(&node)),
+            Some("24.0.3".into())
+        );
+        let other = root.path().join("other-node");
+        fs::copy(&node, &other).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&other)
+            .unwrap()
+            .set_modified(fs::metadata(&node).unwrap().modified().unwrap())
+            .unwrap();
+        assert_eq!(
+            cached_node_version(&other, &cache, || probe(&other)),
+            Some("24.0.4".into())
+        );
+        assert_eq!(calls.get(), 4);
+    }
+
+    #[test]
+    fn node_version_cache_does_not_store_a_probe_if_the_file_changes_during_it() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root.path().join("node");
+        fs::write(&node, b"first").unwrap();
+        let cache = std::sync::Mutex::new(None);
+        assert_eq!(
+            cached_node_version(&node, &cache, || {
+                fs::write(&node, b"replacement").unwrap();
+                Some(("24.0.0".into(), Some(node.clone())))
+            }),
+            Some("24.0.0".into())
+        );
+        assert_eq!(
+            cached_node_version(&node, &cache, || Some((
+                "24.0.1".into(),
+                Some(node.clone())
+            ))),
+            Some("24.0.1".into())
+        );
+    }
+
+    #[test]
+    fn node_version_cache_does_not_reuse_a_fixed_shim_after_its_target_version_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root
+            .path()
+            .join(if cfg!(windows) { "node.cmd" } else { "node" });
+        let script = if cfg!(windows) {
+            "@echo off\r\nif \"%~1\"==\"-p\" (type \"%~dp0identity\") else (type \"%~dp0version\")\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = '-p' ]; then cat \"${0%/*}/identity\"; else cat \"${0%/*}/version\"; fi\n"
+        };
+        fs::write(&node, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let actual = root.path().join("actual-node");
+        fs::write(&actual, b"target").unwrap();
+        let before = fs::metadata(&node).unwrap();
+        fs::write(root.path().join("version"), "v22.19.0\n").unwrap();
+        fs::write(
+            root.path().join("identity"),
+            serde_json::to_vec(&("22.19.0", &actual)).unwrap(),
+        )
+        .unwrap();
+        let first = get_node_version_of_path(&node).unwrap();
+        assert_eq!(first, "22.19.0");
+        assert!(is_supported_node_version(&first));
+        fs::write(root.path().join("version"), "v23.0.0\n").unwrap();
+        fs::write(
+            root.path().join("identity"),
+            serde_json::to_vec(&("23.0.0", &actual)).unwrap(),
+        )
+        .unwrap();
+        let second = get_node_version_of_path(&node).unwrap();
+        assert_eq!(second, "23.0.0");
+        assert!(!is_supported_node_version(&second));
+        let after = fs::metadata(&node).unwrap();
+        assert_eq!(before.len(), after.len());
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        fs::write(root.path().join("identity"), b"invalid JSON").unwrap();
+        for version in ["22.19.0", "23.0.0"] {
+            fs::write(root.path().join("version"), format!("v{version}\n")).unwrap();
+            assert_eq!(get_node_version_of_path(&node).as_deref(), Some(version));
+        }
+    }
+
+    #[test]
+    fn node_version_cache_requires_an_existing_matching_exec_path() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root.path().join("node");
+        fs::write(&node, b"fixture").unwrap();
+        let cache = std::sync::Mutex::new(None);
+        for actual in [None, Some(root.path().join("missing-node"))] {
+            for version in ["22.19.0", "23.0.0"] {
+                assert_eq!(
+                    cached_node_version(&node, &cache, || Some((version.into(), actual.clone()))),
+                    Some(version.into())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn node_version_cache_executes_the_actual_node_probe_once() {
+        let candidate = find_local_node_binary().expect("Node.js required for version probe tests");
+        let (_, actual) = probe_node_version(&candidate).expect("working Node.js required");
+        let node = actual.expect("Node.js must expose its real executable path");
+        let output = node_version_output(&node, &["--version"]).unwrap();
+        assert!(output.status.success());
+        let expected = String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .trim_start_matches('v')
+            .to_string();
+        let cache = std::sync::Mutex::new(None);
+        let calls = std::cell::Cell::new(0);
+        for _ in 0..3 {
+            assert_eq!(
+                cached_node_version(&node, &cache, || {
+                    calls.set(calls.get() + 1);
+                    let result = probe_node_version(&node).unwrap();
+                    assert_eq!(
+                        dunce::canonicalize(result.1.as_ref().unwrap()).unwrap(),
+                        dunce::canonicalize(&node).unwrap()
+                    );
+                    Some(result)
+                }),
+                Some(expected.clone())
+            );
+        }
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn node_version_cache_does_not_remember_failed_probes() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root.path().join("node");
+        fs::write(&node, b"fixture").unwrap();
+        let cache = std::sync::Mutex::new(None);
+        assert_eq!(cached_node_version(&node, &cache, || None), None);
+        assert_eq!(
+            cached_node_version(&node, &cache, || Some((
+                "24.0.0".into(),
+                Some(node.clone())
+            ))),
+            Some("24.0.0".into())
+        );
+        assert_eq!(
+            cached_node_version(&node, &cache, || panic!("success must be cached")),
+            Some("24.0.0".into())
+        );
+    }
+
+    #[test]
+    fn node_version_cache_never_hits_when_file_identity_is_unavailable() {
+        let root = tempfile::tempdir().unwrap();
+        let node = root.path().join("node");
+        fs::write(&node, b"fixture").unwrap();
+        let cache = std::sync::Mutex::new(None);
+        assert_eq!(
+            cached_node_version(&node, &cache, || Some((
+                "24.0.0".into(),
+                Some(node.clone())
+            ))),
+            Some("24.0.0".into())
+        );
+        fs::remove_file(&node).unwrap();
+        for version in ["24.0.1", "24.0.2"] {
+            assert_eq!(
+                cached_node_version(&node, &cache, || Some((version.into(), Some(node.clone())))),
+                Some(version.into())
+            );
+        }
+        fs::create_dir(&node).unwrap();
+        for version in ["24.0.3", "24.0.4"] {
+            assert_eq!(
+                cached_node_version(&node, &cache, || Some((version.into(), Some(node.clone())))),
+                Some(version.into())
+            );
+        }
+    }
 
     /// 为文件布局测试生成互不冲突的临时目录。
     fn unique_runtime_test_dir(name: &str) -> PathBuf {
@@ -738,6 +1151,19 @@ mod tests {
         assert_eq!(MINGIT_X64_SHA256.len(), 64);
         assert_eq!(MINGIT_ARM64_SHA256.len(), 64);
         assert_ne!(MINGIT_X64_SHA256, MINGIT_ARM64_SHA256);
+    }
+
+    #[test]
+    fn dsh_pkg_asset_filename_matches_linux_architecture() {
+        assert_eq!(
+            dsh_pkg_asset_filename("linux", "x86_64").unwrap(),
+            "deepseek-harness-pkg-linux.zip"
+        );
+        assert_eq!(
+            dsh_pkg_asset_filename("linux", "aarch64").unwrap(),
+            "deepseek-harness-pkg-linux-arm64.zip"
+        );
+        assert!(dsh_pkg_asset_filename("linux", "riscv64").is_err());
     }
 
     #[test]

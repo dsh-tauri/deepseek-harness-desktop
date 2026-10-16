@@ -8,7 +8,6 @@ const PLAY_FILL_PATH = 'M14.642 6.285c1.294.777 1.294 2.653 0 3.43l-9.113 5.468c
 const RESUME_LABEL = 'resumeTask'
 
 interface ControllerStub {
-  triggerObserve: () => void
   click: (event: unknown) => void
   dispose: () => void
 }
@@ -17,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   resumeComposer: vi.fn(async () => ({ ok: true })),
   adapter: {} as Record<string, unknown>,
   controller: undefined as unknown,
+  mutate: () => {},
 }))
 
 vi.mock('../service/composer-resume', () => ({ resumeComposer: mocks.resumeComposer }))
@@ -33,7 +33,7 @@ vi.mock('dsh-tauri/client', () => {
   const createLifecycleController = () => {
     const disposers: Array<() => void> = []
     let clickHandler: ((event: unknown) => void) | undefined
-    let observerCallback: (() => void) | undefined
+    let disposed = false
     return {
       add: (disposer: () => void) => {
         disposers.push(disposer)
@@ -43,16 +43,16 @@ vi.mock('dsh-tauri/client', () => {
         return () => {}
       },
       observe: (_node: unknown, callback: () => void) => {
-        observerCallback = callback
+        mocks.mutate = callback
         return { disconnect: () => {} }
       },
-      isDisposed: () => false,
+      isDisposed: () => disposed,
       dispose: () => {
+        disposed = true
         for (const disposer of [...disposers])
           disposer()
         disposers.length = 0
       },
-      triggerObserve: () => observerCallback?.(),
       click: (event: unknown) => clickHandler?.(event),
     }
   }
@@ -170,6 +170,23 @@ interface HarnessOptions {
   buttonDisabled?: boolean
 }
 
+function frameStub() {
+  const queued = new Map<number, FrameRequestCallback>()
+  let nextFrame = 0
+  const request = (callback: FrameRequestCallback) => {
+    queued.set(++nextFrame, callback)
+    return nextFrame
+  }
+  const cancel = (id: number) => void queued.delete(id)
+  const flush = () => {
+    mocks.mutate()
+    const batch = [...queued.values()]
+    queued.clear()
+    batch.forEach(callback => callback(16))
+  }
+  return { cancel, flush, pending: () => queued.size, request }
+}
+
 function harness(options: HarnessOptions = {}) {
   const sessionId = 's-1'
   const primary = createButton({
@@ -189,6 +206,7 @@ function harness(options: HarnessOptions = {}) {
   })
   const events = snapshotSource({ entries: options.entries ?? [turnEnd('aborted')] })
   const list = snapshotSource({ current: sessionId as string | undefined })
+  const frames = frameStub()
 
   mocks.adapter.sessions = {
     list,
@@ -202,12 +220,15 @@ function harness(options: HarnessOptions = {}) {
     },
     Element: FakeElement,
     HTMLButtonElement: FakeButtonElement,
+    requestAnimationFrame: frames.request,
+    cancelAnimationFrame: frames.cancel,
   })
 
   const ctx = { locale: { subscribe: () => () => {} } }
   const register = composerResumeFeature as unknown as (this: unknown) => () => void
   const cleanup = register.call(ctx)
   const controller = mocks.controller as ControllerStub
+  frames.flush()
 
   return {
     sessionId,
@@ -221,7 +242,8 @@ function harness(options: HarnessOptions = {}) {
     setRunning: (running: boolean) => session.publish({ running, removed: false, subagent: null }),
     setRunningSilently: (running: boolean) => session.setSilently({ running, removed: false, subagent: null }),
     setEntries: (entries: ComposerSessionEventEntry[]) => events.publish({ entries }),
-    triggerObserve: () => controller.triggerObserve(),
+    flushFrames: () => frames.flush(),
+    pendingFrames: () => frames.pending(),
     click: (event: unknown) => controller.click(event),
     cleanup,
   }
@@ -248,7 +270,7 @@ describe('composerResumeFeature', () => {
 
     h.setIcon(ARROW_PATH)
     h.button.disabled = true
-    h.triggerObserve()
+    h.flushFrames()
 
     expect(h.icon()).toBe(PLAY_FILL_PATH)
     expect(h.disabled()).toBe(false)
@@ -260,11 +282,12 @@ describe('composerResumeFeature', () => {
     expect(h.icon()).toBe(ARROW_PATH)
 
     h.setEntries([turnStart(), turnEnd('aborted')])
+    h.flushFrames()
     expect(h.icon()).toBe(ARROW_PATH)
 
     h.setRunningSilently(false)
     h.button.disabled = true
-    h.triggerObserve()
+    h.flushFrames()
 
     expect(h.icon()).toBe(PLAY_FILL_PATH)
     expect(h.disabled()).toBe(false)
@@ -307,6 +330,46 @@ describe('composerResumeFeature', () => {
   })
 })
 
+describe('composerResumeFeature · 合帧收敛', () => {
+  it('流式期间连续 DOM 变动与订阅通知合并成一帧一次改写', () => {
+    const h = harness({ entries: [turnStart()] })
+    expect(h.icon()).toBe(ARROW_PATH)
+
+    h.setEntries([turnStart(), turnEnd('aborted')])
+    h.button.disabled = true
+    h.setRunningSilently(false)
+    h.flushFrames()
+    expect(h.pendingFrames()).toBe(0)
+
+    h.setIcon(ARROW_PATH)
+    h.button.disabled = true
+    h.setRunningSilently(false)
+    h.setEntries([turnStart(), turnEnd('aborted')])
+
+    expect(h.pendingFrames()).toBe(1)
+    h.flushFrames()
+
+    expect(h.icon()).toBe(PLAY_FILL_PATH)
+    expect(h.disabled()).toBe(false)
+    h.cleanup()
+  })
+
+  it('卸载时取消尚未执行的帧，之后的变动不再改写按钮', () => {
+    const h = harness({ entries: [turnStart()] })
+    h.setEntries([turnStart(), turnEnd('aborted')])
+    expect(h.pendingFrames()).toBe(1)
+    h.cleanup()
+
+    expect(h.pendingFrames()).toBe(0)
+    h.setIcon(ARROW_PATH)
+    h.button.disabled = true
+    h.flushFrames()
+
+    expect(h.icon()).toBe(ARROW_PATH)
+    expect(h.disabled()).toBe(true)
+  })
+})
+
 describe('composerResumeFeature · 内容审核恢复', () => {
   function refusal(): ComposerSessionEventEntry {
     return {
@@ -331,6 +394,7 @@ describe('composerResumeFeature · 内容审核恢复', () => {
     expect(h.label()).toBe('recoverContentRisk')
 
     h.setEntries([turnStart(), turnEnd('aborted')])
+    h.flushFrames()
     expect(h.label()).toBe('resumeTask')
     h.cleanup()
   })

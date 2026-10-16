@@ -1,7 +1,7 @@
 import type { IconComponent } from './loadable'
 import type { PluginProcess } from '@/store/modules/plugins'
 import type { PreinstallPlugin } from '@/store/modules/preinstall'
-import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, Comments, Copy, Cubes3Overlap, Globe, LayoutSideContentLeft, PlugConnection, ShoppingCart, Xmark } from '@gravity-ui/icons'
+import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, Comments, Copy, Cubes3Overlap, LayoutSideContentLeft, PlugConnection, ShoppingCart, Xmark } from '@gravity-ui/icons'
 import { Button, Card, Checkbox, Chip, ScrollShadow, Spinner, Switch, Typography } from '@heroui/react'
 import { useMount } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
@@ -54,7 +54,6 @@ const PLUGIN_ICONS: Record<string, IconComponent | undefined> = {
   'dsh-better-sidebar': LayoutSideContentLeft,
   'dsh-rewind-plugin': ArrowUturnCcwLeft,
   'billion-context': Cubes3Overlap,
-  '@wenbin_wb/dsh-bridge': Globe,
   '@xmanrui/dsh-im': Comments,
 }
 

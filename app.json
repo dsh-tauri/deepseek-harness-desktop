@@ -1,0 +1,101 @@
+{
+  "expo": {
+    "name": "DSH Mobile",
+    "slug": "dsh-bridge",
+    "version": "0.24.1",
+    "scheme": "dshbridge",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/native/icon.png",
+    "android": {
+      "package": "com.dshtauri.dshbridge",
+      "versionCode": 21013,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/native/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "CAMERA",
+        "POST_NOTIFICATIONS",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.dshtauri.dshbridge",
+      "supportsTablet": true,
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "DSH Mobile 使用本地网络发现并连接您电脑上的 DSH 服务。",
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ]
+      }
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "src-native/app"
+        }
+      ],
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/native/splash-icon.png",
+          "imageWidth": 128,
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#151517"
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "允许 DSH Mobile 使用相机扫描连接二维码。",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/native/notification-icon.png",
+          "color": "#151517",
+          "mode": "production"
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true,
+            "buildArchs": ["arm64-v8a"],
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enableBundleCompression": true,
+            "useLegacyPackaging": true
+          }
+        }
+      ]
+    ]
+  }
+}

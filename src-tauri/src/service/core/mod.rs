@@ -28,12 +28,15 @@ mod version;
 
 pub use local::{local_core_package_dir, update_local_core};
 // 以下重导出为对外公开 API（部分项当前链路未直接引用，属有意保留，见模块头）。
+pub(crate) use runtime::{
+    prepare_active_runtime, prepare_active_runtime_at, RuntimePreparation, RuntimePreparationPaths,
+    RuntimeRequiredPlugin,
+};
 #[allow(unused_imports)]
 pub use source::{
     active_core_dir, active_dsh_binary, active_source, active_version, CoreSource, HarnessCore,
 };
 pub use version::{download_version, has_installed_version, list, remove_version, set_active};
-pub(crate) use runtime::prepare_active_runtime;
 // 目录链接实现（Windows 符号链接 → 无特权时的 junction 回退）供插件模块复用：
 // pnpm 建链后回读失败时，桌面端自行落盘内置插件入口（见 plugin::internal::materialize）。
 pub(crate) use runtime::create_directory_link;

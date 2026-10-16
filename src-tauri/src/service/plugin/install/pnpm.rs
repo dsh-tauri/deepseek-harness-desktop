@@ -485,7 +485,11 @@ fn pnpm_probe_path(pnpm: &Path, node: Option<&Path>, bin_dir: Option<&Path>) -> 
 /// node_modules）时返回 `None`，由调用方走"全新档案"逻辑。
 /// 供 [`ensure_pnpm`] 选版与 [`crate::service::plugin::verify`] 的修复选版共用。
 pub(crate) fn profile_store_major(app_handle: &AppHandle) -> Option<u32> {
-    parse_store_major_from_modules_yaml(&read_modules_yaml(app_handle)?)
+    profile_store_major_at(&profile_dir(app_handle))
+}
+
+pub(crate) fn profile_store_major_at(profile_dir: &Path) -> Option<u32> {
+    parse_store_major_from_modules_yaml(&read_modules_yaml_at(profile_dir)?)
 }
 
 /// 档案 `node_modules/.modules.yaml` 记录的 pnpm store 基目录（去掉 `v10` 版本段）。
@@ -500,7 +504,11 @@ pub(crate) fn profile_store_major(app_handle: &AppHandle) -> Option<u32> {
 /// 下传的必须是基目录而非记录原文（含版本段）：版本段由 pnpm 按自身主版本追加，见
 /// [`strip_store_version`]。
 pub(crate) fn profile_store_base_dir(app_handle: &AppHandle) -> Option<String> {
-    let store_dir = parse_store_dir_from_modules_yaml(&read_modules_yaml(app_handle)?)?;
+    profile_store_base_dir_at(&profile_dir(app_handle))
+}
+
+pub(crate) fn profile_store_base_dir_at(profile_dir: &Path) -> Option<String> {
+    let store_dir = parse_store_dir_from_modules_yaml(&read_modules_yaml_at(profile_dir)?)?;
     Some(strip_store_version(&store_dir))
 }
 
@@ -556,13 +564,8 @@ pub(crate) fn reset_incompatible_modules_metadata(app_handle: &AppHandle) -> boo
 }
 
 /// 读取档案的 `node_modules/.modules.yaml`；文件缺失（全新档案）返回 `None`。
-fn read_modules_yaml(app_handle: &AppHandle) -> Option<String> {
-    std::fs::read_to_string(
-        profile_dir(app_handle)
-            .join("node_modules")
-            .join(".modules.yaml"),
-    )
-    .ok()
+fn read_modules_yaml_at(profile_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(profile_dir.join("node_modules").join(".modules.yaml")).ok()
 }
 
 /// 从 `.modules.yaml` 文本解析 `storeDir`（纯函数，便于单测）。
@@ -596,8 +599,11 @@ fn parse_store_major_from_modules_yaml(content: &str) -> Option<u32> {
 ///
 /// 供 [`ensure_pnpm`] 选版与 [`crate::service::plugin::verify`] 的修复选版共用（store 主版本匹配）。
 pub(crate) fn bundled_pnpm_major(app_handle: &AppHandle) -> Option<u32> {
-    let manifest = config::get_pnpm_install_path(app_handle).join("package.json");
-    let content = std::fs::read_to_string(manifest).ok()?;
+    bundled_pnpm_major_at(&config::get_pnpm_install_path(app_handle))
+}
+
+pub(crate) fn bundled_pnpm_major_at(pnpm_root: &Path) -> Option<u32> {
+    let content = std::fs::read_to_string(pnpm_root.join("package.json")).ok()?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
     value
         .get("version")?
@@ -613,14 +619,39 @@ pub(crate) fn bundled_pnpm_major(app_handle: &AppHandle) -> Option<u32> {
 /// store 未知时用户 pnpm ≥ 10 优先，否则强制捆绑版。启动阶段绝不触发下载，
 /// 捆绑版未安装即返回 false（交由用户 pnpm）。
 pub(crate) async fn harness_prefer_bundled_pnpm(app_handle: &AppHandle) -> Result<bool, String> {
-    if !config::get_pnpm_binary_path(app_handle).exists() {
+    harness_prefer_bundled_pnpm_from(
+        &profile_dir(app_handle),
+        &config::get_pnpm_install_path(app_handle),
+        &config::get_pnpm_binary_path(app_handle),
+        cli::find_user_pnpm(app_handle).as_deref(),
+        &config::get_node_binary_path(app_handle),
+        &cli::get_bin_dir(app_handle),
+    )
+    .await
+}
+
+pub(crate) async fn harness_prefer_bundled_pnpm_from(
+    profile_dir: &Path,
+    pnpm_root: &Path,
+    pnpm_binary: &Path,
+    user_pnpm: Option<&Path>,
+    node: &Path,
+    bin_dir: &Path,
+) -> Result<bool, String> {
+    if !pnpm_binary.exists() {
         return Ok(false);
     }
-    let store_major = profile_store_major(app_handle);
-    if store_major.is_some_and(|store| bundled_pnpm_major(app_handle) != Some(store)) {
+    let store_major = profile_store_major_at(profile_dir);
+    if store_major.is_some_and(|store| bundled_pnpm_major_at(pnpm_root) != Some(store)) {
         return Ok(false);
     }
-    let user_major = user_pnpm_major_version_bounded(app_handle, new_process_owner()).await?;
+    let user_major = match user_pnpm {
+        Some(pnpm) => {
+            pnpm_major_version_at_bounded(pnpm, Some(node), Some(bin_dir), new_process_owner())
+                .await?
+        }
+        None => None,
+    };
     Ok(match store_major {
         Some(store) => user_major != Some(store),
         None => !matches!(user_major, Some(major) if major >= MIN_TRUSTED_PNPM_MAJOR),
@@ -631,6 +662,81 @@ pub(crate) async fn harness_prefer_bundled_pnpm(app_handle: &AppHandle) -> Resul
 mod tests {
     use super::super::super::process::TEST_PROCESS_LOCK;
     use super::*;
+
+    #[tokio::test]
+    async fn startup_pnpm_paths_reread_metadata_and_skip_unneeded_probes() {
+        let _test_guard = TEST_PROCESS_LOCK.lock().await;
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profile");
+        let modules = profile.join("node_modules").join(".modules.yaml");
+        let pnpm_root = root.path().join("pnpm");
+        let manifest = pnpm_root.join("package.json");
+        let binary = pnpm_root.join("bin").join("pnpm.cjs");
+        let user = root.path().join("must-not-be-probed");
+        let node = root.path().join("node");
+        let bin_dir = root.path().join("desktop-bin");
+        std::fs::create_dir_all(modules.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        let yaml = "storeDir: /store/v10\n";
+        std::fs::write(&modules, yaml).unwrap();
+        std::fs::write(&manifest, r#"{"version":"11.2.0"}"#).unwrap();
+        assert_eq!(read_modules_yaml_at(&profile).as_deref(), Some(yaml));
+        assert_eq!(profile_store_major_at(&profile), Some(10));
+        assert_eq!(
+            profile_store_base_dir_at(&profile).as_deref(),
+            Some("/store")
+        );
+        assert_eq!(bundled_pnpm_major_at(&pnpm_root), Some(11));
+
+        let process_guard = acquire_process_lock().await.unwrap();
+        for present in [false, true] {
+            if present {
+                std::fs::write(&binary, "").unwrap();
+            }
+            let prefer = tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                harness_prefer_bundled_pnpm_from(
+                    &profile,
+                    &pnpm_root,
+                    &binary,
+                    Some(&user),
+                    &node,
+                    &bin_dir,
+                ),
+            )
+            .await
+            .expect("missing or incompatible bundled pnpm must not acquire the probe lock")
+            .unwrap();
+            assert!(!prefer);
+        }
+        drop(process_guard);
+
+        for store in [11, 10] {
+            let json = format!(r#"{{"storeDir":"/store/v{store}"}}"#);
+            std::fs::write(&modules, &json).unwrap();
+            assert_eq!(profile_store_major_at(&profile), Some(store));
+            assert_eq!(
+                profile_store_base_dir_at(&profile).as_deref(),
+                Some("/store")
+            );
+            assert_eq!(
+                harness_prefer_bundled_pnpm_from(
+                    &profile, &pnpm_root, &binary, None, &node, &bin_dir,
+                )
+                .await
+                .unwrap(),
+                store == 11
+            );
+            assert_eq!(std::fs::read_to_string(&modules).unwrap(), json);
+        }
+        std::fs::write(&manifest, r#"{"version":"10.9.0"}"#).unwrap();
+        assert_eq!(bundled_pnpm_major_at(&pnpm_root), Some(10));
+        assert!(harness_prefer_bundled_pnpm_from(
+            &profile, &pnpm_root, &binary, None, &node, &bin_dir,
+        )
+        .await
+        .unwrap());
+    }
 
     /// issue #449 回归：探测超时、但进程已被强杀并回收干净时，必须降级为
     /// 「用户 pnpm 不可用」（`None` → `ensure_pnpm` 回退捆绑版），而不是把

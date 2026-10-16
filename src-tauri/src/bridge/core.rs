@@ -18,19 +18,24 @@ pub async fn get_cores(app_handle: AppHandle) -> Vec<core::HarnessCore> {
 /// 互换；自动重启由前端负责）
 #[tauri::command]
 pub async fn set_active_core(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     id: String,
 ) -> Result<core::HarnessCore, String> {
-    core::set_active(&app_handle, &id).await
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, core::set_active(&app_handle, &id)).await
 }
 
 /// 下载指定 tag 的预打包核心到历史槽位（不激活；切换由 `set_active_core` 完成）
 #[tauri::command]
 pub async fn download_core(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     tag: String,
 ) -> Result<core::HarnessCore, String> {
-    core::download_version(&app_handle, &tag).await
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, core::download_version(&app_handle, &tag))
+        .await
 }
 
 /// 卸载已下载的历史版本（激活中的版本不可卸载）
@@ -42,6 +47,13 @@ pub async fn remove_core(app_handle: AppHandle, id: String) -> Result<(), String
 /// 通过用户包管理器 CLI 更新本地核心（npm `install -g @latest` /
 /// pnpm `add -g @latest`），返回更新后的版本号。
 #[tauri::command]
-pub async fn update_local_core(app_handle: AppHandle) -> Result<String, String> {
-    core::update_local_core(app_handle).await
+pub async fn update_local_core(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        core::update_local_core(app_handle).await
+    })
+    .await
 }

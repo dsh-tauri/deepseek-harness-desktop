@@ -1,4 +1,7 @@
+import type { McpAuthBackend } from '../service/mcp-auth.types'
 import type { ProviderRuntime } from '../service/provider.types'
+
+export const mcpAuthRuntime: { backend?: McpAuthBackend } = {}
 
 export const providerRuntime: ProviderRuntime = {
   fiber: undefined,

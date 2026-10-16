@@ -9,7 +9,7 @@
 
 #[cfg(not(windows))]
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
@@ -37,9 +37,10 @@ pub(crate) use registry::{
 };
 // 数据目录（issue #871）在 Unix 上复用 rc 的「标记块 + 备份写回」原语，
 // 免得再抄一份 rc 文件读写实现。rc 模块本身是私有的，跨模块用要在这里再导出。
+pub(crate) use pnpm::find_user_pnpm_from;
+pub use pnpm::{find_user_pnpm, pnpm_env_value};
 #[cfg(unix)]
 pub(crate) use rc::{strip_rc_block, upsert_rc_block, write_rc_with_backup};
-pub use pnpm::{find_user_pnpm, pnpm_env_value};
 
 /// Windows 下 shim 根目录名（`%LOCALAPPDATA%\<此目录>\bin`）
 #[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 bin 目录计算使用
@@ -59,14 +60,30 @@ const UNIX_BIN_DIR: &str = ".local/bin";
 pub fn get_bin_dir(app_handle: &AppHandle) -> PathBuf {
     #[cfg(windows)]
     {
+        let local_data_dir = std::env::var_os("LOCALAPPDATA")
+            .is_none()
+            .then(|| app_handle.path().local_data_dir().ok())
+            .flatten();
+        get_bin_dir_from(local_data_dir.as_deref(), None)
+    }
+    #[cfg(not(windows))]
+    {
+        get_bin_dir_from(None, app_handle.path().home_dir().ok().as_deref())
+    }
+}
+
+pub(crate) fn get_bin_dir_from(
+    _local_data_dir: Option<&Path>,
+    _home_dir: Option<&Path>,
+) -> PathBuf {
+    #[cfg(windows)]
+    {
         std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .or_else(|| {
-                app_handle
-                    .path()
-                    .local_data_dir()
-                    .ok()
-                    .and_then(|d| d.parent().map(|p| p.to_path_buf()))
+                _local_data_dir
+                    .and_then(Path::parent)
+                    .map(Path::to_path_buf)
             })
             .unwrap_or_else(std::env::temp_dir)
             .join(if cfg!(debug_assertions) {
@@ -78,10 +95,7 @@ pub fn get_bin_dir(app_handle: &AppHandle) -> PathBuf {
     }
     #[cfg(not(windows))]
     {
-        let home = app_handle
-            .path()
-            .home_dir()
-            .unwrap_or_else(|_| PathBuf::from("."));
+        let home = _home_dir.unwrap_or_else(|| Path::new("."));
         if cfg!(debug_assertions) {
             home.join(".local/bin/dev")
         } else {
@@ -197,6 +211,51 @@ pub fn unregister_path(app_handle: &AppHandle) -> Result<(), String> {
         strip_shell_rc(app_handle)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bin_directory_preserves_platform_inputs_and_build_split() {
+        #[cfg(windows)]
+        {
+            let local_data = Path::new("local").join("application");
+            let root = std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("local"));
+            let name = if cfg!(debug_assertions) {
+                CLI_ROOT_DEV_DIR_NAME
+            } else {
+                CLI_ROOT_DIR_NAME
+            };
+            assert_eq!(
+                get_bin_dir_from(Some(&local_data), Some(Path::new("unused"))),
+                root.join(name).join("bin")
+            );
+            let fallback = std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            assert_eq!(
+                get_bin_dir_from(None, None),
+                fallback.join(name).join("bin")
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            let suffix = if cfg!(debug_assertions) {
+                ".local/bin/dev"
+            } else {
+                ".local/bin"
+            };
+            assert_eq!(
+                get_bin_dir_from(Some(Path::new("unused")), Some(Path::new("home"))),
+                Path::new("home").join(suffix)
+            );
+            assert_eq!(get_bin_dir_from(None, None), Path::new(".").join(suffix));
+        }
+    }
 }
 
 #[cfg(test)]

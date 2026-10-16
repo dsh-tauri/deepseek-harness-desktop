@@ -78,7 +78,13 @@ fn sync_cli_link(app_handle: &AppHandle) {
 ///
 /// 启动逻辑由前端显式调用 `launch_harness` 完成，避免重复拉起进程。
 #[tauri::command]
-pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String> {
+pub async fn install_dependencies(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<bool, String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+
     // 并发/重入防护：使用独立互斥锁而非依赖 Status::Installing——
     // 失败路径会复位状态，若用状态判断则一次失败后所有后续调用都会被
     // “Installation process already running” 静默跳过直到重启应用。
@@ -273,6 +279,8 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
     config::set_store_dat_setting(&app_handle, setting);
     sync_cli_link(&app_handle);
     Ok(updated)
+
+    }).await
 }
 
 /// 静默检查是否有新版 Harness 可用（只查不装，供进入页面后后台调用）
@@ -355,20 +363,42 @@ pub async fn check_dsh_update(
 
 /// 启动 Harness 服务
 #[tauri::command]
-pub async fn launch_harness(app_handle: AppHandle) -> Result<(), String> {
-    workflow::launch(app_handle).await
+pub async fn launch_harness(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        workflow::launch(app_handle).await
+    })
+    .await
 }
 
 /// 停止 Harness 服务
 #[tauri::command]
-pub async fn shutdown_harness(app_handle: AppHandle) -> Result<(), String> {
-    workflow::stop(app_handle).await
+pub async fn shutdown_harness(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(
+        profile,
+        async move { workflow::stop(app_handle).await },
+    )
+    .await
 }
 
 /// 重启 Harness 服务
 #[tauri::command]
-pub async fn restart_harness(app_handle: AppHandle) -> Result<(), String> {
-    workflow::restart(app_handle).await
+pub async fn restart_harness(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        workflow::restart(app_handle).await
+    })
+    .await
 }
 
 /// 进入安全模式：确保安全档案存在并切换为当前档案（不重启，由前端走标准重启链路）。
@@ -393,21 +423,35 @@ pub async fn restart_harness(app_handle: AppHandle) -> Result<(), String> {
 /// 而不是假装已恢复。
 #[tauri::command]
 pub async fn enter_safe_mode(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
 ) -> Result<crate::service::plugin::PatchQuarantineReport, String> {
-    crate::service::profile::ensure_safe_profile(&app_handle)?;
-    let report = crate::service::plugin::quarantine_patch_layers_in(
-        &crate::service::profile::profile_dir_of(
-            &app_handle,
+    let _transition = crate::service::workflow::acquire_core_transition().await?;
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        crate::service::profile::ensure_safe_profile(&app_handle)?;
+        let report = crate::service::plugin::quarantine_patch_layers_in(
+            &crate::service::profile::profile_dir_of(
+                &app_handle,
+                crate::service::profile::SAFE_PROFILE,
+            ),
+            &config::get_dsh_data_path(&app_handle),
+        );
+        if report.has_failures() {
+            return Err(crate::service::plugin::quarantine_failure_message(&report));
+        }
+        let old = crate::service::profile::active_profile(&app_handle);
+        crate::service::profile::set_active(&app_handle, crate::service::profile::SAFE_PROFILE)?;
+        crate::service::workflow::instances::bind_window(
+            window.label(),
             crate::service::profile::SAFE_PROFILE,
-        ),
-        &config::get_dsh_data_path(&app_handle),
-    );
-    if report.has_failures() {
-        return Err(crate::service::plugin::quarantine_failure_message(&report));
-    }
-    crate::service::profile::set_active(&app_handle, crate::service::profile::SAFE_PROFILE)?;
-    Ok(report)
+        );
+        if !crate::service::workflow::instances::is_attached(&old) {
+            workflow::stop(app_handle.clone()).await?;
+        }
+        Ok(report)
+    })
+    .await
 }
 
 /// 隔离解析失败的补丁层：当前档案层 + home 层（错误页「隔离损坏的补丁文件」入口）。
@@ -419,13 +463,18 @@ pub async fn enter_safe_mode(
 /// 会立刻回到同一个解析失败。
 #[tauri::command]
 pub async fn quarantine_broken_patch_layers(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
 ) -> Result<crate::service::plugin::PatchQuarantineReport, String> {
-    let report = crate::service::plugin::quarantine_active_patch_layers(&app_handle);
-    if report.has_failures() {
-        return Err(crate::service::plugin::quarantine_failure_message(&report));
-    }
-    Ok(report)
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let report = crate::service::plugin::quarantine_active_patch_layers(&app_handle);
+        if report.has_failures() {
+            return Err(crate::service::plugin::quarantine_failure_message(&report));
+        }
+        Ok(report)
+    })
+    .await
 }
 
 /// 移除补丁层里解析不到包的 `insert` 条目（错误页「移除悬空条目」入口）。
@@ -439,15 +488,24 @@ pub async fn quarantine_broken_patch_layers(
 /// 移除的正是预检报出的那批条目；没有可移除项时返回空报告，前端照常重启。
 #[tauri::command]
 pub async fn strip_unresolved_patch_entries(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
 ) -> Result<crate::service::plugin::PatchEntryStripReport, String> {
-    crate::service::plugin::strip_active_unresolved_entries(&app_handle)
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        crate::service::plugin::strip_active_unresolved_entries(&app_handle)
+    })
+    .await
 }
 
 /// 获取当前 Harness 服务状态
 #[tauri::command]
-pub fn get_dsh_status() -> workflow::status::Status {
-    workflow::status::get_status()
+pub fn get_dsh_status(
+    app_handle: AppHandle,
+    window: tauri::WebviewWindow,
+) -> workflow::status::Status {
+    let profile = workflow::instances::window_profile(&app_handle, window.label());
+    workflow::instances::scope_sync(profile, workflow::status::get_status)
 }
 
 /// 运行时文件是否已全部在盘（Node / Dsh / pnpm；Windows 还要求 Git 可用，

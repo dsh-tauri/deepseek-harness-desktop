@@ -178,10 +178,14 @@ pub async fn get_task_manager_processes(
     webview: tauri::Webview,
 ) -> Result<Vec<TaskManagerProcess>, String> {
     ensure_shell(&webview)?;
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut monitor = monitor().lock().unwrap_or_else(|error| error.into_inner());
-        monitor.refresh();
-        Ok(monitor.rows(std::process::id(), workflow::owned_process_pid()))
+    let profile =
+        workflow::instances::window_profile(webview.app_handle(), webview.window().label());
+    tauri::async_runtime::spawn_blocking(move || {
+        workflow::instances::scope_sync(profile, || {
+            let mut monitor = monitor().lock().unwrap_or_else(|error| error.into_inner());
+            monitor.refresh();
+            Ok(monitor.rows(std::process::id(), workflow::owned_process_pid()))
+        })
     })
     .await
     .map_err(|error| format!("TASK_MANAGER_READ: {error}"))?
@@ -194,8 +198,10 @@ pub async fn end_task_manager_process(
     start_time: u64,
 ) -> Result<(), String> {
     ensure_shell(&webview)?;
+    let profile =
+        workflow::instances::window_profile(webview.app_handle(), webview.window().label());
     let _transition = workflow::acquire_core_transition().await?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || workflow::instances::scope_sync(profile, || {
         let mut current = Monitor::default();
         current.refresh();
         let rows = current.rows(std::process::id(), workflow::owned_process_pid());
@@ -209,7 +215,7 @@ pub async fn end_task_manager_process(
         }
         monitor().lock().unwrap_or_else(|error| error.into_inner()).sampled_at = None;
         Ok(())
-    }).await.map_err(|error| format!("TASK_MANAGER_END: {error}"))?
+    })).await.map_err(|error| format!("TASK_MANAGER_END: {error}"))?
 }
 
 #[cfg(test)]

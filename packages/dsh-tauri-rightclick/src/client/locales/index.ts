@@ -2,6 +2,7 @@ import { defineLocale } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../constants'
 
 const zh = {
+  openInNewWindow: '在新窗口打开',
   renameSession: '重命名会话',
   archiveSession: '归档会话',
   openInExplorer: '在资源管理器中打开',
@@ -74,6 +75,7 @@ const zh = {
 } as const satisfies Record<string, string>
 
 const en: Record<keyof typeof zh, string> = {
+  openInNewWindow: 'Open in new window',
   renameSession: 'Rename session',
   archiveSession: 'Archive session',
   openInExplorer: 'Open in File Explorer',

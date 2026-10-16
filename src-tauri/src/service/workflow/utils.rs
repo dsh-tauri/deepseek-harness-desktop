@@ -1,7 +1,7 @@
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -198,31 +198,69 @@ pub fn is_port_in_use(port: u16) -> bool {
         .any(|ip| TcpListener::bind(SocketAddr::new(IpAddr::V4(*ip), port)).is_err())
 }
 
-/// 在独立线程中读取子进程的输出，同时写入日志文件
-///
-/// # 参数
-/// - `stdout`: 子进程的标准输出
-/// - `stderr`: 子进程的标准错误输出
-/// - `log_path`: 前端日志面板读取的日志文件
-pub fn spawn_output_readers<R1, R2>(stdout: Option<R1>, stderr: Option<R2>, log_path: PathBuf)
+#[cfg(test)]
+thread_local! {
+    static OUTPUT_READER_FAILURE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn with_output_reader_failure<T>(reader: usize, task: impl FnOnce() -> T) -> T {
+    struct Reset(usize);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            OUTPUT_READER_FAILURE.set(self.0);
+        }
+    }
+    let _reset = Reset(OUTPUT_READER_FAILURE.replace(reader));
+    task()
+}
+
+#[cfg(test)]
+fn check_output_reader_spawn() -> io::Result<()> {
+    if OUTPUT_READER_FAILURE.with(|failure| {
+        let remaining = failure.get();
+        failure.set(remaining.saturating_sub(1));
+        remaining == 1
+    }) {
+        return Err(io::Error::other("injected output reader spawn failure"));
+    }
+    Ok(())
+}
+
+pub fn spawn_output_readers<R1, R2>(
+    stdout: Option<R1>,
+    stderr: Option<R2>,
+    log_path: PathBuf,
+) -> io::Result<mpsc::Receiver<bool>>
 where
     R1: Read + Send + 'static,
     R2: Read + Send + 'static,
 {
-    // 在独立线程中读取 stdout
     if let Some(stdout) = stdout {
         let log_path = log_path.clone();
-        thread::spawn(move || {
-            drain_subprocess_output(BufReader::new(stdout), log_path, log::Level::Info);
-        });
+        #[cfg(test)]
+        check_output_reader_spawn()?;
+        thread::Builder::new().spawn(move || {
+            drain_subprocess_output(BufReader::new(stdout), log_path, log::Level::Info, |_| {});
+        })?;
     }
 
-    // 在独立线程中读取 stderr
+    let (signature, receiver) = mpsc::channel();
     if let Some(stderr) = stderr {
-        thread::spawn(move || {
-            drain_subprocess_output(BufReader::new(stderr), log_path, log::Level::Warn);
-        });
+        #[cfg(test)]
+        check_output_reader_spawn()?;
+        thread::Builder::new().spawn(move || {
+            let mut reported = false;
+            drain_subprocess_output(BufReader::new(stderr), log_path, log::Level::Warn, |line| {
+                if !reported && line.contains("duplicate loader entry") {
+                    reported = true;
+                    let _ = signature.send(true);
+                }
+            });
+            let _ = signature.send(false);
+        })?;
     }
+    Ok(receiver)
 }
 
 /// 逐行读取子进程输出并写入日志。
@@ -238,6 +276,7 @@ fn drain_subprocess_output<R: Read + Send + 'static>(
     mut reader: BufReader<R>,
     log_path: PathBuf,
     level: log::Level,
+    mut on_line: impl FnMut(&str),
 ) {
     loop {
         let mut bytes = Vec::new();
@@ -248,6 +287,7 @@ fn drain_subprocess_output<R: Read + Send + 'static>(
                 let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
                 let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
                 let line = decode_process_line(bytes);
+                on_line(&line);
                 match level {
                     log::Level::Warn => log::warn!(target: "dsh", "{}", line),
                     _ => log::info!(target: "dsh", "{}", line),
@@ -270,20 +310,16 @@ fn log_level_name(level: log::Level) -> &'static str {
     }
 }
 
-fn append_log(log_path: &PathBuf, line: &str) {
+pub(super) fn append_log(log_path: &PathBuf, line: &str) {
     // 与 `logger` 的 `desktop.log` / `desktop.frontdesk.log` 保持一致：5MiB × 3 轮转
     let _guard = dsh_log_lock().lock().unwrap_or_else(|e| e.into_inner());
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-    {
-        let _ = writeln!(file, "{}", line);
-        let _ = file.flush();
-    }
-    // 超阈值则按大小轮转（与启动次轮转 `rotate_service_log` 互补，避免单次运行无限增长）
     if let Ok(meta) = std::fs::metadata(log_path) {
-        if meta.len() > DSH_MAX_LOG_BYTES {
+        if meta
+            .len()
+            .saturating_add(line.len() as u64)
+            .saturating_add(1)
+            > DSH_MAX_LOG_BYTES
+        {
             let _ = std::fs::remove_file(indexed_log_path(log_path, DSH_MAX_BACKUPS));
             for i in (1..DSH_MAX_BACKUPS).rev() {
                 let from = indexed_log_path(log_path, i);
@@ -296,12 +332,15 @@ fn append_log(log_path: &PathBuf, line: &str) {
             if log_path.exists() {
                 let _ = std::fs::rename(log_path, indexed_log_path(log_path, 1));
             }
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(log_path);
         }
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
+        let _ = writeln!(file, "{}", line);
+        let _ = file.flush();
     }
 }
 
@@ -374,6 +413,7 @@ mod tests {
             std::io::BufReader::new(std::io::Cursor::new(data)),
             log.clone(),
             log::Level::Warn,
+            |_| {},
         );
 
         let content = fs::read_to_string(&log).unwrap();
@@ -418,11 +458,62 @@ mod tests {
             std::io::BufReader::new(std::io::Cursor::new(b"a\r\nb\n".to_vec())),
             log.clone(),
             log::Level::Info,
+            |_| {},
         );
 
         let content = fs::read_to_string(&log).unwrap();
         assert_eq!(content, "a\nb\n");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn output_readers_report_only_this_attempts_stderr_signature() {
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join("dsh-web.log");
+        let mut data = b"duplicate loader entry\n".to_vec();
+        data.extend_from_slice(&vec![b'x'; 256 * 1024]);
+        data.extend_from_slice(b"\nlast stderr line\n");
+        let duplicate = spawn_output_readers(
+            Some(std::io::Cursor::new(b"stdout ready\n".to_vec())),
+            Some(std::io::Cursor::new(data)),
+            log.clone(),
+        )
+        .unwrap();
+        let timeout = Duration::from_secs(5);
+        assert!(duplicate.recv_timeout(timeout).unwrap());
+        assert!(!duplicate.recv_timeout(timeout).unwrap());
+        let content = fs::read_to_string(&log).unwrap();
+        assert!(content.contains("last stderr line\n"));
+
+        let clean = spawn_output_readers(
+            Some(std::io::Cursor::new(b"duplicate loader entry\n".to_vec())),
+            Some(std::io::Cursor::new(b"unrelated error\n".to_vec())),
+            log,
+        )
+        .unwrap();
+        assert!(!clean.recv_timeout(timeout).unwrap());
+    }
+
+    #[test]
+    fn append_keeps_the_new_line_in_current_log_when_size_limit_is_reached() {
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join("dsh-web.log");
+        let previous = vec![b'x'; 5 * 1024 * 1024];
+        fs::write(&log, &previous).unwrap();
+        let marker = "ERROR HARNESS_FATAL_REPORT: C:/logs/harness-fatal-42.json";
+
+        append_log(&log, marker);
+
+        assert_eq!(fs::read_to_string(&log).unwrap(), format!("{marker}\n"));
+        assert_eq!(
+            fs::read(root.path().join("dsh-web.log.1")).unwrap(),
+            previous
+        );
+        append_log(&log, "next output");
+        assert_eq!(
+            fs::read_to_string(&log).unwrap(),
+            format!("{marker}\nnext output\n")
+        );
     }
 
     /// 模拟连续 5 次启动，验证磁盘上始终只保留最近 `keep` 份日志，
@@ -516,10 +607,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let started = std::time::Instant::now();
-        assert!(!wait_for_port_release(
-            port,
-            Duration::from_millis(200)
-        ));
+        assert!(!wait_for_port_release(port, Duration::from_millis(200)));
         assert!(
             started.elapsed() >= Duration::from_millis(200),
             "an occupied port must be waited on until the budget runs out"

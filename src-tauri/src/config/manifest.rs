@@ -387,9 +387,15 @@ impl EntrySpec {
 /// `EISDIR: illegal operation on a directory, lstat 'C:'` 退出（Node 25 实测），
 /// 随包核心因此永远起不来。CLI shim 也会把这个前缀写进 `.cmd`，同样要归一化。
 pub fn resource_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
-    let dir = app.path().resource_dir().ok()?;
-    let root = pick_resource_root(&dir).unwrap_or(dir);
-    Some(dunce::simplified(&root).to_path_buf())
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|dir| resource_root_from(&dir))
+}
+
+pub(crate) fn resource_root_from(resource_dir: &Path) -> PathBuf {
+    let root = pick_resource_root(resource_dir).unwrap_or_else(|| resource_dir.to_path_buf());
+    dunce::simplified(&root).to_path_buf()
 }
 
 /// 资源根探测顺序：扁平布局（exe 同级）优先，再 `resources/` 子目录布局。
@@ -409,17 +415,21 @@ fn source_manifest_path() -> PathBuf {
 
 /// 定位资源清单：debug 优先当前 checkout，release 优先进安装包资源。
 pub fn manifest_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    let packaged = resource_root(app).map(|root| root.join(MANIFEST_FILE));
-    let source = source_manifest_path();
-    if cfg!(debug_assertions) {
-        candidates.push(source.clone());
-        candidates.extend(packaged.clone());
+    manifest_path_from(resource_root(app).as_deref(), cfg!(debug_assertions))
+}
+
+pub(crate) fn manifest_path_from(
+    resource_root: Option<&Path>,
+    source_first: bool,
+) -> Option<PathBuf> {
+    let packaged = resource_root.map(|root| root.join(MANIFEST_FILE));
+    let source = Some(source_manifest_path());
+    let candidates = if source_first {
+        [source, packaged]
     } else {
-        candidates.extend(packaged.clone());
-        candidates.push(source.clone());
-    }
-    candidates.into_iter().find(|path| path.is_file())
+        [packaged, source]
+    };
+    candidates.into_iter().flatten().find(|path| path.is_file())
 }
 
 /// 解析结果缓存：清单是热路径（核心来源判定、插件清单、宠物列表、依赖映射都要读），
@@ -506,22 +516,6 @@ pub fn is_above_recommended<R: Runtime>(app: &AppHandle<R>, version: &str) -> bo
     }
 }
 
-/// 依赖映射规范（清单缺失或未声明该键时返回 None）
-pub fn dependency_spec<R: Runtime>(app: &AppHandle<R>, key: &str) -> Option<DependencySpec> {
-    with_manifest(app, |manifest| manifest.dependencies.get(key).cloned())?
-}
-
-/// 位置令牌解析：`resources/...` 相对安装包资源根，其余相对 AppData 基础目录，
-/// 绝对路径原样返回——依赖可以位于任意位置（AppData 托管、安装目录捆绑、
-/// 或用户指定的其它盘符）。
-pub fn resolve_location<R: Runtime>(app: &AppHandle<R>, raw: &str) -> PathBuf {
-    resolve_location_from(
-        &super::runtime::get_base_dir(app),
-        resource_root(app).as_deref(),
-        raw,
-    )
-}
-
 /// 位置令牌解析（依赖可位于任意位置：AppData 托管、安装目录捆绑、或用户指定的其它盘符）：
 ///
 /// - 绝对路径（`C:/...`、`/opt/...`）原样返回；
@@ -572,7 +566,7 @@ fn join_token(root: &Path, rest: &str) -> PathBuf {
     root.join(rest.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
-fn strip_jsonc(raw: &str) -> String {
+pub(crate) fn strip_jsonc(raw: &str) -> String {
     let chars: Vec<char> = raw.chars().collect();
     let mut out = String::with_capacity(raw.len());
     let mut i = 0;
@@ -957,16 +951,26 @@ mod tests {
 
         // 两处都没有 → 无资源根
         assert_eq!(pick_resource_root(&dir), None);
+        assert_eq!(resource_root_from(&dir), dir);
 
         // 只有嵌套布局 → 命中 `resources/` 子目录
         let nested = dir.join("resources");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(nested.join(MANIFEST_FILE), "{}").unwrap();
         assert_eq!(pick_resource_root(&dir), Some(nested.clone()));
+        assert_eq!(resource_root_from(&dir), nested);
 
         // 扁平布局存在 → 扁平优先（Tauri 2 的两种落盘形态同时出现时以 exe 同级为准）
         std::fs::write(dir.join(MANIFEST_FILE), "{}").unwrap();
         assert_eq!(pick_resource_root(&dir), Some(dir.clone()));
+        assert_eq!(resource_root_from(&dir), dir);
+        assert_eq!(
+            manifest_path_from(Some(&dir), false),
+            Some(dir.join(MANIFEST_FILE))
+        );
+        let source = source_manifest_path();
+        assert!(source.is_file());
+        assert_eq!(manifest_path_from(Some(&dir), true), Some(source));
 
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -978,7 +982,7 @@ mod tests {
     #[test]
     fn resource_root_simplifies_windows_verbatim_prefix() {
         let verbatim = PathBuf::from(r"\\?\C:\app\resources\dsh");
-        let simplified = dunce::simplified(&verbatim).to_path_buf();
+        let simplified = resource_root_from(&verbatim);
         if cfg!(windows) {
             assert_eq!(simplified, PathBuf::from(r"C:\app\resources\dsh"));
             assert!(!simplified.to_string_lossy().starts_with(r"\\?\"));

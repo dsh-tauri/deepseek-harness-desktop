@@ -39,6 +39,12 @@ describe('pickErrorLines', () => {
     expect(picked).toEqual(lines.slice(-8))
   })
 
+  it('preserves the actual fatal report path when more than eight earlier errors exist', () => {
+    const errors = Array.from({ length: 12 }, (_, i) => `Error: failure ${i}`)
+    const report = 'ERROR HARNESS_FATAL_REPORT: C:/用户 data/logs/harness-fatal-42.json'
+    expect(pickErrorLines([...errors, report])).toEqual([...errors.slice(0, 7), report])
+  })
+
   it('handles empty input', () => {
     expect(pickErrorLines([])).toEqual([])
   })

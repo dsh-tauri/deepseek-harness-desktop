@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
 import type { PetActionResult } from '../service/pet.types'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -18,9 +18,11 @@ vi.mock('dsh-tauri/client', async () => ({
 }))
 
 vi.mock('dsh-tauri-ui/client', () => ({
+  Action: ({ variant: _variant, icon: _icon, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string, icon?: ReactNode }) => <button {...props} />,
   ArrowRightFromSquare: () => null,
   Globe: () => null,
   Plus: () => null,
+  TrashBin: () => null,
   Icon: () => null,
   Checkbox: ({ checked, disabled, children, onChange }: { checked: boolean, disabled: boolean, children: ReactNode, onChange: (next: boolean) => void }) => (
     <label>
@@ -28,6 +30,17 @@ vi.mock('dsh-tauri-ui/client', () => ({
       {children}
     </label>
   ),
+  Input: (props: InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
+  Modal: ({ open, title, description, children, footer, onClose, closeLabel }: { open: boolean, title: string, description?: string, children: ReactNode, footer: ReactNode, onClose: () => void, closeLabel: string }) => open
+    ? (
+        <div role="dialog" aria-label={title}>
+          <button onClick={onClose}>{closeLabel}</button>
+          <p>{description}</p>
+          {children}
+          {footer}
+        </div>
+      )
+    : null,
   Button: ({ variant: _variant, size: _size, icon: _icon, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string, size?: string, icon?: ReactNode }) => <button {...props} />,
   SegmentedControl: ({ value, onChange }: { value: string, onChange: (value: string) => void }) => (
     <div>
@@ -42,11 +55,14 @@ vi.mock('dsh-tauri-ui/client', () => ({
 vi.mock('../service/pet', () => ({
   choosePet: vi.fn(),
   clearPetSelection: vi.fn(),
+  deletePet: vi.fn(),
   enablePet: vi.fn(),
   importPetArchive: vi.fn(),
+  importPetRepository: vi.fn(),
   loadForceXwayland: vi.fn(),
   loadPetCatalog: vi.fn(),
   loadPetOverlaySupported: vi.fn(),
+  loadPetUpdates: vi.fn(),
   openCommunityShare: vi.fn(),
   resizePet: vi.fn(),
   setPetDragProbability: vi.fn(),
@@ -55,6 +71,7 @@ vi.mock('../service/pet', () => ({
   togglePetThrow: vi.fn(),
   togglePetAutonomy: vi.fn(),
   togglePetInteraction: vi.fn(),
+  updatePetRepository: vi.fn(),
 }))
 
 let container: HTMLDivElement
@@ -82,6 +99,20 @@ function card(name: string): HTMLDivElement {
   return result
 }
 
+function deleteButton(name: string): HTMLButtonElement {
+  const result = card(name).querySelector<HTMLButtonElement>(`button[aria-label="${locale.text('delete')}"]`)
+  if (!result)
+    throw new Error(`Missing delete button ${name}`)
+  return result
+}
+
+function actionButton(name: string, label: string): HTMLButtonElement {
+  const result = Array.from(card(name).querySelectorAll('button')).find(item => item.textContent === label)
+  if (!result)
+    throw new Error(`Missing ${label} button on ${name}`)
+  return result
+}
+
 async function click(node: HTMLElement): Promise<void> {
   await act(async () => {
     node.click()
@@ -101,6 +132,7 @@ beforeEach(() => {
     status: { active_pet: 'chat', enabled: false, visible: false, throw_enabled: false },
     fetchRevision: 0,
     catalogLoaded: true,
+    petUpdates: [],
     presetPets: [{ id: 'preset', name: 'Preset', desc: 'Preset description', image: 'preset.gif' }],
     chatPets: [{ id: 'chat', name: 'Chat', source: 'chat', description: 'Chat description', thumbnail: 'chat.png' }],
     codexPets: [{ id: 'codex', name: 'Codex', source: 'codex', thumbnail: 'codex.png' }],
@@ -108,7 +140,7 @@ beforeEach(() => {
     overlaySupported: false,
     forceXwayland: false,
   })
-  for (const action of [petService.loadPetCatalog, petService.choosePet, petService.clearPetSelection, petService.enablePet, petService.togglePet, petService.toggleForceXwayland, petService.resizePet, petService.togglePetThrow, petService.importPetArchive, petService.openCommunityShare])
+  for (const action of [petService.loadPetCatalog, petService.choosePet, petService.clearPetSelection, petService.deletePet, petService.enablePet, petService.togglePet, petService.toggleForceXwayland, petService.resizePet, petService.togglePetThrow, petService.importPetArchive, petService.importPetRepository, petService.openCommunityShare, petService.loadPetUpdates, petService.updatePetRepository])
     vi.mocked(action).mockResolvedValue({ ok: true })
   container = document.createElement('div')
   document.body.append(container)
@@ -168,22 +200,91 @@ describe('pet settings action boundaries', () => {
     expect(container.textContent).toContain(locale.text('interactionFailed'))
   })
 
+  it('renders local dsh GIF thumbnails without spritesheet cropping', async () => {
+    store.pet.setCatalog({
+      presets: [],
+      chat: [{ id: 'chat:video', name: 'Video', source: 'chat', kind: 'dsh', thumbnail_type: 'gif', thumbnail: 'data:image/gif;base64,R0lGODlh' }],
+      codex: [],
+    })
+    await mount()
+    const image = card('Video').querySelector('img')!
+    expect(image.getAttribute('src')).toBe('data:image/gif;base64,R0lGODlh')
+    expect(image.parentElement).toBe(card('Video'))
+    expect(image.className).not.toContain('800%')
+  })
+
   it('renders preset images separately from identical Chat/Codex spritesheet cards and keeps active clear actions', async () => {
     await mount()
     expect(card('Preset').querySelector('img')?.parentElement).toBe(card('Preset'))
     expect(card('Preset').textContent).toContain('Preset description')
-    expect(card('Preset').querySelector('button')?.textContent).toBe(locale.text('enable'))
+    expect(actionButton('Preset', locale.text('enable'))).toBeInstanceOf(HTMLButtonElement)
     expect(card('Chat').querySelector('img')?.parentElement?.tagName).toBe('SPAN')
     expect(card('Chat').textContent).toContain('Chat description')
-    expect(card('Chat').querySelector('button')?.textContent).toBe(locale.text('clear'))
-    await click(card('Chat').querySelector('button')!)
+    await click(actionButton('Chat', locale.text('clear')))
     expect(petService.clearPetSelection).toHaveBeenCalledExactlyOnceWith()
     expect(petService.choosePet).not.toHaveBeenCalled()
     await click(button('codex'))
     expect(card('Codex').querySelector('img')?.parentElement?.tagName).toBe('SPAN')
-    expect(card('Codex').querySelector('button')?.textContent).toBe(locale.text('select'))
-    await click(card('Codex').querySelector('button')!)
+    await click(actionButton('Codex', locale.text('select')))
     expect(petService.choosePet).toHaveBeenCalledExactlyOnceWith({ id: 'codex' })
+  })
+
+  it('offers delete only on imported pets and reports its own failure without selecting', async () => {
+    await mount()
+    expect(card('Preset').querySelector(`button[aria-label="${locale.text('delete')}"]`)).toBeNull()
+    store.pet.setPresetPets([
+      ...store.pet.$state.presetPets,
+      { id: 'remote-pet', name: 'Remote', image: 'remote.gif', remote: true },
+    ])
+    await act(async () => {})
+    expect(card('Remote').querySelector(`button[aria-label="${locale.text('delete')}"]`)).toBeInstanceOf(HTMLButtonElement)
+
+    vi.mocked(petService.deletePet).mockResolvedValueOnce({ ok: false, error: 'native failure' })
+    await click(deleteButton('Remote'))
+    expect(petService.deletePet).toHaveBeenCalledExactlyOnceWith({ id: 'remote-pet' })
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(locale.text('deleteFailed'))
+    expect(petService.choosePet).not.toHaveBeenCalled()
+
+    await click(deleteButton('Remote'))
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    await click(button('codex'))
+    await click(deleteButton('Codex'))
+    expect(petService.deletePet).toHaveBeenLastCalledWith({ id: 'codex' })
+  })
+
+  it('shows updates only for changed remote pets to the right of enable and keeps retry available after failure', async () => {
+    store.pet.setPresetPets([
+      { id: 'preset', name: 'Preset' },
+      { id: 'remote', name: 'Remote', remote: true },
+      { id: 'unchanged', name: 'Unchanged', remote: true },
+    ])
+    store.pet.setPetUpdates(['preset', 'remote'])
+    const pending = deferred()
+    vi.mocked(petService.updatePetRepository).mockReturnValueOnce(pending.promise)
+    await mount()
+    expect(petService.loadPetUpdates).toHaveBeenCalledExactlyOnceWith()
+    expect(card('Preset').textContent).not.toContain(locale.text('update'))
+    expect(card('Unchanged').textContent).not.toContain(locale.text('update'))
+    const update = actionButton('Remote', locale.text('update'))
+    expect(actionButton('Remote', locale.text('enable')).nextElementSibling).toBe(update)
+    await click(update)
+    expect(petService.updatePetRepository).toHaveBeenCalledExactlyOnceWith({ id: 'remote' })
+    expect(update.disabled).toBe(true)
+    await click(update)
+    expect(petService.updatePetRepository).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      pending.resolve({ ok: false, error: 'network' })
+    })
+    expect(update.disabled).toBe(false)
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(locale.text('updateFailed'))
+    vi.mocked(petService.updatePetRepository).mockImplementationOnce(async () => {
+      store.pet.replacePresetPet({ id: 'remote', name: 'Updated', remote: true })
+      return { ok: true }
+    })
+    await click(update)
+    expect(Array.from(card('Updated').querySelectorAll('button')).map(button => button.textContent)).not.toContain(locale.text('update'))
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(petService.enablePet).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -199,11 +300,11 @@ describe('pet settings action boundaries', () => {
     if (kind === 'codex')
       await click(button('codex'))
     const action = kind === 'preset'
-      ? card('Preset').querySelector('button')!
+      ? actionButton('Preset', locale.text('enable'))
       : kind === 'chat'
-        ? card('Chat').querySelector('button')!
+        ? actionButton('Chat', locale.text('clear'))
         : kind === 'codex'
-          ? card('Codex').querySelector('button')!
+          ? actionButton('Codex', locale.text('select'))
           : button(locale.text(kind === 'toggle' ? 'enablePet' : 'xwaylandEnable'))
     await click(action)
     expect(action.disabled).toBe(true)
@@ -325,6 +426,80 @@ describe('pet settings action boundaries', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(locale.text('importFailed'))
     expect(input.disabled).toBe(false)
     expect(input.value).toBe('')
+  })
+
+  it('repository import opens an input directly and blocks duplicate submits until success without selecting', async () => {
+    const pending = deferred()
+    vi.mocked(petService.importPetRepository).mockReturnValueOnce(pending.promise)
+    await mount()
+    const create = button(locale.text('create'))
+    const trigger = button(locale.text('importRepository'))
+    expect(create.nextElementSibling).toBe(trigger)
+    await click(trigger)
+    const dialog = container.querySelector('[role="dialog"]')!
+    const input = dialog.querySelector<HTMLInputElement>('input')!
+    expect(input.id).toBe(dialog.querySelector('label')?.htmlFor)
+    expect(input.hasAttribute('data-modal-autofocus')).toBe(true)
+    expect(dialog.textContent).toContain(locale.text('repositoryHint'))
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'https://github.com/owner/repo')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const form = dialog.querySelector('form')!
+    const confirm = dialog.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    expect(confirm.form).toBe(form)
+    await act(async () => {
+      confirm.click()
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(petService.importPetRepository).toHaveBeenCalledExactlyOnceWith({ repository: 'https://github.com/owner/repo' })
+    expect(input.disabled).toBe(true)
+    expect(dialog.textContent).toContain(locale.text('repositoryImporting'))
+    await click(button(locale.text('close')))
+    expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+    await act(async () => {
+      store.pet.setPresetPets([
+        ...store.pet.$state.presetPets,
+        { id: 'owner/repo', name: 'Remote', image: 'https://raw.githubusercontent.com/owner/repo/main/cover.gif' },
+      ])
+      pending.resolve({ ok: true })
+    })
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(card('Remote').querySelector('img')?.getAttribute('src')).toBe('https://raw.githubusercontent.com/owner/repo/main/cover.gif')
+    expect(card('Remote').querySelector('button')?.textContent).toBe(locale.text('enable'))
+    expect(store.pet.status?.active_pet).toBe('chat')
+    expect(petService.enablePet).not.toHaveBeenCalled()
+    expect(trigger.disabled).toBe(false)
+    expect(petService.choosePet).not.toHaveBeenCalled()
+    await click(button(locale.text('importRepository')))
+    expect(container.querySelector<HTMLInputElement>('[role="dialog"] input')?.value).toBe('')
+    await click(button(locale.text('cancel')))
+    await click(button('codex'))
+    expect(container.textContent).not.toContain(locale.text('importRepository'))
+  })
+
+  it.each([
+    { error: 'PET_REPOSITORY_INVALID', key: 'repositoryInvalid' },
+    { error: 'NETWORK_ERROR: secret filesystem path', key: 'repositoryImportFailed' },
+  ] as const)('repository error $error stays local and permits retry without displaying technical details', async ({ error, key }) => {
+    vi.mocked(petService.importPetRepository).mockResolvedValueOnce({ ok: false, error })
+    await mount()
+    await click(button(locale.text('importRepository')))
+    const dialog = container.querySelector('[role="dialog"]')!
+    const form = dialog.querySelector('form')!
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toBe(locale.text(key))
+    expect(container.textContent).not.toContain(error)
+    const input = dialog.querySelector<HTMLInputElement>('input')!
+    expect(input.disabled).toBe(false)
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(petService.importPetRepository).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
   })
 
   it('community share sits in the Codex tab, opens the site and reports its own failure', async () => {

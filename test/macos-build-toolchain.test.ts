@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest'
 import { readSource } from './setup/read-source'
 
 const WORKFLOWS = [
-  ['.github/workflows/build-bundle-macos.yml', 'steps.check.outputs.should_run == \'true\'', '$/.github/actions/setup-xcode'],
-  ['.github/workflows/build-macos.yml', 'steps.check.outputs.should_run == \'true\'', '$/.github/actions/setup-xcode'],
+  ['.github/workflows/build-bundle-macos.yml', 'steps.check.outputs.should_run == \'true\'', './.github/actions/setup-xcode'],
+  ['.github/workflows/build-macos.yml', 'steps.check.outputs.should_run == \'true\'', './.github/actions/setup-xcode'],
   ['.github/workflows/build-test.yml', undefined, './.github/actions/setup-xcode'],
   ['.github/workflows/ci.yml', 'runner.os == \'macOS\'', './.github/actions/setup-xcode'],
 ] as const

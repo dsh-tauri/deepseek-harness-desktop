@@ -4,6 +4,9 @@ import { MOBILE_MEDIA_QUERIES } from 'dsh-tauri/client'
 const { c } = cssr
 
 export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
+  c('html[data-dsh-mobile-sidebar], html[data-dsh-mobile-sidebar] body', {
+    overflow: 'hidden',
+  }),
   c('[data-dsh-mobile-preferences]', {
     display: 'flex',
     flex: '1',
@@ -16,6 +19,17 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     marginLeft: 'auto',
     flexShrink: '0',
   }),
+  c(':is([data-dsh-mobile-preferences], [data-shell-bottom]) button', {
+    WebkitTapHighlightColor: 'transparent',
+  }),
+  c(':is([data-dsh-mobile-preferences], [data-shell-bottom]) button:focus:not(:focus-visible)', {
+    outline: 'none',
+    boxShadow: 'none',
+  }),
+  c(':is([data-dsh-mobile-preferences], [data-shell-bottom]) button:focus-visible', {
+    outline: 'var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))',
+    outlineOffset: '2px',
+  }),
   c('[data-slot="conversation.composer.bar"] [class$="_dock"]', {
     display: 'none !important',
   }),
@@ -26,6 +40,13 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     display: 'none !important',
   }),
   c('[data-slot="conversation.header"] [class$="_header"]', {
+    display: 'none !important',
+  }),
+  // 第三方插件（dsh-better-sidebar）的空白会话兜底入口 `[data-dsh-dock-fallback]` 是
+  // `position: fixed` 的：它按宿主会话头里「右侧栏角落控件」的 rect 对齐，而手机版顶栏已经
+  // 把那个会话头一并隐藏，锚点 rect 退化成 0×0 之后它会一路退到视口左上角（top/left 各 4px），
+  // 正好压在本顶栏的抽屉开关上；它另一处兜底位是右上角，也压着新建会话按钮。手机上没有容身处。
+  c('[data-dsh-dock-fallback]', {
     display: 'none !important',
   }),
   // 扩展面板内嵌的官方页头由 dsh-tauri-extension 自己排版（同一行左侧还有它叠放的闪光图标），
@@ -70,29 +91,33 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     visibility: 'visible',
   }),
   c('html[data-dsh-mobile-sidebar] [class$="_centerCol"]', {
-    'position': 'absolute',
-    'inset': '0',
-    'zIndex': '1',
-    '--dsh-mobile-sidebar-radius': 'clamp(0px, calc(var(--dsh-mobile-sidebar-offset) / 10), 24px)',
-    'colorScheme': 'light',
-    'backgroundColor': 'Canvas',
-    'backgroundImage': 'linear-gradient(var(--dsw-alias-bg-base, Canvas), var(--dsw-alias-bg-base, Canvas))',
-    'overflow': 'hidden',
-    'transform': 'translate3d(var(--dsh-mobile-sidebar-offset), 0, 0)',
-    'borderRadius': 'var(--dsh-mobile-sidebar-radius) 0 0 var(--dsh-mobile-sidebar-radius)',
-    'cornerShape': 'round',
-    'boxShadow': 'none',
-    'transition': 'transform 240ms cubic-bezier(.2, .8, .2, 1), border-radius 240ms ease, box-shadow 240ms ease',
-    'willChange': 'transform',
+    position: 'absolute',
+    inset: '0',
+    zIndex: '1',
+    colorScheme: 'light',
+    backgroundColor: 'Canvas',
+    backgroundImage: 'linear-gradient(var(--dsw-alias-bg-base, Canvas), var(--dsw-alias-bg-base, Canvas))',
+    overflow: 'hidden',
+    transform: 'translate3d(0, 0, 0)',
+    borderRadius: '0',
+    cornerShape: 'round',
+    boxShadow: 'none',
+    transition: 'transform 240ms cubic-bezier(.2, .8, .2, 1), border-radius 240ms ease, box-shadow 240ms ease',
+    willChange: 'transform',
   }),
-  c('html[data-dsh-mobile-sidebar-open] [class$="_centerCol"], html[data-dsh-mobile-sidebar-dragging] [class$="_centerCol"]', {
+  c('html[data-dsh-mobile-sidebar-open] [class$="_centerCol"]', {
+    transform: 'translate3d(var(--dsh-mobile-sidebar-width), 0, 0)',
+    borderRadius: '24px 0 0 24px',
     boxShadow: 'var(--dsw-shadow-lv3)',
+  }),
+  c('html[data-dsh-mobile-sidebar-dragging] [class$="_centerCol"]', {
+    transform: 'translate3d(var(--dsh-mobile-sidebar-offset), 0, 0)',
+    borderRadius: 'clamp(0px, calc(var(--dsh-mobile-sidebar-offset) / 10), 24px) 0 0 clamp(0px, calc(var(--dsh-mobile-sidebar-offset) / 10), 24px)',
+    boxShadow: 'var(--dsw-shadow-lv3)',
+    transition: 'none',
   }),
   c('html[data-dsh-mobile-sidebar] body[data-ds-dark-theme] [class$="_centerCol"]', {
     colorScheme: 'dark',
-  }),
-  c('html[data-dsh-mobile-sidebar-dragging] [class$="_centerCol"]', {
-    transition: 'none',
   }),
   c('html[data-dsh-mobile-sidebar] [class$="_rightbarCol"]', {
     display: 'none !important',
@@ -127,8 +152,8 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     gridTemplateColumns: '24px minmax(0, 1fr) 24px',
     alignItems: 'center',
     gap: '16px',
-    height: 'calc(52px + env(safe-area-inset-top))',
-    padding: 'calc(14px + env(safe-area-inset-top)) 16px 14px',
+    height: 'calc(52px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px)))',
+    padding: 'calc(14px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px))) 16px 14px',
     boxSizing: 'border-box',
     backgroundColor: 'Canvas',
     backgroundImage: 'linear-gradient(var(--dsw-alias-bg-base, Canvas), var(--dsw-alias-bg-base, Canvas))',
@@ -145,6 +170,8 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     cursor: 'pointer',
     pointerEvents: 'auto',
     touchAction: 'manipulation',
+    outline: 'none',
+    WebkitTapHighlightColor: 'transparent',
   }),
   c('[data-dsh-mobile-new-session]', {
     display: 'block',
@@ -158,6 +185,8 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     cursor: 'pointer',
     pointerEvents: 'auto',
     touchAction: 'manipulation',
+    outline: 'none',
+    WebkitTapHighlightColor: 'transparent',
   }),
   c('[data-dsh-mobile-sidebar-toggle]:focus-visible, [data-dsh-mobile-new-session]:focus-visible', {
     outline: 'var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))',
@@ -188,7 +217,7 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
   }),
   c('[data-dsh-mobile-sidebar-shade]', {
     position: 'absolute',
-    inset: 'calc(52px + env(safe-area-inset-top)) 0 0',
+    inset: 'calc(52px + var(--dsh-mobile-safe-area-inset-top, env(safe-area-inset-top, 0px))) 0 0',
     zIndex: '2',
     display: 'block',
     width: '100%',
@@ -198,17 +227,22 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     opacity: '0',
     visibility: 'hidden',
     pointerEvents: 'none',
-    transform: 'translate3d(var(--dsh-mobile-sidebar-offset), 0, 0)',
+    transform: 'translate3d(0, 0, 0)',
     transition: 'transform 240ms cubic-bezier(.2, .8, .2, 1), opacity 180ms ease, visibility 0s linear 240ms',
     touchAction: 'pan-y pinch-zoom',
   }),
-  c('html[data-dsh-mobile-sidebar-open] [data-dsh-mobile-sidebar-shade], html[data-dsh-mobile-sidebar-dragging] [data-dsh-mobile-sidebar-shade]', {
+  c('html[data-dsh-mobile-sidebar-open] [data-dsh-mobile-sidebar-shade]', {
+    transform: 'translate3d(var(--dsh-mobile-sidebar-width), 0, 0)',
     opacity: '1',
     visibility: 'visible',
     pointerEvents: 'auto',
     transitionDelay: '0s',
   }),
   c('html[data-dsh-mobile-sidebar-dragging] [data-dsh-mobile-sidebar-shade]', {
+    transform: 'translate3d(var(--dsh-mobile-sidebar-offset), 0, 0)',
+    opacity: '1',
+    visibility: 'visible',
+    pointerEvents: 'auto',
     transition: 'none',
   }),
   c('@media (prefers-reduced-motion: reduce)', [

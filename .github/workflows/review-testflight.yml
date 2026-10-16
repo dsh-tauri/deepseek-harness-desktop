@@ -1,0 +1,98 @@
+name: Review Existing TestFlight Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ios_version:
+        description: Exact numeric iOS marketing version already uploaded
+        required: true
+        type: string
+      build_number:
+        description: Exact existing CFBundleVersion; no new upload will be performed
+        required: true
+        type: string
+      source_sha:
+        description: Original uploaded build source commit on official main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-distribution
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: >-
+      github.repository == 'dsh-tauri/deepseek-harness-desktop' &&
+      github.ref == 'refs/heads/main' &&
+      vars.IOS_BETA_REVIEW_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      IOS_VERSION: ${{ inputs.ios_version }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout trusted workflow revision
+        uses: actions/checkout@v7
+        with:
+          repository: dsh-tauri/deepseek-harness-desktop
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate original build source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
+
+      - name: Install temporary API key only
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import tempfile
+          os.umask(0o077)
+          key_id = os.environ['APP_STORE_CONNECT_KEY_ID']
+          key = os.environ['APP_STORE_CONNECT_API_KEY']
+          if not re.fullmatch(r'[A-Z0-9]{10}', key_id) or not key.startswith('-----BEGIN PRIVATE KEY-----'):
+              raise ValueError('Configure the App Store Connect API key and ID')
+          root = Path(tempfile.mkdtemp(prefix='ios-beta-review-', dir=Path(os.environ['RUNNER_TEMP']).resolve()))
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write(f'SIGNING_ROOT={root}\n')
+          (root / 'private_keys').mkdir()
+          (root / 'private_keys' / f'AuthKey_{key_id}.p8').write_text(key)
+          PY
+
+      - name: Resume external Beta review without uploading another build
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          TESTFLIGHT_BETA_GROUP_ID: ${{ vars.TESTFLIGHT_BETA_GROUP_ID }}
+        run: python3 .github/scripts/ios-beta-review.py
+
+      - name: Always remove temporary API key
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+          value = os.environ.get('SIGNING_ROOT')
+          if value:
+              root = Path(value)
+              temp = Path(os.environ['RUNNER_TEMP']).resolve()
+              if not root.is_absolute() or root.parent != temp or not root.name.startswith('ios-beta-review-') or root.is_symlink() or root.resolve() != root:
+                  raise ValueError('Refusing unsafe API key cleanup path')
+              if root.exists():
+                  shutil.rmtree(root)
+          PY

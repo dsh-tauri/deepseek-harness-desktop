@@ -4,6 +4,8 @@ const FRAME_SELECTOR = 'div[class$="_frame"]'
 
 const COMPONENT_REGION_SELECTOR = '[data-slot]'
 
+export const STYLE_INPUT_SELECTOR = `${OVERLAY_SELECTORS}, ${FRAME_SELECTOR}, [data-slot="sidebar"], [data-slot="sidebar"] > div, style, link[rel~="stylesheet" i]`
+
 /** 全透明底色的判定：`transparent` 与 `rgba(…, 0)`（含现代浏览器的空格/斜杠分隔）。 */
 function isTransparent(color: string): boolean {
   const value = color.trim().toLowerCase()

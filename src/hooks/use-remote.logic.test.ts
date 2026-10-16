@@ -1,8 +1,8 @@
-import type { SshMachineRow } from './use-remote'
+import type { RemoteMachineRow } from './use-remote'
 import { describe, expect, it } from 'vitest'
 import { dotClassOf, reconcileSwitcher } from './use-remote'
 
-function machineOf(partial: Partial<SshMachineRow>): SshMachineRow {
+function machineOf(partial: Partial<RemoteMachineRow>): RemoteMachineRow {
   return {
     id: 'm1',
     name: 'machine',

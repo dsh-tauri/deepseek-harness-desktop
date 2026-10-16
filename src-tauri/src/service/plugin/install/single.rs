@@ -3,10 +3,11 @@
 //! 卸载后核验 profile 清单，插件仍被引用时走离线卸载兜底（受保护包除外）。
 //! 另含启动期弃用插件自动卸载（`uninstall_deprecated_plugins`）。
 
+#[cfg(test)]
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::Path;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::config;
 use crate::service::cli;
@@ -16,14 +17,13 @@ use crate::service::workflow;
 
 use super::artifact::{ensure_plugin_entry_built, installed_package_name};
 use super::build_plugin_envs;
-use super::harness_prefer_bundled_pnpm;
 use super::diagnose::{
     git_transport_hint, incompatible_versions, network_error_hint, pick_error_message,
     policy_blocked_versions, policy_verification_network_failure, store_mismatch_hint,
     IncompatibleVersion, PolicyBlockedVersion,
 };
 use super::errors;
-use super::installed_name;
+use super::harness_prefer_bundled_pnpm;
 use super::is_actionable_plugin_ref;
 use super::is_installed;
 use super::load_deprecated_ids;
@@ -33,6 +33,7 @@ use super::pnpm::ensure_pnpm;
 use super::profile_dir;
 use super::run_plugin_with_allow_build_retry;
 use super::uninstall_recovery;
+#[cfg(test)]
 use super::PreinstallPluginInfo;
 use crate::service::plugin::update::known_latest;
 use crate::service::profile::profile_release_age_excluded;
@@ -49,10 +50,8 @@ use crate::service::profile::profile_release_age_excluded;
 /// 逐项核验的结果汇总成一条错误消息（见 [`update_failure_payload`]）：两个阶段各自的结算都
 /// 保留下来，前一段装上的目标不会被后一段的一般错误抹掉（见 [`UpdateFailure`]）。
 pub async fn update_many(app_handle: &AppHandle, specs: &[String]) -> Result<(), String> {
-    let mut requested: Vec<(String, Option<String>)> = specs
-        .iter()
-        .map(|spec| split_upgrade_spec(spec))
-        .collect();
+    let mut requested: Vec<(String, Option<String>)> =
+        specs.iter().map(|spec| split_upgrade_spec(spec)).collect();
     if requested.iter().any(|(_, version)| version.is_none()) {
         resolve_missing_targets(app_handle, &mut requested).await;
     }
@@ -100,7 +99,9 @@ async fn resolve_missing_targets(
         let Some(latest) = known_latest(app_handle, id) else {
             continue;
         };
-        if !is_registry_version(&latest) || installed_package_version(&profile, id).as_deref() == Some(latest.as_str()) {
+        if !is_registry_version(&latest)
+            || installed_package_version(&profile, id).as_deref() == Some(latest.as_str())
+        {
             continue;
         }
         *version = Some(latest);
@@ -113,10 +114,6 @@ async fn resolve_missing_targets(
 /// `link:` 本地目录 / 精确版本）也照样被改写到目标版本——这正是「用户授权过那个新版本、
 /// 升级却始终停在旧版本」的唯一出路。
 ///
-/// 目标还在发布保护期内时先让 pnpm 如实报错（不加旗标），再用**我们自己请求的目标**合成
-/// 拒绝载荷请用户授权（见 [`policy_refusal_from_specs`]）；授权会写进档案豁免清单，重跑时
-/// 本批目标全部已豁免，带上放宽旗标就是安全的。反过来，没豁免就放宽会把太新的条目写进
-/// lock，此后每一次插件操作都会在 lockfile 校验阶段失败（见 §5.3 的自愈说明）。
 async fn install_targets(
     app_handle: &AppHandle,
     targets: &[(String, String)],
@@ -131,13 +128,7 @@ async fn install_targets(
         .iter()
         .map(|id| dependency_fingerprint(&profile, id))
         .collect();
-    let mut args = specs.clone();
-    if targets.iter().all(|(id, version)| {
-        profile_release_age_excluded(app_handle, &format!("{id}@{version}"))
-    }) {
-        args.push(RELEASE_AGE_RELAXED_FLAG.to_string());
-    }
-    if let Err(e) = run_plugin_command(app_handle, &ids, "add", &args).await {
+    if let Err(e) = run_plugin_command(app_handle, &ids, "add", &specs).await {
         return UpdateFailure::stage(&specs, e);
     }
     let mut failures = Vec::new();
@@ -160,14 +151,7 @@ async fn update_to_latest(app_handle: &AppHandle, ids: &[String]) -> Vec<UpdateF
         .iter()
         .map(|id| dependency_fingerprint(&profile, id))
         .collect();
-    let targets: Vec<(bool, bool)> = ids
-        .iter()
-        .map(|id| release_age_target(app_handle, &profile, id))
-        .collect();
-    let mut args = update_pnpm_args(ids);
-    if relax_release_age(&targets) {
-        args.push(RELEASE_AGE_RELAXED_FLAG.to_string());
-    }
+    let args = update_pnpm_args(ids);
     if let Err(e) = run_plugin_command(app_handle, ids, "update", &args).await {
         return UpdateFailure::stage(ids, e);
     }
@@ -263,7 +247,11 @@ fn policy_refusal_from_specs(specs: &[String], failure: &str) -> Option<String> 
 fn force_upgrade_spec(id: &str, failure: &str) -> Option<String> {
     let payload = failure.strip_prefix(UPDATE_HOLD_PREFIX)?;
     let payload: serde_json::Value = serde_json::from_str(payload).ok()?;
-    if payload.get("retryable").and_then(serde_json::Value::as_bool) != Some(false) {
+    if payload
+        .get("retryable")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+    {
         return None;
     }
     let latest = payload.get("latest").and_then(serde_json::Value::as_str)?;
@@ -346,21 +334,22 @@ fn update_failure_payload(failures: Vec<UpdateFailure>) -> Option<String> {
     let mut blocked = Vec::new();
     let mut holds = Vec::new();
     let mut others = Vec::new();
-    let push_blocked = |entries: Vec<PolicyBlockedVersion>, blocked: &mut Vec<PolicyBlockedVersion>| {
+    let push_blocked = |entries: Vec<PolicyBlockedVersion>,
+                        blocked: &mut Vec<PolicyBlockedVersion>| {
         for entry in entries {
             if !blocked.contains(&entry) {
                 blocked.push(entry);
             }
         }
     };
-    let push_incompatible = |entries: Vec<IncompatibleVersion>,
-                             incompatible: &mut Vec<IncompatibleVersion>| {
-        for entry in entries {
-            if !incompatible.contains(&entry) {
-                incompatible.push(entry);
+    let push_incompatible =
+        |entries: Vec<IncompatibleVersion>, incompatible: &mut Vec<IncompatibleVersion>| {
+            for entry in entries {
+                if !incompatible.contains(&entry) {
+                    incompatible.push(entry);
+                }
             }
-        }
-    };
+        };
     for failure in failures {
         // 版本兼容性拒绝照原样提升到顶层：前端只认这一行里的载荷来挂「授权后重跑」的按钮，
         // 落进下面的逐项失败里用户就只能看着一条纯文本，无从授权（与批量安装路径同形状）。
@@ -444,52 +433,6 @@ fn update_pnpm_args(ids: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// 放宽 pnpm 发布时长门禁的参数：档案的 `minimumReleaseAgeExclude` 会被解析阶段采信，
-/// lockfile 校验阶段却照旧按默认窗口拦截，授权过的精确版本因此永远装不上（见
-/// [`relax_release_age`]）。
-pub(super) const RELEASE_AGE_RELAXED_FLAG: &str = "--config.minimumReleaseAge=0";
-
-/// 单个 id 的发布时长门禁事实：`(有可升级的 registry 目标, 该目标已授权)`。
-///
-/// 目标版本取更新探测缓存（[`known_latest`]，不新发网络请求）；git 托管插件的「最新」是
-/// 提交 SHA、`next` 这类 ref 都不是版本，不能进发布时长豁免清单，按形状挡掉。
-fn release_age_target(app_handle: &AppHandle, profile: &Path, id: &str) -> (bool, bool) {
-    let target = known_latest(app_handle, id);
-    let target = target.as_deref().filter(|latest| is_registry_version(latest));
-    let Some(target) = target else {
-        return (false, false);
-    };
-    let upgradable = installed_package_version(profile, id).as_deref() != Some(target);
-    let excluded = profile_release_age_excluded(app_handle, &format!("{id}@{target}"));
-    (upgradable, excluded)
-}
-
-/// 这次 `update` 调用是否要放宽发布时长门禁（[`RELEASE_AGE_RELAXED_FLAG`]）。
-///
-/// 实测 bundled pnpm 11.7.0：档案已列出 `billion-context@0.1.174` 时
-/// `pnpm update billion-context --latest` 仍以 1 退出并报
-/// `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`，同一命令追加
-/// `--config.minimumReleaseAge=0` 才装到 0.1.174——「授权过的版本装不上」正是
-/// 升级入口报「没有可授权的新版本」的成因。
-///
-/// 该旗标是**全调用生效**的：一旦放宽，同批里未被授权的包也可能跟着越过默认窗口。
-/// 因此只在「本批每个可升级的 registry 目标都已授权」时放宽；混进一个未授权的可
-/// 升级目标就保持默认窗口，界面照旧先请用户授权。升级入口按单个插件派发，批里通常
-/// 只有一个目标。
-fn relax_release_age(targets: &[(bool, bool)]) -> bool {
-    let mut authorized = 0;
-    for (upgradable, excluded) in targets {
-        if !*upgradable {
-            continue;
-        }
-        if !*excluded {
-            return false;
-        }
-        authorized += 1;
-    }
-    authorized > 0
-}
-
 /// registry 版本形状：数字开头且含 `.`。git 托管插件的「最新」是提交 SHA、`next`
 /// 这类 ref 都不是版本，不能进发布时长豁免清单。
 fn is_registry_version(value: &str) -> bool {
@@ -541,14 +484,6 @@ fn lock_dependency(profile: &Path, id: &str) -> Option<(String, String)> {
         .unwrap_or_default()
         .to_string();
     Some((specifier, version))
-}
-
-/// importer 里该依赖已解析的精确版本（不在 lock 中 / 读不出时 `None`）。
-///
-/// 供发布时长门禁的自愈判定使用（见 `install::heal_locked_release_age`）：被 pnpm 拦下
-/// 的版本若正是 lock 里早早解析好的那个，说明它早就装到本机了，不是本次新解析的版本。
-pub(super) fn locked_package_version(profile: &Path, id: &str) -> Option<String> {
-    lock_dependency(profile, id).map(|(_, version)| version)
 }
 
 /// `node_modules/<id>/package.json` 声明的版本（缺失或损坏返回 `None`）。
@@ -618,79 +553,32 @@ pub async fn remove_many(app_handle: &AppHandle, ids: &[String]) -> Result<(), S
     }
 }
 
-/// 计算需要自动卸载的弃用插件已安装包名（纯函数，便于单测）。
-///
-/// 命中条件：id 登记在弃用名单（`resources/manifest.jsonc` 的 `plugins.depercated`，
-/// 见 [`super::super::preset::load_deprecated_ids`]）且当前已安装，或插件被当前核心
-/// 淘汰（[`PreinstallPluginInfo::retire_on`]：核心已超出清单声明的版本区间、或已安装
-/// 版本不再落在该核心对应的插件版本区间内）。返回实际安装包名——离线卸载
-/// （`uninstall_recovery`）以它为键从 profile 清单与 `node_modules` 精准移除
-/// （scoped 包名与预设 id 不一致时也能正确卸载）。
-///
-/// 两条来源缺一不可：
-/// 1. 预设仍声明该 id：以 `installed_name`（实际 npm 包名）为准；内部插件由启动
-///    自愈强制安装，不适用弃用语义，跳过。
-/// 2. 兜底——预设清单已不存在该 id（被整体删除，如 `dsh-tauri-panel` 并入核心后
-///    从 `plugins.built-in` 移除）：此时按弃用名单登记的 id 本身核对。少了
-///    这一步，弃用名单对「连预设条目一起删掉」的插件永远无效，其 `link:` 目标还会
-///    因安装目录残留而躲过失效链接清理，残留 bundle 直接拖垮启动。
-fn deprecated_installed_names(
-    presets: &[PreinstallPluginInfo],
-    deprecated_ids: &HashSet<String>,
-    core_version: Option<&str>,
-    installed: impl Fn(&str) -> bool,
-    installed_version: impl Fn(&str) -> Option<String>,
-) -> Vec<String> {
-    let mut names: Vec<String> = presets
-        .iter()
-        .filter(|p| {
-            let name = installed_name(p);
-            if !installed(name) {
-                return false;
-            }
-            if !p.internal && deprecated_ids.contains(&p.id) {
-                return true;
-            }
-            p.retire_on(core_version, installed_version(name).as_deref())
-        })
-        .map(|p| installed_name(p).to_string())
-        .collect();
-    for id in deprecated_ids {
-        if presets.iter().any(|p| p.id == *id) {
-            continue;
-        }
-        if installed(id) {
-            names.push(id.clone());
-        }
-    }
-    names.sort();
-    names.dedup();
-    names
-}
-
-/// 弃用插件在 profile 中的残留判定：清单引用或 `node_modules` 入口。
-///
-/// 入口用 `symlink_metadata` 判定：junction / 符号链接的目标目录消失时 `exists()`
-/// 返回 false，但入口本身仍是 profile 解析路径上的残留，必须能被识别并清掉
-/// （`uninstall_recovery` 对已清空清单的 id 幂等，只清入口与 patch 层）。
-fn deprecated_residue_present(app_handle: &AppHandle, name: &str) -> bool {
-    is_installed(app_handle, name)
-        || std::fs::symlink_metadata(profile_dir(app_handle).join("node_modules").join(name))
-            .is_ok()
-}
+#[cfg(test)]
+use super::super::installed::deprecated_installed_names;
 
 pub(crate) async fn uninstall_deprecated_plugins(app_handle: &AppHandle) -> Result<(), String> {
     let presets = load_presets(app_handle);
     let core_version = core::active_version(app_handle);
     let deprecated_ids = load_deprecated_ids(app_handle);
     let profile = profile_dir(app_handle);
-    let names = deprecated_installed_names(
+    let manifest = match std::fs::read_to_string(profile.join("package.json")) {
+        Ok(raw) => serde_json::from_str::<super::super::installed::ProfilePackageJson>(&raw)
+            .map_err(|error| format!("DEPRECATED_PLUGIN_MANIFEST_PARSE_FAILED: {error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            super::super::installed::ProfilePackageJson {
+                dependencies: Default::default(),
+                dsh: None,
+            }
+        }
+        Err(error) => return Err(format!("DEPRECATED_PLUGIN_MANIFEST_READ_FAILED: {error}")),
+    };
+    let (names, _) = super::super::installed::deprecated_plugins_at(
+        &profile,
+        &manifest,
         &presets,
         &deprecated_ids,
         core_version.as_deref(),
-        |name| deprecated_residue_present(app_handle, name),
-        |name| installed_package_version(&profile, name),
-    );
+    )?;
     if names.is_empty() {
         return Ok(());
     }
@@ -723,7 +611,11 @@ pub(crate) async fn uninstall_deprecated_plugins(app_handle: &AppHandle) -> Resu
 ///
 /// 版本豁免授权（`allow-version`，见 [`super::allow_version_exemptions`]）同样走
 /// 这个形状：dsh 在转发给 pnpm 之前先拦下该动词，`--profile` 的拼装完全一致。
-pub(super) fn single_plugin_args(profile: &str, action: &str, sub_args: &[String]) -> Vec<OsString> {
+pub(super) fn single_plugin_args(
+    profile: &str,
+    action: &str,
+    sub_args: &[String],
+) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("plugin"),
         OsString::from("--profile"),
@@ -746,9 +638,8 @@ async fn run_plugin_command(
     if ids.is_empty() {
         return Err("PLUGIN_EMPTY_ID: plugin id is empty".to_string());
     }
-    let window = app_handle
-        .get_webview_window("main")
-        .ok_or("WINDOW_NOT_FOUND: main window missing")?;
+    let window = crate::utils::operation_window(app_handle)
+        .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
 
     cli::ensure_shims(app_handle)?;
 
@@ -780,12 +671,10 @@ async fn run_plugin_command(
 
     let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm);
 
+    let profile = active_profile(app_handle);
+    let profile_path = crate::service::profile::profile_dir_of(app_handle, &profile);
     let mut args = vec![dsh_bin.as_os_str().to_os_string()];
-    args.extend(single_plugin_args(
-        &active_profile(app_handle),
-        action,
-        sub_args,
-    ));
+    args.extend(single_plugin_args(&profile, action, sub_args));
 
     let cwd = crate::service::core::active_core_dir(app_handle);
     log::info!("Running dsh plugin {action} for {ids:?}");
@@ -794,25 +683,15 @@ async fn run_plugin_command(
     )
     .await?;
 
-    // 门禁自愈：lockfile 里早有的太新条目会让**每一次**状态变更都失败
-    // （见 `super::heal_locked_release_age`）。补齐豁免后放宽窗口重跑一次——本批若已经
-    // 因全部目标授权而放宽过（参数里已有旗标），就没什么可补的，直接按原样分类。
-    let relaxed = args
-        .iter()
-        .any(|arg| arg.to_str() == Some(RELEASE_AGE_RELAXED_FLAG));
-    let (exit_code, output, last_attempt) = if exit_code != 0
-        && !relaxed
-        && super::heal_locked_release_age(app_handle, &last_attempt)
-    {
-        let mut retry_args = args.clone();
-        retry_args.push(OsString::from(RELEASE_AGE_RELAXED_FLAG));
-        run_plugin_with_allow_build_retry(
-            app_handle, &node, &retry_args, &cwd, &envs, &window, action, None, owner,
-        )
-        .await?
-    } else {
-        (exit_code, output, last_attempt)
-    };
+    let (exit_code, output, last_attempt) =
+        if exit_code != 0 && super::heal_locked_release_age(&profile_path, &last_attempt) {
+            run_plugin_with_allow_build_retry(
+                app_handle, &node, &args, &cwd, &envs, &window, action, None, owner,
+            )
+            .await?
+        } else {
+            (exit_code, output, last_attempt)
+        };
 
     if exit_code != 0 {
         log::error!("dsh plugin {action} failed for {ids:?} with exit code {exit_code}");
@@ -909,10 +788,8 @@ async fn run_plugin_command(
 /// 2. pnpm 的 release-age 策略：新版本发布不足 `minimumReleaseAge`（pnpm 11
 ///    默认 1440 分钟 = 24 小时）时解析会回落到仍达标的最新版本，命令照旧以 0
 ///    退出且**不打印任何说明**——实测 bundled pnpm 11.7.0 在 `^2.10.15` 上
-///    `update --latest` 静默停在 2.10.15。用户授权该精确版本后，由 [`update_many`]
-///    追加 `--config.minimumReleaseAge=0` 才能真正落地（档案里的豁免只被解析阶段
-///    采信，lockfile 校验阶段照样拦）。因此这条消息不能只归因于 catalog 钉死
-///    （会把人引偏）。
+///    `update --latest` 静默停在 2.10.15。用户授权该精确版本后，档案豁免让
+///    解析与 lockfile 校验放行该版本。因此这条消息不能只归因于 catalog 钉死。
 /// 必须如实报「没升级」——报成功会让用户以为已在新版本上（与 [`remove_many`] 的
 /// 「卸载后核验」同理）；但**不**记进插件错误：插件没坏，记了会让列表挂上
 /// 「可能已损坏或与当前环境不兼容」的误导标记（安装/升级真失败各有记录点）。
@@ -931,7 +808,9 @@ async fn verify_update_landed(
     expected: Option<&str>,
 ) -> Result<(), String> {
     let profile = profile_dir(app_handle);
-    match update_verify_step(&profile, id, before, expected, || known_latest(app_handle, id)) {
+    match update_verify_step(&profile, id, before, expected, || {
+        known_latest(app_handle, id)
+    }) {
         UpdateVerifyStep::Hold { detail, latest } => {
             // 只有「新版本太新」这一种成因有出路（授权那个精确版本即可过闸），因此把
             // 目标版本与「是否已在豁免清单里」一并带出去：已经授权过还是不动，说明成因
@@ -958,9 +837,8 @@ async fn verify_update_landed(
         log::warn!("plugin {id} not resolvable to a package name, skipping entry verify");
         return Ok(());
     };
-    let window = app_handle
-        .get_webview_window("main")
-        .ok_or("WINDOW_NOT_FOUND: main window missing")?;
+    let window = crate::utils::operation_window(app_handle)
+        .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
     let envs = build_plugin_envs(app_handle, harness_prefer_bundled_pnpm(app_handle).await?);
     let pkg_dir = profile_dir(app_handle).join("node_modules").join(name);
     if let Err(e) = ensure_plugin_entry_built(app_handle, id, &pkg_dir, &envs, &window).await {
@@ -995,15 +873,16 @@ fn update_verify_step(
     if !reached {
         if let Some(before) = before {
             if dependency_fingerprint(profile, id).as_deref() == Some(before) {
-                let detail = installed_package_version(profile, id)
-                    .unwrap_or_else(|| before.to_string());
+                let detail =
+                    installed_package_version(profile, id).unwrap_or_else(|| before.to_string());
                 // 目标版本优先用本次请求带来的版本（面板显示的那个），探测缓存只在没有时
                 // 兜底：缓存没命中会让 `latest` 为空，用户点升级就只剩一句「没有变化」。
                 let latest = expected
                     .filter(|expected| *expected != detail && is_registry_version(expected))
                     .map(str::to_string)
                     .or_else(|| {
-                        known_latest().filter(|latest| latest != &detail && is_registry_version(latest))
+                        known_latest()
+                            .filter(|latest| latest != &detail && is_registry_version(latest))
                     });
                 log::warn!(
                     "dsh plugin update made no change for {id}, still at {detail}, newest {latest:?}"
@@ -1206,7 +1085,10 @@ mod tests {
         assert_eq!(force_upgrade_spec("a", &hold("0.1.174", true)), None);
         assert_eq!(force_upgrade_spec("a", &hold("main", false)), None);
         assert_eq!(force_upgrade_spec("a", &hold("", false)), None);
-        assert_eq!(force_upgrade_spec("a", "PLUGIN_ENTRY_MISSING: broken"), None);
+        assert_eq!(
+            force_upgrade_spec("a", "PLUGIN_ENTRY_MISSING: broken"),
+            None
+        );
     }
 
     /// 面板给的条目才带版本：`@scope` 包按最后一个 `@` 切，非 registry 版本（git ref、`next`）
@@ -1246,7 +1128,10 @@ mod tests {
                     .to_string()
             )
         );
-        assert_eq!(policy_refusal_from_specs(&specs, "PLUGIN_ENTRY_MISSING: broken"), None);
+        assert_eq!(
+            policy_refusal_from_specs(&specs, "PLUGIN_ENTRY_MISSING: broken"),
+            None
+        );
         assert_eq!(
             policy_refusal_from_specs(&["aaa@next".to_string()], failure),
             None
@@ -1319,7 +1204,8 @@ mod tests {
             serde_json::json!([{"name": "aaa", "version": "1.0.0", "runtime_version": "0.2.0-rc.2"}])
         );
 
-        let message = update_failure_payload(UpdateFailure::stage(&specs, refusal)).expect("message");
+        let message =
+            update_failure_payload(UpdateFailure::stage(&specs, refusal)).expect("message");
 
         let entries = payload_of(&message, INCOMPATIBLE_PREFIX);
         assert_eq!(entries.as_array().expect("array").len(), 1);
@@ -1521,28 +1407,14 @@ mod tests {
         );
     }
 
-    /// 回归用户报告：授权过的精确版本此前永远装不上——档案里的发布时长豁免只被
-    /// 解析阶段采信，lockfile 校验阶段照旧按默认窗口拦截，`--latest` 于是「退出 0
-    /// 但版本没动」。已授权的目标版本必须让那次调用带上门禁放宽参数。
-    #[test]
-    fn release_age_relaxation_requires_an_authorized_registry_target() {
-        assert!(relax_release_age(&[(true, true)]));
-        // 没授权过 → 不放宽，界面照旧先请用户授权
-        assert!(!relax_release_age(&[(true, false)]));
-        // 混进未授权的可升级目标 → 整批保持默认窗口，不能顺带把它放过去
-        assert!(!relax_release_age(&[(true, true), (true, false)]));
-        // 没有可升级目标的目标不阻碍放宽（同版本 / 没有 registry 目标）
-        assert!(relax_release_age(&[(true, true), (false, false)]));
-        assert!(!relax_release_age(&[(false, true)]));
-        assert!(!relax_release_age(&[]));
-    }
-
     #[test]
     fn registry_versions_are_recognized_by_shape() {
         assert!(is_registry_version("0.1.174"));
         assert!(is_registry_version("1.66.5"));
         assert!(!is_registry_version("next"));
-        assert!(!is_registry_version("b3a69187e1bac1bf6162e3d37d005e58bc2ee74e"));
+        assert!(!is_registry_version(
+            "b3a69187e1bac1bf6162e3d37d005e58bc2ee74e"
+        ));
         assert!(!is_registry_version(""));
     }
 
@@ -1693,7 +1565,10 @@ mod tests {
             Some("0.19.0"),
             || None,
         );
-        assert!(matches!(step, UpdateVerifyStep::Entry), "版本已达目标必须继续核验入口");
+        assert!(
+            matches!(step, UpdateVerifyStep::Entry),
+            "版本已达目标必须继续核验入口"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

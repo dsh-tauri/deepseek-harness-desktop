@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs'
 import i18next from 'i18next'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { Panel } from '../src/components/panel'
 import { resources } from '../src/i18n/index.resource'
 import { attachStartupDiagnostics } from '../src/store/modules/harness/utils'
 import { readSource } from './setup/read-source'
@@ -58,6 +62,19 @@ afterEach(() => {
 })
 
 describe('attachStartupDiagnostics heap exhaustion hint', () => {
+  it('keeps the generated report path in diagnostics after a long fatal error stack', async () => {
+    const errors = Array.from({ length: 12 }, (_, i) => `Error: native frame ${i}`)
+    const report = 'ERROR HARNESS_FATAL_REPORT: C:/app data/logs/harness-fatal-42.json'
+    stubServiceLogTail([...errors, report].join('\n'))
+
+    const error = await attachStartupDiagnostics(new Error('Harness exited'), true)
+
+    expect(renderToStaticMarkup(createElement(I18nextProvider, { i18n: i18next }, createElement(Panel.Progress, { logs: error.logs })))).toContain(report)
+    expect(error.logs).toEqual([...errors.slice(0, 7), report])
+    expect(error.heapOomHint).toBeUndefined()
+    expect(invokeMock).toHaveBeenCalledExactlyOnceWith('read_service_logs', { maxBytes: 16 * 1024 })
+  })
+
   it('attaches the heap hint when the owned process exited and the log tail shows V8 heap exhaustion', async () => {
     stubServiceLogTail([
       'dsh web: http://127.0.0.1:3080/?token=abc',

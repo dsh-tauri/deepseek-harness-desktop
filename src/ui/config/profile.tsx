@@ -34,13 +34,6 @@ const PROFILE_ERROR_KEYS: Record<string, string> = {
 }
 
 export function ConfigProfile() {
-  /**
-   * 「档案」面板：展示 & 切换 dsh 配置档案，支持新建/删除。
-   *
-   * 档案 = `$DSH_HOME/profiles/<id>` 目录，与官方 dsh CLI 的 profile 语义一致；
-   * 桌面端把「当前档案」持久化在 store（`active_profile`），服务启动与插件管理
-   * 都以它为准。切换档案需要重启服务才生效（toast 内提供重启入口）。
-   */
   const queryClient = useQueryClient()
   const { data: profileList, isLoading, error: profileError, refetch } = useQuery({
     queryKey: queryKeys.profiles,
@@ -59,7 +52,7 @@ export function ConfigProfile() {
     onSuccess: invalidate,
   })
   const activate = useMutation({
-    mutationFn: (id: string) => invoke<Profile>('set_active_profile', { id }),
+    mutationFn: (id: string) => store.harness.switchProfile(id),
     onSuccess: invalidate,
   })
   const remove = useMutation({
@@ -82,10 +75,9 @@ export function ConfigProfile() {
     return created
   }
 
-  async function activateProfile(id: string): Promise<Profile> {
-    const activated = await activate.mutateAsync(id)
+  async function activateProfile(id: string): Promise<void> {
+    await activate.mutateAsync(id)
     await refetch()
-    return activated
   }
 
   async function removeProfile(id: string) {
@@ -223,18 +215,6 @@ export function ConfigProfile() {
     }
     try {
       await activateProfile(id)
-      const key = toast(t('profiles.activate_toast', { name: target.name }), {
-        variant: 'accent',
-        description: t('profiles.activate_restart_hint'),
-        timeout: 10_000,
-        actionProps: {
-          children: t('app.restart'),
-          onPress: () => {
-            store.harness.restart()
-            toast.close(key)
-          },
-        },
-      })
     }
     catch (err) {
       console.error('[ConfigProfile] activate failed:', err)

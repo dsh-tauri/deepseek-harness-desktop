@@ -7,7 +7,7 @@
 
 ## 取用上游仓库
 
-`web_fetch` 在部分网络环境下会被拒（DNS 落到代理段，报 `non-public IP address`），改用 git：
+仅从零生成且确实需要上游提示词/脚本时才获取仓库；用户已提供可用透明素材时跳过 clone 与绿幕链。`web_fetch` 在部分网络环境下会被拒（DNS 落到代理段，报 `non-public IP address`），可改用 git：
 
 ```sh
 git clone --depth 1 https://github.com/PC2005-cloud/dsh-pet
@@ -58,7 +58,7 @@ python encode_thumbs.py      # 转码 640×360 播放变体 → step04/
 - 同目录还有 `encode_preview_gifs.py`（预览 GIF）、`check_alpha.py`（alpha 自检）、`fill_nn.py`、`make_mask_black.py`、`encode_hevc_alpha.sh`、`hevc_alpha_encoder.swift`，以及 `video/watermark_mask_v5.mkv`（水印遮罩素材）。
 - 中间产物 `step01~04/` 由脚本生成、不入仓库；`video/` 源视频与 `scripts/` 入库维护。
 
-## ②.5 macOS / Safari 的 HEVC-alpha mov（只与上游插件有关）
+## ②.5 macOS / Safari 的 HEVC-alpha mov
 
 插件默认只发布 `.webm`（VP9-alpha），Safari/WKWebView 不认 webm alpha（黑底），macOS 需要官方转码的 **HEVC-with-Alpha `.mov`**：
 
@@ -68,7 +68,7 @@ python encode_thumbs.py      # 转码 640×360 播放变体 → step04/
 
 宿主路由已固定双扩展名兜底（白名单 `webm|mov`、MIME、素材根按扩展名分派），无需改宿主。
 
-**本机 `dsh-tauri-pet` 的图集宠物用不到这一步**：PNG/WebP 图集双端一致，没有 webm alpha 解码问题。
+**本机 Pets 视频包也有这个平台限制**：有原生 HEVC-alpha MOV 才填写 `macUriPath` 与 `ext.mac: "mov"`；ProRes 4444 alpha MOV 只是归档/转码源，不是 WKWebView 播放格式。Windows 不能产出原生 HEVC-alpha 时明示，不用普通 HEVC 冒充。没有可播文件就省略 `macUriPath`，明确本包不支持 macOS；只有用户明确选 Codex 时，PNG/WebP 图集分支不涉及视频解码。上面修改 ANIMATION_EXT 的步骤属于上游插件安装，不适用于本机视频包，也不是授权修改安装文件。
 
 ## ③ 动画 → 插件（上游落点）
 
@@ -82,7 +82,7 @@ dsh plugin --profile desktop add file:D:/path/to/dsh-pet/dsh-pet
 
 发布：单一 npm 包、单一素材格式（webm），`npm publish --tag latest` 触发 `prepare.js`（构建产物 + 收敛 `files`：lib / src / assets/webm / runtime/electron-helper / assets/fonts / assets/pic / assets/config.jsonc / scripts/ensure-electron.mjs / cordis.patch.yml）。
 
-**本机 `dsh-tauri-pet` 不用这条**：本机自定义宠物的落点是 `<DSH_HOME>/pets/<petId>/` 的图集，见 SKILL.md「落点」与 `atlas-compose.md`。
+**本机 `dsh-tauri-pet` 不用这条插件安装流程**：将完整透明 WebM、实际方形 GIF 与配置整理为 `<DSH_HOME>/pets/<petId>/` 的 `kind: "dsh"` 视频包，见 SKILL.md。不要为了导入已有透明素材构建或重新安装上游插件。
 
 ## 上游的另一种宠物：pet pack（方式四）
 
@@ -116,7 +116,7 @@ $DSH_HOME/dsh-pet/
 | 余额 | `events.balance[0..5]` | `余额-钱袋满溢`、`余额-金袋叮当`、`余额-钱袋如常`、`余额-数金皱眉`、`余额-袋空如洗`、`余额-分文不剩` |
 | 碎碎念 | `events.whisper[]` | `碎碎念-擦桌碎碎念`、`碎碎念-发呆碎碎念`、`碎碎念-对屏碎碎念` |
 
-本机图集只有 9 个动作行，从这份池子里每个行挑 1 个最贴近的动作即可，不需要（也没法）把上游上百个动作全搬进来。
+本机 Pets 视频包可复用传统 animations 池或 motions 映射，只保留实际提供的动作引用；静态待机视频也可用，鼠标方向不同不切换待机。只有明确选择 Codex 图集时才受固定动作行限制。
 
 ## 上游项目结构
 

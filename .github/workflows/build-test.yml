@@ -89,10 +89,17 @@ jobs:
           retention-days: 7
 
   linux:
-    name: Build (linux)
+    name: Build (linux-${{ matrix.arch }})
     if: ${{ inputs.platform == 'all' || inputs.platform == 'linux' }}
-    # 与 release 的可复用构建一致：22.04 的 glibc/WebKitGTK 产物兼容性最好。
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - name: Checkout repository
@@ -112,7 +119,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf squashfs-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -125,13 +132,22 @@ jobs:
       - name: Build packages
         run: pnpm tauri build --bundles appimage,deb ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }}
 
+      - name: Fix AppImage host libraries and GTK backend
+        shell: bash
+        run: |
+          mapfile -d '' appimages < <(find src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
+          [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
+          for appimage in "${appimages[@]}"; do
+            bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
+          done
+
       - name: Normalize release asset names
         run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
         with:
-          name: build-test-linux
+          name: build-test-linux-${{ matrix.arch }}
           path: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb

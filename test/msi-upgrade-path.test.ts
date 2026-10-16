@@ -58,6 +58,12 @@ it('stable MSI removes only the three old renamed shortcuts on a major upgrade',
 describe('nsis upgrade discovery', () => {
   const source = readFileSync(new NodeURL('templates/installer.nsi', tauriRoot), 'utf8')
 
+  it('loads RestartManager and checks the installed executable path for install and uninstall', () => {
+    expect(source).toMatch(/^!include "Win\\RestartManager\.nsh"\r?$/m)
+    expect([...source.matchAll(/^\s*!insertmacro CheckIfAppIsRunning (.+)$/gm)].map(match => match[1]))
+      .toEqual(Array.from({ length: 2 }).fill(`"$INSTDIR\\\${MAINBINARYNAME}.exe" "\${PRODUCTNAME}"`))
+  })
+
   it('reads the old github install directory only for stable when the current key is empty', () => {
     const read = source.match(/^Function ReadPreviousInstallLocation\r?\n([\s\S]*?)^FunctionEnd/m)?.[1]
     expect(read).toMatch(/ReadRegStr \$4 SHCTX "\$\{MANUPRODUCTKEY\}" ""\s+!if "\$\{BUNDLEID\}" == "dsh-tauri"\s+\$\{If\} \$4 == ""\s+ReadRegStr \$4 SHCTX "Software\\github\\\$\{REGISTRYPRODUCTNAME\}" ""\s+\$\{EndIf\}\s+!endif/)

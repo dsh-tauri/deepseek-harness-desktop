@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 
 use crate::config;
 
-use super::process::{has_owned_process, LAUNCH_GUARD};
+use super::process::{has_owned_process, launch_guard};
 use super::startup;
 use super::utils;
 
@@ -15,8 +15,15 @@ use super::utils;
 /// 上下，提高并发能直接缩短启动尾段的这一轮全量校验。
 const HEALTH_PROBE_CONCURRENCY: usize = 48;
 
+#[derive(serde::Serialize)]
+pub struct HealthCheck {
+    pub status: String,
+    pub boot_html: String,
+    pub service_url: String,
+}
+
 /// 读取 Harness 首页并解析本次启动实际声明的客户端模块。
-async fn client_probe_endpoints(port: u16) -> Result<Vec<String>, String> {
+async fn client_probe_endpoints(port: u16) -> Result<(Vec<String>, String), String> {
     // 回环与通配地址都还绑得上，才说明没有任何进程在监听它，此时发起 HTTP 探测
     // 只会吃满建连超时（`LOOPBACK_CONNECT_TIMEOUT`）。判定成本不足 1ms；任一地址
     // 绑不上即照旧走 HTTP 探测，不会把占用误判成未监听。
@@ -53,8 +60,9 @@ async fn client_probe_endpoints(port: u16) -> Result<Vec<String>, String> {
         .text()
         .await
         .map_err(|e| format!("HARNESS_BOOT_MANIFEST_READ_FAILED: {e}"))?;
-    Ok(utils::client_urls_from_boot_html(port, &body)
-        .unwrap_or_else(|| utils::health_probe_plugin_urls(port)))
+    let endpoints = utils::client_urls_from_boot_html(port, &body)
+        .unwrap_or_else(|| utils::health_probe_plugin_urls(port));
+    Ok((endpoints, body))
 }
 
 /// 无持有进程时应返回给前端的探测信号。
@@ -132,18 +140,22 @@ async fn probe_client_bundles(
 }
 
 /// 健康检查（通过 Rust 代理，避免 WebView CORS 问题）
-pub async fn proxy_health_check(port: u16) -> Result<String, String> {
+pub async fn proxy_health_check(port: u16) -> Result<HealthCheck, String> {
     if !has_owned_process() {
-        return Err(not_owned_probe_signal(LAUNCH_GUARD.load(Ordering::SeqCst)).to_string());
+        return Err(not_owned_probe_signal(launch_guard().load(Ordering::SeqCst)).to_string());
     }
     let client = utils::loopback_http_client(config::HEALTH_CHECK_TIMEOUT)
         .map_err(|e| format!("HARNESS_HEALTH_CLIENT_FAILED: {e}"))?;
-    let endpoints = client_probe_endpoints(port).await?;
+    let (endpoints, boot_html) = client_probe_endpoints(port).await?;
     let total = endpoints.len();
     let (ready, failures) = probe_client_bundles(&client, endpoints).await;
     if all_client_modules_ready(ready, total) {
         startup::note_client_modules_ready(ready, total);
-        return Ok(format!("healthy - {ready}/{total} client modules ready"));
+        return Ok(HealthCheck {
+            status: format!("healthy - {ready}/{total} client modules ready"),
+            boot_html,
+            service_url: config::get_dsh_service_url(port),
+        });
     }
     Err(format!(
         "HARNESS_NOT_READY: Harness client modules are not ready ({ready}/{total} ready; {})",
@@ -166,7 +178,7 @@ fn ownership_recheck_signal(owned: bool, launch_in_progress: bool) -> Result<(),
 /// 这里重跑完整健康探测，代价是重新拉取全部客户端 bundle（实测 93 个 / 18MB / 311ms），
 /// 而 ownership 只取决于进程槽位与启动守卫，故改用这条查询。
 pub fn recheck_ownership() -> Result<(), String> {
-    ownership_recheck_signal(has_owned_process(), LAUNCH_GUARD.load(Ordering::SeqCst))
+    ownership_recheck_signal(has_owned_process(), launch_guard().load(Ordering::SeqCst))
 }
 
 #[cfg(test)]
@@ -230,7 +242,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let (release, mut hold) = tokio::sync::oneshot::channel::<()>();
+        let (release, hold) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let mut request = [0; 4096];
@@ -305,10 +317,12 @@ mod tests {
             server.abort();
             served.expect("HTTP fixture did not complete").unwrap();
             if status == "200 OK" {
+                let (endpoints, boot_html) = result.unwrap();
                 assert_eq!(
-                    result.unwrap(),
+                    endpoints,
                     vec![format!("http://127.0.0.1:{port}/plugins/fixture/client.js")]
                 );
+                assert_eq!(boot_html, html);
             } else {
                 assert_eq!(
                     result.unwrap_err(),

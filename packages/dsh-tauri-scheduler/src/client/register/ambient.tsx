@@ -46,8 +46,6 @@ export const ambientFeature = defineRegister<ClientContext>((controller, ctx, ad
   }
   const registerSeat = <Props extends object>(entry: AmbientSlotEntry, scope: 'root' | 'session', component: ComponentType<Props>, owner: RegisterController = controller) => {
     try {
-      if (slots.spec(entry.name) === undefined)
-        console.warn(`[scheduler ambient] Public seat ${entry.name} unavailable; disabled until declared.`)
       owner.add(slots.inject(entry.name, () => {
         if (controller.isDisposed() || owner.isDisposed())
           return noop
@@ -95,8 +93,6 @@ export const ambientFeature = defineRegister<ClientContext>((controller, ctx, ad
     }
   })
   if (typeof ctx.inject === 'function') {
-    if (adapter.service('uiConversation') === undefined)
-      console.warn('[scheduler ambient] uiConversation unavailable; created turn cards disabled until declared.')
     try {
       const fiber = ctx.inject(['uiConversation'], scoped => scoped.effect(turnFeature, 'scheduler: ambient turn'))
       controller.add(() => void fiber.dispose())

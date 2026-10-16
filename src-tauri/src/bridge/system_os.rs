@@ -12,36 +12,65 @@ use tauri_plugin_opener::OpenerExt;
 
 /// 健康检查（通过 Rust 代理，避免 WebView CORS 问题）
 #[tauri::command]
-pub async fn proxy_health_check(app_handle: AppHandle) -> Result<String, String> {
-    let port = config::get_store_dat_setting(&app_handle).port;
-    crate::service::workflow::proxy_health_check(port).await
+pub async fn proxy_health_check(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<crate::service::workflow::HealthCheck, String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let port = crate::service::workflow::instances::port(&app_handle);
+        crate::service::workflow::proxy_health_check(port).await
+    })
+    .await
 }
 
 /// 就绪提交窗口的 ownership 复核：只读后端进程槽位与启动守卫，不发 HTTP。
 ///
 /// 失败时返回与探测路径同一条 `HARNESS_NOT_OWNED` 信号，错误页据此识别进程退出。
 #[tauri::command]
-pub fn harness_ownership() -> Result<(), String> {
-    crate::service::workflow::recheck_ownership()
+pub fn harness_ownership(
+    app_handle: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope_sync(
+        profile,
+        crate::service::workflow::recheck_ownership,
+    )
 }
 
 /// 运行时/版本/诊断信息（侧边栏展示）
 #[tauri::command]
-pub async fn get_runtime_info(app_handle: AppHandle) -> Result<config::RuntimeInfo, String> {
-    let port = config::get_store_dat_setting(&app_handle).port;
-    let mut info = config::runtime_info(&app_handle, port);
-    info.dsh_version = core::active_version(&app_handle).or(info.dsh_version);
-    Ok(info)
+pub async fn get_runtime_info(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<config::RuntimeInfo, String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let port = crate::service::workflow::instances::port(&app_handle);
+        let mut info = config::runtime_info(&app_handle, port);
+        info.dsh_version = core::active_version(&app_handle).or(info.dsh_version);
+        Ok(info)
+    })
+    .await
 }
 
 /// 在系统浏览器中打开 Harness 界面
 #[tauri::command]
-pub async fn open_in_browser(app_handle: AppHandle) -> Result<(), String> {
-    let url = config::get_dsh_service_url(config::get_store_dat_setting(&app_handle).port);
-    app_handle
-        .opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| e.to_string())
+pub async fn open_in_browser(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let url =
+            config::get_dsh_service_url(crate::service::workflow::instances::port(&app_handle));
+        app_handle
+            .opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 复制 Harness 服务地址到剪贴板
@@ -50,9 +79,17 @@ pub async fn open_in_browser(app_handle: AppHandle) -> Result<(), String> {
 /// Linux Wayland 合成器不支持 data-control 时 `tauri-plugin-clipboard-manager`
 /// 单例剪贴板导致的崩溃/挂死（同「复制日志」）。
 #[tauri::command]
-pub async fn copy_service_url(app_handle: AppHandle) -> Result<(), String> {
-    let url = config::get_dsh_service_url(config::get_store_dat_setting(&app_handle).port);
-    crate::bridge::write_clipboard_text(url).await
+pub async fn copy_service_url(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let url =
+            config::get_dsh_service_url(crate::service::workflow::instances::port(&app_handle));
+        crate::bridge::write_clipboard_text(url).await
+    })
+    .await
 }
 
 /// 在系统文件管理器中定位指定文件（Session 日志下载完成后的"在文件夹中显示"）
@@ -112,28 +149,40 @@ fn tail_bytes(s: &str, max_bytes: usize) -> &str {
 /// 读取 dsh 服务日志
 #[tauri::command]
 pub async fn read_service_logs(
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     max_bytes: Option<usize>,
 ) -> Result<String, String> {
-    let log_path = config::get_service_log_path(&app_handle);
-    if !log_path.exists() {
-        return Ok(String::new());
-    }
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let log_path = config::get_service_log_path(&app_handle);
+        if !log_path.exists() {
+            return Ok(String::new());
+        }
 
-    let content = std::fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
-    let max_bytes = max_bytes.unwrap_or(64 * 1024);
-    if content.len() <= max_bytes {
-        Ok(content)
-    } else {
-        Ok(tail_bytes(&content, max_bytes).to_string())
-    }
+        let content = std::fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
+        let max_bytes = max_bytes.unwrap_or(64 * 1024);
+        if content.len() <= max_bytes {
+            Ok(content)
+        } else {
+            Ok(tail_bytes(&content, max_bytes).to_string())
+        }
+    })
+    .await
 }
 
 /// 清空 dsh 服务日志
 #[tauri::command]
-pub async fn clear_service_logs(app_handle: AppHandle) -> Result<(), String> {
-    let log_path = config::get_service_log_path(&app_handle);
-    std::fs::write(&log_path, "").map_err(|e| e.to_string())
+pub async fn clear_service_logs(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        let log_path = config::get_service_log_path(&app_handle);
+        std::fs::write(&log_path, "").map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 拼装「复制日志」的环境信息段（纯函数，便于单测锁定报障格式）。
@@ -185,7 +234,12 @@ fn format_env_info(
 /// 每段取末尾最多 `MAX_LINES` 行（前端日志量大，仅取一半 `FRONTEND_MAX_LINES`），
 /// 避免粘贴内容超出 GitHub issue 长度上限。
 #[tauri::command]
-pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
+pub async fn read_run_logs(
+    window: tauri::WebviewWindow,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
     const MAX_LINES: usize = 100;
     // 前端日志量大，复制的行数减半（避免粘贴内容过长）；后端仍取满 MAX_LINES
     const FRONTEND_MAX_LINES: usize = MAX_LINES / 2;
@@ -237,6 +291,7 @@ pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
         frontend_text.trim_end(),
         backend_text.trim_end()
     ))
+ }).await
 }
 
 fn read_tail(path: &std::path::Path, max_lines: usize, filter_frontend: bool) -> String {

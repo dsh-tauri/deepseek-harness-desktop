@@ -6,6 +6,7 @@ import type {
   WorkspaceViewLike,
 } from '../types'
 import type { MenuComposer } from './context-menu.types'
+import { invoke } from 'dsh-tauri/client'
 import { confirmDialog } from '../components/confirm-dialog'
 import { locale } from '../locales'
 import {
@@ -135,6 +136,12 @@ export function buildSessionMenu(
   }
 
   composer.split()
+  if (current && 'dshDesktop' in globalThis) {
+    composer.add(locale.text('openInNewWindow'), () => invoke<void>('create_app_window', {
+      sessionId: current.id,
+      iframeUrl: window.location.origin,
+    }))
+  }
   composer.add(locale.text('refresh'), reload, shortcutLabel('R'))
 }
 

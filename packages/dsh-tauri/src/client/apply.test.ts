@@ -48,13 +48,13 @@ interface Harness {
 
 /** 装上 DOM 假实现（node 环境无 jsdom）。 */
 function stubEnv(): Harness {
-  const windowListeners = new Set<(event: MessageEvent) => void>()
-  const documentListeners = new Set<(event: KeyboardEvent) => void>()
+  const windowListeners = new Map<(event: MessageEvent) => void, string>()
+  const documentListeners = new Map<(event: KeyboardEvent) => void, string>()
   const sent: ParentMessage[] = []
   const parent = { postMessage: (message: ParentMessage) => sent.push(message) }
   vi.stubGlobal('window', {
     parent,
-    addEventListener: (_type: string, handler: (event: MessageEvent) => void) => windowListeners.add(handler),
+    addEventListener: (type: string, handler: (event: MessageEvent) => void) => windowListeners.set(handler, type),
     removeEventListener: (_type: string, handler: (event: MessageEvent) => void) => windowListeners.delete(handler),
   })
   const styles: HTMLStyleElement[] = []
@@ -71,7 +71,7 @@ function stubEnv(): Harness {
     createElement: () => ({ setAttribute: () => {}, textContent: '', parentElement: head }),
     querySelector: () => null,
     querySelectorAll: () => [],
-    addEventListener: (_type: string, handler: (event: KeyboardEvent) => void) => documentListeners.add(handler),
+    addEventListener: (type: string, handler: (event: KeyboardEvent) => void) => documentListeners.set(handler, type),
     removeEventListener: (_type: string, handler: (event: KeyboardEvent) => void) => documentListeners.delete(handler),
   })
   vi.stubGlobal('MutationObserver', FakeMutationObserver)
@@ -93,12 +93,16 @@ function stubEnv(): Harness {
     },
     pendingFrames: () => frames.size,
     dispatch(data) {
-      for (const handler of windowListeners)
-        handler({ source: window.parent, data } as MessageEvent)
+      for (const [handler, type] of windowListeners) {
+        if (type === 'message')
+          handler({ source: window.parent, data } as MessageEvent)
+      }
     },
     keydown(event) {
-      for (const handler of documentListeners)
-        handler(event)
+      for (const [handler, type] of documentListeners) {
+        if (type === 'keydown')
+          handler(event)
+      }
     },
     windowListeners: () => windowListeners.size,
     documentListeners: () => documentListeners.size,
@@ -201,9 +205,8 @@ describe('apply', () => {
     expect(env.labels).toEqual(EXPECTED_LABELS)
     expect(env.styles).toHaveLength(1)
     expect(env.sent.filter(message => message.type === 'dsh://plugin-error')).toEqual([])
-    // 侧边栏桥 + 导航命令各挂一个父窗口消息监听；缩放快捷键挂一个 document 捕获监听。
-    expect(env.windowListeners()).toBe(2)
-    expect(env.documentListeners()).toBe(1)
+    expect(env.windowListeners()).toBe(3)
+    expect(env.documentListeners()).toBe(2)
 
     for (const dispose of disposers.splice(0))
       dispose()

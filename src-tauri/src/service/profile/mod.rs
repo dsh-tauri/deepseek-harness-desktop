@@ -159,7 +159,10 @@ pub(crate) fn ensure_profile_pnpm_policy(app_handle: &AppHandle) -> Result<(), S
         .iter()
         .map(|package| (*package).to_string())
         .collect();
-    release_age_excludes_at(&profile_dir_of(app_handle, &active_profile(app_handle)), &entries)
+    release_age_excludes_at(
+        &profile_dir_of(app_handle, &active_profile(app_handle)),
+        &entries,
+    )
 }
 
 /// 档案的 `minimumReleaseAgeExclude` 里是否已经有这个精确 `包名@版本`。
@@ -182,25 +185,74 @@ pub(crate) fn profile_release_age_excluded(app_handle: &AppHandle, entry: &str) 
     else {
         return false;
     };
-    let wanted = Value::String(entry.to_string());
-    sequence.iter().any(|item| item == &wanted)
+    release_age_excluded(sequence, entry)
 }
 
-/// 把用户明确授权过的精确 `包名@版本` 追加进档案的 `minimumReleaseAgeExclude`。
-///
-/// pnpm 的发布时长策略（`minimumReleaseAge`，11 默认 24 小时）只被**解析**阶段采信：
-/// 写进豁免清单能让 pnpm 解析到这个版本，也能让此后 `pnpm install` 的 lockfile 校验
-/// 放行**豁免清单里的精确条目**（实测：无豁免时校验阶段硬失败，补上豁免后通过）。
-/// 用户授权与「太新条目早已在 lock 里」的自愈（`install::heal_locked_release_age`）都走
-/// 这里：写的是精确条目，只让列出的版本过闸，其余解析照旧受窗口约束；已存在的不重复写。
+fn release_age_package(entry: &str) -> Option<(&str, &str)> {
+    static NAME: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^(?:@[a-zA-Z0-9._-]+/)?[a-zA-Z0-9._-]+$").unwrap()
+    });
+    let (name, versions) = entry.rsplit_once('@')?;
+    (NAME.is_match(name) && versions.split("||").all(|part| !part.trim().is_empty()))
+        .then_some((name, versions))
+}
+
+fn release_age_excluded(sequence: &[Value], entry: &str) -> bool {
+    let Some((name, version)) = release_age_package(entry) else {
+        return false;
+    };
+    sequence.iter().filter_map(Value::as_str).any(|item| {
+        release_age_package(item).is_some_and(|(package, versions)| {
+            package == name && versions.split("||").any(|part| part.trim() == version)
+        })
+    })
+}
+
+fn normalize_release_age_excludes(sequence: &[Value]) -> Vec<Value> {
+    let mut result = Vec::with_capacity(sequence.len());
+    let mut packages = std::collections::HashMap::<String, usize>::new();
+    for item in sequence {
+        let Some((name, versions)) = item.as_str().and_then(release_age_package) else {
+            if !result.contains(item) {
+                result.push(item.clone());
+            }
+            continue;
+        };
+        let index = *packages.entry(name.to_string()).or_insert_with(|| {
+            result.push(Value::String(format!("{name}@")));
+            result.len() - 1
+        });
+        let value = result[index].as_str().unwrap();
+        let mut merged: Vec<&str> = value[name.len() + 1..]
+            .split("||")
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect();
+        for version in versions.split("||").map(str::trim) {
+            if !merged.contains(&version) {
+                merged.push(version);
+            }
+        }
+        result[index] = Value::String(format!("{name}@{}", merged.join(" || ")));
+    }
+    result
+}
+
 pub(crate) fn allow_profile_release_age(
     app_handle: &AppHandle,
     entries: &[String],
+    expected_profile: Option<&str>,
 ) -> Result<(), String> {
     if entries.is_empty() {
         return Err("PROFILE_RELEASE_AGE_EMPTY: no release-age exemption to record".to_string());
     }
-    release_age_excludes_at(&profile_dir_of(app_handle, &active_profile(app_handle)), entries)
+    let profile = active_profile(app_handle);
+    if expected_profile.is_some_and(|expected| expected != profile) {
+        return Err(
+            "PROFILE_RELEASE_AGE_CHANGED: active profile changed before authorization".to_string(),
+        );
+    }
+    release_age_excludes_at(&profile_dir_of(app_handle, &profile), entries)
 }
 
 /// 把 `entries` 并入**指定档案目录** `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`
@@ -236,15 +288,11 @@ pub(crate) fn release_age_excludes_at(dir: &Path, entries: &[String]) -> Result<
     let sequence = excludes.as_sequence_mut().ok_or_else(|| {
         "PROFILE_WORKSPACE_POLICY_INVALID: minimumReleaseAgeExclude must be a sequence".to_string()
     })?;
-    // 归一化（多文档 → 单文档）本身就是需要落盘的改动：不写回的话 pnpm 依然读不了。
-    let mut changed = normalized;
-    for package in entries {
-        let value = Value::String(package.clone());
-        if !sequence.iter().any(|item| item == &value) {
-            sequence.push(value);
-            changed = true;
-        }
-    }
+    let mut combined = sequence.clone();
+    combined.extend(entries.iter().cloned().map(Value::String));
+    let merged = normalize_release_age_excludes(&combined);
+    let changed = normalized || *sequence != merged;
+    *sequence = merged;
     if changed {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("PROFILE_WORKSPACE_MKDIR: {e}"))?;
@@ -266,6 +314,9 @@ pub(crate) fn release_age_excludes_at(dir: &Path, entries: &[String]) -> Result<
 /// 清理），回退默认 web。全新机器上 `profiles/` 尚未初始化时同样回退 web
 /// （web 由 dsh 启动/插件操作时按需初始化）。
 pub fn active_profile(app_handle: &AppHandle) -> String {
+    if let Some(profile) = crate::service::workflow::instances::current_profile() {
+        return profile;
+    }
     let stored = config::get_store_dat_setting(app_handle).active_profile;
     if !stored.is_empty()
         && stored != DEFAULT_PROFILE
@@ -600,7 +651,7 @@ pub fn remove(app_handle: &AppHandle, id: &str) -> Result<(), String> {
             "PROFILE_DEFAULT_NOT_REMOVABLE: the default profile cannot be removed".to_string(),
         );
     }
-    if id == active_profile(app_handle) {
+    if id == active_profile(app_handle) || crate::service::workflow::instances::is_attached(id) {
         return Err(
             "PROFILE_ACTIVE_NOT_REMOVABLE: the active profile cannot be removed".to_string(),
         );
@@ -945,12 +996,18 @@ fn atomic_write(path: &Path, content: &str, code: &str) -> Result<(), String> {
 /// 形态：宿主不提供 webServer/connection，内置插件恒为 pending，服务必然启动
 /// 失败）时补齐并写回，令本轮启动即可恢复。
 pub fn ensure_active_profile_core_bundles(app_handle: &AppHandle) -> Result<bool, String> {
-    let id = active_profile(app_handle);
-    let dir = profile_dir_of(app_handle, &id);
+    prepare_at(
+        &config::get_dsh_data_path(app_handle),
+        &active_profile(app_handle),
+    )
+}
+
+pub(crate) fn prepare_at(data_home: &Path, id: &str) -> Result<bool, String> {
+    let dir = fs_guard::join_safe(&data_home.join("profiles"), id)?;
     if !dir.is_dir() {
         return Ok(false);
     }
-    ensure_profile_core_bundles(&dir, &id)
+    ensure_profile_core_bundles(&dir, id)
 }
 
 /// 初始化档案目录：与官方 `dsh-app-boot::initProfile` 的产物一致
@@ -1139,6 +1196,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prepare_at_rereads_the_explicit_profile_without_creating_missing_directories() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("profiles/beta");
+        assert!(!prepare_at(home.path(), "beta").unwrap());
+        assert!(!dir.exists());
+        assert!(prepare_at(home.path(), "../beta")
+            .unwrap_err()
+            .starts_with("INVALID_ID:"));
+
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("package.json");
+        fs::write(
+            &path,
+            r#"{"dependencies":{"user-plugin":"1.0.0"},"dsh":{"profile":{"bundles":["user-plugin"]}}}"#,
+        )
+        .unwrap();
+        let patch = dir.join("cordis.patch.yml");
+        fs::write(&patch, "# user patch\n[]\n").unwrap();
+        assert!(prepare_at(home.path(), "beta").unwrap());
+        let repaired = fs::read_to_string(&path).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(
+            manifest["dsh"]["profile"]["bundles"],
+            serde_json::json!([
+                "@deepseek-ai/dsh-base",
+                "@deepseek-ai/dsh-web-app",
+                "user-plugin"
+            ])
+        );
+        assert_eq!(manifest["dependencies"]["user-plugin"], "1.0.0");
+        assert!(!prepare_at(home.path(), "beta").unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), repaired);
+
+        fs::write(&path, "{ broken").unwrap();
+        assert!(prepare_at(home.path(), "beta")
+            .unwrap_err()
+            .starts_with("PROFILE_MANIFEST_PARSE_FAILED:"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
+        assert_eq!(fs::read_to_string(patch).unwrap(), "# user patch\n[]\n");
+    }
+
+    #[test]
     fn normalize_id_lowercases_and_joins() {
         assert_eq!(normalize_profile_id("My Work Space"), "my-work-space");
         assert_eq!(normalize_profile_id("  dev--stage  "), "dev-stage");
@@ -1203,6 +1302,74 @@ mod tests {
     fn parse_workspace_document_keeps_real_syntax_errors() {
         let duplicate = "allowBuilds:\n  node-pty: true\n  node-pty: true\n";
         assert!(parse_workspace_document(duplicate).is_err());
+    }
+
+    #[test]
+    fn release_age_excludes_merge_every_exact_package_without_expanding_ranges() {
+        let dir = std::env::temp_dir().join(format!("dsh-policy-merge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pnpm-workspace.yaml");
+        std::fs::write(&path, "packages:\n  - .\nnodeLinker: hoisted\nminimumReleaseAgeExclude:\n  - foo@^1.0.0\n  - '@scope/pkg@2.0.0'\n  - foo@1.2.3\n  - foo@1.2.3 || 1.3.0\n  - '@scope/pkg@2.1.0'\n  - '@scope/*@3.0.0'\n  - '@scope/other@3.1.0'\n  - zod@4.4.3\n").unwrap();
+        release_age_excludes_at(&dir, &["zod@4.4.3".to_string()]).unwrap();
+        let first = std::fs::read_to_string(&path).unwrap();
+        let document: Value = serde_yaml::from_str(&first).unwrap();
+        let entries: Vec<&str> = document["minimumReleaseAgeExclude"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            entries,
+            vec![
+                "foo@^1.0.0 || 1.2.3 || 1.3.0",
+                "@scope/pkg@2.0.0 || 2.1.0",
+                "@scope/*@3.0.0",
+                "@scope/other@3.1.0",
+                "zod@4.4.3"
+            ]
+        );
+        assert_eq!(document["nodeLinker"].as_str(), Some("hoisted"));
+        release_age_excludes_at(
+            &dir,
+            &["foo@1.4.0".to_string(), "@scope/pkg@2.1.0".to_string()],
+        )
+        .unwrap();
+        let merged = std::fs::read_to_string(&path).unwrap();
+        let document: Value = serde_yaml::from_str(&merged).unwrap();
+        assert_eq!(
+            document["minimumReleaseAgeExclude"][0].as_str(),
+            Some("foo@^1.0.0 || 1.2.3 || 1.3.0 || 1.4.0")
+        );
+        release_age_excludes_at(&dir, &["zod@4.4.3".to_string(), "foo@1.4.0".to_string()]).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), merged);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn release_age_excluded_reads_exact_or_branches_not_ranges_or_other_packages() {
+        let sequence: Value = serde_yaml::from_str(
+            "- foo@^1.0.0 || 1.2.3 || 1.3.0\n- '@scope/pkg@2.0.0 || 2.1.0'\n- '@scope/*@3.0.0'\n",
+        )
+        .unwrap();
+        let sequence = sequence.as_sequence().unwrap();
+        for entry in [
+            "foo@1.2.3",
+            "foo@1.3.0",
+            "@scope/pkg@2.0.0",
+            "@scope/pkg@2.1.0",
+        ] {
+            assert!(release_age_excluded(sequence, entry), "{entry}");
+        }
+        for entry in [
+            "foo@1.1.0",
+            "foo@1.2.30",
+            "foo@1.4.0",
+            "@scope/other@2.1.0",
+            "@scope/other@3.0.0",
+        ] {
+            assert!(!release_age_excluded(sequence, entry), "{entry}");
+        }
     }
 
     #[test]

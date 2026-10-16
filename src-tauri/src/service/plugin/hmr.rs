@@ -65,13 +65,23 @@ pub(crate) fn patch_path(app_handle: &AppHandle) -> PathBuf {
 /// 每次启动都要重算：`--patch` 只在本次进程有效，而本地插件的安装状态可能已经变化。
 /// 任何一步失败都退化为「不传 `--patch`」（热重载只是便利功能，不该阻断启动）。
 pub(crate) fn sync_layer(app_handle: &AppHandle) -> Option<PathBuf> {
-    let path = patch_path(app_handle);
-    let roots = local_watch_roots(app_handle);
-    let rendered = if hmr_enabled(app_handle) {
-        render_layer(&roots)
-    } else {
-        None
-    };
+    sync_layer_at(
+        &config::get_base_dir(app_handle),
+        &profile_dir(app_handle),
+        app_handle.path().resource_dir().ok().as_deref(),
+        hmr_enabled(app_handle),
+    )
+}
+
+pub(crate) fn sync_layer_at(
+    base: &Path,
+    profile: &Path,
+    resource_root: Option<&Path>,
+    enabled: bool,
+) -> Option<PathBuf> {
+    let path = base.join(HMR_PATCH_FILENAME);
+    let roots = local_watch_roots_at(profile, resource_root);
+    let rendered = if enabled { render_layer(&roots) } else { None };
     let Some(rendered) = rendered else {
         remove_layer(&path);
         return None;
@@ -111,12 +121,18 @@ fn hmr_enabled(app_handle: &AppHandle) -> bool {
 /// 需要热重载的本地插件源码目录：已装且已挂载（在 `dsh.profile.bundles` 里）、以
 /// `link:` / `file:` 声明、目录真实存在、且不属于随包分发的内置插件。
 pub(crate) fn local_watch_roots(app_handle: &AppHandle) -> Vec<PathBuf> {
-    let profile = profile_dir(app_handle);
-    let Some(manifest) = read_manifest(&profile) else {
+    local_watch_roots_at(
+        &profile_dir(app_handle),
+        app_handle.path().resource_dir().ok().as_deref(),
+    )
+}
+
+pub(crate) fn local_watch_roots_at(profile: &Path, resource_root: Option<&Path>) -> Vec<PathBuf> {
+    let Some(manifest) = read_manifest(profile) else {
         return Vec::new();
     };
-    watch_roots_in(&profile, &manifest, |_name, dir| {
-        is_bundled(app_handle, dir)
+    watch_roots_in(profile, &manifest, |_name, dir| {
+        resource_root.is_some_and(|root| is_bundled(root, dir))
     })
 }
 
@@ -179,10 +195,7 @@ fn resolve_dir(raw: &str, profile: &Path) -> Option<PathBuf> {
 }
 
 /// 随包分发的内置插件源码目录：改它没有意义（升级即被覆盖），不该进 watch root。
-fn is_bundled(app_handle: &AppHandle, dir: &Path) -> bool {
-    let Ok(resource_dir) = app_handle.path().resource_dir() else {
-        return false;
-    };
+fn is_bundled(resource_root: &Path, dir: &Path) -> bool {
     let flatten = |path: &Path| {
         let mut text = path
             .to_string_lossy()
@@ -192,7 +205,7 @@ fn is_bundled(app_handle: &AppHandle, dir: &Path) -> bool {
         }
         text.to_lowercase()
     };
-    flatten(dir).starts_with(&flatten(dunce::simplified(&resource_dir)))
+    flatten(dir).starts_with(&flatten(dunce::simplified(resource_root)))
 }
 
 /// 去掉被父目录覆盖的子目录：chokidar 递归监听父目录即可，重复 root 只增开销。
@@ -443,6 +456,62 @@ mod tests {
         for pattern in &patterns {
             assert!(!pattern.contains("[/\\]"), "{pattern}");
         }
+    }
+
+    #[test]
+    fn sync_layer_at_rereads_the_profile_and_excludes_only_the_explicit_resource_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let profile = plugin_dir(&root, "profile");
+        let resources = plugin_dir(&root, "resources");
+        let bundled = plugin_dir(&resources, "builtin");
+        let local = plugin_dir(&root, "resources-local");
+        let base = root.join("app-data");
+        let path = base.join(HMR_PATCH_FILENAME);
+        let manifest_path = profile.join("package.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "dependencies": {
+                    "local": format!("link:{}", local.display()),
+                    "bundled": format!("file:{}", bundled.display())
+                },
+                "dsh": { "profile": { "bundles": ["local", "bundled"] } }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            local_watch_roots_at(&profile, Some(&resources)),
+            vec![local.clone()]
+        );
+        assert_eq!(
+            sync_layer_at(&base, &profile, Some(&resources), true),
+            Some(path.clone())
+        );
+        let layer = std::fs::read_to_string(&path).unwrap();
+        let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&layer).unwrap();
+        let url = tauri::Url::parse(entries[0]["config"]["base"].as_str().unwrap()).unwrap();
+        assert_eq!(url.to_file_path().unwrap(), local);
+        assert_eq!(entries[0]["config"]["root"].as_sequence().unwrap().len(), 1);
+        assert_eq!(entries[0]["config"]["root"][0].as_str(), Some("."));
+
+        assert_eq!(
+            sync_layer_at(&base, &profile, Some(&resources), false),
+            None
+        );
+        assert!(!path.exists());
+        assert_eq!(
+            sync_layer_at(&base, &profile, Some(&resources), true),
+            Some(path.clone())
+        );
+        std::fs::write(
+            &manifest_path,
+            r#"{"dependencies":{},"dsh":{"profile":{"bundles":[]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(sync_layer_at(&base, &profile, Some(&resources), true), None);
+        assert!(!path.exists());
     }
 
     #[test]

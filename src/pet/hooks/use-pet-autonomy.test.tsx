@@ -30,7 +30,7 @@ function fixture() {
       },
     },
   }
-  const source: PetSource = { kind: 'dsh', config, uri: '/webm', width: 200, aspect: 0.5 }
+  const source: PetSource = { kind: 'dsh', config, uri: '/webm', cache: true, width: 200, aspect: 0.5 }
   const controlled = { geometry, motion: vi.fn(), clear: vi.fn() } as unknown as PetRef
   return { config, source, controlled }
 }

@@ -24,7 +24,9 @@ export interface PetListItem {
   id: string
   name: string
   source: PetSource
+  kind?: 'dsh' | 'codex'
   thumbnail?: string
+  thumbnail_type?: 'gif' | 'spritesheet'
 }
 
 /**
@@ -39,5 +41,7 @@ export interface PresetPetItem {
   image?: string | null
   kind?: 'dsh' | 'codex' | null
   name: string
+  /** 是否由用户登记远端资源；内置预设为 false，只有登记来的条目可删除。 */
+  remote?: boolean
   size?: number | null
 }

@@ -20,11 +20,7 @@ use windows_sys::Win32::UI::{
     WindowsAndMessaging::{SendMessageW, HICON, ICON_BIG, ICON_SMALL, WM_GETICON, WM_SETICON},
 };
 
-// 托盘相关的 tauri 类型只在非 Linux 路径使用：Linux 走 desktop::linux_tray 的
-// KSNI 托盘（见该文件的背景说明），届时这些导入会变成未使用。
-#[cfg(not(target_os = "linux"))]
 use tauri::menu::{Menu, MenuEvent, MenuItem};
-#[cfg(not(target_os = "linux"))]
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
 #[cfg(target_os = "macos")]
@@ -50,9 +46,6 @@ const MACOS_VIEW_COMMANDS: [(&str, &str); 4] = [
 #[cfg(windows)]
 use crate::desktop::window::on_page_load;
 use crate::desktop::window::{on_download, on_new_window};
-// 只在 tauri::tray 路径（Windows / macOS）里按短名使用；Linux 的 KSNI 托盘在
-// desktop::linux_tray 内自行引用，且下面单例回调用的是完整路径。
-#[cfg(not(target_os = "linux"))]
 use crate::utils::show_main_window;
 
 pub const SHELL_NAV_HEIGHT: u32 = 44;
@@ -106,82 +99,101 @@ fn webview_data_directory(app: &tauri::AppHandle<Wry>) -> std::path::PathBuf {
 
 /// setup app
 pub fn setup(app_handle: tauri::AppHandle) {
-    // 升级清理：内置插件已迁至 resources/node_modules（pnpm deploy 产物）；旧安装
-    // 可能残留 resources/preset-plugins 与 resources/internal-plugins 目录。仅删除
-    // 旧目录，失败告警并继续启动（查找回退见 preset::find_bundled_in_root）。
-    if let Err(e) = crate::service::plugin::remove_legacy_bundled_plugins(&app_handle) {
-        log::warn!("legacy bundled plugins cleanup skipped: {e}");
-    }
+    crate::service::workflow::early::setup(move |prepared| {
+        if !prepared {
+            // 升级清理：内置插件已迁至 resources/node_modules（pnpm deploy 产物）；旧安装
+            // 可能残留 resources/preset-plugins 与 resources/internal-plugins 目录。仅删除
+            // 旧目录，失败告警并继续启动（查找回退见 preset::find_bundled_in_root）。
+            if let Err(e) = crate::service::plugin::remove_legacy_bundled_plugins(&app_handle) {
+                log::warn!("legacy bundled plugins cleanup skipped: {e}");
+            }
 
-    // 启动前清扫上次崩溃残留的孤儿 Harness（端口/PID 双重确认，见
-    // workflow::sweep_orphan_harness），避免新实例一路漂移端口
-    crate::service::workflow::sweep_orphan_harness(&app_handle);
+            // 启动前清扫上次崩溃残留的孤儿 Harness（端口/PID 双重确认，见
+            // workflow::sweep_orphan_harness），避免新实例一路漂移端口
+            crate::service::workflow::sweep_orphan_harness(&app_handle);
 
-    // 启动自愈：清理指向旧位置的 pnpm `.modules.yaml`。老版本完成数据搬迁后该
-    // 文件仍记录旧 $DSH_HOME（AppData）下的绝对路径，导致任何 pnpm 操作抛
-    // `ERR_PNPM_UNEXPECTED_VIRTUAL_STORE`（插件安装/更新失败，issue #103）。
-    // 幂等、best-effort：仅在检测到失效路径时删除，下次 pnpm 操作自动重建。
-    let dsh_home = crate::config::get_dsh_data_path(&app_handle);
-    if let Err(e) = crate::service::migrate::heal_stale_pnpm_metadata(&dsh_home) {
-        log::warn!("pnpm modules metadata self-heal skipped: {e}");
-    }
+            // 启动自愈：清理指向旧位置的 pnpm `.modules.yaml`。老版本完成数据搬迁后该
+            // 文件仍记录旧 $DSH_HOME（AppData）下的绝对路径，导致任何 pnpm 操作抛
+            // `ERR_PNPM_UNEXPECTED_VIRTUAL_STORE`（插件安装/更新失败，issue #103）。
+            // 幂等、best-effort：仅在检测到失效路径时删除，下次 pnpm 操作自动重建。
+            let dsh_home = crate::config::get_dsh_data_path(&app_handle);
+            if let Err(e) = crate::service::migrate::heal_stale_pnpm_metadata(&dsh_home) {
+                log::warn!("pnpm modules metadata self-heal skipped: {e}");
+            }
 
-    // 档案迁移 + 首装引导：官方核心 0.1.5 起 `desktop` 档案名被保留给 Electron
-    // 应用（`--profile desktop` 直接报错），先把老用户的 `profiles/desktop` 改名到
-    // `tauri` 并改指 `active_profile`，再在桌面端首次安装时新建独立档案并切换
-    // （与 CLI 用户既有插件/补丁隔离，见 service::profile）。必须先于 scheduler/
-    // auto_start：它们启动服务/装插件时会带上 active_profile，迁移完成前 dsh
-    // spawn 必然失败。
-    crate::service::profile::migrate_desktop_profile_name(&app_handle);
-
-    // 启动进程监控（tick 检测 dsh 服务状态）
-    crate::service::scheduler::start(&app_handle);
-
-    // `dsh://` 深链（成功页「打开应用」按钮）：仅打包态注册协议并接管 open-url
-    // （debug 注册会把系统 `dsh:` 指向调试产物）。
-    #[cfg(not(debug_assertions))]
-    crate::desktop::deep_link::init(&app_handle);
-
-    // 开机自启动：已安装且开启 auto_start 时拉起服务
-    let app_for_start = app_handle.clone();
-    tauri::async_runtime::spawn(async move {
-        let setting = crate::config::get_store_dat_setting(&app_for_start);
-        if !setting.auto_start {
-            log::debug!("auto_start disabled, skipping startup");
-            return;
+            // 档案迁移 + 首装引导：官方核心 0.1.5 起 `desktop` 档案名被保留给 Electron
+            // 应用（`--profile desktop` 直接报错），先把老用户的 `profiles/desktop` 改名到
+            // `tauri` 并改指 `active_profile`，再在桌面端首次安装时新建独立档案并切换
+            // （与 CLI 用户既有插件/补丁隔离，见 service::profile）。必须先于 scheduler/
+            // auto_start：它们启动服务/装插件时会带上 active_profile，迁移完成前 dsh
+            // spawn 必然失败。
+            crate::service::profile::migrate_desktop_profile_name(&app_handle);
         }
-        if let Err(e) = crate::service::workflow::start(app_for_start).await {
-            log::error!("start failed: {}", e);
-        }
-    });
 
-    // 命令行集成自愈：已安装且开启时，确保 shim 与 PATH 注册完整
-    // （shim 被删除、PATH 条目丢失等情况下自动重建）
-    tauri::async_runtime::spawn(async move {
-        let setting = crate::config::get_store_dat_setting(&app_handle);
-        if !setting.installed || !setting.cli_link_enabled {
-            return;
-        }
-        if let Err(e) = crate::service::cli::ensure(&app_handle) {
-            log::warn!("cli link self-heal failed: {e}");
-        }
+        // 启动进程监控（tick 检测 dsh 服务状态）
+        crate::service::workflow::instances::window_profile(&app_handle, MAIN_WINDOW_LABEL);
+        crate::service::scheduler::start(&app_handle);
+
+        // `dsh://` 深链（成功页「打开应用」按钮）：仅打包态注册协议并接管 open-url
+        // （debug 注册会把系统 `dsh:` 指向调试产物）。
+        #[cfg(not(debug_assertions))]
+        crate::desktop::deep_link::init(&app_handle);
+
+        // 开机自启动：已安装且开启 auto_start 时拉起服务
+        let app_for_start = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let setting = crate::config::get_store_dat_setting(&app_for_start);
+            if !setting.auto_start {
+                log::debug!("auto_start disabled, skipping startup");
+                return;
+            }
+            let profile = crate::service::workflow::instances::window_profile(
+                &app_for_start,
+                MAIN_WINDOW_LABEL,
+            );
+            if let Err(e) = crate::service::workflow::instances::scope(
+                profile,
+                crate::service::workflow::start(app_for_start),
+            )
+            .await
+            {
+                log::error!("start failed: {}", e);
+            }
+        });
+
+        // 命令行集成自愈：已安装且开启时，确保 shim 与 PATH 注册完整
+        // （shim 被删除、PATH 条目丢失等情况下自动重建）
+        tauri::async_runtime::spawn(async move {
+            let setting = crate::config::get_store_dat_setting(&app_handle);
+            if !setting.installed || !setting.cli_link_enabled {
+                return;
+            }
+            if let Err(e) = crate::service::cli::ensure(&app_handle) {
+                log::warn!("cli link self-heal failed: {e}");
+            }
+        });
     });
 }
 
 /// 构建系统托盘。
 ///
-/// Linux 用上游 tray-icon 的 KSNI 后端自建（`tauri::tray` 固定依赖的 tray-icon 0.24
-/// 在 Linux 上不上报任何托盘事件，见 `desktop::linux_tray` 的平台说明与 issue #386）；
-/// Windows / macOS 沿用 `tauri::tray`。
-#[cfg(target_os = "linux")]
+/// 托盘是可选壳层能力：Linux 桌面没有 SNI watcher（例如未装 AppIndicator 扩展的
+/// GNOME）或会话总线不可用时只记日志，不让应用启动失败。
 pub fn tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
-    crate::desktop::linux_tray::build(app);
+    #[cfg(target_os = "linux")]
+    if let Err(error) = build_tray(app) {
+        log::warn!("[tray] LINUX_TRAY_FAILED: {error}");
+    }
+    #[cfg(not(target_os = "linux"))]
+    build_tray(app)?;
     Ok(())
 }
 
-/// 构建系统托盘（Windows / macOS：`tauri::tray`）。
-#[cfg(not(target_os = "linux"))]
-pub fn tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
+/// Linux 后端由 Cargo.toml 里 `tray-icon` 的 `ksni` 特性选定（tauri 自己只开
+/// libappindicator，而后者在 Linux 上不上报托盘事件，见 issue #386）；tauri 在
+/// `App::run` 里给同一个 tray-icon / muda 实例装全局处理器，因此 Linux 上同样能收到
+/// 单击与菜单事件。
+fn build_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     // 平台差异的托盘图标策略：
     // - macOS：使用 scoped template 透明图标（NSImage template），由系统按菜单栏
     //   深浅/半透明材质自动着色，呈现与系统一致的半透明玻璃观感，而非彩色方块。
@@ -1120,6 +1132,11 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
             log::info!("[notification] scheduling handler registration from setup");
             let webview_for_dialog = webview_window.clone();
             if let Err(e) = webview_window.with_webview(move |webview| {
+                if let Err(error) =
+                    crate::desktop::frontend_preload::install(&webview, &webview_for_dialog)
+                {
+                    log::warn!("FRONTEND_PRELOAD_UNAVAILABLE: {error}");
+                }
                 if let Err(e) = crate::desktop::notification::enable_notification_permissions(
                     webview,
                     webview_for_dialog,
@@ -1140,7 +1157,10 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
 /// macOS 未实现窗口底色接口，`set_background_color` 会返回错误并被忽略——那里由
 /// `config::apply_window_theme` 同步原生外观。
 fn apply_window_background(app: &tauri::AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
-    let background = if crate::config::get_store_dat_setting(app).appearance.transparency {
+    let background = if crate::config::get_store_dat_setting(app)
+        .appearance
+        .transparency
+    {
         Some(tauri::webview::Color(0, 0, 0, 0))
     } else {
         crate::config::window_background(crate::config::get_dsh_theme(app), window.theme().ok())
@@ -1164,12 +1184,13 @@ pub fn build_shell_window(
     app: &tauri::AppHandle<Wry>,
     label: String,
     title: &str,
+    path: std::path::PathBuf,
 ) -> tauri::Result<tauri::WebviewWindow<Wry>> {
     let app_handle = app.clone();
 
     let webview_builder = with_shell_chrome(
         app,
-        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into())).title(title),
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App(path)).title(title),
     )?;
 
     // 非 Windows 平台没有 WebView2 的 FrameCreated/ContentLoading 流程，兼容桥、
@@ -1213,13 +1234,19 @@ pub fn build_shell_window(
 }
 
 /// 「文件 → 新建窗口」：`window-<N>` 序号 label，chrome 全部取 `build_shell_window`。
-pub fn build_extra_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::WebviewWindow<Wry>> {
+pub fn build_extra_window(
+    app: &tauri::AppHandle<Wry>,
+    path: std::path::PathBuf,
+    profile: &str,
+) -> tauri::Result<tauri::WebviewWindow<Wry>> {
     let sequence = EXTRA_WINDOW_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-    build_shell_window(
-        app,
-        format!("window-{sequence}"),
-        crate::desktop::product_name(app),
-    )
+    let label = format!("window-{sequence}");
+    crate::service::workflow::instances::bind_window(&label, profile);
+    let result = build_shell_window(app, label.clone(), crate::desktop::product_name(app), path);
+    if result.is_err() {
+        crate::service::workflow::instances::release_window(&label);
+    }
+    result
 }
 
 #[cfg(all(test, windows))]
@@ -1397,7 +1424,8 @@ mod security_tests {
     #[test]
     fn native_appearance_effects_are_local_shell_only() {
         let appearance: Value =
-            serde_json::from_str(include_str!("../../capabilities/appearance-effects.json")).unwrap();
+            serde_json::from_str(include_str!("../../capabilities/appearance-effects.json"))
+                .unwrap();
         // 这个能力一旦带上 remote，就会把窗口级 setEffects 暴露给回环承载的 Harness 页面。
         assert!(appearance.get("remote").is_none());
 
@@ -1405,9 +1433,9 @@ mod security_tests {
             .as_array()
             .expect("permissions must be an array")
             .clone();
-        assert!(!default_permissions.iter().any(|permission| {
-            permission.as_str() == Some("core:window:allow-set-effects")
-        }));
+        assert!(!default_permissions
+            .iter()
+            .any(|permission| { permission.as_str() == Some("core:window:allow-set-effects") }));
     }
 
     #[test]
@@ -1573,6 +1601,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::remove_core,
         crate::bridge::update_local_core,
         crate::bridge::proxy_health_check,
+        crate::desktop::frontend_preload::prepare_frontend_preload,
         crate::bridge::harness_ownership,
         crate::bridge::get_runtime_info,
         crate::bridge::runtime_ready,
@@ -1631,6 +1660,10 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::set_pet_ignore_cursor_events,
         crate::bridge::list_pets,
         crate::bridge::import_pet,
+        crate::bridge::delete_pet,
+        crate::bridge::import_pet_repository,
+        crate::bridge::check_pet_updates,
+        crate::bridge::update_pet_repository,
         crate::bridge::get_pet_asset,
         crate::bridge::list_preset_pets,
         crate::desktop::pet_mouse::start_pet_mouse_stream,
@@ -1802,7 +1835,13 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                 }
                 // 主窗口以外的附加窗口（「文件 → 新建窗口」）不驻留托盘：直接关闭
                 // 销毁。隐藏它们既没有恢复入口，也不符合「关掉这个窗口」的直觉。
-                if window.label() != MAIN_WINDOW_LABEL {
+                if (window.label() != MAIN_WINDOW_LABEL && !window.label().starts_with("window-"))
+                    || window.app_handle().webview_windows().values().any(|other| {
+                        other.label() != window.label()
+                            && (other.label() == MAIN_WINDOW_LABEL
+                                || other.label().starts_with("window-"))
+                    })
+                {
                     return;
                 }
                 // get_store_dat_setting 内部已归一化，取值只可能是 tray 或 quit
@@ -1840,8 +1879,36 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                         log::error!("[activation] APP_HIDE_FAILED: {error}");
                     }
                 }
+                // 隐藏窗口**不会**停掉页面里的动画 tick：WebView2 的「隐藏后照跑」是
+                // By Design 行为（WebView2Feedback #3207），微软那边的建议是按 webview
+                // 可见性停 tick，而不是把窗口移出屏幕。`background_throttling()` 只在
+                // WKWebView 上生效（wry CHANGELOG 0.48.1），Windows/WebView2 上是空转
+                // API；tauri/wry 也都不调用 `TrySuspendAsync`（WebView2Feedback #2398），
+                // 最小化同样不改变 webview 可见性（tauri-runtime-wry 只在窗口 Show/Hide
+                // 时 `set_visible`）。要真正停 tick 只能显式把 webview 可见性设为 false
+                // （已有的 `with_webview` 通路，webview2-com 已是直接依赖）。
                 #[cfg(not(target_os = "macos"))]
                 let _ = window.hide();
+            }
+            tauri::WindowEvent::Destroyed => {
+                if let Some(profile) =
+                    crate::service::workflow::instances::release_window(window.label())
+                {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Ok(_transition) =
+                            crate::service::workflow::acquire_core_transition().await
+                        {
+                            if !crate::service::workflow::instances::is_attached(&profile) {
+                                let _ = crate::service::workflow::instances::scope(
+                                    profile,
+                                    crate::service::workflow::stop(app),
+                                )
+                                .await;
+                            }
+                        }
+                    });
+                }
             }
             tauri::WindowEvent::ScaleFactorChanged { .. } => {
                 if window.label() == crate::desktop::pet::PET_WINDOW_LABEL {
@@ -1882,7 +1949,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
     // 因此开发环境跳过该插件。
     // `deep-link` feature 只在单例在场时起作用：把二次启动携带的 `dsh://` URL
     // （成功页「打开应用」按钮）转发给主实例派发 open-url。
-    #[cfg(not(debug_assertions))]
+    #[cfg(all(not(windows), not(debug_assertions)))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         crate::utils::show_main_window(app);
     }));

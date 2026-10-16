@@ -17,12 +17,15 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use super::cancel::terminate_owned_install;
 use super::install::install_internal;
-use super::installed::{installed_name, profile_dir, ProfilePackageJson};
-use super::preset::{bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo};
+use super::installed::{deprecated_plugins_at, installed_name, profile_dir, ProfilePackageJson};
+use super::preset::{
+    bundled_dep_spec, bundled_plugin_dir, bundled_plugin_dir_from, load_presets,
+    presets_from_manifest, PreinstallPluginInfo,
+};
 use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
 use crate::config;
 
@@ -195,11 +198,17 @@ impl EnsureCoordinator {
     }
 }
 
-static ENSURE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<EnsureCoordinator>> =
-    std::sync::OnceLock::new();
-
-fn ensure_lock() -> &'static tokio::sync::Mutex<EnsureCoordinator> {
-    ENSURE_LOCK.get_or_init(|| tokio::sync::Mutex::new(EnsureCoordinator::default()))
+fn ensure_lock(profile: &str) -> std::sync::Arc<tokio::sync::Mutex<EnsureCoordinator>> {
+    static COORDINATORS: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<EnsureCoordinator>>>>,
+    > = std::sync::OnceLock::new();
+    COORDINATORS
+        .get_or_init(std::sync::Mutex::default)
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .entry(profile.to_string())
+        .or_default()
+        .clone()
 }
 
 /// 在启动 Harness 前修复旧桌面目录遗留的 profile loader 状态。
@@ -208,28 +217,35 @@ fn ensure_lock() -> &'static tokio::sync::Mutex<EnsureCoordinator> {
 /// patch、home patch；如果旧 checkout 曾把内置插件 patch 写入其中，单纯重装
 /// `node_modules` 无法消除重复 loader entry。只清理桌面端明确拥有的内置 id，
 /// 绝不触碰用户插件。
-pub(crate) fn repair_loader_state(app_handle: &AppHandle) -> Result<(), String> {
-    let core_version = crate::service::core::active_version(app_handle);
-    let internal: Vec<_> = load_presets(app_handle)
-        .into_iter()
-        .filter(|preset| preset.internal && !preset.unsupported_on(core_version.as_deref()))
-        .collect();
+fn repair_loader_state(
+    profile: &Path,
+    dsh_home: &Path,
+    internal: &[&PreinstallPluginInfo],
+    manifest: &mut Option<serde_json::Value>,
+    prepare: bool,
+) -> Result<bool, String> {
     let bundle_ids: HashSet<&str> = internal.iter().map(|preset| preset.id.as_str()).collect();
-    let profile = profile_dir(app_handle);
-    let profile_manifest = profile.join("package.json");
-    let mut changed_manifest = false;
-    if let Ok(raw) = std::fs::read_to_string(&profile_manifest) {
-        let mut manifest = serde_json::from_str::<serde_json::Value>(&raw)
-            .map_err(|e| format!("INTERNAL_PLUGIN_MANIFEST_PARSE_FAILED: {e}"))?;
-        changed_manifest = dedupe_profile_bundles(&mut manifest);
-        if changed_manifest {
-            write_profile_manifest(&profile_manifest, &manifest)?;
+    let mut pending = false;
+    if let Some(manifest) = manifest.as_mut() {
+        if dedupe_profile_bundles(manifest) {
+            if prepare {
+                write_profile_manifest(&profile.join("package.json"), manifest)?;
+            } else {
+                pending = true;
+            }
         }
     }
 
-    for patch_path in super::patch_layer_paths(&profile, &config::get_dsh_data_path(app_handle)) {
-        let Ok(raw) = std::fs::read_to_string(&patch_path) else {
-            continue;
+    for patch_path in super::patch_layer_paths(profile, dsh_home) {
+        let raw = match std::fs::read_to_string(&patch_path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "INTERNAL_PLUGIN_PATCH_READ_FAILED: {}: {error}",
+                    patch_path.display()
+                ))
+            }
         };
         let mut patch = serde_yaml::from_str::<serde_yaml::Value>(&raw).map_err(|e| {
             format!(
@@ -238,6 +254,10 @@ pub(crate) fn repair_loader_state(app_handle: &AppHandle) -> Result<(), String> 
             )
         })?;
         if remove_duplicate_bundle_entries_from_patch(&mut patch, &bundle_ids) {
+            if !prepare {
+                pending = true;
+                continue;
+            }
             let rendered = serde_yaml::to_string(&patch)
                 .map_err(|e| format!("INTERNAL_PLUGIN_PATCH_RENDER_FAILED: {e}"))?;
             std::fs::write(&patch_path, rendered).map_err(|e| {
@@ -253,11 +273,25 @@ pub(crate) fn repair_loader_state(app_handle: &AppHandle) -> Result<(), String> 
         }
     }
 
+    if !prepare {
+        return Ok(pending);
+    }
+
     // dsh 会把运行时组合结果写回 cordis.yml；旧版本留下的组合结果会在下一次
     // 启动时与新 patch 再合并，必须恢复官方约定的空根配置。
     let root = profile.join("cordis.yml");
     const EMPTY_ROOT: &str = "# dsh profile root — an empty entry list. The tree is composed as patches:\n# each bundle in package.json's dsh.profile.bundles, then cordis.patch.yml, then any\n# --patch overlays. Edit cordis.patch.yml, not this file.\n[]\n";
-    if std::fs::read_to_string(&root).ok().as_deref() != Some(EMPTY_ROOT) && profile.is_dir() {
+    let existing = match std::fs::read_to_string(&root) {
+        Ok(raw) => Some(raw),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "INTERNAL_PLUGIN_ROOT_READ_FAILED: {}: {error}",
+                root.display()
+            ))
+        }
+    };
+    if existing.as_deref() != Some(EMPTY_ROOT) && profile.is_dir() {
         std::fs::write(&root, EMPTY_ROOT)
             .map_err(|e| format!("INTERNAL_PLUGIN_ROOT_WRITE_FAILED: {}: {e}", root.display()))?;
         log::warn!(
@@ -265,13 +299,7 @@ pub(crate) fn repair_loader_state(app_handle: &AppHandle) -> Result<(), String> 
             root.display()
         );
     }
-    if changed_manifest {
-        log::warn!(
-            "INTERNAL_PLUGIN_PROFILE_MIGRATED: deduplicated profile bundles in {}",
-            profile_manifest.display()
-        );
-    }
-    Ok(())
+    Ok(false)
 }
 
 /// 核对输入指纹：档案路径 + loader 状态修复的全部输入 + 核心版本 + 内置插件的安装规格。
@@ -316,6 +344,13 @@ fn ensure_fingerprint(app_handle: &AppHandle, internal: &[PreinstallPluginInfo])
 }
 
 pub(crate) async fn ensure(app_handle: &AppHandle) -> Result<(), String> {
+    let profile = crate::service::profile::active_profile(app_handle);
+    crate::service::workflow::instances::scope(profile, ensure_scoped(app_handle)).await
+}
+
+async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
+    crate::service::workflow::early::wait_preparation().await?;
+    let lock = ensure_lock(&crate::service::profile::active_profile(app_handle));
     let presets = load_presets(app_handle);
     // 被核心吸收的内置插件（当前核心已超出其声明的全部核心版本区间）自愈不再装回，
     // 与 `uninstall_deprecated_plugins` 的退役判定同源，避免两边互相拉扯。
@@ -324,13 +359,28 @@ pub(crate) async fn ensure(app_handle: &AppHandle) -> Result<(), String> {
         .into_iter()
         .filter(|p| p.internal && !p.unsupported_on(core_version.as_deref()))
         .collect();
+    if crate::service::workflow::has_owned_process() {
+        if config::manifest::read(app_handle).is_none() {
+            return Err("INTERNAL_PLUGIN_RESTART_REQUIRED: 内置插件清单不可读；请恢复应用资源后通过正常启动重试。".into());
+        }
+        let refs: Vec<_> = internal.iter().collect();
+        let profile = profile_dir(app_handle);
+        let check = prepare_internal_plugins(
+            &profile,
+            &config::get_dsh_data_path(app_handle),
+            &refs,
+            false,
+            |id| bundled_plugin_dir(app_handle, id),
+        )?;
+        return require_running_plugins_ready(&profile, &check);
+    }
     // 同一次启动的两路调用：后到的一路输入未变、且前一路刚成功，直接复用结论，
     // 连下面的失效链接清理、可写性预检与 loader 状态修复一起跳过（issue #766）。
     let fingerprint = ensure_fingerprint(app_handle, &internal);
     let reused = if internal.is_empty() {
         false
     } else {
-        ensure_lock().lock().await.reuse(fingerprint)
+        lock.lock().await.reuse(fingerprint)
     };
     if reused {
         log::debug!(
@@ -338,111 +388,62 @@ pub(crate) async fn ensure(app_handle: &AppHandle) -> Result<(), String> {
         );
         return Ok(());
     }
-    prune_dangling_link_deps(app_handle, &internal);
-    if internal.is_empty() {
-        return Ok(());
-    }
-
-    // 写入前可写性预检（issue #466）：档案目录属主不是当前用户时（典型：此前用
-    // sudo 运行过 dsh，macOS 的 sudo 保留 $HOME）**读得到、写不了**——清单能读，
-    // 但 .npmrc、cordis.yml、链接、依赖全部 EACCES。必须在任何写入与 pnpm 之前
-    // 给出可执行诊断（失败路径 + 属主 + chown 命令），否则用户只会看到 pnpm/写盘的
-    // 裸 os error 13，或一路走到 spawn 之后 dsh 才崩在 cordis.yml 上（只剩
-    // "exited early"）。放在 repair_loader_state 之前：它同样会写档案清单/patch/根
-    // 配置，权限错位时最先失败的就是那里。预检不创建目录：建档案留给
-    // dsh/init_profile_dir 自己的初始化逻辑（issue #452）。
-    crate::service::perm::ensure_writable_path(
-        &profile_dir(app_handle),
-        &config::get_dsh_data_path(app_handle),
-        "PROFILE_NOT_WRITABLE",
-    )?;
-
-    repair_loader_state(app_handle)?;
     let outcome =
         receive_current_or_next_flight(|| subscribe_or_start(app_handle, &internal)).await;
     if outcome.is_ok() {
         // 记「完成后的」指纹：本轮自己写回的状态（去重/修复/安装）就是已被核对过的
         // 状态，后到的那一路按同一状态算指纹即可命中，不会白跑第二轮。
-        ensure_lock()
-            .lock()
+        lock.lock()
             .await
             .record(ensure_fingerprint(app_handle, &internal));
     }
     outcome
 }
 
-/// 卸载「本地链接目标已不存在」的失效依赖（含已被删除的内置包），在服务启动前调用。
-///
-/// 已删除的包不再出现在预设清单里，孤儿分支（bundled 目录缺失）永远碰不到它，其
-/// `link:` 悬空依赖与 `dsh.profile.bundles` 引用会永久留档，令 dsh 每次启动都报
-/// `cannot resolve profile bundle <name>`。与孤儿卸载同一模式：best-effort、离线
-/// 精准（改写清单 + 删入口 + 剥 patch 层），任何失败只记告警，绝不阻断启动。
-fn prune_dangling_link_deps(app_handle: &AppHandle, internal: &[PreinstallPluginInfo]) {
-    let profile = profile_dir(app_handle);
-    let manifest_path = profile.join("package.json");
-    let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
-        return;
-    };
-    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        log::warn!("INTERNAL_PLUGIN_MANIFEST_PARSE_FAILED: 跳过失效链接依赖清理");
-        return;
-    };
-    let mut keep: HashSet<&str> = HashSet::new();
-    for preset in internal {
-        keep.insert(preset.id.as_str());
-        keep.insert(installed_name(preset));
-    }
-    for name in collect_dangling_local_link_deps(&manifest, &keep, &profile) {
-        if !super::recovery::is_actionable_plugin_ref(&name) {
-            log::warn!("INTERNAL_PLUGIN_DANGLING_LINK_SKIPPED: {name}（核心/官方包不执行卸载）");
-            continue;
-        }
-        log::warn!(
-            "INTERNAL_PLUGIN_DANGLING_LINK_UNINSTALLING: {name}（本地链接目标已不存在，卸载失效依赖）"
-        );
-        if let Err(e) = super::uninstall_recovery(app_handle, &name) {
-            log::warn!("INTERNAL_PLUGIN_DANGLING_LINK_UNINSTALL_FAILED: {name}: {e}");
-        }
-    }
-}
-
 async fn subscribe_or_start(
     app_handle: &AppHandle,
     internal: &[PreinstallPluginInfo],
 ) -> EnsureSubscription {
-    let mut coordinator = ensure_lock().lock().await;
+    let profile = crate::service::profile::active_profile(app_handle);
+    let lock = ensure_lock(&profile);
+    let mut coordinator = lock.lock().await;
     match coordinator.subscribe() {
         Some(subscription) => subscription,
         None => {
             let (id, owner, result_tx, result_rx, cancel_tx, cancel_rx) = coordinator.start();
             let app_handle = app_handle.clone();
             let internal = internal.to_vec();
-            tauri::async_runtime::spawn(async move {
-                let mut outcome =
-                    run_ensure_operation(&app_handle, &internal, owner, cancel_tx, cancel_rx).await;
-                // 强杀返回不等于持有句柄的 wait 已完成；必须等精确 owner 的 PID
-                // 守卫随 wait 退出，才能发布结果并允许 Retry 创建下一次 flight。
+            let lock = lock.clone();
+            tauri::async_runtime::spawn(crate::service::workflow::instances::scope(
+                profile,
+                async move {
+                    let mut outcome =
+                        run_ensure_operation(&app_handle, &internal, owner, cancel_tx, cancel_rx)
+                            .await;
+                    // 强杀返回不等于持有句柄的 wait 已完成；必须等精确 owner 的 PID
+                    // 守卫随 wait 退出，才能发布结果并允许 Retry 创建下一次 flight。
 
-                if !wait_for_owner_release(owner, ENSURE_OWNER_DRAIN_TIMEOUT).await {
-                    let reason = format!(
+                    if !wait_for_owner_release(owner, ENSURE_OWNER_DRAIN_TIMEOUT).await {
+                        let reason = format!(
                         "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
                         ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
                     );
-                    log::error!("{reason}");
-                    outcome = Err(reason.clone());
-                    let _ = result_tx.send(Some(outcome));
-                    ensure_lock().lock().await.mark_cleanup_failed(id, reason);
-                    // 保留 cleanup-failed flight 与唯一 owner；进程锁仍由 wait 线程持有。
-                    // 若系统最终完成 reap，再释放 flight 允许后续 Retry。
-                    while super::process::active_plugin_pid(owner).is_some() {
-                        tokio::time::sleep(ENSURE_OWNER_DRAIN_INTERVAL).await;
+                        log::error!("{reason}");
+                        outcome = Err(reason.clone());
+                        let _ = result_tx.send(Some(outcome));
+                        lock.lock().await.mark_cleanup_failed(id, reason);
+                        // 保留 cleanup-failed flight 与唯一 owner；进程锁仍由 wait 线程持有。
+                        // 若系统最终完成 reap，再释放 flight 允许后续 Retry。
+                        while super::process::active_plugin_pid(owner).is_some() {
+                            tokio::time::sleep(ENSURE_OWNER_DRAIN_INTERVAL).await;
+                        }
+                        lock.lock().await.finish(id);
+                        return;
                     }
-                    ensure_lock().lock().await.finish(id);
-                    return;
-                }
-                ensure_lock().lock().await.finish(id);
-                let _ = result_tx.send(Some(outcome));
-            });
+                    lock.lock().await.finish(id);
+                    let _ = result_tx.send(Some(outcome));
+                },
+            ));
             EnsureSubscription::Running(result_rx)
         }
     }
@@ -518,7 +519,10 @@ async fn receive_flight_result(
 /// 取消共享的内置插件安装并等待拥有者完成清理，确保 Retry 不会叠加新进程。
 pub(crate) async fn cancel() -> Result<(), String> {
     let mut result = {
-        let mut coordinator = ensure_lock().lock().await;
+        let profile =
+            crate::service::workflow::instances::current_profile().unwrap_or_else(|| "web".into());
+        let lock = ensure_lock(&profile);
+        let mut coordinator = lock.lock().await;
         let Some(active) = &coordinator.active else {
             return Ok(());
         };
@@ -609,7 +613,8 @@ fn emit_phase(
     completed: usize,
     total: usize,
 ) {
-    let _ = app_handle.emit(
+    crate::service::workflow::instances::emit(
+        app_handle,
         "internal-plugins-phase",
         InternalPluginsPhase {
             phase,
@@ -620,21 +625,22 @@ fn emit_phase(
     );
 }
 
-/// 实际的核对与安装：遍历 internal 预设，未安装 / 路径不对 / 被卸载 → 批量重装。
-async fn ensure_inner(
-    app_handle: &AppHandle,
-    internal: &[&PreinstallPluginInfo],
-    cancel: tokio::sync::watch::Receiver<bool>,
-    owner: ProcessOwner,
-) -> Result<(), String> {
-    log::info!(
-        "checking {} internal preset plugins for install state",
-        internal.len()
-    );
+struct InternalPluginCheck {
+    manifest: Option<serde_json::Value>,
+    parsed: Option<ProfilePackageJson>,
+    need: Vec<(String, String, PathBuf)>,
+    orphans: Vec<String>,
+    sources_ready: bool,
+    migration_pending: bool,
+}
 
-    // 一次读取当前档案；缺失时按「全部未安装」处理，由安装流程自行初始化。已有但
-    // 损坏的清单不能静默覆盖，否则可能丢失用户其它插件，故直接给出可诊断错误。
-    let profile = profile_dir(app_handle);
+fn prepare_internal_plugins(
+    profile: &Path,
+    dsh_home: &Path,
+    internal: &[&PreinstallPluginInfo],
+    prepare: bool,
+    resolve_bundle: impl Fn(&str) -> Option<PathBuf>,
+) -> Result<InternalPluginCheck, String> {
     let manifest_path = profile.join("package.json");
     let mut manifest = match std::fs::read_to_string(&manifest_path) {
         Ok(raw) => Some(
@@ -644,50 +650,31 @@ async fn ensure_inner(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("INTERNAL_PLUGIN_MANIFEST_READ_FAILED: {e}")),
     };
-    let dependencies: HashMap<String, String> = match manifest.as_ref() {
-        Some(value) => {
-            serde_json::from_value::<ProfilePackageJson>(value.clone())
-                .map_err(|e| format!("INTERNAL_PLUGIN_MANIFEST_SCHEMA_FAILED: {e}"))?
-                .dependencies
-        }
-        None => HashMap::new(),
-    };
-
-    // 旧工作目录留下的 profile 可能含重复 bundle；先做幂等迁移，避免在
-    // 检查依赖正常时直接进入 Cordis 并触发 duplicate loader entry。
-    let mut migrated = false;
-    if let Some(value) = manifest.as_mut() {
-        migrated = dedupe_profile_bundles(value);
+    let parsed = manifest
+        .as_ref()
+        .map(|value| serde_json::from_value::<ProfilePackageJson>(value.clone()))
+        .transpose()
+        .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_SCHEMA_FAILED: {error}"))?;
+    if prepare {
+        crate::service::perm::ensure_writable_path(profile, dsh_home, "PROFILE_NOT_WRITABLE")?;
     }
-
-    let bundle_ids: HashSet<&str> = internal.iter().map(|preset| preset.id.as_str()).collect();
-    let patch_path = profile.join("cordis.patch.yml");
-    let mut patch = std::fs::read_to_string(&patch_path)
-        .ok()
-        .and_then(|raw| serde_yaml::from_str::<serde_yaml::Value>(&raw).ok());
-    if let Some(value) = patch.as_mut() {
-        if remove_duplicate_bundle_entries_from_patch(value, &bundle_ids) {
-            let rendered = serde_yaml::to_string(value)
-                .map_err(|e| format!("INTERNAL_PLUGIN_PATCH_RENDER_FAILED: {e}"))?;
-            std::fs::write(&patch_path, rendered)
-                .map_err(|e| format!("INTERNAL_PLUGIN_PATCH_WRITE_FAILED: {e}"))?;
-            migrated = true;
-            log::warn!(
-                "INTERNAL_PLUGIN_PROFILE_MIGRATED: removed duplicate bundle entries from {}",
-                patch_path.display()
-            );
-        }
-    }
-    if migrated {
-        if let Some(value) = manifest.as_ref() {
-            write_profile_manifest(&manifest_path, value)?;
-        }
-    }
-
-    let mut need: Vec<(String, String, PathBuf)> = Vec::new();
-    // 本分支要「直接卸载」的孤儿内置插件（安装包名）：其捆绑目录已不存在且仍以
-    // `link:`/`file:` 本地依赖形式安装在 profile 里。见下方 bundle 缺失分支的说明。
-    let mut orphans: Vec<String> = Vec::new();
+    let migration_pending =
+        repair_loader_state(profile, dsh_home, internal, &mut manifest, prepare)?;
+    let empty_dependencies = HashMap::new();
+    let dependencies = parsed
+        .as_ref()
+        .map(|manifest| &manifest.dependencies)
+        .unwrap_or(&empty_dependencies);
+    let keep: HashSet<&str> = internal
+        .iter()
+        .flat_map(|preset| [preset.id.as_str(), installed_name(preset)])
+        .collect();
+    let mut orphans = manifest
+        .as_ref()
+        .map(|manifest| collect_dangling_local_link_deps(manifest, &keep, profile))
+        .unwrap_or_default();
+    let mut need = Vec::new();
+    let mut sources_ready = true;
     for preset in internal {
         let name = installed_name(preset);
         if super::disable::has_patch_disable(&profile, &preset.id)
@@ -695,7 +682,8 @@ async fn ensure_inner(
         {
             continue;
         }
-        let Some(bundled) = bundled_plugin_dir(app_handle, &preset.id) else {
+        let Some(bundled) = resolve_bundle(&preset.id) else {
+            sources_ready = false;
             // 未找到内置插件目录：release 说明构建期 build:plugins 未打包（发布
             // 缺陷，由 build:plugins 响亮失败）；debug 自动发现 packages/* 中非私有
             // 且含 dsh 对象的包，未命中时跳过（「找不到则不装」）。
@@ -728,7 +716,7 @@ async fn ensure_inner(
         // 不存在目录的 `link:` 依赖会静默 exit 0（日志特征 `Installing a dependency
         // from a non-existent directory`），重装必然再次假成功，形成启动死循环。这类
         // 是「应用资源缺失」而非「路径变更」：直接给出精确错误，阻断本轮重装。
-        if !bundled.join("package.json").is_file() {
+        if !internal_plugin_entry_is_ready(&bundled) {
             return Err(format!(
                 "INTERNAL_PLUGIN_SOURCE_MISSING: 内置插件 {name} 的捆绑源目录 {} 缺失或不可读（应用资源目录可能被移动/删除或盘符变更）。pnpm 会静默跳过安装（exit 0 无产物），导致服务启动时 loader 抛 ERR_MODULE_NOT_FOUND。请重新安装应用或恢复应用资源目录后重试。",
                 bundled.display()
@@ -767,6 +755,160 @@ async fn ensure_inner(
             need.push((preset.id.clone(), name, entry));
         }
     }
+    orphans.sort();
+    orphans.dedup();
+    Ok(InternalPluginCheck {
+        manifest,
+        parsed,
+        need,
+        orphans,
+        sources_ready,
+        migration_pending,
+    })
+}
+
+fn require_running_plugins_ready(
+    profile: &Path,
+    check: &InternalPluginCheck,
+) -> Result<(), String> {
+    let fallback = profile
+        .join(".dsh-module-fallback")
+        .try_exists()
+        .map_err(|error| format!("INTERNAL_PLUGIN_FALLBACK_READ_FAILED: {error}"))?;
+    if check.manifest.is_none()
+        || !check.sources_ready
+        || !check.need.is_empty()
+        || !check.orphans.is_empty()
+        || check.migration_pending
+        || fallback
+    {
+        return Err(format!(
+            "INTERNAL_PLUGIN_RESTART_REQUIRED: 内置插件需要修复；请停止当前服务后通过正常启动重试（need={:?}, orphans={:?}, migration={}, sources_ready={}, fallback={}）。",
+            check.need.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>(),
+            check.orphans,
+            check.migration_pending,
+            check.sources_ready,
+            fallback,
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EarlyPluginState {
+    Ready,
+    Defer,
+}
+
+pub(crate) fn prepare_early_plugins(
+    profile: &Path,
+    dsh_home: &Path,
+    resources: Option<&Path>,
+    manifest: Option<&config::manifest::Manifest>,
+    core_version: Option<&str>,
+) -> Result<EarlyPluginState, String> {
+    let Some(manifest) = manifest.filter(|manifest| !manifest.plugins.built_in.is_empty()) else {
+        return Ok(EarlyPluginState::Defer);
+    };
+    let presets = presets_from_manifest(manifest, resources);
+    let deprecated = manifest.plugins.deprecated.iter().cloned().collect();
+    prepare_early_plugins_from(
+        profile,
+        dsh_home,
+        &presets,
+        &deprecated,
+        core_version,
+        |id| bundled_plugin_dir_from(resources, id),
+    )
+}
+
+fn prepare_early_plugins_from(
+    profile: &Path,
+    dsh_home: &Path,
+    presets: &[PreinstallPluginInfo],
+    deprecated: &HashSet<String>,
+    core_version: Option<&str>,
+    resolve_bundle: impl Fn(&str) -> Option<PathBuf>,
+) -> Result<EarlyPluginState, String> {
+    if presets.is_empty()
+        || presets.iter().any(|preset| {
+            matches!(
+                preset.version,
+                Some(config::manifest::PluginVersion::Matrix(_))
+            )
+        }) && !core_version.is_some_and(|version| semver::Version::parse(version).is_ok())
+    {
+        return Ok(EarlyPluginState::Defer);
+    }
+    let internal: Vec<_> = presets
+        .iter()
+        .filter(|preset| preset.internal && !preset.unsupported_on(core_version))
+        .collect();
+    let check = match prepare_internal_plugins(profile, dsh_home, &internal, true, resolve_bundle) {
+        Ok(check) => check,
+        Err(error) if error.starts_with("INTERNAL_PLUGIN_SOURCE_MISSING:") => {
+            log::warn!("{error}");
+            return Ok(EarlyPluginState::Defer);
+        }
+        Err(error) => return Err(error),
+    };
+    let Some(parsed) = check.parsed.as_ref() else {
+        return Ok(EarlyPluginState::Defer);
+    };
+    if !check.sources_ready
+        || !check.need.is_empty()
+        || !check.orphans.is_empty()
+        || profile
+            .join(".dsh-module-fallback")
+            .try_exists()
+            .map_err(|error| format!("INTERNAL_PLUGIN_FALLBACK_READ_FAILED: {error}"))?
+    {
+        return Ok(EarlyPluginState::Defer);
+    }
+    let bundles = parsed
+        .dsh
+        .as_ref()
+        .and_then(|dsh| dsh.profile.as_ref())
+        .map(|profile| profile.bundles.as_slice())
+        .unwrap_or_default();
+    if !super::verify::missing_plugin_ids(
+        &presets,
+        &parsed.dependencies,
+        bundles,
+        &profile.join("node_modules"),
+    )
+    .is_empty()
+    {
+        return Ok(EarlyPluginState::Defer);
+    }
+    let (names, known) = deprecated_plugins_at(profile, parsed, presets, deprecated, core_version)?;
+    Ok(if known && names.is_empty() {
+        EarlyPluginState::Ready
+    } else {
+        EarlyPluginState::Defer
+    })
+}
+
+async fn ensure_inner(
+    app_handle: &AppHandle,
+    internal: &[&PreinstallPluginInfo],
+    cancel: tokio::sync::watch::Receiver<bool>,
+    owner: ProcessOwner,
+) -> Result<(), String> {
+    let profile = profile_dir(app_handle);
+    let manifest_path = profile.join("package.json");
+    let InternalPluginCheck {
+        mut manifest,
+        need,
+        orphans,
+        ..
+    } = prepare_internal_plugins(
+        &profile,
+        &config::get_dsh_data_path(app_handle),
+        internal,
+        true,
+        |id| bundled_plugin_dir(app_handle, id),
+    )?;
     // 卸载孤儿内置插件：best-effort、离线精准，不依赖 node/pnpm（其源目录已
     // 不存在，走 `dsh plugin remove` 也没有可安装的本地链接可删）。与弃用插件
     // 自动卸载同一模式：任何失败只记告警，绝不阻断本轮其余重装或整体启动。
@@ -777,8 +919,16 @@ async fn ensure_inner(
                 log::warn!("INTERNAL_PLUGIN_ORPHAN_SKIPPED: {name}（核心/官方包不执行孤儿卸载）");
                 continue;
             }
-            if let Err(e) = super::uninstall_recovery(app_handle, name) {
-                log::warn!("INTERNAL_PLUGIN_ORPHAN_UNINSTALL_FAILED: {name}: {e}");
+            match super::uninstall_recovery(app_handle, name) {
+                Ok(()) => {
+                    if let Some(value) = manifest.as_mut() {
+                        remove_internal_plugins_from_manifest(
+                            value,
+                            &HashSet::from([name.as_str()]),
+                        );
+                    }
+                }
+                Err(e) => log::warn!("INTERNAL_PLUGIN_ORPHAN_UNINSTALL_FAILED: {name}: {e}"),
             }
         }
     }
@@ -856,7 +1006,8 @@ async fn ensure_inner(
         // 桌面端自建链接并补齐清单，让内置插件落盘、启动继续，而不是把应用永久
         // 卡在 Plugin installation 阶段（见 [`materialize`]）。
         if is_link_materialization_failure(&e, &need) {
-            let _ = app_handle.emit(
+            crate::service::workflow::instances::emit(
+                app_handle,
                 PREINSTALL_LOG_EVENT,
                 PreinstallLogPayload {
                     line: "[harness] pnpm 无法回读新建的插件链接，改由应用直接建立链接…"
@@ -1143,7 +1294,202 @@ fn is_legacy_profile_fallback_target(target: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn unscoped_flight_cleanup_uses_the_acquired_coordinator() {
+        use crate::service::workflow::instances;
+        let acquired = super::ensure_lock("ensure-stored-profile");
+        let (id, _, _, _, _, _) = acquired.lock().await.start();
+        instances::scope("ensure-stored-profile".into(), async {
+            let spawned = super::ensure_lock(&instances::current_profile().unwrap());
+            assert!(std::sync::Arc::ptr_eq(&acquired, &spawned));
+            spawned.lock().await.finish(id);
+        })
+        .await;
+        assert!(acquired.lock().await.subscribe().is_none());
+    }
+
+    #[tokio::test]
+    async fn internal_plugin_flights_are_shared_only_within_profile() {
+        use crate::service::workflow::instances;
+        instances::scope("ensure-profile-a".into(), async {
+            let first = super::ensure_lock(&instances::current_profile().unwrap());
+            assert!(std::sync::Arc::ptr_eq(
+                &first,
+                &super::ensure_lock(&instances::current_profile().unwrap())
+            ));
+            let (id, _, _, _, _, _) = first.lock().await.start();
+            instances::scope("ensure-profile-b".into(), async {
+                let second = super::ensure_lock(&instances::current_profile().unwrap());
+                assert!(!std::sync::Arc::ptr_eq(&first, &second));
+                assert!(second.lock().await.subscribe().is_none());
+            })
+            .await;
+            assert!(first.lock().await.subscribe().is_some());
+            first.lock().await.finish(id);
+        })
+        .await;
+    }
+
     use super::*;
+
+    #[test]
+    fn early_prepare_uses_normal_kernel_and_defers_repairs_without_installing() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profiles/web");
+        let source = root.path().join("resources/builtin");
+        let entry = profile.join("node_modules/builtin");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&entry).unwrap();
+        std::fs::write(source.join("package.json"), "{}").unwrap();
+        std::fs::write(entry.join("package.json"), "{}").unwrap();
+        let preset = |id: &str, internal| PreinstallPluginInfo {
+            id: id.into(),
+            spec: id.into(),
+            internal,
+            package: None,
+            version: None,
+            name: id.into(),
+            description: String::new(),
+            repo_url: String::new(),
+            recommended: false,
+            fix: false,
+            default_checked: false,
+            default_unchecked: false,
+            win_only: false,
+        };
+        let presets = vec![preset("builtin", true), preset("community", false)];
+        let deprecated = HashSet::from(["old-plugin".to_string()]);
+        let path = profile.join("package.json");
+        let healthy = serde_json::json!({
+            "dependencies": {"builtin": bundled_dep_spec(&source)},
+            "dsh": {"profile": {"bundles": ["builtin", "builtin"]}}
+        });
+        let check = |manifest: &serde_json::Value| {
+            std::fs::write(&path, manifest.to_string()).unwrap();
+            prepare_early_plugins_from(&profile, root.path(), &presets, &deprecated, None, |_| {
+                Some(source.clone())
+            })
+        };
+        std::fs::write(
+            profile.join("cordis.patch.yml"),
+            "- insert:\n  - id: builtin\n  - id: user-plugin\n",
+        )
+        .unwrap();
+        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Ready);
+        let migrated: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            migrated["dsh"]["profile"]["bundles"],
+            serde_json::json!(["builtin"])
+        );
+        assert!(std::fs::read_to_string(profile.join("cordis.patch.yml"))
+            .unwrap()
+            .contains("user-plugin"));
+        assert_eq!(
+            prepare_early_plugins_from(&profile, root.path(), &presets, &deprecated, None, |_| {
+                Some(source.clone())
+            })
+            .unwrap(),
+            EarlyPluginState::Ready
+        );
+        let running_root = "- id: builtin\n  name: runtime-composed\n";
+        std::fs::write(profile.join("cordis.yml"), running_root).unwrap();
+        let running_check = || {
+            prepare_internal_plugins(&profile, root.path(), &[&presets[0]], false, |_| {
+                Some(source.clone())
+            })
+        };
+        let running = running_check().unwrap();
+        require_running_plugins_ready(&profile, &running).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(profile.join("cordis.yml")).unwrap(),
+            running_root
+        );
+        let mut needs_repair = migrated.clone();
+        needs_repair["dsh"]["profile"]["bundles"] = serde_json::json!([]);
+        std::fs::write(&path, needs_repair.to_string()).unwrap();
+        let running = running_check().unwrap();
+        assert_eq!(
+            running
+                .need
+                .iter()
+                .map(|(id, _, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["builtin"]
+        );
+        assert!(require_running_plugins_ready(&profile, &running)
+            .unwrap_err()
+            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
+        assert_eq!(
+            std::fs::read_to_string(profile.join("cordis.yml")).unwrap(),
+            running_root
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            needs_repair.to_string()
+        );
+        assert_eq!(
+            std::fs::read_to_string(entry.join("package.json")).unwrap(),
+            "{}"
+        );
+        std::fs::write(&path, healthy.to_string()).unwrap();
+        let running = running_check().unwrap();
+        assert!(running.migration_pending);
+        assert!(require_running_plugins_ready(&profile, &running)
+            .unwrap_err()
+            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), healthy.to_string());
+        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Ready);
+        assert_eq!(
+            prepare_early_plugins_from(&profile, root.path(), &presets, &deprecated, None, |_| {
+                None
+            })
+            .unwrap(),
+            EarlyPluginState::Defer
+        );
+        std::fs::remove_file(source.join("package.json")).unwrap();
+        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Defer);
+        std::fs::write(source.join("package.json"), "{}").unwrap();
+        let mut missing_bundle = healthy.clone();
+        missing_bundle["dsh"]["profile"]["bundles"] = serde_json::json!([]);
+        assert_eq!(check(&missing_bundle).unwrap(), EarlyPluginState::Defer);
+        assert_eq!(
+            std::fs::read_to_string(entry.join("package.json")).unwrap(),
+            "{}"
+        );
+        let mut wrong_dep = healthy.clone();
+        wrong_dep["dependencies"]["builtin"] = serde_json::json!("link:/missing/source");
+        assert_eq!(check(&wrong_dep).unwrap(), EarlyPluginState::Defer);
+        let mut missing_preset = healthy.clone();
+        missing_preset["dependencies"]["community"] = serde_json::json!("1.0.0");
+        assert_eq!(check(&missing_preset).unwrap(), EarlyPluginState::Defer);
+        let mut dangling = healthy.clone();
+        dangling["dependencies"]["removed"] = serde_json::json!("link:missing-source");
+        assert_eq!(check(&dangling).unwrap(), EarlyPluginState::Defer);
+        std::fs::create_dir_all(profile.join("node_modules/old-plugin")).unwrap();
+        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Defer);
+        assert!(profile.join("node_modules/old-plugin").is_dir());
+        std::fs::remove_dir(profile.join("node_modules/old-plugin")).unwrap();
+        std::fs::remove_file(entry.join("package.json")).unwrap();
+        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Defer);
+        assert!(!entry.join("package.json").exists());
+        std::fs::write(&path, "{").unwrap();
+        assert!(prepare_early_plugins_from(
+            &profile,
+            root.path(),
+            &presets,
+            &deprecated,
+            None,
+            |_| None
+        )
+        .unwrap_err()
+        .starts_with("INTERNAL_PLUGIN_MANIFEST_PARSE_FAILED:"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{");
+        assert_eq!(
+            prepare_early_plugins(&profile, root.path(), None, None, None).unwrap(),
+            EarlyPluginState::Defer
+        );
+    }
 
     #[test]
     fn post_install_manifest_check_rejects_missing_or_unreadable_manifest() {

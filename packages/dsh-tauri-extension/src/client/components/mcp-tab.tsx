@@ -3,9 +3,9 @@ import type { PostApiTauriExtensionMcpBody as McpSaveBody } from '../apis/index.
 import type { McpRow } from '../types'
 import type { McpEditorMode, McpEditorState, McpImportItem, McpTabProps } from './mcp-tab.types'
 import { Action, ArrowRotateRight, Button, Card, Icon, Modal, PlugConnection, Select, Tag, Text, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
-import { compact } from 'dsh-tauri/client'
+import { compact, invoke } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
-import { deleteMcp, getImportScan, getMcp, postImportApply, postMcp, postMcpCheck, postMcpToggle } from '../apis'
+import { deleteMcp, getImportScan, getMcp, getMcpAuthorize, postImportApply, postMcp, postMcpAuthorize, postMcpCheck, postMcpToggle } from '../apis'
 import { MCP_RESTART_INITIAL_DELAY_MS, MCP_RESTART_POLL_INTERVAL_MS, MCP_RESTART_TIMEOUT_MS } from '../constants'
 import { useTimers } from '../hooks/use-timers'
 import { restartHost } from '../service/restart'
@@ -14,6 +14,14 @@ import { McpEditorForm } from './mcp-editor-form'
 import { McpImportDialog } from './mcp-import-dialog'
 import { mapToPairs, parseMcpJson, parsePairs } from './mcp-tab.utils'
 import { failText } from './outcome.utils'
+
+function rowScope(row: McpRow): 'global' | 'profile' {
+  return row.scope ?? row.layer ?? 'profile'
+}
+
+function rowKey(row: McpRow): string {
+  return `${rowScope(row)}:${row.id}`
+}
 
 export function McpTab({ t }: McpTabProps): ReactElement {
   const [servers, setServers] = useState<McpRow[] | null>(null)
@@ -33,7 +41,9 @@ export function McpTab({ t }: McpTabProps): ReactElement {
   const [scope, setScope] = useState<'all' | 'global' | 'profile'>('all')
   const [checking, setChecking] = useState<string | null>(null)
   const [globalError, setGlobalError] = useState('')
-  const { later } = useTimers()
+  const [requiresAuth, setRequiresAuth] = useState<Record<string, boolean>>({})
+  const [authorizing, setAuthorizing] = useState<string | null>(null)
+  const { mounted, later } = useTimers()
 
   useEffect(() => {
     let current = true
@@ -47,6 +57,19 @@ export function McpTab({ t }: McpTabProps): ReactElement {
           }
           setServers(body.servers)
           setGlobalError(body.globalError ?? '')
+          setRequiresAuth({})
+          for (const row of body.servers.filter(row => row.transport !== 'stdio')) {
+            void postMcpCheck({ id: row.id, scope: rowScope(row) }).then(
+              (result) => {
+                if (current)
+                  setRequiresAuth(previous => ({ ...previous, [rowKey(row)]: !('error' in result) && result.requiresAuth === true }))
+              },
+              () => {
+                if (current)
+                  setRequiresAuth(previous => ({ ...previous, [rowKey(row)]: false }))
+              },
+            )
+          }
         }
       },
       (error: Error) => {
@@ -111,11 +134,12 @@ export function McpTab({ t }: McpTabProps): ReactElement {
   }
 
   const checkConnectivity = async (row: McpRow): Promise<void> => {
-    setChecking(row.id)
+    setChecking(rowKey(row))
     try {
-      const result = await postMcpCheck({ id: row.id })
+      const result = await postMcpCheck({ id: row.id, scope: rowScope(row) })
       if ('error' in result)
         throw new Error(result.error)
+      setRequiresAuth(previous => ({ ...previous, [rowKey(row)]: result.requiresAuth === true }))
       setToast({
         text: result.ok ? `${t('connectivityOk')}${result.detail ? ` (${result.detail})` : ''}` : `${t('connectivityFailed')}: ${result.detail ?? ''}`,
         ok: result.ok,
@@ -126,6 +150,70 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       setToast({ text: `${t('connectivityFailed')}: ${String(error)}`, ok: false, seq: Date.now() })
     }
     finally { setChecking(null) }
+  }
+
+  const authorize = async (row: McpRow): Promise<void> => {
+    setAuthorizing(rowKey(row))
+    const desktop = 'dshDesktop' in window
+    const browser = desktop ? null : window.open('about:blank', '_blank')
+    if (browser !== null)
+      browser.opener = null
+    try {
+      if (!desktop && browser === null)
+        throw new Error(t('authorizationBrowserBlocked'))
+      const result = await postMcpAuthorize({ id: row.id, scope: rowScope(row) })
+      if (!mounted.current) {
+        browser?.close()
+        return
+      }
+      if ('error' in result)
+        throw new Error(result.error)
+      const url = new URL(result.authorizationUrl)
+      if (url.protocol !== 'https:' || url.username !== '' || url.password !== '')
+        throw new Error(t('authorizationUrlInvalid'))
+      if (desktop)
+        await invoke('open_external_url', { url: url.href })
+      else if (browser !== null)
+        browser.location.href = url.href
+      const deadline = Date.now() + 300_000
+      const poll = async (): Promise<void> => {
+        if (!mounted.current)
+          return
+        try {
+          if (Date.now() >= deadline)
+            throw new Error(t('authorizationTimeout'))
+          const status = await getMcpAuthorize({ query: { attemptId: result.attemptId } })
+          if (!mounted.current)
+            return
+          if (!('status' in status))
+            throw new Error(status.error)
+          if (status.status === 'error')
+            throw new Error(status.error ?? t('authorizationFailed'))
+          if (status.status === 'authorized') {
+            setRequiresAuth(previous => ({ ...previous, [rowKey(row)]: false }))
+            setAuthorizing(null)
+            setToast({ text: t('authorizationRestartNeeded'), ok: true, seq: Date.now() })
+            return
+          }
+          later(() => void poll(), 1_500)
+        }
+        catch (error) {
+          if (!mounted.current)
+            return
+          setAuthorizing(null)
+          setToast({ text: failText(t, error), ok: false, seq: Date.now() })
+        }
+      }
+      if (mounted.current)
+        later(() => void poll(), 1_500)
+    }
+    catch (error) {
+      browser?.close()
+      if (mounted.current) {
+        setAuthorizing(null)
+        setToast({ text: failText(t, error), ok: false, seq: Date.now() })
+      }
+    }
   }
 
   const openCreate = (): void => {
@@ -334,8 +422,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       {servers !== null && servers.length === 0 && <Text size="sm" tone="tertiary">{t('emptyMcp')}</Text>}
       {servers !== null && servers.length > 0 && (
         <Card.List className="grid grid-cols-[repeat(2,minmax(0,1fr))] items-stretch gap-[10px] max-[680px]:grid-cols-[minmax(0,1fr)]">
-          {servers.filter(row => scope === 'all' || (row.layer ?? 'profile') === scope).map(row => (
-            <Card key={row.id} className="mx-0 flex flex-col gap-[8px] px-[14px] py-[12px]">
+          {servers.filter(row => scope === 'all' || rowScope(row) === scope).map(row => (
+            <Card key={rowKey(row)} className="mx-0 flex flex-col gap-[8px] px-[14px] py-[12px]">
               <div className="flex items-center gap-[6px] flex-wrap">
                 <Card.Title className="flex-1 min-w-0 font-semibold [font-family:var(--ds-font-family-code)]" title={row.id}>{row.serverName}</Card.Title>
                 <Tag tone={(row.scope ?? row.layer) === 'global' ? 'info' : 'neutral'}>{(row.scope ?? row.layer) === 'global' ? t('scopeGlobal') : t('scopeProfile')}</Tag>
@@ -349,7 +437,18 @@ export function McpTab({ t }: McpTabProps): ReactElement {
               {globalError !== '' && <Text tone="error">{globalError}</Text>}
               <div className="flex items-center gap-[6px] flex-wrap">
                 <span className="flex-1" />
-                <Button variant="ghost" size="sm" disabled={busy || checking === row.id} onClick={() => void checkConnectivity(row)}>{checking === row.id ? t('checkRunning') : t('checkLabel')}</Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy || checking !== null || authorizing !== null || (row.transport !== 'stdio' && requiresAuth[rowKey(row)] === undefined)}
+                  onClick={() => void (requiresAuth[rowKey(row)] ? authorize(row) : checkConnectivity(row))}
+                >
+                  {authorizing === rowKey(row)
+                    ? t('authorizationRunning')
+                    : checking === rowKey(row) || (row.transport !== 'stdio' && requiresAuth[rowKey(row)] === undefined)
+                      ? t('checkRunning')
+                      : t(requiresAuth[rowKey(row)] ? 'authorizeLabel' : 'checkLabel')}
+                </Button>
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => void doToggle(row)}>{t('toggle')}</Button>
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => openEdit(row)}>{t('edit')}</Button>
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmId(row.id)}>{t('delete')}</Button>

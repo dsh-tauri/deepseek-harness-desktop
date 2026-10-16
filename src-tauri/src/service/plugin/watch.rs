@@ -11,12 +11,13 @@
 //! 的勾选态，这里解析「实际已安装」的插件元信息（名称/版本/描述/仓库地址/
 //! 是否启动加载），供前端做已安装列表展示与后续插件管理。
 
+use crate::service::workflow::instances;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use super::errors::{self, PluginError};
 use super::installed::{installed_name, profile_dir, ProfilePackageJson};
@@ -244,10 +245,12 @@ pub fn list(app_handle: &AppHandle) -> Vec<DshPlugin> {
 /// 同时把监控指纹同步到当前状态，避免紧接着的下一次轮询重复推送同一列表。
 pub fn force_emit(app_handle: &AppHandle) {
     let fp = fingerprint(app_handle);
-    let mut state = STATE.get_or_init(Mutex::default).lock().unwrap();
+    let profile = crate::service::profile::active_profile(app_handle);
+    let mut states = STATE.get_or_init(Mutex::default).lock().unwrap();
+    let state = states.entry(profile).or_default();
     state.pending_fp = None;
     state.last_fp = fp;
-    drop(state);
+    drop(states);
     emit(app_handle);
 }
 
@@ -289,13 +292,21 @@ struct WatchState {
     pending_fp: Option<String>,
 }
 
-static STATE: OnceLock<Mutex<WatchState>> = OnceLock::new();
+static STATE: OnceLock<Mutex<HashMap<String, WatchState>>> = OnceLock::new();
 
 /// 秒级轮询入口（由 scheduler 永久循环调用）：指纹变化且超过防抖窗口时，
 /// 重新解析插件列表并推送 `dsh-plugins-updated` 事件。
 pub fn check_and_emit(app_handle: &AppHandle) {
+    if instances::current_profile().is_none() {
+        for profile in instances::profiles() {
+            instances::scope_sync(profile, || check_and_emit(app_handle));
+        }
+        return;
+    }
     let fp = fingerprint(app_handle);
-    let mut state = STATE.get_or_init(Mutex::default).lock().unwrap();
+    let profile = crate::service::profile::active_profile(app_handle);
+    let mut states = STATE.get_or_init(Mutex::default).lock().unwrap();
+    let state = states.entry(profile).or_default();
 
     if state.last_fp.as_deref() == fp.as_deref() {
         return;
@@ -321,7 +332,7 @@ fn emit(app_handle: &AppHandle) {
         "dsh plugins changed, emitting {} plugin(s) to frontend",
         plugins.len()
     );
-    let _ = app_handle.emit(PLUGINS_UPDATED_EVENT, &plugins);
+    instances::emit(app_handle, PLUGINS_UPDATED_EVENT, &plugins);
 }
 
 #[cfg(test)]

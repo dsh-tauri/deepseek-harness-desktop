@@ -1,18 +1,19 @@
 diff --git a/dist/config-uYUPRhMz.mjs b/dist/config-uYUPRhMz.mjs
-index 8faa393..0b3d58b 100644
+index 8faa3939..abd3a653 100644
 --- a/dist/config-uYUPRhMz.mjs
 +++ b/dist/config-uYUPRhMz.mjs
-@@ -6304,6 +6304,9 @@ async function updateFile(relPath, operation) {
+@@ -6304,6 +6304,10 @@ async function updateFile(relPath, operation) {
  		case "jsr.jsonc":
  		case "deno.json":
  		case "deno.jsonc": return updateManifestFile(relPath, operation);
 +		case "tauri.conf.json": return updateManifestFile(relPath, operation);
 +		case "cargo.toml": return updateCargoToml(relPath, operation);
 +		case "cargo.lock": return updateCargoLock(relPath, operation);
++		case "app.json": return updateExpoAppConfig(relPath, operation);
  		default: return updateTextFile(relPath, operation);
  	}
  }
-@@ -6320,7 +6323,9 @@ async function updateManifestFile(relPath, operation) {
+@@ -6320,7 +6324,9 @@ async function updateManifestFile(relPath, operation) {
  	const { newVersion } = operation.state;
  	let modified = false;
  	const file = await readJsoncFile(relPath, cwd);
@@ -23,7 +24,7 @@ index 8faa393..0b3d58b 100644
  	if (file.data.version == null) return modified;
  	if (file.data.version !== newVersion) {
  		file.modified.push([["version"], newVersion]);
-@@ -6335,6 +6340,71 @@ async function updateManifestFile(relPath, operation) {
+@@ -6335,6 +6341,94 @@ async function updateManifestFile(relPath, operation) {
  	return modified;
  }
  /**
@@ -89,6 +90,29 @@ index 8faa393..0b3d58b 100644
 +			modified = true;
 +		}
 +	}
++	return modified;
++}
++/**
++* Updates app.json: `expo.version` follows the desktop version and
++* `expo.android.versionCode` is incremented by one (Android requires a strictly
++* increasing versionCode; the historical rule is +1 per version change).
++*
++* @returns - `true` if the file was actually modified
++*/
++async function updateExpoAppConfig(relPath, operation) {
++	const { cwd } = operation.options;
++	const { newVersion } = operation.state;
++	let modified = false;
++	const file = await readJsoncFile(relPath, cwd);
++	const expo = file.data?.expo;
++	if (!expo || typeof expo !== "object" || Array.isArray(expo)) return modified;
++	const versionCode = expo.android?.versionCode;
++	if (typeof expo.version !== "string" || !Number.isInteger(versionCode) || versionCode < 1) return modified;
++	if (expo.version === newVersion) return modified;
++	file.modified.push([["expo", "version"], newVersion]);
++	file.modified.push([["expo", "android", "versionCode"], versionCode + 1]);
++	await writeJsoncFile(file);
++	modified = true;
 +	return modified;
 +}
 +/**

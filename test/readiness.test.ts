@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BoundedReloadGate, pollReadiness, SingleFlight, waitForActivityTask } from '../src/store/modules/harness/readiness'
 
 function noWait(): Promise<void> {
@@ -197,6 +197,46 @@ describe('pollReadiness', () => {
 })
 
 describe('waitForActivityTask', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it.each(['resolve', 'reject'] as const)('wakes when a pending task %s before the polling interval ends', async (settlement) => {
+    vi.useFakeTimers()
+    const startedAt = Date.now()
+    const task = Promise.withResolvers<string>()
+    const failure = new Error('plugin installation failed')
+    const settled = vi.fn()
+    const result = waitForActivityTask({
+      task: task.promise,
+      getActivity: () => ({ sequence: 0, reason: 'checking plugins' }),
+      inactivityTimeoutMs: 30_000,
+      absoluteTimeoutMs: 60_000,
+      intervalMs: 1000,
+    }).then(settled, settled)
+
+    await vi.advanceTimersByTimeAsync(10)
+    expect(settled).not.toHaveBeenCalled()
+    if (settlement === 'resolve')
+      task.resolve('installed')
+    else
+      task.reject(failure)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(settled).toHaveBeenCalledTimes(1)
+    if (settlement === 'resolve') {
+      expect(settled.mock.calls[0][0]).toEqual({
+        completed: true,
+        cancelled: false,
+        value: 'installed',
+        reason: 'checking plugins',
+      })
+    }
+    else {
+      expect(settled.mock.calls[0][0]).toBe(failure)
+    }
+    expect(Date.now() - startedAt).toBe(10)
+    await result
+  })
+
   it('allows plugin installation to exceed the old deadline while heartbeats continue', async () => {
     let clock = 0
     let sequence = 0
@@ -220,6 +260,52 @@ describe('waitForActivityTask', () => {
     expect(result.completed).toBe(true)
     expect(result.value).toBe('installed')
     expect(clock).toBe(70)
+  })
+
+  it('keeps cancellation authoritative when a pending task rejects', async () => {
+    let active = true
+    const task = Promise.withResolvers<void>()
+    const result = waitForActivityTask({
+      task: task.promise,
+      getActivity: () => ({ sequence: 0, reason: 'checking plugins' }),
+      inactivityTimeoutMs: 30_000,
+      absoluteTimeoutMs: 60_000,
+      intervalMs: 1000,
+      shouldContinue: () => active,
+      wait: () => new Promise<void>(() => {}),
+    })
+
+    active = false
+    task.reject(new Error('cancelled installation'))
+
+    await expect(result).resolves.toEqual({
+      completed: false,
+      cancelled: true,
+      reason: 'checking plugins',
+    })
+  })
+
+  it('returns an inactivity timeout when a pending task has no heartbeat', async () => {
+    let clock = 0
+    const result = await waitForActivityTask({
+      task: new Promise<never>(() => {}),
+      getActivity: () => ({ sequence: 0, reason: 'checking plugins' }),
+      inactivityTimeoutMs: 30,
+      absoluteTimeoutMs: 100,
+      intervalMs: 10,
+      now: () => clock,
+      wait: async (milliseconds) => {
+        clock += milliseconds
+      },
+    })
+
+    expect(result).toEqual({
+      completed: false,
+      cancelled: false,
+      timeout: 'inactivity',
+      reason: 'checking plugins',
+    })
+    expect(clock).toBe(30)
   })
 
   it('caps a progressing plugin installation at its absolute deadline', async () => {

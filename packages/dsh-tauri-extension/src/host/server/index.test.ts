@@ -9,6 +9,8 @@ import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '.'
 import { resetTestDshHome } from '../../../../.test/test-utils'
+import { mcp } from '../service/mcp'
+import { mcpAuth } from '../service/mcp-auth'
 
 vi.mock('dsh-tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('dsh-tauri')>()
@@ -33,6 +35,8 @@ const EXPECTED_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ['DELETE', `${P}/mcp`],
   ['POST', `${P}/mcp/toggle`],
   ['POST', `${P}/mcp/check`],
+  ['POST', `${P}/mcp/authorize`],
+  ['GET', `${P}/mcp/authorize`],
   ['POST', `${P}/mcp/copy`],
   ['GET', `${P}/import/scan`],
   ['POST', `${P}/import/apply`],
@@ -147,6 +151,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   disposers.splice(0).forEach(dispose => dispose())
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))))
   for (const dir of dirs.splice(0))
@@ -238,6 +243,38 @@ describe('能力管理器路由声明', () => {
     dispose()
   })
 
+  it('授权与检测按作用域读取服务器，授权轮询不泄露令牌', async () => {
+    const { base } = await start()
+    const row = { id: 'figma', serverName: 'figma', transport: 'streamable-http' as const, disabled: false, url: 'https://mcp.example.test/mcp' }
+    const peek = vi.spyOn(mcp, 'peek').mockReturnValue([row])
+    vi.spyOn(mcp, 'check').mockResolvedValue({ ok: false, requiresAuth: true, detail: 'Unauthorized' })
+    const startAuth = vi.spyOn(mcpAuth, 'start').mockResolvedValue({ authorizationUrl: 'https://auth.example.test/authorize', attemptId: 'attempt-1' })
+    vi.spyOn(mcpAuth, 'lookup').mockReturnValue({ status: 'authorized' })
+    const checked = await fetch(`${base}${P}/mcp/check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: row.id, scope: 'global' }) })
+    expect(await checked.json()).toEqual({ ok: false, requiresAuth: true, detail: 'Unauthorized' })
+    const dir = peek.mock.calls[0]?.[0]
+    const authorized = await fetch(`${base}${P}/mcp/authorize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: row.id, scope: 'global' }) })
+    expect(await authorized.json()).toEqual({ authorizationUrl: 'https://auth.example.test/authorize', attemptId: 'attempt-1' })
+    expect(peek.mock.calls[1]?.[0]).toBe(dir)
+    expect(startAuth).toHaveBeenCalledWith(row)
+    const status = await fetch(`${base}${P}/mcp/authorize?attemptId=attempt-1`)
+    expect(await status.json()).toEqual({ status: 'authorized' })
+    const missing = await fetch(`${base}${P}/mcp/authorize`)
+    expect(missing.status).toBe(400)
+  })
+
+  it('拒绝未知授权任务和不存在的 MCP，stdio 不进入 OAuth', async () => {
+    const { base } = await start()
+    const unknown = await fetch(`${base}${P}/mcp/authorize?attemptId=missing`)
+    expect(unknown.status).toBe(404)
+    const absent = await fetch(`${base}${P}/mcp/authorize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'missing' }) })
+    expect(absent.status).toBe(404)
+    vi.spyOn(mcp, 'peek').mockReturnValue([{ id: 'local', serverName: 'local', transport: 'stdio', command: 'test-fixture', disabled: false }])
+    const local = await fetch(`${base}${P}/mcp/authorize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'local' }) })
+    expect(local.status).toBe(400)
+    expect(await local.json()).toEqual({ error: 'only HTTP MCP servers support authorization' })
+  })
+
   it('hMR 在线时 mcp 列表不再要求重启', async () => {
     const harness = createHarness()
     dirs.push(harness.dir)
@@ -258,6 +295,8 @@ describe('能力管理器路由声明', () => {
       ['POST', `${P}/mcp/toggle`, {}, 'id and disabled are required'],
       ['DELETE', `${P}/mcp`, {}, 'id is required'],
       ['POST', `${P}/mcp/check`, {}, 'id is required'],
+      ['POST', `${P}/mcp/authorize`, {}, 'id and valid scope are required'],
+      ['POST', `${P}/mcp/authorize`, { id: 'x', scope: 'elsewhere' }, 'id and valid scope are required'],
       ['POST', `${P}/mcp/copy`, {}, 'id is required'],
       ['DELETE', `${P}/roots`, {}, 'id is required'],
       ['POST', `${P}/roots`, { kind: 'zip' }, 'kind must be local or git'],

@@ -7,5 +7,6 @@ export default defineConfig({
     'src-tauri/Cargo.toml',
     'src-tauri/Cargo.lock',
     'src-tauri/tauri.conf.json',
+    'app.json',
   ],
 })

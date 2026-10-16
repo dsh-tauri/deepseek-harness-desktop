@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use super::preset::{load_deprecated_ids, load_presets, PreinstallPluginInfo};
@@ -103,6 +103,97 @@ pub(crate) fn installed_name(p: &PreinstallPluginInfo) -> &str {
     p.package.as_deref().unwrap_or(p.id.as_str())
 }
 
+pub(super) fn deprecated_installed_names(
+    presets: &[PreinstallPluginInfo],
+    deprecated_ids: &HashSet<String>,
+    core_version: Option<&str>,
+    mut installed: impl FnMut(&str) -> bool,
+    mut installed_version: impl FnMut(&str) -> Option<String>,
+) -> Vec<String> {
+    let mut names: Vec<String> = presets
+        .iter()
+        .filter(|p| {
+            let name = installed_name(p);
+            if !installed(name) {
+                return false;
+            }
+            if !p.internal && deprecated_ids.contains(&p.id) {
+                return true;
+            }
+            matches!(
+                p.version,
+                Some(crate::config::manifest::PluginVersion::Matrix(_))
+            ) && p.retire_on(core_version, installed_version(name).as_deref())
+        })
+        .map(|p| installed_name(p).to_string())
+        .collect();
+    for id in deprecated_ids {
+        if !presets.iter().any(|p| p.id == *id) && installed(id) {
+            names.push(id.clone());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+pub(super) fn deprecated_plugins_at(
+    profile: &Path,
+    manifest: &ProfilePackageJson,
+    presets: &[PreinstallPluginInfo],
+    deprecated_ids: &HashSet<String>,
+    core_version: Option<&str>,
+) -> Result<(Vec<String>, bool), String> {
+    let bundles = manifest.dsh.as_ref().and_then(|dsh| dsh.profile.as_ref());
+    let mut failure = None;
+    let mut known = true;
+    let names = deprecated_installed_names(
+        presets,
+        deprecated_ids,
+        core_version,
+        |name| {
+            if manifest.dependencies.contains_key(name)
+                || bundles.is_some_and(|profile| profile.bundles.iter().any(|id| id == name))
+            {
+                return true;
+            }
+            match std::fs::symlink_metadata(profile.join("node_modules").join(name)) {
+                Ok(_) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => {
+                    failure = Some(format!(
+                        "DEPRECATED_PLUGIN_ENTRY_READ_FAILED: {name}: {error}"
+                    ));
+                    false
+                }
+            }
+        },
+        |name| {
+            let version = std::fs::read_to_string(
+                profile.join("node_modules").join(name).join("package.json"),
+            )
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|manifest| manifest.get("version")?.as_str().map(String::from));
+            known &= presets
+                .iter()
+                .filter(|preset| installed_name(preset) == name)
+                .all(|preset| {
+                    preset.version.as_ref().is_some_and(|range| {
+                        range
+                            .outdated_for_core_generation(core_version, version.as_deref())
+                            .is_some()
+                    })
+                });
+            version
+        },
+    );
+    match failure {
+        Some(error) => Err(error),
+        None => Ok((names, known)),
+    }
+}
+
 /// 预装插件列表（含 installed 状态），前端渲染用
 pub fn list(app_handle: &AppHandle) -> Vec<PreinstallPlugin> {
     let installed = list_installed(app_handle);
@@ -150,7 +241,7 @@ const NPMRC_KEY: &str = "confirmModulesPurge=false";
 ///
 /// 拆出纯路径版便于单元测试（不依赖 AppHandle）；`ensure_profile_npmrc` 仅负责
 /// 把 profile 路径传进来。
-fn ensure_npmrc_at(npmrc_path: &PathBuf) -> Result<(), String> {
+pub(crate) fn ensure_npmrc_at(npmrc_path: &PathBuf) -> Result<(), String> {
     // 读取既有内容（不存在按空处理）
     let existing = match std::fs::read_to_string(npmrc_path) {
         Ok(c) => c,

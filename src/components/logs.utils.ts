@@ -27,7 +27,8 @@ export function formatLogLine(line: string): string {
  * 纯函数：仅依赖字符串输入，便于单元测试。
  */
 export function pickErrorLines(lines: readonly string[]): string[] {
-  const errored = lines.filter(line => ERROR_LINE_MARKERS.test(line)).slice(0, 8)
+  const reports = lines.filter(line => line.startsWith('ERROR HARNESS_FATAL_REPORT: ')).slice(-8)
+  const errored = [...lines.filter(line => ERROR_LINE_MARKERS.test(line) && !line.startsWith('ERROR HARNESS_FATAL_REPORT: ')).slice(0, 8 - reports.length), ...reports]
   return errored.length > 0 ? errored : lines.slice(-8)
 }
 

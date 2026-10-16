@@ -54,11 +54,63 @@ beforeEach(async () => {
   await mountIframe({ serviceHealthy: false, iframeLoaded: true, iframeError: true })
 })
 
-afterEach(() => {
+afterEach(async () => {
+  harness.serviceHealthy = false
+  await vi.advanceTimersByTimeAsync(0)
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('iframe dsh document watchdog', () => {
+  it('logs arm, load rearm and expiry once with the current recovery flags', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await mountIframe({ iframeKey: 1077 })
+    const context = {
+      status: 'ready',
+      serviceRunning: true,
+      serviceHealthy: true,
+      iframeKey: 1077,
+      iframeAlive: false,
+      iframeLoaded: false,
+      iframeError: false,
+    }
+    expect(warn).toHaveBeenCalledWith('[Harness] iframe watchdog armed', { ...context, timeoutMs: 20000 })
+    harness.startupReason = 'unrelated activity'
+    await vi.advanceTimersByTimeAsync(0)
+    expect(warn).toHaveBeenCalledTimes(1)
+
+    harness.markIframeLoaded()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(warn).toHaveBeenLastCalledWith('[Harness] iframe watchdog armed', { ...context, iframeLoaded: true, timeoutMs: 5000 })
+    expect(warn).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(harness.iframeError).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(warn).toHaveBeenLastCalledWith('[Harness] iframe watchdog expired', { ...context, iframeLoaded: true, timeoutMs: 5000 })
+    expect(harness.showIframeError).toBe(true)
+    expect(warn).toHaveBeenCalledTimes(3)
+  })
+
+  it.each(['alive', 'unhealthy', 'error'] as const)('logs cancellation when the frame becomes %s without changing the deadline', async (reason) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await mountIframe()
+    if (reason === 'alive')
+      harness.markIframeAlive()
+    else if (reason === 'unhealthy')
+      harness.serviceHealthy = false
+    else
+      harness.fail('startup failure', undefined, undefined, undefined, true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(warn).toHaveBeenLastCalledWith('[Harness] iframe watchdog cancelled', expect.objectContaining({
+      status: reason === 'error' ? 'error' : 'ready',
+      serviceHealthy: reason !== 'unhealthy',
+      iframeAlive: reason === 'alive',
+    }))
+    expect(warn).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(harness.iframeError).toBe(false)
+  })
+
   // issue #705：浏览器内部错误页（代理拦截、DNS 失败等）同样触发 iframe 的 load，
   // 只按 load 判定就会把它当成加载成功，用户看不到任何重试入口。
   it('shows the retryable error screen when the frame commits a document but never reports a dsh page', async () => {
