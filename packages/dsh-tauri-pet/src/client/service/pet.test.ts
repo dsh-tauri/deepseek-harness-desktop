@@ -15,8 +15,11 @@ import {
   loadPetStatus,
   openCommunityShare,
   resizePet,
+  setPetDragProbability,
   toggleForceXwayland,
   togglePet,
+  togglePetAutonomy,
+  togglePetInteraction,
   togglePetThrow,
 } from './pet'
 
@@ -80,6 +83,15 @@ afterEach(() => {
 })
 
 describe('pet service native command contracts', () => {
+  it('keeps interaction selections unchanged when native persistence fails', async () => {
+    const previous = { ...status, resize_enabled: false, move_enabled: true }
+    store.pet.setStatus(previous)
+    invoke.mockRejectedValue(new Error('save failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await togglePetInteraction({ kind: 'move', enabled: false })).toEqual({ ok: false, error: 'save failed' })
+    expect(store.pet.status).toEqual(previous)
+  })
+
   it('catalog loads all four native queries and commits their exact lists', async () => {
     const chat = [{ id: 'chat-a', name: 'Chat', source: 'chat' }]
     const codex = [{ id: 'codex-a', name: 'Codex', source: 'codex' }]
@@ -114,6 +126,9 @@ describe('pet service native command contracts', () => {
     { action: () => choosePet({ id: 'chosen' }), call: ['set_active_pet', { id: 'chosen' }] },
     { action: () => togglePet({ enabled: false }), call: ['set_pet_enabled', { enabled: false }] },
     { action: () => resizePet({ size: 160 }), call: ['set_pet_size', { size: 160 }] },
+    { action: () => togglePetAutonomy({ enabled: true }), call: ['set_pet_autonomy_enabled', { enabled: true }] },
+    { action: () => togglePetInteraction({ kind: 'resize', enabled: false }), call: ['set_pet_interaction_enabled', { kind: 'resize', enabled: false }] },
+    { action: () => togglePetInteraction({ kind: 'move', enabled: true }), call: ['set_pet_interaction_enabled', { kind: 'move', enabled: true }] },
     { action: () => togglePetThrow({ enabled: true }), call: ['set_pet_throw_enabled', { enabled: true }] },
   ])('status action forwards $call and stores the authoritative result', async ({ action, call }) => {
     invoke.mockResolvedValue(status)
@@ -289,5 +304,31 @@ describe('pet session action contracts', () => {
     expect(await createPetSession({ adapter: client })).toEqual({ ok: false, error: 'connect refused' })
     expect(log).toHaveBeenCalledExactlyOnceWith('[dsh-tauri-pet] create pet session failed:', error)
     expect(client.sessions.open).not.toHaveBeenCalled()
+  })
+})
+
+describe('pet drag probability', () => {
+  it.each([0, 25, 100])('persists %s percent through the native command and commits the returned status', async (probability) => {
+    const updated = { ...status, drag_probability: probability }
+    invoke.mockResolvedValue(updated)
+    expect(await setPetDragProbability({ probability })).toEqual({ ok: true })
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('set_pet_drag_probability', { probability })
+    expect(store.pet.$state.status).toEqual(updated)
+  })
+
+  it.each([-1, 101, 12.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid probability %s before invoking native code', async (probability) => {
+    store.pet.setStatus(status)
+    expect(await setPetDragProbability({ probability })).toEqual({ ok: false, error: 'PET_DRAG_PROBABILITY_OUT_OF_RANGE: expected 0..=100' })
+    expect(invoke).not.toHaveBeenCalled()
+    expect(store.pet.$state.status).toEqual(status)
+  })
+
+  it('preserves the saved probability when native persistence fails', async () => {
+    const previous = { ...status, drag_probability: 30 }
+    store.pet.setStatus(previous)
+    invoke.mockRejectedValue(new Error('store unavailable'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await setPetDragProbability({ probability: 80 })).toEqual({ ok: false, error: 'store unavailable' })
+    expect(store.pet.$state.status).toEqual(previous)
   })
 })

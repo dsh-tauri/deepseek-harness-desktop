@@ -1057,6 +1057,7 @@ dependencies = [
  "log",
  "objc2-app-kit",
  "objc2-foundation",
+ "rand 0.9.5",
  "rayon",
  "rdev",
  "regex",

@@ -1621,6 +1621,10 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::set_active_pet,
         crate::bridge::set_pet_size,
         crate::bridge::set_pet_throw_enabled,
+        crate::bridge::set_pet_autonomy_enabled,
+        crate::bridge::set_pet_interaction_enabled,
+        crate::bridge::set_pet_drag_probability,
+        crate::desktop::pet_autonomy::step_pet_autonomy,
         crate::bridge::push_pet_session,
         crate::bridge::move_pet_window,
         crate::bridge::persist_pet_window_position,
@@ -1667,6 +1671,9 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
 
     let builder = builder
         .manage(crate::desktop::pet_mouse::PetMouseStreamState::default())
+        .manage(std::sync::Mutex::new(
+            crate::desktop::pet_autonomy::PetAutonomy::default(),
+        ))
         .setup(|app| {
             let app_handle = app.handle().clone();
             crate::desktop::autostart::init(&app_handle)?;
