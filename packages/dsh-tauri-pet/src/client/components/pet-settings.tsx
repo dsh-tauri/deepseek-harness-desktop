@@ -527,7 +527,7 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
                 className="w-full accent-brand cursor-pointer"
                 min={0}
                 max={100}
-                step={5}
+                step={1}
                 value={probability}
                 aria-valuetext={`${probability}%`}
                 disabled={busy}

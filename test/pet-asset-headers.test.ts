@@ -106,7 +106,8 @@ describe('pet asset headers contract', () => {
 
   it('reports pet asset failures instead of swallowing them', () => {
     const source = readFileSync(new URL('../src/pet/app.tsx', import.meta.url), 'utf8')
-    expect(source).toContain('onError={reportPetAssetError}')
-    expect(source).toMatch(/reportPetIssue\('asset'/)
+    expect(source).toContain('onError={autonomy.onError}')
+    const autonomy = readFileSync(new URL('../src/pet/hooks/use-pet-autonomy.ts', import.meta.url), 'utf8')
+    expect(autonomy).toMatch(/reportPetIssue\('asset', error\)/)
   })
 })

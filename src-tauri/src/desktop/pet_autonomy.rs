@@ -331,7 +331,7 @@ impl PetAutonomy {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn step_pet_autonomy(
     window: WebviewWindow,
     state: tauri::State<'_, Mutex<PetAutonomy>>,
@@ -456,6 +456,29 @@ mod windows {
         }
     }
 
+    fn foreground_blocks_interaction(handle: HWND, monitor: Rect) -> bool {
+        unsafe {
+            if handle.is_null() || handle == GetShellWindow() || handle == GetDesktopWindow() {
+                return false;
+            }
+            let mut class = [0u16; 256];
+            let length = GetClassNameW(handle, class.as_mut_ptr(), class.len() as i32);
+            if length == 0 {
+                return false;
+            }
+            let class = String::from_utf16_lossy(&class[..length as usize]);
+            if class == "WorkerW" || class == "Progman" {
+                return false;
+            }
+            if IsZoomed(handle) != 0
+                && GetWindowLongW(handle, GWL_STYLE) as u32 & WS_CAPTION == WS_CAPTION
+            {
+                return false;
+            }
+        }
+        rect(handle).is_some_and(|bounds| bounds.contains(monitor))
+    }
+
     fn exposed(handle: HWND, edge: Edge) -> bool {
         unsafe {
             GetAncestor(
@@ -557,12 +580,13 @@ mod windows {
                 desired.right - desired.left,
                 desired.bottom - desired.top,
                 SWP_NOACTIVATE
+                    | SWP_ASYNCWINDOWPOS
                     | SWP_NOZORDER
                     | SWP_NOOWNERZORDER
                     | if same_size { SWP_NOSIZE } else { 0 },
             )
         };
-        if result == 0 || rect(handle) != Some(desired) {
+        if result == 0 {
             return Err("PET_AUTONOMY_TARGET_CHANGE_FAILED: target rejected interaction".into());
         }
         Ok(desired)
@@ -617,6 +641,60 @@ mod windows {
                 return 0;
             }
             DefWindowProcW(handle, message, wparam, lparam)
+        }
+
+        #[test]
+        fn native_window_move_does_not_wait_for_a_stalled_target_thread() {
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+            let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let fixture = fixture(WS_OVERLAPPEDWINDOW);
+                ready_tx
+                    .send((fixture.0 as usize, rect(fixture.0).unwrap()))
+                    .unwrap();
+                let _ = resume_rx.recv_timeout(Duration::from_secs(2));
+                let mut message = MSG::default();
+                unsafe {
+                    while PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                        TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    }
+                }
+                rect(fixture.0).unwrap()
+            });
+            let (handle, before) = ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let desired = before.shifted(30, 0);
+            let started = Instant::now();
+            let result = change_target(handle as HWND, before, desired, 1.0);
+            let elapsed = started.elapsed();
+            let _ = resume_tx.send(());
+            let actual = worker.join().unwrap();
+            assert_eq!(result.unwrap(), desired);
+            assert_eq!(actual, desired);
+            assert!(
+                elapsed < Duration::from_secs(1),
+                "target thread blocked for {elapsed:?}"
+            );
+        }
+
+        #[test]
+        fn native_fullscreen_guard_ignores_shell_and_maximized_framed_windows() {
+            let fixture = fixture(WS_OVERLAPPEDWINDOW);
+            let bounds = rect(fixture.0).unwrap();
+            assert!(foreground_blocks_interaction(fixture.0, bounds));
+            unsafe {
+                assert!(!foreground_blocks_interaction(GetShellWindow(), bounds));
+                assert!(!foreground_blocks_interaction(GetDesktopWindow(), bounds));
+                SetWindowLongW(
+                    fixture.0,
+                    GWL_STYLE,
+                    (WS_OVERLAPPEDWINDOW | WS_MAXIMIZE) as i32,
+                );
+                assert_ne!(IsZoomed(fixture.0), 0);
+                assert!(!foreground_blocks_interaction(fixture.0, bounds));
+                SetWindowLongW(fixture.0, GWL_STYLE, (WS_POPUP | WS_MAXIMIZE) as i32);
+                assert!(foreground_blocks_interaction(fixture.0, bounds));
+            }
         }
 
         #[test]
@@ -809,18 +887,19 @@ mod windows {
             right: work.position.x + work.size.width as i32,
             bottom: work.position.y + work.size.height as i32,
         };
-        if let Some(foreground) = rect(unsafe { GetForegroundWindow() }) {
-            let p = monitor.position();
-            let size = monitor.size();
-            if foreground.contains(Rect {
+        let p = monitor.position();
+        let size = monitor.size();
+        if foreground_blocks_interaction(
+            unsafe { GetForegroundWindow() },
+            Rect {
                 left: p.x,
                 top: p.y,
                 right: p.x + size.width as i32,
                 bottom: p.y + size.height as i32,
-            }) {
-                state.rest(now, 6);
-                return Ok(());
-            }
+            },
+        ) {
+            state.rest(now, 6);
+            return Ok(());
         }
         let elapsed = state
             .last_tick

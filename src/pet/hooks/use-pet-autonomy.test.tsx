@@ -46,6 +46,15 @@ afterEach(() => {
 })
 
 describe('autonomous pet polling', () => {
+  it('reports asset failures even when window interactions are disabled', () => {
+    const { source, controlled } = fixture()
+    const { result, unmount } = renderHook(() => usePetAutonomy(controlled, false, () => false, source))
+    const failure = new Error('missing idle video')
+    act(() => result.current.onError(failure))
+    expect(report).toHaveBeenCalledExactlyOnceWith('asset', failure)
+    unmount()
+  })
+
   it('sends actual body bounds and pauses when grabbed or flying', async () => {
     let busy = false
     const { unmount } = renderHook(() => usePetAutonomy(pet, true, () => busy))

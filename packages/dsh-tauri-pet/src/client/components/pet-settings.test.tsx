@@ -538,6 +538,18 @@ describe('autonomous window interaction', () => {
 })
 
 describe('drag probability slider', () => {
+  it('keeps a saved integer probability valid and unchanged when blurred', async () => {
+    store.pet.setStatus({ active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: true, drag_probability: 33 })
+    await mount()
+    expect(slider().value).toBe('33')
+    expect(slider().validity.stepMismatch).toBe(false)
+    expect(container.querySelector('output')?.textContent).toBe('33%')
+    await act(async () => {
+      slider().dispatchEvent(new Event('focusout', { bubbles: true }))
+    })
+    expect(petService.setPetDragProbability).not.toHaveBeenCalled()
+  })
+
   function slider(): HTMLInputElement {
     const result = container.querySelector<HTMLInputElement>('input[type="range"][max="100"]')
     if (!result)

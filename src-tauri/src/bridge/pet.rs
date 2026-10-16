@@ -338,7 +338,7 @@ pub fn set_pet_size(app: AppHandle, size: f64) -> Result<PetStatus, String> {
     Ok(status)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_pet_drag_probability(app: AppHandle, probability: u8) -> Result<PetStatus, String> {
     if probability > 100 {
         return Err("PET_DRAG_PROBABILITY_OUT_OF_RANGE: expected 0..=100".into());
@@ -358,7 +358,7 @@ pub fn set_pet_drag_probability(app: AppHandle, probability: u8) -> Result<PetSt
     Ok(status)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_pet_autonomy_enabled(app: AppHandle, enabled: bool) -> Result<PetStatus, String> {
     if enabled && !cfg!(windows) {
         return Err("PET_AUTONOMY_UNSUPPORTED: Windows required".into());
@@ -382,7 +382,7 @@ pub enum PetInteractionKind {
     Move,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_pet_interaction_enabled(
     app: AppHandle,
     kind: PetInteractionKind,
