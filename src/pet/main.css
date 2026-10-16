@@ -3,6 +3,10 @@
 @config "../../tailwind.config.js";
 @import "@heroui/styles";
 
+.pet-interacting .dsh-pet__visual {
+  translate: var(--pet-interaction-x, 0px) var(--pet-interaction-y, 0px);
+}
+
 /* 桌宠窗口 toast 微调（仅本 webview 生效）：
    - 整体下移一点，避免贴顶挤占宠物视野；
    - 宽度收窄约 10%（toast.css 默认 w-[calc(100vw-2rem)]）。 */

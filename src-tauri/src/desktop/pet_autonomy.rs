@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, WebviewWindow};
@@ -249,11 +249,83 @@ pub struct PetAutonomy {
     target: Option<Target>,
     last_tick: Option<Instant>,
     next_search: Option<Instant>,
+    frame: Option<InteractionFrame>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct InteractionFrame {
+    action: &'static str,
+    direction: &'static str,
+    edge: &'static str,
+    contact: Option<ContactPoint>,
+}
+
+#[derive(Clone, Serialize)]
+struct ContactPoint {
+    x: f64,
+    y: f64,
+}
+
+fn interaction_frame(target: &Target, walking: bool, delta: (i32, i32)) -> InteractionFrame {
+    let edge = match (target.edge.dx, target.edge.dy) {
+        (-1, 0) => "left",
+        (1, 0) => "right",
+        (0, -1) => "top",
+        _ => "bottom",
+    };
+    let (dx, dy) = if walking {
+        delta
+    } else {
+        (-target.edge.dx, -target.edge.dy)
+    };
+    let direction = if dx.abs() >= dy.abs() && dx != 0 {
+        if dx < 0 {
+            "left"
+        } else {
+            "right"
+        }
+    } else if dy < 0 {
+        "up"
+    } else {
+        "down"
+    };
+    let action = if walking {
+        "walk"
+    } else {
+        match target.interaction.map(|item| item.action) {
+            Some(Action::Squeeze) => "squeeze",
+            Some(Action::Stretch) => "stretch",
+            _ => "move",
+        }
+    };
+    let contact = (!walking).then(|| {
+        let x = match target.edge.dx {
+            -1 => target.rect.left,
+            1 => target.rect.right,
+            _ => target.edge.contact_x,
+        };
+        let y = match target.edge.dy {
+            -1 => target.rect.top,
+            1 => target.rect.bottom,
+            _ => target.edge.contact_y,
+        };
+        ContactPoint {
+            x: f64::from(x - target.pet_position.0) / target.scale,
+            y: f64::from(y - target.pet_position.1) / target.scale,
+        }
+    });
+    InteractionFrame {
+        action,
+        direction,
+        edge,
+        contact,
+    }
 }
 
 impl PetAutonomy {
     pub(crate) fn rest(&mut self, now: Instant, seconds: u64) {
         self.target = None;
+        self.frame = None;
         self.last_tick = Some(now);
         self.next_search = Some(now + Duration::from_secs(seconds));
     }
@@ -265,7 +337,7 @@ pub fn step_pet_autonomy(
     state: tauri::State<'_, Mutex<PetAutonomy>>,
     body: Option<PetBody>,
     paused: bool,
-) -> Result<(), String> {
+) -> Result<Option<InteractionFrame>, String> {
     if window.label() != super::pet::PET_WINDOW_LABEL {
         return Err("PET_AUTONOMY_CALLER_FORBIDDEN: pet window required".into());
     }
@@ -281,7 +353,7 @@ pub fn step_pet_autonomy(
         || !window.is_visible().unwrap_or(false)
     {
         state.rest(now, 6);
-        return Ok(());
+        return Ok(None);
     }
     #[cfg(windows)]
     {
@@ -310,12 +382,12 @@ pub fn step_pet_autonomy(
         if result.is_err() {
             state.rest(now, 20);
         }
-        result
+        result.map(|()| state.frame.clone())
     }
     #[cfg(not(windows))]
     {
         state.rest(now, 20);
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -804,6 +876,7 @@ mod windows {
         let dx = target.edge.x - body.left;
         let dy = target.edge.y - body.top;
         let length = f64::from(dx).hypot(f64::from(dy));
+        let walking = length > 1.0;
         let (x, y) = if length > 1.0 {
             let step = (100.0 * scale * elapsed.min(0.1)).max(1.0).min(length);
             (
@@ -862,6 +935,7 @@ mod windows {
             .set_position(tauri::PhysicalPosition::new(next.0, next.1))
             .map_err(|e| format!("PET_AUTONOMY_MOVE_FAILED: {e}"))?;
         target.pet_position = next;
+        state.frame = Some(interaction_frame(&target, walking, (dx, dy)));
         if target
             .interaction
             .is_some_and(|action| action.remaining == 0)
@@ -896,6 +970,66 @@ mod tests {
         right: 280,
         bottom: 380,
     };
+
+    #[test]
+    fn animation_frames_distinguish_actions_and_convert_contact_to_logical_coordinates() {
+        let mut target = Target {
+            handle: 1,
+            pid: 1,
+            rect: WINDOW,
+            edge: edges(BODY, WINDOW, AREA)[0],
+            interaction: None,
+            pull_decision: PullDecision::default(),
+            area: AREA,
+            body: BODY,
+            scale: 2.0,
+            pet_position: (200, 260),
+        };
+        for (delta, direction) in [
+            ((-10, 1), "left"),
+            ((10, 1), "right"),
+            ((1, -10), "up"),
+            ((1, 10), "down"),
+        ] {
+            let frame = interaction_frame(&target, true, delta);
+            assert_eq!(
+                serde_json::to_value(frame).unwrap(),
+                serde_json::json!({"action":"walk", "direction":direction, "edge":"left", "contact":null})
+            );
+        }
+        for (action, name) in [
+            (Action::Squeeze, "squeeze"),
+            (Action::Stretch, "stretch"),
+            (Action::Move, "move"),
+        ] {
+            target.interaction = Some(Interaction {
+                action,
+                remaining: 10,
+            });
+            let frame = interaction_frame(&target, false, (0, 0));
+            assert_eq!(
+                serde_json::to_value(frame).unwrap(),
+                serde_json::json!({"action":name, "direction":"right", "edge":"left", "contact":{"x":100.0,"y":40.0}})
+            );
+        }
+        for (edge, direction, x, y) in [
+            (1, "left", 420.0, 40.0),
+            (2, "down", 120.0, -30.0),
+            (3, "up", 120.0, 210.0),
+        ] {
+            target.edge = edges(BODY, WINDOW, AREA)[edge];
+            let frame = interaction_frame(&target, false, (0, 0));
+            assert_eq!(frame.direction, direction);
+            let contact = frame.contact.unwrap();
+            assert_eq!((contact.x, contact.y), (x, y));
+        }
+        let mut state = PetAutonomy {
+            frame: Some(interaction_frame(&target, false, (0, 0))),
+            ..Default::default()
+        };
+        state.rest(Instant::now(), 6);
+        assert!(state.frame.is_none());
+    }
 
     #[test]
     fn movement_preserves_size_in_all_four_directions() {
