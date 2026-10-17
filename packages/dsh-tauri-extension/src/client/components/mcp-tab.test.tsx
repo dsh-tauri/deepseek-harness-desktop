@@ -2,19 +2,35 @@
 import type { ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { getMcp, getMcpAuthorize, postMcpAuthorize, postMcpCheck } from '../apis'
+import { deleteMcp, getMcp, getMcpAuthorize, postMcp, postMcpAuthorize, postMcpCheck, postMcpToggle } from '../apis'
 import { McpTab } from './mcp-tab'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../apis', () => ({
+  deleteMcp: vi.fn(),
   getMcp: vi.fn(),
+  postMcp: vi.fn(),
   postMcpCheck: vi.fn(),
   postMcpAuthorize: vi.fn(),
+  postMcpToggle: vi.fn(),
   getMcpAuthorize: vi.fn(),
 }))
-vi.mock('dsh-tauri/client', () => ({ compact: (items: unknown[]) => items.filter(Boolean), invoke }))
+vi.mock('dsh-tauri/client', () => ({
+  compact: (items: unknown[]) => items.filter(Boolean),
+  isEmpty: (value: object) => Object.keys(value).length === 0,
+  omitBy: (value: Record<string, unknown>, reject: (entry: unknown) => boolean) =>
+    Object.fromEntries(Object.entries(value).filter(([, entry]) => !reject(entry))),
+  invoke,
+}))
 vi.mock('../service/restart', () => ({ restartHost: vi.fn() }))
-vi.mock('./mcp-editor-form', () => ({ McpEditorForm: () => null }))
+vi.mock('./mcp-editor-form', () => ({
+  McpEditorForm: ({ onSave, onPasteJsonChange }: { onSave: () => void, onPasteJsonChange: (text: string) => void }) => (
+    <>
+      <button onClick={onSave}>editorSave</button>
+      <button onClick={() => onPasteJsonChange('{"mcpServers":{"fresh":{"command":"node","args":["-v"]}}}')}>editorPaste</button>
+    </>
+  ),
+}))
 vi.mock('./mcp-import-dialog', () => ({ McpImportDialog: () => null }))
 vi.mock('dsh-tauri-ui/client', () => {
   const Content = ({ children }: { children?: ReactNode }) => <div>{children}</div>
@@ -25,7 +41,14 @@ vi.mock('dsh-tauri-ui/client', () => {
     Button: ({ children, disabled, onClick }: { children?: ReactNode, disabled?: boolean, onClick?: () => void }) => <button disabled={disabled} onClick={onClick}>{children}</button>,
     Card: Object.assign(({ children }: { children?: ReactNode }) => <article>{children}</article>, { List: Content, Title: Content, Description: Content }),
     Icon: Empty,
-    Modal: Empty,
+    Modal: ({ open, description, children, footer }: { open: boolean, description?: string, children?: ReactNode, footer?: ReactNode }) => open
+      ? (
+          <div data-testid="modal" data-description={description}>
+            {children}
+            {footer}
+          </div>
+        )
+      : null,
     PlugConnection: Empty,
     Select: Empty,
     Tag: Content,
@@ -43,6 +66,9 @@ beforeEach(() => {
   vi.mocked(postMcpCheck).mockResolvedValue({ ok: false, detail: 'authorization required', requiresAuth: true })
   vi.mocked(postMcpAuthorize).mockResolvedValue({ authorizationUrl: 'https://auth.example.test/authorize', attemptId: 'attempt-1' })
   vi.mocked(getMcpAuthorize).mockResolvedValue({ status: 'pending' })
+  vi.mocked(postMcpToggle).mockResolvedValue({ ok: true, restartNeeded: false })
+  vi.mocked(deleteMcp).mockResolvedValue({ ok: true, restartNeeded: false })
+  vi.mocked(postMcp).mockResolvedValue({ ok: true, id: 'same', restartNeeded: false })
   invoke.mockResolvedValue(undefined)
   Object.defineProperty(window, 'dshDesktop', { configurable: true, value: {} })
 })
@@ -174,4 +200,51 @@ it('cancels pending authorization polling when the component unmounts', async ()
   view.unmount()
   await act(() => vi.advanceTimersByTimeAsync(10_000))
   expect(getMcpAuthorize).not.toHaveBeenCalled()
+})
+
+it('toggles a global row with its own scope instead of the default profile scope', async () => {
+  vi.mocked(getMcp).mockResolvedValue({ servers: [
+    { id: 'global-local', serverName: 'global local', transport: 'stdio', command: 'node', args: ['-v'], disabled: false, scope: 'global' },
+  ], restartNeeded: false })
+  render(<McpTab t={t} />)
+  const card = (await screen.findAllByRole('article'))[0]
+  fireEvent.click(within(card).getByRole('button', { name: 'toggle' }))
+  await waitFor(() => expect(postMcpToggle).toHaveBeenCalledWith({ id: 'global-local', disabled: true, scope: 'global' }))
+  expect(screen.getByRole('status').textContent).toBe('mcpApplied')
+})
+
+it('deletes a global row with its own scope so the confirmation targets the confirmed row', async () => {
+  vi.mocked(getMcp).mockResolvedValue({ servers: [
+    { id: 'global-local', serverName: 'global local', transport: 'stdio', command: 'node', args: ['-v'], disabled: false, scope: 'global' },
+  ], restartNeeded: false })
+  render(<McpTab t={t} />)
+  const card = (await screen.findAllByRole('article'))[0]
+  fireEvent.click(within(card).getByRole('button', { name: 'delete' }))
+  const modal = await screen.findByTestId('modal')
+  expect(modal.dataset.description).toBe('global-local')
+  fireEvent.click(within(modal).getByRole('button', { name: 'delete' }))
+  await waitFor(() => expect(deleteMcp).toHaveBeenCalledWith({ id: 'global-local', scope: 'global' }))
+  expect(screen.getByRole('status').textContent).toBe('mcpApplied')
+})
+
+it('saves an edited global row back to the global layer', async () => {
+  vi.mocked(getMcp).mockResolvedValue({ servers: [
+    { id: 'global-local', serverName: 'global local', transport: 'stdio', command: 'node', args: ['-v'], disabled: false, scope: 'global' },
+  ], restartNeeded: false })
+  render(<McpTab t={t} />)
+  const card = (await screen.findAllByRole('article'))[0]
+  fireEvent.click(within(card).getByRole('button', { name: 'edit' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'editorSave' }))
+  await waitFor(() => expect(postMcp).toHaveBeenCalledWith({ id: 'global-local', scope: 'global', serverName: 'global local', transport: 'stdio', command: 'node', args: ['-v'], env: {} }))
+  expect(screen.getByRole('status').textContent).toBe('mcpApplied')
+})
+
+it('creates a new server in the profile layer through the pasted JSON path', async () => {
+  render(<McpTab t={t} />)
+  await screen.findAllByRole('article')
+  fireEvent.click(screen.getByRole('button', { name: 'addServer' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'editorPaste' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'editorSave' }))
+  await waitFor(() => expect(postMcp).toHaveBeenCalledWith({ id: '', scope: 'profile', serverName: 'fresh', transport: 'stdio', command: 'node', args: ['-v'], env: {} }))
+  expect(screen.getByRole('status').textContent).toBe('mcpApplied')
 })

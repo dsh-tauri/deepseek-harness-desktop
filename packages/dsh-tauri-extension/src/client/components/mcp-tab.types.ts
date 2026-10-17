@@ -5,6 +5,7 @@ export type McpEditorMode = 'json' | 'form'
 
 export interface McpEditorState {
   id: string
+  scope: 'global' | 'profile'
   serverName: string
   transport: 'stdio' | 'streamable-http'
   command: string

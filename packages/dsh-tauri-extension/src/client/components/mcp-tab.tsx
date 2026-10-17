@@ -26,7 +26,7 @@ function rowKey(row: McpRow): string {
 export function McpTab({ t }: McpTabProps): ReactElement {
   const [servers, setServers] = useState<McpRow[] | null>(null)
   const [editor, setEditor] = useState<McpEditorState | null>(null)
-  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [confirmRow, setConfirmRow] = useState<McpRow | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [importItems, setImportItems] = useState<McpImportItem[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -221,7 +221,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setPasteError(null)
     setPasteJson('')
     setEditorMode('json')
-    setEditor({ id: '', serverName: '', transport: 'stdio', command: '', args: '', env: '', url: '', headers: '' })
+    setEditor({ id: '', scope: 'profile', serverName: '', transport: 'stdio', command: '', args: '', env: '', url: '', headers: '' })
   }
 
   const openEdit = (row: McpRow): void => {
@@ -231,6 +231,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setEditorMode('form')
     setEditor({
       id: row.id,
+      scope: rowScope(row),
       serverName: row.serverName,
       transport: row.transport,
       command: row.command ?? '',
@@ -286,6 +287,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       }
       input = {
         id: editor.id,
+        scope: editor.scope,
         serverName: parsed.serverName?.trim() ?? '',
         transport: parsed.transport,
         ...(parsed.transport === 'stdio'
@@ -296,6 +298,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     else {
       input = {
         id: editor.id,
+        scope: editor.scope,
         serverName: editor.serverName.trim(),
         transport: editor.transport,
         ...(editor.transport === 'stdio'
@@ -332,7 +335,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
   const doToggle = async (row: McpRow): Promise<void> => {
     setBusy(true)
     try {
-      const body = await postMcpToggle({ id: row.id, disabled: !row.disabled })
+      const body = await postMcpToggle({ id: row.id, disabled: !row.disabled, scope: rowScope(row) })
       if ('error' in body)
         throw new Error(body.error)
       setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
@@ -347,11 +350,11 @@ export function McpTab({ t }: McpTabProps): ReactElement {
   }
 
   const doRemove = async (): Promise<void> => {
-    if (confirmId === null)
+    if (confirmRow === null)
       return
     setBusy(true)
     try {
-      const body = await deleteMcp({ id: confirmId })
+      const body = await deleteMcp({ id: confirmRow.id, scope: rowScope(confirmRow) })
       if ('error' in body)
         throw new Error(body.error)
       setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
@@ -362,7 +365,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     }
     finally {
       setBusy(false)
-      setConfirmId(null)
+      setConfirmRow(null)
     }
   }
 
@@ -451,7 +454,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
                 </Button>
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => void doToggle(row)}>{t('toggle')}</Button>
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => openEdit(row)}>{t('edit')}</Button>
-                <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmId(row.id)}>{t('delete')}</Button>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmRow(row)}>{t('delete')}</Button>
               </div>
             </Card>
           ))}
@@ -486,14 +489,14 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       </Modal>
 
       <Modal
-        open={confirmId !== null}
-        onClose={() => setConfirmId(null)}
+        open={confirmRow !== null}
+        onClose={() => setConfirmRow(null)}
         closeLabel={t('close')}
         title={t('confirmRemove')}
-        description={confirmId ?? undefined}
+        description={confirmRow?.id}
         footer={(
           <>
-            <Button variant="ghost" onClick={() => setConfirmId(null)}>{t('cancel')}</Button>
+            <Button variant="ghost" onClick={() => setConfirmRow(null)}>{t('cancel')}</Button>
             <Button variant="primary" disabled={busy} onClick={() => void doRemove()}>{t('delete')}</Button>
           </>
         )}
