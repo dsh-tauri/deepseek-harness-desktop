@@ -121,7 +121,7 @@ export function usePetPhysics(pet: PetRef, kind: 'dsh' | 'codex' | undefined, th
     rafRef.current?.pause()
   }
 
-  return { onFling, onGrab, onRelease }
+  return { onFling, onGrab, onRelease, isBusy: () => pressedRef.current || flightRef.current !== null }
 
   /**
    * 抓住宠物（命中箱上的左键按下）：立刻刹车 + 清空轨迹。
@@ -233,6 +233,7 @@ interface MouseButtonState {
 
 /** 甩动控制的出口：`onFling` 接组件回吐的甩出请求，`onGrab`/`onRelease` 接命中箱上的抓取与松开。 */
 export interface PetPhysicsControls {
+  isBusy: () => boolean
   /** 组件校验后的甩出请求（接到 `<Pet onFling>`）。 */
   onFling: (event: PetPhysicsEvent) => void
   /**

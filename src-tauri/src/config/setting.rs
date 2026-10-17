@@ -87,6 +87,14 @@ pub struct Setting {
     /// 需要该效果的用户显式开启。拖拽本身不受此字段影响。
     #[serde(default)]
     pub throw_enabled: bool,
+    #[serde(default)]
+    pub pet_autonomy_enabled: bool,
+    #[serde(default = "default_pet_interaction_enabled")]
+    pub pet_resize_enabled: bool,
+    #[serde(default = "default_pet_interaction_enabled")]
+    pub pet_move_enabled: bool,
+    #[serde(default = "default_pet_drag_probability")]
+    pub pet_drag_probability: u8,
     /// 强制以 XWayland 运行（默认关闭，下次启动生效）。
     ///
     /// 影响的是整个应用而非只有桌宠：原生 Wayland 下桌宠既不能置顶也不能定位
@@ -173,7 +181,16 @@ pub fn normalize_backup_retention(retention_count: u32) -> u32 {
     }
 }
 
+fn default_pet_drag_probability() -> u8 {
+    100
+}
+
+fn default_pet_interaction_enabled() -> bool {
+    true
+}
+
 fn normalize_setting(setting: &mut Setting) {
+    setting.pet_drag_probability = setting.pet_drag_probability.min(100);
     setting.proxy_url = super::proxy::normalize_proxy_url(&setting.proxy_url).unwrap_or_default();
     setting.appearance.normalize();
     setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
@@ -218,6 +235,10 @@ impl Default for Setting {
             active_pet: None,
             pet_size: None,
             throw_enabled: false,
+            pet_autonomy_enabled: false,
+            pet_resize_enabled: true,
+            pet_move_enabled: true,
+            pet_drag_probability: default_pet_drag_probability(),
             force_xwayland: false,
             local_plugin_hmr: default_local_plugin_hmr(),
         }
@@ -384,6 +405,10 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.active_pet.clone_from(&current.active_pet);
     replacement.pet_size = current.pet_size;
     replacement.throw_enabled = current.throw_enabled;
+    replacement.pet_autonomy_enabled = current.pet_autonomy_enabled;
+    replacement.pet_resize_enabled = current.pet_resize_enabled;
+    replacement.pet_move_enabled = current.pet_move_enabled;
+    replacement.pet_drag_probability = current.pet_drag_probability;
     replacement.force_xwayland = current.force_xwayland;
     replacement.local_plugin_hmr = current.local_plugin_hmr;
     replacement
@@ -762,6 +787,45 @@ mod tests {
     }
 
     #[test]
+    fn pet_drag_probability_survives_serialization_and_defaults_for_old_settings() {
+        let mut value = serde_json::to_value(Setting::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("pet_drag_probability");
+        assert_eq!(setting_from_value(Some(&value)).pet_drag_probability, 100);
+        for probability in [0, 25, 100] {
+            value["pet_drag_probability"] = serde_json::json!(probability);
+            let loaded = setting_from_value(Some(&value));
+            let saved = serde_json::to_value(loaded).unwrap();
+            assert_eq!(saved["pet_drag_probability"], probability);
+        }
+        value["pet_drag_probability"] = serde_json::json!(150);
+        assert_eq!(setting_from_value(Some(&value)).pet_drag_probability, 100);
+    }
+
+    #[test]
+    fn pet_interaction_choices_default_on_and_preserve_all_saved_combinations() {
+        let mut value = serde_json::to_value(Setting::default()).unwrap();
+        value.as_object_mut().unwrap().remove("pet_resize_enabled");
+        value.as_object_mut().unwrap().remove("pet_move_enabled");
+        let old = setting_from_value(Some(&value));
+        assert!(old.pet_resize_enabled);
+        assert!(old.pet_move_enabled);
+        for resize in [false, true] {
+            for movement in [false, true] {
+                value["pet_resize_enabled"] = serde_json::json!(resize);
+                value["pet_move_enabled"] = serde_json::json!(movement);
+                let loaded = setting_from_value(Some(&value));
+                let merged = preserve_persisted_fields(Setting::default(), &loaded);
+                let saved = serde_json::to_value(merged).unwrap();
+                assert_eq!(saved["pet_resize_enabled"], resize);
+                assert_eq!(saved["pet_move_enabled"], movement);
+            }
+        }
+    }
+
+    #[test]
     fn legacy_full_setting_write_preserves_latest_fields() {
         let stale = Setting {
             installed: true,
@@ -777,6 +841,7 @@ mod tests {
             active_pet: Some("chat:stale".to_string()),
             pet_size: Some(80.0),
             throw_enabled: false,
+            pet_autonomy_enabled: false,
             force_xwayland: false,
             local_plugin_hmr: false,
             ..Default::default()
@@ -799,6 +864,8 @@ mod tests {
             active_pet: Some("codex:latest".to_string()),
             pet_size: Some(140.0),
             throw_enabled: true,
+            pet_autonomy_enabled: true,
+            pet_drag_probability: 35,
             force_xwayland: true,
             local_plugin_hmr: true,
             ..Default::default()
@@ -824,6 +891,8 @@ mod tests {
             Some(140.0),
             "整对象写入不得覆盖最新桌宠字段"
         );
+        assert!(merged.pet_autonomy_enabled);
+        assert_eq!(merged.pet_drag_probability, 35);
         assert!(merged.throw_enabled, "整对象写入不得覆盖最新的抛射开关");
         assert!(
             merged.force_xwayland,

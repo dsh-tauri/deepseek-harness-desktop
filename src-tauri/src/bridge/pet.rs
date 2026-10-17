@@ -73,6 +73,11 @@ pub struct PetStatus {
     /// 经 `pet://status` 广播给 pet 窗口，由窗口侧的物理层决定是否响应释放速度
     /// （issue #930）。
     pub throw_enabled: bool,
+    pub autonomy_enabled: bool,
+    pub autonomy_supported: bool,
+    pub resize_enabled: bool,
+    pub move_enabled: bool,
+    pub drag_probability: u8,
 }
 
 /// 文件系统宠物的数据来源。
@@ -199,6 +204,11 @@ fn status_from_setting(setting: &config::Setting, default_id: &str) -> PetStatus
         active_pet: normalize_active_pet(setting.active_pet.as_deref(), default_id),
         pet_size: setting.pet_size,
         throw_enabled: setting.throw_enabled,
+        autonomy_enabled: setting.pet_autonomy_enabled,
+        resize_enabled: setting.pet_resize_enabled,
+        move_enabled: setting.pet_move_enabled,
+        autonomy_supported: cfg!(windows),
+        drag_probability: setting.pet_drag_probability,
     }
 }
 
@@ -323,6 +333,72 @@ pub fn set_pet_size(app: AppHandle, size: f64) -> Result<PetStatus, String> {
     // Rust 不再绕开前端重复 set_size，避免内置鲸鱼（16:9）与自定义图集比例不一致时被
     // 两处高度交替重设，造成大小变更时上下闪烁（issue #308）。DPI 变化仍由 Rust 的
     // ScaleFactorChanged 分支按当前宠物比例重设。
+    let status = status_from_setting(&updated, &default_active_pet(&app));
+    emit_pet_status(&app, &status);
+    Ok(status)
+}
+
+#[tauri::command(async)]
+pub fn set_pet_drag_probability(app: AppHandle, probability: u8) -> Result<PetStatus, String> {
+    if probability > 100 {
+        return Err("PET_DRAG_PROBABILITY_OUT_OF_RANGE: expected 0..=100".into());
+    }
+    let mut autonomy = app
+        .state::<Mutex<crate::desktop::pet_autonomy::PetAutonomy>>()
+        .inner()
+        .lock()
+        .map_err(|_| "PET_AUTONOMY_LOCK_FAILED".to_string())?;
+    let updated = config::update_store_dat_setting(&app, |setting| {
+        setting.pet_drag_probability = probability;
+    });
+    autonomy.rest(Instant::now(), 6);
+    drop(autonomy);
+    let status = status_from_setting(&updated, &default_active_pet(&app));
+    emit_pet_status(&app, &status);
+    Ok(status)
+}
+
+#[tauri::command(async)]
+pub fn set_pet_autonomy_enabled(app: AppHandle, enabled: bool) -> Result<PetStatus, String> {
+    if enabled && !cfg!(windows) {
+        return Err("PET_AUTONOMY_UNSUPPORTED: Windows required".into());
+    }
+    let updated = config::update_store_dat_setting(&app, |setting| {
+        setting.pet_autonomy_enabled = enabled;
+    });
+    app.state::<Mutex<crate::desktop::pet_autonomy::PetAutonomy>>()
+        .lock()
+        .map_err(|_| "PET_AUTONOMY_LOCK_FAILED".to_string())?
+        .rest(Instant::now(), 6);
+    let status = status_from_setting(&updated, &default_active_pet(&app));
+    emit_pet_status(&app, &status);
+    Ok(status)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PetInteractionKind {
+    Resize,
+    Move,
+}
+
+#[tauri::command(async)]
+pub fn set_pet_interaction_enabled(
+    app: AppHandle,
+    kind: PetInteractionKind,
+    enabled: bool,
+) -> Result<PetStatus, String> {
+    let mut autonomy = app
+        .state::<Mutex<crate::desktop::pet_autonomy::PetAutonomy>>()
+        .inner()
+        .lock()
+        .map_err(|_| "PET_AUTONOMY_LOCK_FAILED".to_string())?;
+    let updated = config::update_store_dat_setting(&app, |setting| match kind {
+        PetInteractionKind::Resize => setting.pet_resize_enabled = enabled,
+        PetInteractionKind::Move => setting.pet_move_enabled = enabled,
+    });
+    autonomy.rest(Instant::now(), 6);
+    drop(autonomy);
     let status = status_from_setting(&updated, &default_active_pet(&app));
     emit_pet_status(&app, &status);
     Ok(status)

@@ -1,9 +1,9 @@
 import type { ChangeEvent, ReactElement } from 'react'
 import type { PetActionResult, PetListItem } from '../service/pet.types'
-import { ArrowRightFromSquare, Button, Globe, Icon, Input, Modal, Plus, SegmentedControl, Switch } from 'dsh-tauri-ui/client'
+import { ArrowRightFromSquare, Button, Checkbox, Globe, Icon, Input, Modal, Plus, SegmentedControl, Switch } from 'dsh-tauri-ui/client'
 import { useStore, useWatchImmediate } from 'dsh-tauri/client'
 import { useEffect, useId, useRef, useState } from 'react'
-import { PET_DEFAULT_SIZE, PET_SIZE_MAX, PET_SIZE_MIN, PET_SIZE_STEP } from '../constants'
+import { PET_DEFAULT_DRAG_PROBABILITY, PET_DEFAULT_SIZE, PET_SIZE_MAX, PET_SIZE_MIN, PET_SIZE_STEP } from '../constants'
 import { locale } from '../locales'
 import {
   choosePet,
@@ -18,8 +18,11 @@ import {
   loadPetUpdates,
   openCommunityShare,
   resizePet,
+  setPetDragProbability,
   toggleForceXwayland,
   togglePet,
+  togglePetAutonomy,
+  togglePetInteraction,
   togglePetThrow,
   updatePetRepository,
 } from '../service/pet'
@@ -64,15 +67,20 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
   const repositoryPendingRef = useRef(false)
   const repositoryId = useId()
   const [size, setSize] = useState(status?.pet_size ?? PET_DEFAULT_SIZE)
+  const [probability, setProbability] = useState(status?.drag_probability ?? PET_DEFAULT_DRAG_PROBABILITY)
   // 切换只落盘，本次进程不会有任何变化，提示重启是用户唯一能看到的反馈。
   const [xwaylandRestart, setXwaylandRestart] = useState(false)
   const tabsId = useId()
+  const probabilityId = useId()
   const fileRef = useRef<HTMLInputElement>(null)
   const committedSizeRef = useRef<number | null>(null)
   const enabled = Boolean(status?.enabled)
   const active = status?.active_pet ?? ''
   const statusSize = status?.pet_size ?? PET_DEFAULT_SIZE
   const throwEnabled = Boolean(status?.throw_enabled)
+  const statusProbability = status?.drag_probability ?? PET_DEFAULT_DRAG_PROBABILITY
+
+  useWatchImmediate(statusProbability, () => setProbability(statusProbability))
 
   // 宿主侧尺寸变化同步到本地滑条，正在拖动的本地值不被覆盖。
   useWatchImmediate(statusSize, () => {
@@ -170,6 +178,17 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
       committedSizeRef.current = value
     else
       setError(locale.text('setSizeFailed'))
+  }
+
+  async function commitProbability(value: number): Promise<void> {
+    if (busy || !status?.autonomy_enabled || value === statusProbability)
+      return
+    await run(async () => {
+      const result = await setPetDragProbability({ probability: value })
+      if (!result.ok)
+        setProbability(statusProbability)
+      return result
+    }, 'dragProbabilityFailed')
   }
 
   async function createPet(): Promise<void> {
@@ -468,6 +487,60 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
         />
       </div>
       <p className="m-0 text-[12px] leading-[18px] text-secondary">{locale.text('throwHint')}</p>
+      {status?.autonomy_supported === true && (
+        <>
+          <div className="flex items-center justify-between gap-[12px]">
+            <span className="flex-none font-medium">{locale.text('autonomyLabel')}</span>
+            <Switch
+              checked={status.autonomy_enabled === true}
+              disabled={busy}
+              label={locale.text('autonomyLabel')}
+              onChange={() => { void run(() => togglePetAutonomy({ enabled: !status.autonomy_enabled }), 'autonomyFailed') }}
+            />
+          </div>
+          <p className="m-0 text-[12px] leading-[18px] text-secondary">{locale.text('autonomyHint')}</p>
+          {status.autonomy_enabled === true && (
+            <>
+              <div className="flex flex-wrap items-center gap-[12px]">
+                <Checkbox
+                  checked={status.resize_enabled !== false}
+                  disabled={busy}
+                  onChange={(enabled) => { void run(() => togglePetInteraction({ kind: 'resize', enabled }), 'interactionFailed') }}
+                >
+                  {locale.text('resizeLabel')}
+                </Checkbox>
+                <Checkbox
+                  checked={status.move_enabled !== false}
+                  disabled={busy}
+                  onChange={(enabled) => { void run(() => togglePetInteraction({ kind: 'move', enabled }), 'interactionFailed') }}
+                >
+                  {locale.text('moveLabel')}
+                </Checkbox>
+              </div>
+              <div className="flex items-center justify-between gap-[12px]">
+                <label htmlFor={probabilityId} className="font-medium">{locale.text('dragProbabilityLabel')}</label>
+                <output htmlFor={probabilityId}>{`${probability}%`}</output>
+              </div>
+              <input
+                id={probabilityId}
+                type="range"
+                className="w-full accent-brand cursor-pointer"
+                min={0}
+                max={100}
+                step={1}
+                value={probability}
+                aria-valuetext={`${probability}%`}
+                disabled={busy}
+                onChange={event => setProbability(Number(event.target.value))}
+                onPointerUp={(event) => { void commitProbability(Number(event.currentTarget.value)) }}
+                onKeyUp={(event) => { void commitProbability(Number(event.currentTarget.value)) }}
+                onBlur={(event) => { void commitProbability(Number(event.currentTarget.value)) }}
+              />
+              <p className="m-0 text-[12px] leading-[18px] text-secondary">{locale.text('dragProbabilityHint')}</p>
+            </>
+          )}
+        </>
+      )}
     </div>
   )
 }

@@ -14,6 +14,8 @@ import {
   CMD_OPEN_EXTERNAL_URL,
   CMD_SET_ACTIVE_PET,
   CMD_SET_FORCE_XWAYLAND,
+  CMD_SET_PET_AUTONOMY_ENABLED,
+  CMD_SET_PET_DRAG_PROBABILITY,
   CMD_SET_PET_ENABLED,
   CMD_SET_PET_SIZE,
   CMD_SET_PET_THROW_ENABLED,
@@ -171,6 +173,29 @@ export async function toggleForceXwayland(input: { enabled: boolean }): Promise<
 export async function resizePet(input: { size: number }): Promise<PetActionResult> {
   return guard('resize pet', async () => {
     store.pet.setStatus(await invoke<PetStatus>(CMD_SET_PET_SIZE, { size: input.size }))
+    return { ok: true }
+  })
+}
+
+export async function setPetDragProbability(input: { probability: number }): Promise<PetActionResult> {
+  if (!Number.isInteger(input.probability) || input.probability < 0 || input.probability > 100)
+    return { ok: false, error: 'PET_DRAG_PROBABILITY_OUT_OF_RANGE: expected 0..=100' }
+  return guard('set pet drag probability', async () => {
+    store.pet.setStatus(await invoke<PetStatus>(CMD_SET_PET_DRAG_PROBABILITY, { probability: input.probability }))
+    return { ok: true }
+  })
+}
+
+export async function togglePetAutonomy(input: { enabled: boolean }): Promise<PetActionResult> {
+  return guard('toggle pet autonomy', async () => {
+    store.pet.setStatus(await invoke<PetStatus>(CMD_SET_PET_AUTONOMY_ENABLED, { enabled: input.enabled }))
+    return { ok: true }
+  })
+}
+
+export async function togglePetInteraction(input: { kind: 'resize' | 'move', enabled: boolean }): Promise<PetActionResult> {
+  return guard('toggle pet interaction', async () => {
+    store.pet.setStatus(await invoke<PetStatus>('set_pet_interaction_enabled', input))
     return { ok: true }
   })
 }

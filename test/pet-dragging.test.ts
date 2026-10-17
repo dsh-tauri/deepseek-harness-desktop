@@ -42,7 +42,7 @@ describe('pet dragging follows the pointer (upstream spring feel)', () => {
   it('brakes a thrown pet only on a real grab, never on a click elsewhere', () => {
     // 抓取信号来自命中箱 pointerdown，经拖拽 hook 的 onGrab 转给甩动物理。
     expect(app).toContain('useWindowDraggable({ onGrab: handleGrab, onRelease, clampPosition })')
-    expect(app).toContain('const { onFling, onGrab, onRelease } = usePetPhysics(pet, source?.kind, status?.throw_enabled === true)')
+    expect(app).toContain('const { onFling, onGrab, onRelease, isBusy } = usePetPhysics(pet, source?.kind, status?.throw_enabled === true)')
     expect(hook).toContain('onGrabRef.current?.()')
     // 全屏左键流只用来取「松开」时刻：任何位置的按下都不能刹车。
     expect(physics).toContain('if (payload.pressed)')
@@ -61,7 +61,7 @@ describe('pet dragging follows the pointer (upstream spring feel)', () => {
     expect(hook).toContain('onRelease?: () => void')
     expect(hook).toContain('onReleaseRef.current?.()')
     expect(physics).toContain('function onRelease(): void {')
-    expect(physics).toContain('return { onFling, onGrab, onRelease }')
+    expect(physics).toContain('return { onFling, onGrab, onRelease, isBusy:')
     expect(physics).toContain('onRelease: () => void')
   })
 

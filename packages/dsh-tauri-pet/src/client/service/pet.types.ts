@@ -4,6 +4,11 @@ export type PetActionResult = { ok: true } | { ok: false, error: string }
 /** DTO：桌面端 Tauri 命令的请求/响应形状（invoke 层专属）。 */
 
 export interface PetStatus {
+  autonomy_enabled?: boolean
+  autonomy_supported?: boolean
+  resize_enabled?: boolean
+  move_enabled?: boolean
+  drag_probability?: number
   active_pet: string
   enabled: boolean
   pet_size?: number | null

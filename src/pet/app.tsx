@@ -9,12 +9,12 @@ import { Hint } from '@/ui/pet/hint'
 import { useWakelockRelease } from '../hooks/use-wakelock-release'
 import { PET_BASE_WIDTH, PET_DSH_ASPECT } from './constants'
 import { useBubbleTracker } from './hooks/use-bubble-tracker'
+import { usePetAutonomy } from './hooks/use-pet-autonomy'
 import { usePetPhysics } from './hooks/use-pet-physics'
 import { usePetSource } from './hooks/use-pet-source'
 import { normalizeSizePercent, usePetStatus } from './hooks/use-pet-status'
 import { usePetWindowSize } from './hooks/use-pet-window'
 import { usePetWindowClamp } from './hooks/use-pet-window-clamp'
-import { reportPetIssue } from './utils/log'
 
 export function App() {
   const petRef = useRef<PetRef>(null)
@@ -27,7 +27,7 @@ export function App() {
   // 抓取信号来自命中箱 `pointerdown`（经拖拽 hook 的 `onGrab`）：`device-mouse-button`
   // 是全屏左键流，在桌面别处的点击不能给甩出中的宠物刹车。松开由拖拽 hook 统一上报
   // （`onRelease`，命中箱 `pointerup` 与设备流两条路只结算一次），物理层据此估速并清状态。
-  const { onFling, onGrab, onRelease } = usePetPhysics(pet, source?.kind, status?.throw_enabled === true)
+  const { onFling, onGrab, onRelease, isBusy } = usePetPhysics(pet, source?.kind, status?.throw_enabled === true)
   // 跟手期间按「宠物本体 / 脚底」把窗口夹进显示器工作区（与飞行共用边界）：贴边松手
   // 不会被整窗夹取推开，也不会跑出飞行边界而在松手瞬间被修正回来。
   const { clampPosition, refreshWorkAreas } = usePetWindowClamp(pet, source?.kind)
@@ -42,6 +42,7 @@ export function App() {
   const visible = status === null || (status.enabled !== false && status.visible !== false)
   const width = (source?.width ?? PET_BASE_WIDTH) * normalizeSizePercent(status?.pet_size) / 100
 
+  const autonomy = usePetAutonomy(pet, visible && source !== null && source !== undefined && status?.autonomy_enabled === true && status?.autonomy_supported === true, isBusy, source)
   useBubbleTracker(pet, source)
   usePetWindowSize(width, source?.aspect ?? PET_DSH_ASPECT, visible)
   useOmitIgnoreCursorEvents(hitboxRef, draggable.dragging)
@@ -58,7 +59,11 @@ export function App() {
         <Pet
           ref={petRef}
           kind={source.kind}
-          config={source.config}
+          config={autonomy.config ?? source.config}
+          className={autonomy.active ? 'pet-interacting' : undefined}
+          style={autonomy.style}
+          mirrored={autonomy.mirrored}
+          onMotionChange={autonomy.onMotionChange}
           uri={source.uri}
           ext={source.ext}
           motion={source?.kind === 'codex' ? motion : undefined}
@@ -70,14 +75,10 @@ export function App() {
           hitboxRef={hitboxRef}
           onHitboxPointerDown={draggable.onPointerDown}
           onHitboxPointerUp={draggable.onPointerUp}
-          onError={reportPetAssetError}
+          onError={autonomy.onError}
         />
       )}
       <If cond={error !== null} then={<Hint petId={activedPet} />} />
     </main>
   )
-}
-
-function reportPetAssetError(error: unknown): void {
-  reportPetIssue('asset', error)
 }

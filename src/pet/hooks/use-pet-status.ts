@@ -6,6 +6,11 @@ import { PET_SIZE_DEFAULT_PERCENT, PET_SIZE_MAX_PERCENT, PET_SIZE_MIN_PERCENT } 
 
 /** Rust `PetStatus`（`get_pet_status` 返回值 / `pet://status` 事件载荷）。 */
 export interface PetStatus {
+  autonomy_enabled?: boolean
+  autonomy_supported?: boolean
+  resize_enabled?: boolean
+  move_enabled?: boolean
+  drag_probability?: number
   /** 桌宠能力是否永久启用。 */
   enabled: boolean
   /** 桌宠窗口当前是否应显示。 */

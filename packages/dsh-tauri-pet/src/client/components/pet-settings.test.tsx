@@ -24,6 +24,12 @@ vi.mock('dsh-tauri-ui/client', () => ({
   Plus: () => null,
   TrashBin: () => null,
   Icon: () => null,
+  Checkbox: ({ checked, disabled, children, onChange }: { checked: boolean, disabled: boolean, children: ReactNode, onChange: (next: boolean) => void }) => (
+    <label>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} />
+      {children}
+    </label>
+  ),
   Input: (props: InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
   Modal: ({ open, title, description, children, footer, onClose, closeLabel }: { open: boolean, title: string, description?: string, children: ReactNode, footer: ReactNode, onClose: () => void, closeLabel: string }) => open
     ? (
@@ -59,9 +65,12 @@ vi.mock('../service/pet', () => ({
   loadPetUpdates: vi.fn(),
   openCommunityShare: vi.fn(),
   resizePet: vi.fn(),
+  setPetDragProbability: vi.fn(),
   toggleForceXwayland: vi.fn(),
   togglePet: vi.fn(),
   togglePetThrow: vi.fn(),
+  togglePetAutonomy: vi.fn(),
+  togglePetInteraction: vi.fn(),
   updatePetRepository: vi.fn(),
 }))
 
@@ -148,6 +157,49 @@ afterEach(async () => {
 })
 
 describe('pet settings action boundaries', () => {
+  it.each(['resize', 'move'] as const)('changes only the %s selection and preserves choices across the master switch', async (kind) => {
+    const status = { active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: true, resize_enabled: true, move_enabled: true }
+    store.pet.setStatus(status)
+    vi.mocked(petService.togglePetInteraction).mockImplementation(async (input) => {
+      store.pet.setStatus({ ...store.pet.$state.status!, [`${input.kind}_enabled`]: input.enabled })
+      return { ok: true }
+    })
+    await mount()
+    const index = kind === 'resize' ? 0 : 1
+    const choices = () => Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'))
+    expect(choices().map(input => input.checked)).toEqual([true, true])
+    await click(choices()[index]!)
+    expect(petService.togglePetInteraction).toHaveBeenCalledExactlyOnceWith({ kind, enabled: false })
+    const expected = kind === 'resize' ? [false, true] : [true, false]
+    expect(choices().map(input => input.checked)).toEqual(expected)
+    await act(async () => {
+      store.pet.setStatus({ ...store.pet.$state.status!, autonomy_enabled: false })
+    })
+    expect(choices()).toHaveLength(0)
+    await act(async () => {
+      store.pet.setStatus({ ...store.pet.$state.status!, autonomy_enabled: true })
+    })
+    expect(choices().map(input => input.checked)).toEqual(expected)
+  })
+
+  it('disables both interaction choices during saving and retains them on failure', async () => {
+    store.pet.setStatus({ active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: true, resize_enabled: true, move_enabled: false })
+    const pending = deferred()
+    vi.mocked(petService.togglePetInteraction).mockReturnValue(pending.promise)
+    await mount()
+    const choices = Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'))
+    await click(choices[0]!)
+    expect(choices.map(input => input.disabled)).toEqual([true, true])
+    await click(choices[1]!)
+    expect(petService.togglePetInteraction).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      pending.resolve({ ok: false, error: 'save failed' })
+    })
+    expect(choices.map(input => input.checked)).toEqual([true, false])
+    expect(choices.map(input => input.disabled)).toEqual([false, false])
+    expect(container.textContent).toContain(locale.text('interactionFailed'))
+  })
+
   it('renders local dsh GIF thumbnails without spritesheet cropping', async () => {
     store.pet.setCatalog({
       presets: [],
@@ -461,5 +513,113 @@ describe('pet settings action boundaries', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(locale.text('communityShareFailed'))
     await click(button(locale.text('communityShare')))
     expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+})
+
+describe('autonomous window interaction', () => {
+  it('only shows the switch when the native host supports window interaction', async () => {
+    await mount()
+    expect(container.textContent).not.toContain(locale.text('autonomyLabel'))
+    await act(async () => {
+      store.pet.setStatus({ active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: false })
+    })
+    expect(button(locale.text('autonomyLabel')).getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('sends the enabled value and shows native errors without pretending the switch succeeded', async () => {
+    store.pet.setStatus({ active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: false })
+    vi.mocked(petService.togglePetAutonomy).mockResolvedValue({ ok: false, error: 'native error' })
+    await mount()
+    await click(button(locale.text('autonomyLabel')))
+    expect(petService.togglePetAutonomy).toHaveBeenCalledWith({ enabled: true })
+    expect(button(locale.text('autonomyLabel')).getAttribute('aria-checked')).toBe('false')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(locale.text('autonomyFailed'))
+  })
+})
+
+describe('drag probability slider', () => {
+  it('keeps a saved integer probability valid and unchanged when blurred', async () => {
+    store.pet.setStatus({ active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: true, drag_probability: 33 })
+    await mount()
+    expect(slider().value).toBe('33')
+    expect(slider().validity.stepMismatch).toBe(false)
+    expect(container.querySelector('output')?.textContent).toBe('33%')
+    await act(async () => {
+      slider().dispatchEvent(new Event('focusout', { bubbles: true }))
+    })
+    expect(petService.setPetDragProbability).not.toHaveBeenCalled()
+  })
+
+  function slider(): HTMLInputElement {
+    const result = container.querySelector<HTMLInputElement>('input[type="range"][max="100"]')
+    if (!result)
+      throw new Error('Missing drag probability slider')
+    return result
+  }
+
+  async function change(value: number): Promise<void> {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(slider(), String(value))
+      slider().dispatchEvent(new Event('change', { bubbles: true }))
+    })
+  }
+
+  it('hides probability controls while autonomy is off and restores the saved value when enabled', async () => {
+    await mount()
+    expect(container.querySelector('input[max="100"]')).toBeNull()
+    await act(async () => {
+      store.pet.setStatus({ active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: false, drag_probability: 35 })
+    })
+    expect(container.querySelector('input[max="100"]')).toBeNull()
+    expect(container.textContent).not.toContain(locale.text('dragProbabilityLabel'))
+    expect(container.textContent).not.toContain(locale.text('dragProbabilityHint'))
+    await act(async () => {
+      store.pet.setStatus({ ...store.pet.$state.status!, autonomy_enabled: true })
+    })
+    expect(slider().disabled).toBe(false)
+    expect(slider().value).toBe('35')
+    expect(container.querySelector('output')?.textContent).toBe('35%')
+    await act(async () => {
+      store.pet.setStatus({ ...store.pet.$state.status!, autonomy_enabled: false })
+    })
+    expect(container.querySelector('input[max="100"]')).toBeNull()
+    expect(container.querySelector('output')).toBeNull()
+    expect(petService.setPetDragProbability).not.toHaveBeenCalled()
+  })
+
+  it.each(['pointerup', 'keyup', 'focusout'])('previews changes and saves on %s, restoring the saved value on failure', async (eventType) => {
+    store.pet.setStatus({ active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: true, drag_probability: 35 })
+    vi.mocked(petService.setPetDragProbability).mockResolvedValue({ ok: false, error: 'save failed' })
+    await mount()
+    await change(60)
+    expect(container.querySelector('output')?.textContent).toBe('60%')
+    expect(petService.setPetDragProbability).not.toHaveBeenCalled()
+    await act(async () => {
+      slider().dispatchEvent(new Event(eventType, { bubbles: true }))
+    })
+    expect(petService.setPetDragProbability).toHaveBeenCalledExactlyOnceWith({ probability: 60 })
+    expect(slider().value).toBe('35')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(locale.text('dragProbabilityFailed'))
+  })
+
+  it.each([0, 100])('saves %s percent and displays the persisted result after remounting', async (probability) => {
+    const status = { active_pet: 'chat', enabled: true, visible: true, throw_enabled: false, autonomy_supported: true, autonomy_enabled: true, drag_probability: 35 }
+    store.pet.setStatus(status)
+    vi.mocked(petService.setPetDragProbability).mockImplementation(async (input) => {
+      store.pet.setStatus({ ...status, drag_probability: input.probability })
+      return { ok: true }
+    })
+    await mount()
+    await change(probability)
+    await act(async () => {
+      slider().dispatchEvent(new Event('pointerup', { bubbles: true }))
+    })
+    expect(petService.setPetDragProbability).toHaveBeenCalledExactlyOnceWith({ probability })
+    await act(async () => {
+      root.render(null)
+    })
+    await mount()
+    expect(slider().value).toBe(String(probability))
+    expect(container.querySelector('output')?.textContent).toBe(`${probability}%`)
   })
 })

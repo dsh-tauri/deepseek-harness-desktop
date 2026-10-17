@@ -3,6 +3,15 @@ import { PLUGIN_ID } from '../../shared/constants'
 
 /** 桌宠设置分区的双语文案（`zh` 键集合为权威，`en` 缺键即编译错误）。 */
 const zh = {
+  autonomyLabel: '开启趣味互动',
+  autonomyHint: '空闲时靠近最近的窗口边缘，执行勾选的互动。',
+  resizeLabel: '挤压与拉伸',
+  moveLabel: '移动窗口',
+  interactionFailed: '保存窗口互动选项失败',
+  autonomyFailed: '切换趣味互动失败',
+  dragProbabilityLabel: '互动概率',
+  dragProbabilityHint: '每次靠边判定是否触发已勾选的互动；0% 不触发，100% 必定尝试。',
+  dragProbabilityFailed: '保存拖拽概率失败',
   cancel: '取消',
   close: '关闭',
   importRepository: '导入仓库',
@@ -50,6 +59,15 @@ const zh = {
 }
 
 const en: Record<keyof typeof zh, string> = {
+  autonomyLabel: 'Enable playful interactions',
+  autonomyHint: 'Approach the nearest window edge while idle and perform the selected interactions.',
+  resizeLabel: 'Squeeze and stretch',
+  moveLabel: 'Move window',
+  interactionFailed: 'Failed to save window interaction options',
+  autonomyFailed: 'Failed to toggle playful interactions',
+  dragProbabilityLabel: 'Window interaction chance',
+  dragProbabilityHint: 'Chance of a selected interaction per approach: 0% never, 100% always tries.',
+  dragProbabilityFailed: 'Failed to save window drag chance',
   cancel: 'Cancel',
   close: 'Close',
   importRepository: 'Import repository',
