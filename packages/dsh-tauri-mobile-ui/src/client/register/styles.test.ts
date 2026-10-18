@@ -29,7 +29,7 @@ it('owns mobile styles and composer activation until unload, and can reload clea
     const dispose = register()
     const style = document.querySelector('style[cssr-id="dsh-tauri-mobile-ui-styles"]')
     expect(style?.getAttribute('data-plugin')).toBe('dsh-tauri-mobile-ui')
-    expect(style?.textContent).toContain('@media (hover: none) and (any-pointer: coarse) and (any-hover: none) and (max-width: 1023px)')
+    expect(style?.textContent).toContain(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`)
     for (const selector of [
       '[data-dsh-mobile-preferences]',
       '[data-slot="conversation.composer.bar"] [class$="_dock"]',
