@@ -94,6 +94,7 @@ vi.mock('react-native-webview', async () => {
       Object.assign(this, {
         injectJavaScript: vi.fn<(script: string) => void>(),
         goBack: vi.fn<() => void>(),
+        clearHistory: vi.fn<() => void>(),
       })
     }
 
@@ -136,6 +137,7 @@ function hydrate() {
 interface NativeViewRef {
   injectJavaScript: ReturnType<typeof vi.fn<(script: string) => void>>
   goBack: ReturnType<typeof vi.fn<() => void>>
+  clearHistory: ReturnType<typeof vi.fn<() => void>>
 }
 
 function root() {
@@ -1147,7 +1149,7 @@ describe('rendered Bridge WebView acknowledged notification focus', () => {
 })
 
 describe('rendered Bridge WebView native navigation and resource boundaries', () => {
-  it('treats missing Android isTopFrame as top-level and permits only exact-origin documents inside the WebView', async () => {
+  it('treats missing Android isTopFrame as top-level and sends foreign top-level documents outside an Access login to the system browser', async () => {
     await mount()
     await act(async () => {
       expect(webView().props.onShouldStartLoadWithRequest({ url: 'http://bridge.test:3080/session?id=alpha' })).toBe(true)
@@ -1308,5 +1310,253 @@ describe('rendered Bridge WebView native navigation and resource boundaries', ()
     expect(view.injectJavaScript).not.toHaveBeenCalled()
     expect(native.getPermissionsAsync).not.toHaveBeenCalled()
     expect(native.scheduleNotificationAsync).not.toHaveBeenCalled()
+  })
+})
+
+describe('rendered Bridge WebView Cloudflare Access login', () => {
+  const accessLogin = 'https://team.cloudflareaccess.com/cdn-cgi/access/login/bridge.test?kid=aud&redirect_url=%2Ftasks'
+
+  it('keeps the Access login redirected from the host document inside the WebView with the loader lifted and its deadline paused', async () => {
+    await mount()
+    expect(texts()).toContain('连接中…')
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+    expect(texts()).not.toContain('连接中…')
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'https://github.com/login/oauth/authorize?client_id=team' })).toBe(true)
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'https://team.cloudflareaccess.com/cdn-cgi/access/callback?code=idp' })).toBe(true)
+      await vi.advanceTimersByTimeAsync(60000)
+    })
+
+    expect(texts()).not.toContain(slowLoading)
+    expect(texts()).not.toContain('连接中…')
+    expect(native.openURL).not.toHaveBeenCalled()
+    expect(connection.loadError).toBeNull()
+  })
+
+  it('lifts an already shown slow-loading prompt when a late host redirect reaches the Access login', async () => {
+    await mount()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20000)
+    })
+    expect(texts()).toContain(slowLoading)
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+
+    expect(texts()).not.toContain(slowLoading)
+    expect(texts()).not.toContain('连接中…')
+  })
+
+  it('restores the loader with a fresh twenty-second deadline once Access hands back to the host origin', async () => {
+    await mount()
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000)
+    })
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'http://bridge.test:3080/cdn-cgi/access/authorized?token=jwt' })).toBe(true)
+    })
+    expect(texts()).toContain('连接中…')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(19999)
+    })
+    expect(texts()).not.toContain(slowLoading)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+
+    expect(texts()).toContain(slowLoading)
+  })
+
+  it('ends the Access login when a host document commits without a navigation decision, so identity provider hosts leave the app again', async () => {
+    await mount()
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+    await act(async () => {
+      webView().props.onLoadStart({ nativeEvent: { url: 'http://bridge.test:3080/', loading: true } })
+    })
+    expect(texts()).toContain('连接中…')
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'https://github.com/login' })).toBe(false)
+    })
+
+    expect(native.openURL).toHaveBeenCalledExactlyOnceWith('https://github.com/login')
+  })
+
+  it('keeps insecure, credentialed and non-web navigations out of the WebView during the Access login, opening only the plain http one externally', async () => {
+    await mount()
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+    await act(async () => {
+      for (const url of ['http://idp.test/authorize', 'https://user@idp.test/authorize', 'https://:secret@idp.test/authorize', 'intent://authorize#Intent;scheme=idp;end'])
+        expect(webView().props.onShouldStartLoadWithRequest({ url })).toBe(false)
+    })
+
+    expect(native.openURL).toHaveBeenCalledExactlyOnceWith('http://idp.test/authorize')
+  })
+
+  it('shows the recoverable connection failure when the Access login page fails to load', async () => {
+    await mount()
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+    await act(async () => {
+      webView().props.onLoad({ nativeEvent: { url: accessLogin } })
+      webView().props.onError({ nativeEvent: { url: accessLogin, code: -2, description: 'net::ERR_NAME_NOT_RESOLVED' } })
+    })
+
+    expect(connection.loadError).toBe(failure)
+    expect(texts()).toContain(failure)
+    expect(root().findAll(node => String(node.type) === 'Button').map(text)).toContain('重新连接')
+  })
+
+  it('keeps the slow-loading recovery when a timed-out host document reports same-document history', async () => {
+    await mount()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20000)
+    })
+    expect(texts()).toContain(slowLoading)
+    await act(async () => {
+      webView().props.onLoadStart({ nativeEvent: { url: 'http://bridge.test:3080/', loading: false } })
+    })
+
+    expect(texts()).toContain(slowLoading)
+    expect(texts()).not.toContain('连接中…')
+  })
+
+  it('drops Access and identity-provider pages from Android back history once the host document loads after the login', async () => {
+    await mount()
+    const view = await viewRef()
+    const handler = [...native.backListeners][0]!
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'http://bridge.test:3080/cdn-cgi/access/authorized?token=jwt' })).toBe(true)
+      webView().props.onLoadStart({ nativeEvent: { url: 'http://bridge.test:3080/', loading: true } })
+      webView().props.onLoad({ nativeEvent: { url: 'http://bridge.test:3080/' } })
+      webView().props.onNavigationStateChange({ url: 'http://bridge.test:3080/', canGoBack: true })
+    })
+
+    expect(view.clearHistory).toHaveBeenCalledExactlyOnceWith()
+    expect(handler()).toBe(false)
+    expect(view.goBack).not.toHaveBeenCalled()
+  })
+
+  it('clears Android back history once per Access login, so later host history still goes back inside the WebView', async () => {
+    await mount()
+    const view = await viewRef()
+    const handler = [...native.backListeners][0]!
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+    await act(async () => {
+      webView().props.onLoadStart({ nativeEvent: { url: 'http://bridge.test:3080/', loading: true } })
+      webView().props.onLoad({ nativeEvent: { url: 'http://bridge.test:3080/' } })
+      webView().props.onNavigationStateChange({ url: 'http://bridge.test:3080/', canGoBack: true })
+    })
+    await act(async () => {
+      webView().props.onLoadStart({ nativeEvent: { url: 'http://bridge.test:3080/tasks', loading: true } })
+      webView().props.onLoad({ nativeEvent: { url: 'http://bridge.test:3080/tasks' } })
+      webView().props.onNavigationStateChange({ url: 'http://bridge.test:3080/tasks', canGoBack: true })
+    })
+
+    expect(view.clearHistory).toHaveBeenCalledOnce()
+    expect(handler()).toBe(true)
+    expect(view.goBack).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('keeps Android back history when the loaded host document never went through an Access login', async () => {
+    await mount()
+    const view = await viewRef()
+    const handler = [...native.backListeners][0]!
+    await act(async () => {
+      webView().props.onLoad({ nativeEvent: { url: alpha.url } })
+      webView().props.onNavigationStateChange({ url: alpha.url, canGoBack: true })
+    })
+
+    expect(view.clearHistory).not.toHaveBeenCalled()
+    expect(handler()).toBe(true)
+    expect(view.goBack).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('keeps sending a tapped Access login link to the system browser after Android reports same-document history of the loaded host document', async () => {
+    await mount()
+    await act(async () => {
+      webView().props.onLoadStart({ nativeEvent: { url: alpha.url, loading: true } })
+      webView().props.onLoad({ nativeEvent: { url: alpha.url } })
+      webView().props.onLoadStart({ nativeEvent: { url: 'http://bridge.test:3080/tasks?session=alpha', loading: false } })
+    })
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(false)
+    })
+
+    expect(native.openURL).toHaveBeenCalledExactlyOnceWith(accessLogin)
+    expect(texts()).toContain('连接中…')
+  })
+
+  it('closes the in-app Access window once the first foreign hop of a host navigation is refused', async () => {
+    await mount()
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'http://bridge.test:3080/tasks' })).toBe(true)
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'https://sso.test/start' })).toBe(false)
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(false)
+    })
+
+    expect(native.openURL.mock.calls).toEqual([['https://sso.test/start'], [accessLogin]])
+  })
+
+  it('sends an Access login link tapped from a loaded host document to the system browser', async () => {
+    await mount()
+    await act(async () => {
+      webView().props.onLoad({ nativeEvent: { url: alpha.url } })
+    })
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(false)
+    })
+
+    expect(native.openURL).toHaveBeenCalledExactlyOnceWith(accessLogin)
+    expect(texts()).toContain('连接中…')
+  })
+
+  it('re-arms the in-app Access login for the redirect of a new host navigation after the previous document loaded', async () => {
+    await mount()
+    await act(async () => {
+      webView().props.onLoad({ nativeEvent: { url: alpha.url } })
+    })
+    await act(async () => {
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'http://bridge.test:3080/tasks' })).toBe(true)
+      expect(webView().props.onShouldStartLoadWithRequest({ url: accessLogin })).toBe(true)
+    })
+
+    expect(native.openURL).not.toHaveBeenCalled()
+    expect(texts()).not.toContain('连接中…')
+  })
+
+  it('refuses lookalike, insecure, credentialed and non-login Cloudflare URLs even as a host document redirect', async () => {
+    const refused = [
+      'https://team.cloudflareaccess.com/cdn-cgi/access/logout',
+      'https://team.cloudflareaccess.com.evil.test/cdn-cgi/access/login/bridge.test',
+      'https://cloudflareaccess.com/cdn-cgi/access/login/bridge.test',
+      'http://team.cloudflareaccess.com/cdn-cgi/access/login/bridge.test',
+    ]
+    await mount()
+    await act(async () => {
+      for (const url of refused) {
+        expect(webView().props.onShouldStartLoadWithRequest({ url: alpha.url })).toBe(true)
+        expect(webView().props.onShouldStartLoadWithRequest({ url })).toBe(false)
+      }
+      expect(webView().props.onShouldStartLoadWithRequest({ url: alpha.url })).toBe(true)
+      expect(webView().props.onShouldStartLoadWithRequest({ url: 'https://user:secret@team.cloudflareaccess.com/cdn-cgi/access/login/bridge.test' })).toBe(false)
+    })
+
+    expect(native.openURL.mock.calls).toEqual(refused.map(url => [url]))
+    expect(texts()).toContain('连接中…')
   })
 })

@@ -14,3 +14,5 @@ export const FOCUS_TIMEOUT_MS = 15000
 export const NOTIFICATION_CHANNEL = 'dsh-bridge'
 export const CONNECTION_STORAGE_KEY = 'dsh-bridge/connections'
 export const MANIFEST_PATH = '/manifest.webmanifest'
+export const ACCESS_TEAM_DOMAIN_SUFFIX = '.cloudflareaccess.com'
+export const ACCESS_LOGIN_PATH = '/cdn-cgi/access/login/'

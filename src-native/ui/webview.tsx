@@ -18,7 +18,7 @@ import { Uniwind } from 'uniwind'
 import { useStore } from 'valtio-define'
 import { BreathingLight } from '@/components/breathing-light'
 import { Logo, Wordmark } from '@/components/icons'
-import { SESSION_FORGET_TIMEOUT_MS, WEBVIEW_LOAD_TIMEOUT_MS } from '@/config/constants'
+import { ACCESS_LOGIN_PATH, ACCESS_TEAM_DOMAIN_SUFFIX, SESSION_FORGET_TIMEOUT_MS, WEBVIEW_LOAD_TIMEOUT_MS } from '@/config/constants'
 import { useAppState } from '@/hooks/use-app-state'
 import { requestNotificationAccess, sendNativeNotification } from '@/hooks/use-notifications'
 import { connection } from '@/store/modules/connection'
@@ -39,7 +39,12 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
   const canGoBackRef = useRef(false)
   const focusRequestRef = useRef<{ requestId: string, focus: NotificationFocus } | null>(null)
   const documentReadyRef = useRef(false)
+  const redirectableRef = useRef(true)
+  const authenticatingRef = useRef(false)
+  const accessHistoryRef = useRef(false)
+  const clearedHistoryRef = useRef(false)
   const [documentReady, setDocumentReady] = useState(false)
+  const [authenticating, setAuthenticating] = useState(false)
   const [loadingTimedOut, setLoadingTimedOut] = useState(false)
   const [documentGeneration, setDocumentGeneration] = useState(0)
   const state = useStore(connection)
@@ -85,11 +90,11 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
   }, [address.id, appState, documentReady, nonce, state.loadError, state.pendingFocus, state.focusGeneration])
   // keep:effect Offer recovery for a slow document without rejecting its later authenticated readiness.
   useEffect(() => {
-    if (documentReady || state.loadError)
+    if (documentReady || state.loadError || authenticating)
       return
     const timeout = setTimeout(setLoadingTimedOut, WEBVIEW_LOAD_TIMEOUT_MS, true)
     return () => clearTimeout(timeout)
-  }, [documentGeneration, documentReady, state.loadError])
+  }, [authenticating, documentGeneration, documentReady, state.loadError])
   // keep:effect Bound cookie clearing to this WebView's lifetime before removing its connection.
   useEffect(() => {
     if (state.forgettingOrigin !== address.id)
@@ -121,15 +126,34 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
       connection.setNotice(t('connection.connectionFailed'))
     }
   }
+  function authenticate(active: boolean) {
+    authenticatingRef.current = active
+    setAuthenticating(active)
+    if (!active)
+      return
+    accessHistoryRef.current = true
+    setLoadingTimedOut(false)
+  }
   function allowNavigation(request: ShouldStartLoadRequest): boolean {
     if (request.isTopFrame === false)
       return true
     if (isTrustedOrigin(request.url, address.id)) {
       mainUrlRef.current = request.url
+      redirectableRef.current = true
+      authenticate(false)
       return true
     }
     if (request.url === 'about:blank')
       return true
+    const redirected = redirectableRef.current
+    redirectableRef.current = false
+    const url = URL.canParse(request.url) ? new URL(request.url) : null
+    // Why: only our own document's server redirect may open Cloudflare Access login in-app; tapped links still leave for the system browser.
+    if (url?.protocol === 'https:' && !url.username && !url.password
+      && (authenticatingRef.current || (redirected && url.hostname.endsWith(ACCESS_TEAM_DOMAIN_SUFFIX) && url.pathname.startsWith(ACCESS_LOGIN_PATH)))) {
+      authenticate(true)
+      return true
+    }
     void openExternal(request.url)
     return false
   }
@@ -182,6 +206,7 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
     if (generation !== connection.viewGeneration || !isTrustedOrigin(url, address.id))
       return
     mainUrlRef.current = url
+    authenticate(false)
     if (!loading)
       return
     focusRequestRef.current = null
@@ -191,8 +216,16 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
     setDocumentGeneration(value => value + 1)
   }
   function loaded(url: string) {
-    if (isTrustedOrigin(url, address.id))
-      ref.current?.injectJavaScript(shim)
+    if (!isTrustedOrigin(url, address.id))
+      return
+    redirectableRef.current = false
+    ref.current?.injectJavaScript(shim)
+    if (!accessHistoryRef.current)
+      return
+    // Why: Android Back must not re-enter Access/IdP pages outside the login; this finish event's canGoBack predates the clear.
+    accessHistoryRef.current = false
+    clearedHistoryRef.current = true
+    ref.current?.clearHistory?.()
   }
   function openDrawer() {
     connection.dismissHint()
@@ -229,7 +262,8 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
               connection.markLoadFailed(generation, t('connection.connectionFailed'))
           }}
           onNavigationStateChange={(navigation) => {
-            canGoBackRef.current = navigation.canGoBack
+            canGoBackRef.current = navigation.canGoBack && !clearedHistoryRef.current
+            clearedHistoryRef.current = false
             if (isTrustedOrigin(navigation.url, address.id))
               mainUrlRef.current = navigation.url
           }}
@@ -249,7 +283,7 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
             </Pressable>
           </Then>
         </If>
-        <If cond={state.loading && !loadingTimedOut}>
+        <If cond={state.loading && !loadingTimedOut && !authenticating}>
           <Then>
             <View className="absolute inset-0 items-center justify-center gap-7 bg-background px-8">
               <View className="items-center gap-3">
