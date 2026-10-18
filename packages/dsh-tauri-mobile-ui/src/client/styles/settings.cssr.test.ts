@@ -3,6 +3,7 @@ import postcss from 'postcss'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cssr } from '../../../../dsh-tauri-ui/src/client/utils/cssr'
 import { MOBILE_POINTER_QUERIES } from '../../../../dsh-tauri/src/client/utils/device'
+import { MOBILE_SETTINGS_MEDIA } from '../constants'
 import settingsStyle from './settings.cssr'
 
 vi.mock('dsh-tauri/client', () => ({ MOBILE_POINTER_QUERIES }))
@@ -39,7 +40,7 @@ describe('mobile settings layout contract', () => {
     if (media.type !== 'atrule')
       throw new Error('Missing mobile settings media query')
     expect(media.name).toBe('media')
-    expect(media.params).toBe('(hover: none) and (any-pointer: coarse) and (any-hover: none) and (max-width: 767px)')
+    expect(media.params).toBe(MOBILE_SETTINGS_MEDIA)
     expect(rules.length).toBeGreaterThan(0)
     for (const rule of rules) {
       expect(rule.parent).toBe(media)

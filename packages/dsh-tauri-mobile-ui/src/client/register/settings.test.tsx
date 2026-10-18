@@ -3,6 +3,7 @@ import type { ButtonHTMLAttributes, ComponentType, ReactNode } from 'react'
 import type { MobileSettingsPresentation } from '../types/settings'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MOBILE_SETTINGS_MEDIA } from '../constants'
 import { registerMobileSettings } from './settings'
 
 vi.mock('dsh-tauri/client', async () => ({
@@ -156,7 +157,7 @@ beforeEach(() => {
   mediaListeners = new Set()
   media = {
     get matches() { return matches },
-    media: '(hover: none) and (any-pointer: coarse) and (any-hover: none) and (max-width: 767px)',
+    media: MOBILE_SETTINGS_MEDIA,
     onchange: null,
     addEventListener: vi.fn((_name, listener) => mediaListeners.add(listener as () => void)),
     removeEventListener: vi.fn((_name, listener) => mediaListeners.delete(listener as () => void)),
@@ -330,7 +331,7 @@ describe('mobile settings presentation', () => {
     const dialog = fixture()
     register(dialog)
     await flush()
-    expect(window.matchMedia).toHaveBeenCalledWith('(hover: none) and (any-pointer: coarse) and (any-hover: none) and (max-width: 767px)')
+    expect(window.matchMedia).toHaveBeenCalledWith(MOBILE_SETTINGS_MEDIA)
     expect(dialog.panel.hasAttribute('data-dsh-mobile-settings')).toBe(false)
     expect(dialog.list.hidden).toBe(false)
     expect(dialog.options.hidden).toBe(false)

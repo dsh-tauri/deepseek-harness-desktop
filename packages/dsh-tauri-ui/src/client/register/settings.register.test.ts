@@ -34,19 +34,19 @@ const disposers: Array<() => void> = []
 
 /** 手机端才有三条设备查询加窄屏门槛全部成立；触屏为主但另接鼠标的设备缺 `(any-hover: none)`。 */
 const MOBILE_DEVICE = {
-  '(hover: none)': true,
+  '(pointer: coarse)': true,
   '(any-pointer: coarse)': true,
   '(any-hover: none)': true,
   '(max-width: 1023px)': true,
 }
 const TOUCHSCREEN_WITH_MOUSE = {
-  '(hover: none)': true,
+  '(pointer: coarse)': true,
   '(any-pointer: coarse)': true,
   '(any-hover: none)': false,
 }
 /** issue #1128：触屏笔记本命中三条指针查询，但宽度在 1024px 以上仍走桌面布局。 */
 const TOUCHSCREEN_DESKTOP = {
-  '(hover: none)': true,
+  '(pointer: coarse)': true,
   '(any-pointer: coarse)': true,
   '(any-hover: none)': true,
   '(max-width: 1023px)': false,
@@ -160,7 +160,7 @@ describe('registerSettings launcher seat', () => {
 
   /** 桌面端仍走自有侧栏，手机端判据不误伤。 */
   it('keeps the own sidebar on a touchscreen desktop', () => {
-    stubDevice({ '(hover: none)': false, '(any-pointer: coarse)': true, '(any-hover: none)': false })
+    stubDevice({ '(pointer: coarse)': false, '(any-pointer: coarse)': true, '(any-hover: none)': false })
 
     const { injected } = activate()
 

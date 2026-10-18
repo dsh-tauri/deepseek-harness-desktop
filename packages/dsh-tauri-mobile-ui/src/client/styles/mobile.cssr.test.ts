@@ -7,7 +7,7 @@ import mobileStyle from './mobile.cssr'
 vi.mock('dsh-tauri/client', () => ({ MOBILE_MEDIA_QUERIES }))
 vi.mock('dsh-tauri-ui/client', () => ({ cssr }))
 
-const MOBILE_MEDIA = '(hover: none) and (any-pointer: coarse) and (any-hover: none) and (max-width: 1023px)'
+const MOBILE_MEDIA = MOBILE_MEDIA_QUERIES.join(' and ')
 
 describe('mobile conversation layout', () => {
   const root = postcss.parse(mobileStyle.render())

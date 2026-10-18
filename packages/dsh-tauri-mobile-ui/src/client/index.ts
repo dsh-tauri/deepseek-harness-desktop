@@ -3,6 +3,7 @@ import type { ClientContext } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../shared/constants'
 import { locale } from './locales'
 import { installBridgeConfig, registerBridgeConfig } from './register/bridge'
+import { registerCompat } from './register/compat'
 import { registerMobileKeyboard } from './register/keyboard'
 import { registerMobilePreferences } from './register/preferences'
 import { registerMobileSettings } from './register/settings'
@@ -15,6 +16,7 @@ export const inject = ['slots', 'layout', 'locale', 'sessions']
 export function apply(ctx: ClientContext): void {
   installBridgeConfig()
   ctx.effect(registerBridgeConfig, `${PLUGIN_ID}: bridge`)
+  ctx.effect(registerCompat, `${PLUGIN_ID}: compat`)
   ctx.effect(locale.registerLocale, `${PLUGIN_ID}: locale`)
   ctx.effect(registerStyles, `${PLUGIN_ID}: styles`)
   ctx.effect(registerMobileKeyboard, `${PLUGIN_ID}: keyboard`)

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { apply, inject, name } from './index'
 import { locale } from './locales'
 import { installBridgeConfig, registerBridgeConfig } from './register/bridge'
+import { registerCompat } from './register/compat'
 import { registerMobileKeyboard } from './register/keyboard'
 import { registerMobilePreferences } from './register/preferences'
 import { registerMobileSettings } from './register/settings'
@@ -18,6 +19,7 @@ vi.mock('./register/bridge', () => ({
   }),
   registerBridgeConfig: vi.fn(),
 }))
+vi.mock('./register/compat', () => ({ registerCompat: vi.fn() }))
 vi.mock('./register/keyboard', () => ({ registerMobileKeyboard: vi.fn() }))
 vi.mock('./register/preferences', () => ({ registerMobilePreferences: vi.fn() }))
 vi.mock('./register/sidebar', () => ({ registerMobileSidebar: vi.fn() }))
@@ -38,6 +40,7 @@ it('assembles mobile-only effects and yields bridge page tweaks early', () => {
   expect(window.__DSH_BRIDGE_CONFIG__).toEqual({ disablePageTweaks: true })
   expect(effect.mock.calls).toEqual([
     [registerBridgeConfig, 'dsh-tauri-mobile-ui: bridge'],
+    [registerCompat, 'dsh-tauri-mobile-ui: compat'],
     [locale.registerLocale, 'dsh-tauri-mobile-ui: locale'],
     [registerStyles, 'dsh-tauri-mobile-ui: styles'],
     [registerMobileKeyboard, 'dsh-tauri-mobile-ui: keyboard'],
