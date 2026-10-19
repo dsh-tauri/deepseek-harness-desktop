@@ -1924,6 +1924,18 @@ describe('gateway 限速分桶', () => {
     expect((await call(status.port, '/?auth=v1.invalid', { headers: navigation() })).status).toBe(401)
   })
 
+  it('缺少 cf-connecting-ip 时不按访客自填的 x-forwarded-for 首跳分桶，轮换首跳也绕不过封禁', async () => {
+    const status = await startEntry('inbound', upstream, { auth: () => policyOf({ linkToken: 'link-token' }) })
+    const attempt = async (hop: number) => await call(status.port, '/', {
+      method: 'POST',
+      headers: { 'cf-ray': 'a4d155e90a5f78dd-LAX', 'x-forwarded-for': `198.51.100.${hop}, 203.0.113.7`, 'content-type': 'application/x-www-form-urlencoded', ...navigation() },
+      body: 'code=wrong',
+    })
+    for (let hop = 0; hop < 5; hop++)
+      await attempt(hop)
+    expect((await attempt(5)).status).toBe(429)
+  })
+
   it('非隧道来源忽略可伪造的转发头，只按 TCP 对端分桶', async () => {
     const status = await startEntry('inbound', upstream, { auth: () => policyOf({ linkToken: 'link-token' }) })
     const attempt = async (clientIp: string) => await call(status.port, '/', {

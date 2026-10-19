@@ -271,15 +271,11 @@ export function parseFormField(body: string, name: string): string | undefined {
   return value === null || value === '' ? undefined : value
 }
 
-/** 隧道侧声明的客户端 IP：只用于限速分桶，绝不参与放行判定（S2 §7.1）。 */
+/** 隧道侧声明的客户端 IP：只用于限速分桶，绝不参与放行判定（S2 §7.1）。只认边缘改写的 `cf-connecting-ip`：`x-forwarded-for` 首跳由访客自填，轮换即可绕过封禁。 */
 export function tunnelClientIpOf(headers: IncomingHttpHeaders): string | undefined {
   const direct = headers['cf-connecting-ip']
   const declared = typeof direct === 'string' ? direct.trim() : undefined
-  if (isIpAddress(declared))
-    return declared
-  const forwarded = headers['x-forwarded-for']
-  const first = (typeof forwarded === 'string' ? forwarded : '').split(',')[0]?.trim()
-  return isIpAddress(first) ? first : undefined
+  return isIpAddress(declared) ? declared : undefined
 }
 
 export function loginPageHtml(message?: string): string {

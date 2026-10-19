@@ -359,10 +359,14 @@ describe('cookie helpers', () => {
 })
 
 describe('tunnelClientIpOf', () => {
-  it('prefers the Cloudflare client address and falls back to the first forwarded hop', () => {
+  it('takes the client address set by the Cloudflare edge', () => {
     expect(tunnelClientIpOf({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '198.51.100.1' })).toBe('203.0.113.7')
-    expect(tunnelClientIpOf({ 'x-forwarded-for': '203.0.113.7, 10.0.0.1' })).toBe('203.0.113.7')
-    expect(tunnelClientIpOf({ 'x-forwarded-for': '2001:db8::7' })).toBe('2001:db8::7')
+    expect(tunnelClientIpOf({ 'cf-connecting-ip': '2001:db8::7' })).toBe('2001:db8::7')
+  })
+
+  it('never falls back to x-forwarded-for, whose first hop the visitor writes', () => {
+    expect(tunnelClientIpOf({ 'x-forwarded-for': '6.6.6.6, 203.0.113.7' })).toBeUndefined()
+    expect(tunnelClientIpOf({ 'x-forwarded-for': '2001:db8::7' })).toBeUndefined()
   })
 
   it('reports nothing for a missing or malformed declaration', () => {
