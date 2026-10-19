@@ -21,6 +21,13 @@ const SESSION = ensureSourceSession()
 
 const MIN_BYTES = 1024
 
+const CLOUDFLARE_RELAYED: IncomingHttpHeaders = {
+  'cf-ray': 'a4d155e90a5f78dd-LAX',
+  'cdn-loop': 'cloudflare; loops=1; subreqs=1',
+  'cf-connecting-ip': '203.0.113.7',
+  'x-forwarded-for': '6.6.6.6,203.0.113.7',
+}
+
 interface Coded {
   status: number
   headers: IncomingHttpHeaders
@@ -1024,6 +1031,29 @@ describe('gateway 来源门禁判定矩阵（真实 HTTP 管线）', () => {
     }
   }
 
+  for (const mode of ['unconfigured', 'public_only', 'all'] as const) {
+    const expected = mode === 'unconfigured' ? EXPECTED.tunnel.unconfigured : mode === 'public_only' ? EXPECTED.tunnel.publicOnly : EXPECTED.tunnel.all
+    it(`【矩阵】同机 cloudflared 从回环对端转入的请求 × ${mode} 与 tunnel 一致，是 ${expected}`, async () => {
+      const auth = policyFor(mode)
+      const status = await gateway.start({
+        id: 'entry',
+        kind: 'inbound',
+        upstream: upstream.origin,
+        port: 0,
+        tokenProvider: upstream.mintUrlFor,
+        ...auth === undefined ? {} : { auth },
+      })
+      const reply = await call(status.port, '/api/ping', { headers: CLOUDFLARE_RELAYED })
+      expect(reply.status).toBe(expected)
+    })
+  }
+
+  it('同机 cloudflared 转入的 WebSocket 握手同样要先认证，不继承回环放行', async () => {
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor, auth: () => policyOf({ linkToken: 'link-token' }) })
+    await expect(upgraded(status.port, '/api/remote.mux', CLOUDFLARE_RELAYED)).rejects.toThrow('401')
+    expect(upstream.upgrades).toHaveLength(0)
+  })
+
   it('把物理回环来源之外的私网来源按真实 TCP 对端地址判定', async () => {
     const external = externalAddress()
     if (external === undefined)
@@ -1789,6 +1819,14 @@ describe('gateway 内部来源标识', () => {
     expect(upstream.calls.at(-1)?.headers[GATEWAY_SESSION_HEADER]).toBe(SESSION)
   })
 
+  it('入站入口把同机 cloudflared 转入且已认证的请求声明为 tunnel，上游管理接口不会当成回环', async () => {
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor, auth: () => policyOf({ linkToken: 'link-token' }) })
+    const session = signSession('session-secret', Date.now()).value
+    const forwarded = await call(status.port, '/api/ping', { headers: { ...CLOUDFLARE_RELAYED, cookie: `dsh_remote_session=${session}` } })
+    expect(forwarded.status).toBe(200)
+    expect(upstream.calls.at(-1)?.headers[GATEWAY_SOURCE_HEADER]).toBe('tunnel')
+  })
+
   it('注入前先剥离客户端自带的标识头，绝不追加成多值头', async () => {
     const status = await gateway.start({ id: 'tunnel', kind: 'tunnel', upstream: upstream.origin, port: 0, tokenProvider: upstream.mintUrlFor, auth: () => policyOf({ linkToken: 'link-token' }) })
     const session = signSession('session-secret', Date.now()).value
@@ -1870,6 +1908,20 @@ describe('gateway 限速分桶', () => {
     expect(banned.status).toBe(429)
     const other = await attempt('198.51.100.9')
     expect(other.status).toBe(401)
+  })
+
+  it('入站入口给同机 cloudflared 转入的请求按边缘声明的客户端 IP 分桶，封禁不波及其它访客与本机回环', async () => {
+    const status = await startEntry('inbound', upstream, { auth: () => policyOf({ linkToken: 'link-token' }) })
+    const attempt = async (clientIp: string) => await call(status.port, '/', {
+      method: 'POST',
+      headers: { ...CLOUDFLARE_RELAYED, 'cf-connecting-ip': clientIp, 'content-type': 'application/x-www-form-urlencoded', ...navigation() },
+      body: 'code=wrong',
+    })
+    for (let index = 0; index < 5; index++)
+      await attempt('203.0.113.7')
+    expect((await attempt('203.0.113.7')).status).toBe(429)
+    expect((await attempt('198.51.100.9')).status).toBe(401)
+    expect((await call(status.port, '/?auth=v1.invalid', { headers: navigation() })).status).toBe(401)
   })
 
   it('非隧道来源忽略可伪造的转发头，只按 TCP 对端分桶', async () => {

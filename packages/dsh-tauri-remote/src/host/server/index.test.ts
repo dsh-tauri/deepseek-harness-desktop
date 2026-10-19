@@ -277,6 +277,8 @@ describe('management request boundary', () => {
       { [GATEWAY_SOURCE_HEADER]: 'loopback, loopback', [GATEWAY_SESSION_HEADER]: session },
       { [GATEWAY_SOURCE_HEADER]: 'unknown', [GATEWAY_SESSION_HEADER]: session },
       { [GATEWAY_SOURCE_HEADER]: 'public', [GATEWAY_SESSION_HEADER]: 'outbound' },
+      { 'cf-ray': 'a4d155e90a5f78dd-LAX' },
+      { 'cdn-loop': 'cloudflare; loops=1; subreqs=1' },
     ]
     for (const headers of sources) {
       for (const path of PATHS.filter(path => path !== `${BASE}/session/role`)) {

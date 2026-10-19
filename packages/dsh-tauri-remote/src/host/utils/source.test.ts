@@ -93,6 +93,14 @@ describe('classifySource', () => {
     expect(classifySource(headers(), '8.8.8.8', SESSION)).toBe('public')
   })
 
+  it.each<IncomingHttpHeaders>([
+    { 'cf-ray': 'a4d155e90a5f78dd-LAX' },
+    { 'cdn-loop': 'cloudflare; loops=1; subreqs=1' },
+  ])('classifies the edge-relayed request %j as tunnel instead of trusting the connector peer', (relayed) => {
+    expect(classifySource(relayed, '127.0.0.1', SESSION)).toBe('tunnel')
+    expect(classifySource(relayed, '10.1.2.3', SESSION)).toBe('tunnel')
+  })
+
   it('adopts the declared classification of a forwarded request whose session matches', () => {
     expect(classifySource(headers('loopback', SESSION), '10.1.2.3', SESSION)).toBe('loopback')
     expect(classifySource(headers('private', SESSION), '127.0.0.1', SESSION)).toBe('private')
@@ -227,6 +235,10 @@ describe('rateLimitKeyOf', () => {
   it('uses the tunnel-declared client address for tunnel sources only', () => {
     expect(rateLimitKeyOf('tunnel', '127.0.0.1', '203.0.113.7')).toBe('203.0.113.7')
     expect(rateLimitKeyOf('tunnel', '127.0.0.1', '2001:db8::7')).toBe('2001:db8::7')
+  })
+
+  it('ignores the declared address of a tunnel source that did not arrive through a local connector', () => {
+    expect(rateLimitKeyOf('tunnel', '192.168.1.20', '203.0.113.7')).toBe('192.168.1.20')
   })
 
   it('ignores the declared address for every other source', () => {

@@ -21,15 +21,16 @@ export function isLoopbackPeer(address: string | undefined): boolean {
 }
 
 /**
- * 来源分类判定：两枚内部标识头都不存在时回退 TCP 对端地址；任一枚存在则必须两枚同时有效
- * （单值 + 会话标识匹配 + 取值合法）才采用其声明，否则一律按不可信处理——网关转发到本机 DSH
- * 时对端恒为回环，回退会把伪造头变成回环权限。转发头（X-Forwarded-For 等）不参与判定。
+ * 来源分类判定：两枚内部标识头都不存在时回退 TCP 对端地址，但带 CDN 边缘标记（`cf-ray` /
+ * `cdn-loop`）的请求恒为 tunnel——同机 cloudflared 转入时对端恒为回环，回退会让公网访客拿到回环权限；
+ * 任一枚存在则必须两枚同时有效（单值 + 会话标识匹配 + 取值合法）才采用其声明，否则一律按不可信处理——
+ * 网关转发到本机 DSH 时对端恒为回环，回退会把伪造头变成回环权限。转发头（X-Forwarded-For 等）不参与判定。
  */
 export function classifySource(headers: IncomingHttpHeaders, peerAddress: string | undefined, session: string): RemoteSourceClass {
   const declared = headers[GATEWAY_SOURCE_HEADER]
   const token = headers[GATEWAY_SESSION_HEADER]
   if (declared === undefined && token === undefined)
-    return classifyPeer(peerAddress)
+    return isEdgeRelayed(headers) ? 'tunnel' : classifyPeer(peerAddress)
   if (typeof declared !== 'string' || typeof token !== 'string')
     return 'public'
   if (session === '' || !sessionMatches(token, session))
@@ -56,9 +57,9 @@ export function decideSourceAccess(source: RemoteSourceClass, policy: RemoteAuth
   return 'authenticate'
 }
 
-/** 限速分桶键：仅隧道来源（内部标识可信）允许采用隧道侧声明的客户端 IP，且只影响分桶（S2 §7.1/§7.4）。 */
+/** 限速分桶键：仅经同机连接器（回环对端）转入的隧道来源允许采用隧道侧声明的客户端 IP，且只影响分桶（S2 §7.1/§7.4）；私网对端能自报边缘头，不得借此换桶。 */
 export function rateLimitKeyOf(source: RemoteSourceClass, peerAddress: string | undefined, declaredClientIp: string | undefined): string {
-  if (source === 'tunnel' && isIpAddress(declaredClientIp))
+  if (source === 'tunnel' && isLoopbackPeer(peerAddress) && isIpAddress(declaredClientIp))
     return declaredClientIp
   return peerAddress === undefined || peerAddress === '' ? 'unknown' : peerAddress
 }
@@ -113,6 +114,10 @@ function octetOf(value: string | undefined): number | undefined {
     return undefined
   const parsed = Number(value)
   return parsed <= 255 ? parsed : undefined
+}
+
+function isEdgeRelayed(headers: IncomingHttpHeaders): boolean {
+  return headers['cf-ray'] !== undefined || headers['cdn-loop'] !== undefined
 }
 
 function isSourceClass(value: string): value is RemoteSourceClass {

@@ -348,7 +348,7 @@ function sourceOf(entry: GatewayEntry, request: IncomingMessage, session: string
 
 async function admitAuthenticated(entry: GatewayEntry, request: IncomingMessage, response: ServerResponse, source: RemoteSourceClass, policy: RemoteAuthPolicy): Promise<boolean> {
   const now = Date.now()
-  const bucket = rateLimitKeyOf(source, request.socket.remoteAddress, entry.kind === 'tunnel' ? tunnelClientIpOf(request.headers) : undefined)
+  const bucket = rateLimitKeyOf(source, request.socket.remoteAddress, tunnelClientIpOf(request.headers))
   const url = new URL(request.url ?? '/', 'http://gateway.invalid')
   const provided = request.method === 'GET' && url.pathname === '/' ? url.searchParams.get(AUTH_QUERY) ?? undefined : undefined
   const pairing = url.pathname === '/' && url.searchParams.get('pair') === '1'
