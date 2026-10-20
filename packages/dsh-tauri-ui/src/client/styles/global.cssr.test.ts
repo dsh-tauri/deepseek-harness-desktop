@@ -118,27 +118,46 @@ describe('conversation input dock stack', () => {
 })
 
 /**
- * 侧边栏 rail 的 logo 契约。
+ * 官方侧边栏 toggle 契约。
  *
- * 官方侧边栏折叠后，logo 不再来自 `logoRow` 上的品牌块（它只在展开态渲染），
- * 而是画在 logo 行里那枚 toggle 内（`railMark` 鲸鱼，悬停互换为展开图标）。
- * 本仓为去掉重复入口在展开态隐藏该 toggle —— 该规则不得在折叠态继续命中，
- * 否则 rail 上的 logo 整块消失。这里按生成 CSS 断言这条恢复规则存在且特异性更高。
+ * 本表在所有客户端加载；远程网页与 App 没有桌面壳 navbar，官方 toggle 是唯一的侧栏开关。
+ * 桌面 iframe 里的重复入口由 dsh-tauri 的 `register/sidebar-tweaks.ts` 按文案隐藏。
  */
-describe('sidebar rail logo', () => {
-  const css = globalStyle.render()
+describe('official sidebar toggle', () => {
+  function toggleDisplay(markup: string): string[] {
+    const fixture = document.createElement('div')
+    fixture.innerHTML = markup
+    const toggle = fixture.querySelector('[class$="_toggle"]')!
+    const values: string[] = []
+    postcss.parse(globalStyle.render()).walkRules(/logoRow|toggle|iconButton/, (rule) => {
+      if (toggle.matches(rule.selector)) {
+        rule.walkDecls('display', (decl) => {
+          values.push(decl.value)
+        })
+      }
+    })
+    return values
+  }
 
-  it('展开态隐藏重复的折叠 toggle', () => {
-    expect(css).toMatch(/\[class\$="logoRow"\][^{]*\[class\$="toggle"\][^{]*\{[^}]*display:\s*none\s*!important/)
+  it('展开态的折叠按钮不被全局表隐藏', () => {
+    expect(toggleDisplay(`
+      <div class="hHd-Xa_root">
+        <div class="hHd-Xa_logoRow">
+          <button class="hHd-Xa_brand hHd-Xa_wide" aria-label="New session"></button>
+          <button class="hHd-Xa_iconButton hHd-Xa_toggle" aria-label="Collapse sidebar"></button>
+        </div>
+      </div>
+    `)).toEqual([])
   })
 
-  it('折叠态把承载 logo 的 toggle 恢复显示（特异性高于隐藏规则）', () => {
-    const recovery = /\[class\*="collapsed"\]\s*\[class\$="logoRow"\]\s*\[class\$="toggle"\][^{]*\{[^}]*display:\s*inline-flex\s*!important/.exec(css)
-    expect(recovery, '缺少折叠轨道的 logo 恢复规则').not.toBeNull()
-
-    const hide = css.indexOf('[class$="logoRow"] [class$="toggle"]')
-    const show = css.indexOf('[class*="collapsed"] [class$="logoRow"] [class$="toggle"]')
-    expect(show, '恢复规则必须排在隐藏规则之后').toBeGreaterThan(hide)
+  it('折叠轨道的展开按钮不被全局表改写 display', () => {
+    expect(toggleDisplay(`
+      <div class="hHd-Xa_root hHd-Xa_collapsed">
+        <div class="hHd-Xa_logoRow">
+          <button class="hHd-Xa_iconButton hHd-Xa_toggle" aria-label="Open sidebar"></button>
+        </div>
+      </div>
+    `)).toEqual([])
   })
 })
 

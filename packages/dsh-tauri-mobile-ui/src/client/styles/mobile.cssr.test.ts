@@ -122,6 +122,19 @@ describe('mobile conversation layout', () => {
     })
   })
 
+  it('hides the official sidebar toggle only while the drawer owns the sidebar on touch screens', () => {
+    const selector = 'html[data-dsh-mobile-sidebar] [class$="_logoRow"] :is([class$="_toggle"], [class*="_toggle "])'
+    expect(declarations(selector)).toEqual({ display: 'none !important' })
+    const rules: unknown[] = []
+    root.walkRules(selector, (rule) => {
+      rules.push(rule)
+      expect(rule.parent?.type).toBe('atrule')
+      if (rule.parent?.type === 'atrule')
+        expect(rule.parent.params).toBe(MOBILE_MEDIA)
+    })
+    expect(rules).toHaveLength(1)
+  })
+
   it('keeps the navbar controls as naked icons without button backgrounds or shadows', () => {
     for (const selector of ['[data-dsh-mobile-sidebar-toggle]', '[data-dsh-mobile-new-session]']) {
       expect(declarations(selector)).toMatchObject({

@@ -125,6 +125,10 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
   c('html[data-dsh-mobile-sidebar] [data-side="sidebar"]', {
     display: 'none !important',
   }),
+  // 抽屉接管时侧栏被强制展开，官方折叠按钮只翻转布局状态、收不起抽屉；开合交给顶栏、遮罩与滑动。
+  c('html[data-dsh-mobile-sidebar] [class$="_logoRow"] :is([class$="_toggle"], [class*="_toggle "])', {
+    display: 'none !important',
+  }),
   c('html[data-dsh-mobile-sidebar] [class$="_centerCol"] > [data-slot="main"]', {
     flex: '1',
     minHeight: '0',
