@@ -73,6 +73,7 @@ vi.mock('heroui-native/button', async () => {
   }
   return { Button: Object.assign(Button, { Label: 'Text' }) }
 })
+vi.mock('heroui-native/input', () => ({ Input: 'Input' }))
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => native.insets }))
 vi.mock('react-native-lucide', () => ({ X: 'Icon' }))
 vi.mock('react-native-reanimated', async () => {
@@ -141,6 +142,22 @@ function camera() {
 async function press(label: string) {
   await act(async () => {
     await button(label).props.onPress()
+  })
+}
+
+function addressInput() {
+  return root().find(node => String(node.type) === 'Input')
+}
+
+async function typeAddress(value: string) {
+  await act(async () => {
+    addressInput().props.onChangeText(value)
+  })
+}
+
+async function submitFromKeyboard() {
+  await act(async () => {
+    addressInput().props.onSubmitEditing()
   })
 }
 
@@ -389,5 +406,121 @@ describe('rendered scanner QR events', () => {
     expect(native.back).toHaveBeenCalledExactlyOnceWith()
     expect(connection.current).toEqual({ id: 'https://existing.local', url: 'https://existing.local/tasks', host: 'existing.local', port: 443 })
     expect(connection.stage).toBe('connected')
+  })
+})
+
+describe('rendered scanner manual address entry', () => {
+  it('replaces the camera with a focused URL field when manual entry is chosen', async () => {
+    await mount()
+
+    await press('手动输入地址')
+
+    expect(root().findAll(node => String(node.type) === 'CameraView')).toHaveLength(0)
+    expect(addressInput().props).toMatchObject({ accessibilityLabel: '连接地址', value: '', isInvalid: false, autoFocus: true, autoCapitalize: 'none', autoCorrect: false, keyboardType: 'url', returnKeyType: 'go' })
+    expect(texts()).toContain('输入地址连接')
+    expect(texts()).not.toContain('扫码连接 DSH Mobile')
+  })
+
+  it('returns from the address form to a camera that accepts a fresh QR result after an invalid one', async () => {
+    await mount()
+    await act(async () => {
+      camera().props.onBarcodeScanned({ data: 'not a connection QR code' })
+    })
+    expect(camera().props.onBarcodeScanned).toBeUndefined()
+
+    await press('手动输入地址')
+    await press('改为扫码连接')
+
+    expect(texts()).toContain('扫码连接 DSH Mobile')
+    expect(texts()).not.toContain('二维码中没有有效的 HTTP/HTTPS 连接地址。')
+    await act(async () => {
+      camera().props.onBarcodeScanned({ data: 'http://bridge.local:3080/' })
+    })
+    expect(connection.current).toEqual({ id: 'http://bridge.local:3080', url: 'http://bridge.local:3080/', host: 'bridge.local', port: 3080 })
+    expect(native.back).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('connects a typed URL with its pairing code once before React commits and returns to Home once', async () => {
+    await mount()
+    await press('手动输入地址')
+    await typeAddress('  http://192.168.1.10:3088/?auth=K7M2Q9XA  ')
+
+    await act(async () => {
+      button('连接').props.onPress()
+      button('连接').props.onPress()
+    })
+
+    expect(connection.current).toEqual({ id: 'http://192.168.1.10:3088', url: 'http://192.168.1.10:3088/', host: '192.168.1.10', port: 3088, token: 'K7M2Q9XA' })
+    expect(connection.stage).toBe('connected')
+    expect(native.back).toHaveBeenCalledExactlyOnceWith()
+    const generation = connection.viewGeneration
+    await submitFromKeyboard()
+    expect(native.back).toHaveBeenCalledTimes(1)
+    expect(connection.viewGeneration).toBe(generation)
+  })
+
+  it('connects a bare host name submitted from the keyboard over https', async () => {
+    await mount()
+    await press('手动输入地址')
+    await typeAddress('dsh.example.com')
+
+    await submitFromKeyboard()
+
+    expect(connection.current).toEqual({ id: 'https://dsh.example.com', url: 'https://dsh.example.com/', host: 'dsh.example.com', port: 443 })
+    expect(native.back).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('keeps a typed host and port on plain http', async () => {
+    await mount()
+    await press('手动输入地址')
+    await typeAddress('192.168.1.10:3088')
+
+    await press('连接')
+
+    expect(connection.current).toEqual({ id: 'http://192.168.1.10:3088', url: 'http://192.168.1.10:3088/', host: '192.168.1.10', port: 3088 })
+    expect(native.back).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it.each(['ftp://files.local', 'bridge local'])('rejects the typed address %s without connecting', async (value) => {
+    await mount()
+    await press('手动输入地址')
+    await typeAddress(value)
+
+    await press('连接')
+
+    expect(texts()).toContain('请输入有效的 HTTP/HTTPS 连接地址。')
+    expect(addressInput().props.isInvalid).toBe(true)
+    expect(connection.current).toBeNull()
+    expect(native.back).not.toHaveBeenCalled()
+  })
+
+  it('clears the invalid-address error once the address is edited', async () => {
+    await mount()
+    await press('手动输入地址')
+    await typeAddress('ftp://files.local')
+    await press('连接')
+    expect(texts()).toContain('请输入有效的 HTTP/HTTPS 连接地址。')
+
+    await typeAddress('https://files.local')
+
+    expect(texts()).not.toContain('请输入有效的 HTTP/HTTPS 连接地址。')
+    expect(addressInput().props.isInvalid).toBe(false)
+    expect(connection.current).toBeNull()
+  })
+
+  it('keeps Connect disabled and ignores keyboard submits while the address is blank', async () => {
+    await mount()
+    await press('手动输入地址')
+    expect(button('连接').props.isDisabled).toBe(true)
+
+    await typeAddress('   ')
+    await submitFromKeyboard()
+
+    expect(button('连接').props.isDisabled).toBe(true)
+    expect(texts()).not.toContain('请输入有效的 HTTP/HTTPS 连接地址。')
+    expect(connection.current).toBeNull()
+    expect(native.back).not.toHaveBeenCalled()
+    await typeAddress('dsh.example.com')
+    expect(button('连接').props.isDisabled).toBe(false)
   })
 })

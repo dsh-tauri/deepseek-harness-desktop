@@ -95,13 +95,14 @@ src-native/
 ## 4. 启动与连接流程 (Startup & Connection)
 
 * **首次进入**（无成功连接历史）：只展示连接方式选择——「自动扫描局域网」「扫码连接」「最近连接」，**不**自动连接、**不**隐式扫描。
+* **手动输入**：扫码页在相机权限已授予后提供「手动输入地址」，切换后卸载相机、只留地址输入框，「改为扫码连接」切回。输入与二维码共用 `parseQrPayload`，解析失败且不含 `://` 时补 `https://` 再解析一次（裸域名走 HTTPS，`host:port` 仍按 HTTP）；解析结果直接交给 `connectAddress`，需要认证的主机在 WebView 的配对页输入桌面端显示的配对码。
 * **再次进入**（历史中有主机）：只探测历史主机并自动连接可用项，检测期文案为「寻找可用连接」；全部不可用时停在连接方式选择，**不**退化为局域网扫描。
 * **主动发现**由用户操作触发：点击「自动扫描局域网」，或断开连接后紧接的那轮扫描。
 * 探测成功由可信 DSH 文档就绪消息确认，不以原生 `onLoad` 或 HTTP 200 判定。
 * 超时与预算集中在 `src-native/config/constants.ts`：默认端口 `3088` / `3080`、并发 40、单次探测 600 ms、历史探测 3 s、整体扫描预算 20 s、前台健康检查间隔 15 s。
 * 服务识别与健康检查只请求上游真实公开的 `/manifest.webmanifest`，严格校验 `name: 'DeepSeek Harness'` 与 `short_name: 'DSH'`；不请求不存在的认证状态端点，也不把任意 HTML 200 当作 DSH 服务。
 * 服务识别不代表登录成功。需要认证的主机由 WebView 完成配对，只有可信文档就绪消息才能确认连接成功；健康检查不读取或重放配对码。
-* 主机前置 Cloudflare Access 时，需为 `/manifest.webmanifest` 单独建一个 Bypass 应用（该隧道路由不开 Protect with Access），否则启动自动重连与健康检查一律失败；扫码、点选历史与重新连接不经探测。
+* 主机前置 Cloudflare Access 时，需为 `/manifest.webmanifest` 单独建一个 Bypass 应用（该隧道路由不开 Protect with Access），否则启动自动重连与健康检查一律失败；扫码、手动输入、点选历史与重新连接不经探测。
 * 探测与扫描拆成两个模块：`src-native/services/probe-bridge.ts` 的 `probeBridge(address, signal, timeoutMs?)` 探测单个地址（超时、网络错误、非 2xx、响应体不合法一律返回 `null`），`src-native/services/scan-candidates.ts` 的 `scanCandidates(candidates, { signal, concurrency, timeoutMs, budgetMs, onFound })` 以有界并发遍历候选地址并受总预算约束（参数非法直接抛 `RangeError`）。
 * 断开会清空当前连接并保留历史，紧接着的扫描跳过刚断开的精确 origin。
 
@@ -132,7 +133,7 @@ src-native/
 ## 6. 网络与安全边界 (Network & Security)
 
 * 局域网 HTTP 通过 `expo-build-properties` 的 `usesCleartextTraffic: true` 支持；HTTP 不提供传输保密性，仅用于可信局域网，公网优先 HTTPS。
-* 自动发现基于当前 IPv4 推导 `/24` 网段，不保证跨网段、VPN、访客 Wi-Fi 隔离或非默认端口；此时改用桌面端 / Bridge 生成的二维码，或在 `EXTRA_SCAN_PORTS` 追加端口。
+* 自动发现基于当前 IPv4 推导 `/24` 网段，不保证跨网段、VPN、访客 Wi-Fi 隔离或非默认端口；此时改用桌面端 / Bridge 生成的二维码、在扫码页手动输入地址，或在 `EXTRA_SCAN_PORTS` 追加端口。
 * 通知与 WebView 消息入口校验类型白名单、精确 scheme / host / port origin、原生事件 URL 与每个 WebView 的随机 nonce；外站顶层链接交由外部浏览器打开。
 * 唯一例外是 Cloudflare Access 登录：受信 origin 的文档请求被服务端重定向到 `https://*.cloudflareaccess.com/cdn-cgi/access/login/…` 时，登录留在 WebView 内，流程中的 https 顶层跳转（团队域、IdP）放行，回到受信 origin 即结束，期间隐藏加载遮罩并暂停 20 s 超时，结束后 Android 清空返回历史；已加载文档里点开的同类链接仍走外部浏览器。Google 作为 IdP 会拒绝嵌入式 WebView（`disallowed_useragent`），需改用 One-time PIN 等。
 * 配对登录与会话保留在 WebView 内由 cookie jar 管理，**不**通过 RN `fetch` 登录。远程访问不再生成、保存或接受访问密码；SSH 密码与密钥口令不受影响。

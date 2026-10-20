@@ -46,6 +46,13 @@
   "scan.cameraError": "无法打开相机，请检查相机权限后重试。",
   "scan.invalidQr": "二维码中没有有效的 HTTP/HTTPS 连接地址。",
   "scan.qrRetry": "重新扫码",
+  "scan.enterAddress": "手动输入地址",
+  "scan.addressTitle": "输入地址连接",
+  "scan.addressHint": "输入 DSH 主机地址，例如 https://dsh.example.com 或 192.168.1.10:3088",
+  "scan.address": "连接地址",
+  "scan.connect": "连接",
+  "scan.scanInstead": "改为扫码连接",
+  "scan.invalidAddress": "请输入有效的 HTTP/HTTPS 连接地址。",
   "notification.channel": "连接与任务通知",
   "notification.channelSilent": "连接与任务通知 · 静音"
 }

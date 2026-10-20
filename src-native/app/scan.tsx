@@ -3,6 +3,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera'
 import { router } from 'expo-router'
 import { Button } from 'heroui-native/button'
 import { useThemeColor } from 'heroui-native/hooks'
+import { Input } from 'heroui-native/input'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Else, If, Then } from 'react-if-lite'
@@ -22,6 +23,9 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets()
   const [error, setError] = useState<string | null>(null)
   const [scanned, setScanned] = useState(false)
+  const [manual, setManual] = useState(false)
+  const [typedAddress, setTypedAddress] = useState('')
+  const [invalidAddress, setInvalidAddress] = useState(false)
   const lockedRef = useRef(false)
   const [background, foreground] = useThemeColor(['background', 'foreground'])
   // keep:effect Recheck the native camera permission when returning from system settings.
@@ -58,13 +62,34 @@ export default function ScanScreen() {
     setError(null)
     setScanned(false)
   }
+  function switchMode(next: boolean) {
+    retry()
+    setInvalidAddress(false)
+    setManual(next)
+  }
+  function submitAddress() {
+    const text = typedAddress.trim()
+    if (!text || lockedRef.current)
+      return
+    const address = parseQrPayload(text) ?? (text.includes('://') ? null : parseQrPayload(`https://${text}`))
+    if (!address) {
+      setInvalidAddress(true)
+      return
+    }
+    lockedRef.current = true
+    connectAddress(address)
+    router.back()
+  }
   let permissionLabel: string = t('scan.allowCamera')
   if (permission && !permission.canAskAgain)
     permissionLabel = t('scan.openSettings')
+  let title: string = t('scan.cameraTitle')
+  if (manual)
+    title = t('scan.addressTitle')
   return (
     <View style={{ flex: 1, backgroundColor: background, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       <View className="flex-row items-center justify-between gap-3 px-5 pb-3 pt-2">
-        <Text className="flex-1 text-lg font-semibold text-foreground">{t('scan.cameraTitle')}</Text>
+        <Text className="flex-1 text-lg font-semibold text-foreground">{title}</Text>
         <Button variant="ghost" isIconOnly accessibilityLabel={t('scan.closeScanner')} onPress={() => router.back()}>
           <X size={24} color={foreground} />
         </Button>
@@ -73,31 +98,61 @@ export default function ScanScreen() {
         <Then>
           <If cond={permission?.granted}>
             <Then>
-              <View className="mx-5 flex-1 overflow-hidden rounded-3xl bg-black">
-                <If cond={appState === 'active'}>
-                  <Then>
-                    <CameraView
-                      style={{ flex: 1 }}
-                      facing="back"
-                      barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                      onBarcodeScanned={scanned ? undefined : handleBarcode}
-                      onMountError={() => setError(t('scan.cameraError'))}
+              <If cond={manual}>
+                <Then>
+                  <View className="flex-1 gap-4 px-5 pt-2">
+                    <Text className="text-sm leading-6 text-muted">{t('scan.addressHint')}</Text>
+                    <Input
+                      accessibilityLabel={t('scan.address')}
+                      value={typedAddress}
+                      onChangeText={(text) => {
+                        setTypedAddress(text)
+                        setInvalidAddress(false)
+                      }}
+                      isInvalid={invalidAddress}
+                      autoFocus
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                      returnKeyType="go"
+                      onSubmitEditing={submitAddress}
                     />
-                  </Then>
-                </If>
-                <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-                  <View className="h-64 w-64 rounded-3xl border-2 border-white/80" />
-                </View>
-              </View>
-              <View className="gap-4 px-6 py-6">
-                <Text className="text-center text-sm leading-6 text-muted">{t('scan.cameraHint')}</Text>
-                <If cond={error !== null}>
-                  <Then>
-                    <Text className="text-center text-sm text-danger" accessibilityLiveRegion="polite">{error}</Text>
-                    <Button variant="outline" onPress={retry}>{t('scan.qrRetry')}</Button>
-                  </Then>
-                </If>
-              </View>
+                    <If cond={invalidAddress}>
+                      <Then><Text className="text-sm text-danger" accessibilityLiveRegion="polite">{t('scan.invalidAddress')}</Text></Then>
+                    </If>
+                    <Button isDisabled={!typedAddress.trim()} onPress={submitAddress}>{t('scan.connect')}</Button>
+                    <Button variant="ghost" onPress={() => switchMode(false)}>{t('scan.scanInstead')}</Button>
+                  </View>
+                </Then>
+                <Else>
+                  <View className="mx-5 flex-1 overflow-hidden rounded-3xl bg-black">
+                    <If cond={appState === 'active'}>
+                      <Then>
+                        <CameraView
+                          style={{ flex: 1 }}
+                          facing="back"
+                          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                          onBarcodeScanned={scanned ? undefined : handleBarcode}
+                          onMountError={() => setError(t('scan.cameraError'))}
+                        />
+                      </Then>
+                    </If>
+                    <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+                      <View className="h-64 w-64 rounded-3xl border-2 border-white/80" />
+                    </View>
+                  </View>
+                  <View className="gap-4 px-6 py-6">
+                    <Text className="text-center text-sm leading-6 text-muted">{t('scan.cameraHint')}</Text>
+                    <If cond={error !== null}>
+                      <Then>
+                        <Text className="text-center text-sm text-danger" accessibilityLiveRegion="polite">{error}</Text>
+                        <Button variant="outline" onPress={retry}>{t('scan.qrRetry')}</Button>
+                      </Then>
+                    </If>
+                    <Button variant="ghost" onPress={() => switchMode(true)}>{t('scan.enterAddress')}</Button>
+                  </View>
+                </Else>
+              </If>
             </Then>
             <Else>
               <View className="flex-1 items-center justify-center gap-6 px-8">

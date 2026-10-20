@@ -46,6 +46,13 @@
   "scan.cameraError": "Cannot open the camera. Check the camera permission and try again.",
   "scan.invalidQr": "The QR code contains no valid HTTP/HTTPS connection address.",
   "scan.qrRetry": "Scan again",
+  "scan.enterAddress": "Enter address manually",
+  "scan.addressTitle": "Connect by address",
+  "scan.addressHint": "Enter the DSH host address, such as https://dsh.example.com or 192.168.1.10:3088",
+  "scan.address": "Connection address",
+  "scan.connect": "Connect",
+  "scan.scanInstead": "Scan QR code instead",
+  "scan.invalidAddress": "Enter a valid HTTP/HTTPS connection address.",
   "notification.channel": "Connection and task notifications",
   "notification.channelSilent": "Connection and task notifications · silent"
 }
