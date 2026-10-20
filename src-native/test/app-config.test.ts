@@ -84,6 +84,12 @@ describe('public Expo configuration packaged by expo-constants', () => {
     }])
   })
 
+  it('opts iOS into design compatibility so iPadOS window controls get their own top safe area', () => {
+    const { exp } = getConfig(projectRoot, { isPublicConfig: true, skipSDKVersionRequirement: true })
+
+    expect(exp.ios?.infoPlist?.UIDesignRequiresCompatibility).toBe(true)
+  })
+
   it('shrinks release code and resources and compresses APK payloads', () => {
     const { exp } = getConfig(projectRoot, { skipSDKVersionRequirement: true })
 

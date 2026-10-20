@@ -30,6 +30,7 @@
       },
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "DSH Mobile 使用本地网络发现并连接您电脑上的 DSH 服务。",
+        "UIDesignRequiresCompatibility": true,
         "UISupportedInterfaceOrientations~ipad": [
           "UIInterfaceOrientationPortrait",
           "UIInterfaceOrientationPortraitUpsideDown",

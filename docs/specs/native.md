@@ -49,6 +49,7 @@ pnpm typecheck:native   # tsc --project tsconfig.native.json --noEmit
 * 工程根 `tsconfig.json` 是桌面端配置（`"@/*": ["src/*"]`），而 Expo CLI 的 tsconfig paths 解析器读的正是工程根 tsconfig ⇒ native 的 `@/x` 会被错误解析到 `src/x`（同名模块还会静默串味）。因此 `metro.config.js` 在用户解析器里先行短路，把 `@/x` 钉到 `src-native/x`，与 `tsconfig.native.json` 的 paths 一致。
 * `app.json` 的 `expo.version` **跟随桌面端版本**，Android `versionCode` 与之同步递增（由 §8.4 的 bumpp 补丁写入）。
 * **屏幕方向**：`app.json` 的 `orientation: "portrait"` 锁住 iPhone，iPad 由 `ios.infoPlist` 的 `UISupportedInterfaceOrientations~ipad` 放开四向。Android 没有平板专用键，`app.config.js` 在 prebuild 时把 MainActivity 的清单方向改为 `fullUser`，并在 `onCreate` / `onConfigurationChanged` 里按 `smallestScreenWidthDp < 600`（与 Android 16 大屏规则同一条线）把手机锁回竖屏；平板与展开的折叠屏随系统旋转设置。MainActivity 不再匹配 Expo 模板时 prebuild 直接报错，升级 Expo SDK 后需复核补丁锚点。
+* **iPad 窗口控件**：`ios.infoPlist` 设 `UIDesignRequiresCompatibility: true`，让 iPadOS 26 窗口模式在顶部为窗口控件留出窄带，不再盖住页面。临时方案：Xcode 27 构建会忽略该键，升级 Expo SDK 58 后改为在 `SceneDelegate` 返回 `.minimal`。
 * `experiments` 开启 `typedRoutes` 与 `reactCompiler`，因此移动端同样**禁止**手写 `useCallback` / `useMemo`。
 
 ---
