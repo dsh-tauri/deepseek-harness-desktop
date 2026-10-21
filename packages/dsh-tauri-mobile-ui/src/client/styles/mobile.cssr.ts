@@ -1,16 +1,20 @@
 import { cssr } from 'dsh-tauri-ui/client'
-import { MOBILE_MEDIA_QUERIES } from 'dsh-tauri/client'
+import { MOBILE_MEDIA_QUERIES, MOBILE_POINTER_QUERIES } from 'dsh-tauri/client'
 
 const { c } = cssr
 
-export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
+// iOS 弹出键盘时不缩小布局，只把整页临时上推；composer 的退格由 Lexical 在 JS 里删除后自行 `scrollBy`，
+// 而 iOS 把脚本滚动夹在不含键盘的范围内（一屏高的页面即 0），整页会掉回键盘后面。纯触屏设备上编辑 composer 时，
+// 移动与桌面布局都把页面高度收进键盘上方。
+const keyboardFit = c(`@media ${MOBILE_POINTER_QUERIES.join(' and ')}`, [
+  c(':root', {
+    height: 'var(--dsh-mobile-viewport-height, 100%)',
+  }),
+])
+
+const layout = c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
   c('html[data-dsh-mobile-sidebar], html[data-dsh-mobile-sidebar] body', {
     overflow: 'hidden',
-  }),
-  // iOS 弹出键盘时不缩小布局，只把整页临时上推；composer 的退格由 Lexical 在 JS 里删除后自行 `scrollBy`，
-  // 而 iOS 把脚本滚动夹在不含键盘的范围内（一屏高的页面即 0），整页会掉回键盘后面。编辑 composer 时页面高度直接收进键盘上方。
-  c('html[data-dsh-mobile-sidebar]', {
-    height: 'var(--dsh-mobile-viewport-height, 100%)',
   }),
   c('[data-dsh-mobile-preferences]', {
     display: 'flex',
@@ -260,3 +264,5 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     }),
   ]),
 ])
+
+export default c([layout, keyboardFit])

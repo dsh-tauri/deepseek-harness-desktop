@@ -76,17 +76,26 @@ it('contains synthetic document overflow during touch scrolling while preserving
   }
 })
 
-it('fits the conversation shell into the keyboard-visible height published by the keyboard register', async () => {
-  const page = await browser.newPage({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } })
+it.each([
+  { layout: 'mobile', width: 390, height: 844, keyboardTop: 508 },
+  { layout: 'desktop', width: 1180, height: 820, keyboardTop: 460 },
+])('fits the $layout conversation shell into the keyboard-visible height published by the keyboard register', async ({ layout, width, height, keyboardTop }) => {
+  const page = await browser.newPage({ isMobile: true, hasTouch: true, viewport: { width, height } })
   try {
     await page.setContent(conversationPage)
+    if (layout === 'desktop') {
+      await page.evaluate(() => {
+        document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
+        document.querySelector('[data-dsh-mobile-navbar-host]')?.remove()
+      })
+    }
     await page.addStyleTag({ content: mobileStyle.render() })
     const composerBottom = () => page.locator('[data-composer-seat]').evaluate(element => element.getBoundingClientRect().bottom)
-    await page.evaluate(() => document.documentElement.style.setProperty('--dsh-mobile-viewport-height', '508px'))
-    expect(await composerBottom(), '键盘弹出时输入区须贴住键盘上沿').toBe(508)
-    expect(await page.locator('nav').evaluate(element => element.getBoundingClientRect().top), '顶栏须留在可见区顶部').toBe(0)
+    await page.evaluate(top => document.documentElement.style.setProperty('--dsh-mobile-viewport-height', `${top}px`), keyboardTop)
+    expect(await composerBottom(), '键盘弹出时输入区须贴住键盘上沿').toBe(keyboardTop)
+    expect(await page.locator('[data-slot="root"]').evaluate(element => element.getBoundingClientRect().top), '页面顶端须留在可见区顶部').toBe(0)
     await page.evaluate(() => document.documentElement.style.removeProperty('--dsh-mobile-viewport-height'))
-    expect(await composerBottom(), '键盘收起后输入区回到视口底部').toBe(844)
+    expect(await composerBottom(), '键盘收起后输入区回到视口底部').toBe(height)
   }
   finally {
     await page.close()

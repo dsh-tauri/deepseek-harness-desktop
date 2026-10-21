@@ -1,13 +1,14 @@
 import postcss from 'postcss'
 import { describe, expect, it, vi } from 'vitest'
 import { cssr } from '../../../../dsh-tauri-ui/src/client/utils/cssr'
-import { MOBILE_MEDIA_QUERIES } from '../../../../dsh-tauri/src/client/utils/device'
+import { MOBILE_MEDIA_QUERIES, MOBILE_POINTER_QUERIES } from '../../../../dsh-tauri/src/client/utils/device'
 import mobileStyle from './mobile.cssr'
 
-vi.mock('dsh-tauri/client', () => ({ MOBILE_MEDIA_QUERIES }))
+vi.mock('dsh-tauri/client', () => ({ MOBILE_MEDIA_QUERIES, MOBILE_POINTER_QUERIES }))
 vi.mock('dsh-tauri-ui/client', () => ({ cssr }))
 
 const MOBILE_MEDIA = MOBILE_MEDIA_QUERIES.join(' and ')
+const TOUCH_MEDIA = MOBILE_POINTER_QUERIES.join(' and ')
 
 describe('mobile conversation layout', () => {
   const root = postcss.parse(mobileStyle.render())
@@ -89,15 +90,14 @@ describe('mobile conversation layout', () => {
     expect(rules).toHaveLength(1)
   })
 
-  it('sizes the document to the keyboard-visible height only while the touch layout owns the mobile sidebar', () => {
-    const selector = 'html[data-dsh-mobile-sidebar]'
-    expect(declarations(selector)).toEqual({ height: 'var(--dsh-mobile-viewport-height, 100%)' })
+  it('sizes the document to the keyboard-visible height on touch-only devices in both layouts', () => {
+    expect(declarations(':root')).toEqual({ height: 'var(--dsh-mobile-viewport-height, 100%)' })
     const rules: unknown[] = []
-    root.walkRules(selector, (rule) => {
+    root.walkRules(':root', (rule) => {
       rules.push(rule)
       expect(rule.parent?.type).toBe('atrule')
       if (rule.parent?.type === 'atrule')
-        expect(rule.parent.params).toBe(MOBILE_MEDIA)
+        expect(rule.parent.params).toBe(TOUCH_MEDIA)
     })
     expect(rules).toHaveLength(1)
   })

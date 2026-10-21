@@ -1,5 +1,5 @@
 import type { ClientContext } from 'dsh-tauri/client'
-import { defineRegister, detectMobileDevice } from 'dsh-tauri/client'
+import { defineRegister, detectMobileDevice, MOBILE_POINTER_QUERIES } from 'dsh-tauri/client'
 
 const COMPOSER = '[data-composer-seat], [data-slot="conversation.composer.bar"]'
 const SCROLL = '[data-conversation-scroll], [data-slot="conversation.view"]'
@@ -57,15 +57,16 @@ export const registerMobileKeyboard = defineRegister<ClientContext>((controller,
   controller.listen('touchcancel', resetTouch, { passive: true })
 
   const viewport = window.visualViewport
-  if (!viewport)
+  if (!viewport || typeof window.matchMedia !== 'function')
     return
+  const touchOnly = window.matchMedia(MOBILE_POINTER_QUERIES.join(' and '))
   let frame: number | undefined
   let height = 0
   const fitViewport = (): void => {
     frame = undefined
     const editor = focusedEditor()
-    const owned = root.hasAttribute('data-dsh-mobile-sidebar') && Math.abs(viewport.scale - 1) < 0.01
-    const composing = owned && editor !== null && editor.closest(COMPOSER) !== null
+    const active = touchOnly.matches && Math.abs(viewport.scale - 1) < 0.01
+    const composing = active && editor !== null && editor.closest(COMPOSER) !== null
     const next = composing && window.innerHeight - viewport.height >= 1 ? Math.floor(viewport.height) : 0
     if (next !== height) {
       height = next
@@ -74,7 +75,8 @@ export const registerMobileKeyboard = defineRegister<ClientContext>((controller,
       else
         root.style.removeProperty(VIEWPORT_HEIGHT)
     }
-    if (owned && (composing || editor === null) && (viewport.offsetTop >= 1 || window.scrollY >= 1))
+    const fixedPage = root.hasAttribute('data-dsh-mobile-sidebar') || root.scrollHeight <= window.innerHeight
+    if ((composing || (active && editor === null && fixedPage)) && (viewport.offsetTop >= 1 || window.scrollY >= 1))
       window.scrollTo(0, 0)
   }
   const scheduleFit = (): void => {

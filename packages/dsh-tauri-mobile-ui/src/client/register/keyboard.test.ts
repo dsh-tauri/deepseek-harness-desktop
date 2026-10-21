@@ -3,11 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createLifecycleController } from '../../../../dsh-tauri/src/client/controller'
 import { registerMobileKeyboard } from './keyboard'
 
-const device = vi.hoisted(() => ({ mobile: true }))
+const device = vi.hoisted(() => ({ mobile: true, touch: true }))
 vi.mock('dsh-tauri/client', () => ({
   detectMobileDevice: () => device.mobile,
   defineRegister: (setup: (...args: unknown[]) => void) => setup,
+  MOBILE_POINTER_QUERIES: ['(pointer: coarse)', '(any-pointer: coarse)', '(any-hover: none)'],
 }))
+
+const TOUCH_QUERY = '(pointer: coarse) and (any-pointer: coarse) and (any-hover: none)'
 
 class FakeViewport extends EventTarget {
   height = window.innerHeight
@@ -29,6 +32,11 @@ function touch(type: string, x: number, y: number, target: Element = document.qu
 
 beforeEach(() => {
   device.mobile = true
+  device.touch = true
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string) => ({ media: query, get matches() { return device.touch && query === TOUCH_QUERY } }),
+  })
   document.body.innerHTML = '<div data-conversation-scroll><p>Message</p><div data-composer-seat><textarea></textarea><button aria-label="发送消息"><svg></svg></button></div></div><input id="setting">'
   editor = document.querySelector('textarea')!
   editor.focus()
@@ -45,6 +53,8 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
   document.documentElement.style.removeProperty('--dsh-mobile-viewport-height')
   Reflect.deleteProperty(window, 'visualViewport')
+  Reflect.deleteProperty(window, 'matchMedia')
+  Reflect.deleteProperty(document.documentElement, 'scrollHeight')
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -132,6 +142,15 @@ describe('mobile composer keyboard viewport', () => {
     expect(fitted()).toBe('')
   })
 
+  it('fits the desktop layout above the keyboard on touch-only devices too', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
+    moveViewport('resize', 460)
+    expect(fitted()).toBe('460px')
+    moveViewport('scroll', 460, 300)
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0)
+  })
+
   it('pulls a keyboard pan back to the top once the page fits above the keyboard', () => {
     const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
     moveViewport('resize', 420)
@@ -151,7 +170,19 @@ describe('mobile composer keyboard viewport', () => {
     expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0)
   })
 
-  it('leaves other inputs, zoomed pages and the desktop layout to the browser', () => {
+  it('only pulls a leftover desktop pan back when the page cannot scroll on its own', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
+    editor.blur()
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: window.innerHeight + 900 })
+    moveViewport('scroll', window.innerHeight, 120)
+    expect(scrollTo).not.toHaveBeenCalled()
+    Reflect.deleteProperty(document.documentElement, 'scrollHeight')
+    moveViewport('scroll', window.innerHeight, 120)
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0)
+  })
+
+  it('leaves other inputs, zoomed pages and mouse or trackpad devices to the browser', () => {
     const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
     document.querySelector<HTMLInputElement>('#setting')!.focus()
     moveViewport('resize', 420, 348)
@@ -161,7 +192,7 @@ describe('mobile composer keyboard viewport', () => {
     moveViewport('resize', 420, 348)
     expect(fitted()).toBe('')
     viewport.scale = 1
-    document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
+    device.touch = false
     moveViewport('resize', 420, 348)
     expect(fitted()).toBe('')
     expect(scrollTo).not.toHaveBeenCalled()
