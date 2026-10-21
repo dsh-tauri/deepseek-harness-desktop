@@ -14,6 +14,7 @@ Windows 桌面端在对话输入框内右键选择「粘贴」时，顶部提示
 ## 相关链接
 
 - Issue URL: https://github.com/dsh-tauri/deepseek-harness-desktop/issues/1190
+- PR URL: https://github.com/dsh-tauri/deepseek-harness-desktop/pull/1193
 
 ## 实现计划
 
