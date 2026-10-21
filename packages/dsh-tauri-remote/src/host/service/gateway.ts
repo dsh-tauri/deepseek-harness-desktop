@@ -420,7 +420,7 @@ function writeAuthChallenge(request: IncomingMessage, response: ServerResponse, 
     'content-type': 'text/html; charset=utf-8',
     'content-length': String(Buffer.byteLength(html)),
     'cache-control': 'no-store',
-    'referrer-policy': 'no-referrer',
+    'referrer-policy': 'same-origin',
     ...retryAfterMs > 0 ? { 'retry-after': String(Math.ceil(retryAfterMs / 1000)) } : {},
   })
   response.end(html)

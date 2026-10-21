@@ -1143,7 +1143,7 @@ describe('gateway 来源门禁判定矩阵（真实 HTTP 管线）', () => {
     expect(page.status).toBe(401)
     expect(page.headers['content-type']).toContain('text/html')
     expect(page.headers['cache-control']).toBe('no-store')
-    expect(page.headers['referrer-policy']).toBe('no-referrer')
+    expect(page.headers['referrer-policy']).toBe('same-origin')
     expect(page.body.toString()).toContain('<form id="loginForm" method="post">')
 
     const api = await call(status.port, '/api/ping', { headers: markerHeaders('public') })
@@ -1356,6 +1356,24 @@ describe('gateway 认证要素', () => {
     expect(forwarded.body.toString()).toBe('{"ok":true}')
   })
 
+  it.each(['inbound', 'tunnel'] as const)('%s 入口在真实 Host 下手输临时配对码：表单带上浏览器按登录页引用策略发出的 Origin（no-referrer 时为 null）后签发会话', async (kind) => {
+    const first = pairingCodeOf()
+    const status = await startEntry(kind, upstream, { auth: () => policyOf({ linkToken: null, pairingCode: first.code, consumePairingCode }) })
+    const headers = markerHeaders('public', { 'host': 'dsh.example.com', 'sec-fetch-site': 'same-origin', ...navigation() })
+    const page = await call(status.port, '/', { headers })
+    expect(page.status).toBe(401)
+    const origin = page.headers['referrer-policy'] === 'no-referrer' ? 'null' : 'http://dsh.example.com'
+    const login = await call(status.port, '/', {
+      method: 'POST',
+      headers: { ...headers, origin, 'sec-fetch-mode': 'navigate', 'content-type': 'application/x-www-form-urlencoded' },
+      body: `code=${first.code}`,
+    })
+    expect(login.status).toBe(302)
+    expect(login.headers.location).toBe('/')
+    expect((login.headers['set-cookie'] ?? [])[0]).toContain('dsh_remote_session=')
+    expect(pairingCodeOf().usedSeq).toBe(1)
+  })
+
   it('永久配对码撤销后原登录表单拒绝旧码', async () => {
     let policy = policyOf({ linkToken: '01234567' })
     const status = await startEntry('inbound', upstream, { auth: () => policy })
@@ -1560,7 +1578,7 @@ describe('gateway 认证要素', () => {
     expect(pairingCodeOf().usedSeq).toBe(2)
   })
 
-  it('登录页表单提交到当前 URL：回跳目标不依赖 Referer（登录页声明 no-referrer）', async () => {
+  it('登录页表单提交到当前 URL：回跳目标不依赖 Referer', async () => {
     const status = await startEntry('inbound', upstream, { auth: () => policyOf({ linkToken: 'link-token' }), tokenProvider: upstream.mintUrlFor })
     const page = await call(status.port, '/chat/42?tab=two', { headers: markerHeaders('public', navigation()) })
     expect(page.status).toBe(401)
