@@ -89,6 +89,19 @@ describe('mobile conversation layout', () => {
     expect(rules).toHaveLength(1)
   })
 
+  it('sizes the document to the keyboard-visible height only while the touch layout owns the mobile sidebar', () => {
+    const selector = 'html[data-dsh-mobile-sidebar]'
+    expect(declarations(selector)).toEqual({ height: 'var(--dsh-mobile-viewport-height, 100%)' })
+    const rules: unknown[] = []
+    root.walkRules(selector, (rule) => {
+      rules.push(rule)
+      expect(rule.parent?.type).toBe('atrule')
+      if (rule.parent?.type === 'atrule')
+        expect(rule.parent.params).toBe(MOBILE_MEDIA)
+    })
+    expect(rules).toHaveLength(1)
+  })
+
   it('keeps the sidebar stationary behind a raised rounded main panel without a gray shade', () => {
     expect(declarations('html[data-dsh-mobile-sidebar] [class$="_sidebarCol"]')).toMatchObject({
       'z-index': '0',

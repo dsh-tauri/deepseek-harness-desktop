@@ -20,6 +20,20 @@ const upstream = ['layout', 'conversation'].map((name) => {
     throw new Error(`Missing upstream ${name} CSS literal`)
   return JSON.parse(literal[0]) as string
 }).join('\n')
+const conversationPage = `<!doctype html><html data-dsh-mobile-sidebar><head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>html,body,#root,[data-slot="root"]{height:100%;margin:0}
+  ${upstream}
+  [data-slot="main"]{height:100%} nav{height:52px;flex-shrink:0}
+  article{height:2400px;flex-shrink:0}[data-composer-seat]{height:120px}
+  [data-overflow-probe]{height:640px}</style></head><body>
+  <div id="root"><div data-slot="root"><div class="pI_x6G_frame">
+    <div class="pI_x6G_centerCol"><div data-dsh-mobile-navbar-host><nav>Navigation</nav></div>
+      <div data-slot="main"><div class="wSkVaW_root" data-phase="active"><div class="wSkVaW_body">
+        <div class="wSkVaW_scrollBody" data-conversation-scroll><article>Messages</article>
+          <div class="wSkVaW_composerSeat" data-composer-seat><textarea aria-label="Draft"></textarea></div>
+        </div></div></div></div></div><div data-shell-overlay></div></div></div></div>
+  <div data-overflow-probe></div></body></html>`
 
 let browser: Browser
 beforeAll(async () => {
@@ -32,20 +46,7 @@ afterAll(async () => {
 it('contains synthetic document overflow during touch scrolling while preserving the internal scrollport', async () => {
   const page = await browser.newPage({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } })
   try {
-    await page.setContent(`<!doctype html><html data-dsh-mobile-sidebar><head>
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <style>html,body,#root,[data-slot="root"]{height:100%;margin:0}
-      ${upstream}
-      [data-slot="main"]{height:100%} nav{height:52px;flex-shrink:0}
-      article{height:2400px;flex-shrink:0}[data-composer-seat]{height:120px}
-      [data-overflow-probe]{height:640px}</style></head><body>
-      <div id="root"><div data-slot="root"><div class="pI_x6G_frame">
-        <div class="pI_x6G_centerCol"><div data-dsh-mobile-navbar-host><nav>Navigation</nav></div>
-          <div data-slot="main"><div class="wSkVaW_root" data-phase="active"><div class="wSkVaW_body">
-            <div class="wSkVaW_scrollBody" data-conversation-scroll><article>Messages</article>
-              <div class="wSkVaW_composerSeat" data-composer-seat><textarea aria-label="Draft"></textarea></div>
-            </div></div></div></div></div><div data-shell-overlay></div></div></div></div>
-      <div data-overflow-probe></div></body></html>`)
+    await page.setContent(conversationPage)
     await page.addStyleTag({ content: mobileStyle.render() })
     const scroll = page.locator('[data-conversation-scroll]')
     await scroll.evaluate((element) => {
@@ -69,6 +70,23 @@ it('contains synthetic document overflow during touch scrolling while preserving
     await expect.poll(() => scroll.evaluate(element => element.scrollTop), { message: '文档锁定后内部消息仍须能响应真实触摸滚动' }).toBeGreaterThan(0)
     expect(await page.evaluate(() => window.scrollY), '内部滚动不得移动文档').toBe(0)
     await cdp.detach()
+  }
+  finally {
+    await page.close()
+  }
+})
+
+it('fits the conversation shell into the keyboard-visible height published by the keyboard register', async () => {
+  const page = await browser.newPage({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } })
+  try {
+    await page.setContent(conversationPage)
+    await page.addStyleTag({ content: mobileStyle.render() })
+    const composerBottom = () => page.locator('[data-composer-seat]').evaluate(element => element.getBoundingClientRect().bottom)
+    await page.evaluate(() => document.documentElement.style.setProperty('--dsh-mobile-viewport-height', '508px'))
+    expect(await composerBottom(), '键盘弹出时输入区须贴住键盘上沿').toBe(508)
+    expect(await page.locator('nav').evaluate(element => element.getBoundingClientRect().top), '顶栏须留在可见区顶部').toBe(0)
+    await page.evaluate(() => document.documentElement.style.removeProperty('--dsh-mobile-viewport-height'))
+    expect(await composerBottom(), '键盘收起后输入区回到视口底部').toBe(844)
   }
   finally {
     await page.close()

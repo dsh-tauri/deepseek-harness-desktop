@@ -7,6 +7,11 @@ export default c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
   c('html[data-dsh-mobile-sidebar], html[data-dsh-mobile-sidebar] body', {
     overflow: 'hidden',
   }),
+  // iOS 弹出键盘时不缩小布局，只把整页临时上推；composer 的退格由 Lexical 在 JS 里删除后自行 `scrollBy`，
+  // 而 iOS 把脚本滚动夹在不含键盘的范围内（一屏高的页面即 0），整页会掉回键盘后面。编辑 composer 时页面高度直接收进键盘上方。
+  c('html[data-dsh-mobile-sidebar]', {
+    height: 'var(--dsh-mobile-viewport-height, 100%)',
+  }),
   c('[data-dsh-mobile-preferences]', {
     display: 'flex',
     flex: '1',

@@ -9,8 +9,15 @@ vi.mock('dsh-tauri/client', () => ({
   defineRegister: (setup: (...args: unknown[]) => void) => setup,
 }))
 
+class FakeViewport extends EventTarget {
+  height = window.innerHeight
+  offsetTop = 0
+  scale = 1
+}
+
 let controller: ReturnType<typeof createLifecycleController>
 let editor: HTMLElement
+let viewport: FakeViewport
 const labels: Record<string, string> = { 'input.send': '发送消息', 'input.send.queue': '排队发送', 'input.send.steer': '插话发送' }
 
 function touch(type: string, x: number, y: number, target: Element = document.querySelector('[data-conversation-scroll]')!) {
@@ -25,6 +32,8 @@ beforeEach(() => {
   document.body.innerHTML = '<div data-conversation-scroll><p>Message</p><div data-composer-seat><textarea></textarea><button aria-label="发送消息"><svg></svg></button></div></div><input id="setting">'
   editor = document.querySelector('textarea')!
   editor.focus()
+  viewport = new FakeViewport()
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
   controller = createLifecycleController()
   const register = registerMobileKeyboard as unknown as (controller: unknown, ctx: unknown) => void
   register(controller, { locale: { bind: () => (key: string) => labels[key] ?? key } })
@@ -33,6 +42,10 @@ beforeEach(() => {
 afterEach(() => {
   controller.dispose()
   document.body.innerHTML = ''
+  document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
+  document.documentElement.style.removeProperty('--dsh-mobile-viewport-height')
+  Reflect.deleteProperty(window, 'visualViewport')
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -94,5 +107,73 @@ describe('mobile composer keyboard dismissal', () => {
     touch('touchstart', 100, 100)
     touch('touchmove', 100, 130)
     expect(document.activeElement).toBe(editor)
+  })
+})
+
+describe('mobile composer keyboard viewport', () => {
+  const fitted = () => document.documentElement.style.getPropertyValue('--dsh-mobile-viewport-height')
+
+  function moveViewport(type: 'resize' | 'scroll', height: number, offsetTop = 0) {
+    viewport.height = height
+    viewport.offsetTop = offsetTop
+    viewport.dispatchEvent(new Event(type))
+    vi.advanceTimersToNextFrame()
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] })
+    document.documentElement.setAttribute('data-dsh-mobile-sidebar', '')
+  })
+
+  it('fits the mobile page above the keyboard while the composer is edited', () => {
+    moveViewport('resize', 420.6)
+    expect(fitted()).toBe('420px')
+    moveViewport('resize', window.innerHeight)
+    expect(fitted()).toBe('')
+  })
+
+  it('pulls a keyboard pan back to the top once the page fits above the keyboard', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    moveViewport('resize', 420)
+    expect(scrollTo).not.toHaveBeenCalled()
+    moveViewport('scroll', 420, 348)
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0)
+  })
+
+  it('returns the page to full height at the top when the composer loses focus', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    moveViewport('resize', 420)
+    editor.blur()
+    vi.advanceTimersToNextFrame()
+    expect(fitted()).toBe('')
+    expect(scrollTo).not.toHaveBeenCalled()
+    moveViewport('scroll', window.innerHeight, 120)
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0)
+  })
+
+  it('leaves other inputs, zoomed pages and the desktop layout to the browser', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    document.querySelector<HTMLInputElement>('#setting')!.focus()
+    moveViewport('resize', 420, 348)
+    expect(fitted()).toBe('')
+    editor.focus()
+    viewport.scale = 1.5
+    moveViewport('resize', 420, 348)
+    expect(fitted()).toBe('')
+    viewport.scale = 1
+    document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
+    moveViewport('resize', 420, 348)
+    expect(fitted()).toBe('')
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('drops the keyboard height and viewport listeners on unload', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    moveViewport('resize', 420)
+    controller.dispose()
+    expect(fitted()).toBe('')
+    moveViewport('scroll', 380, 348)
+    expect(fitted()).toBe('')
+    expect(scrollTo).not.toHaveBeenCalled()
   })
 })
