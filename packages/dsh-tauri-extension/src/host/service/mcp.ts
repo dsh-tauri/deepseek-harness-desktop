@@ -1,9 +1,9 @@
-import type { YAMLMap } from 'yaml'
+import type { Document, YAMLMap } from 'yaml'
 import type { McpCheckOptions, McpCheckResult, McpInput, McpListResult, McpRow, McpRowView } from './mcp.types'
 import { existsSync } from 'node:fs'
 import process from 'node:process'
 import { defineService, DSH_HOME } from 'dsh-tauri'
-import { compact, isEmpty } from 'lodash-es'
+import { compact } from 'lodash-es'
 import { join } from 'pathe'
 import { MCP_PLUGIN, PATCH_FILE_NAME } from '../config/constants'
 import { mcpAuth } from './mcp-auth'
@@ -12,12 +12,12 @@ import {
   loadPatch,
   managedInsert,
   mcpRowItems,
-  normalizeStdioCommand,
   readRows,
   rowSeq,
   savePatch,
   takenIds,
   toNode,
+  updateRow,
 } from './mcp.utils'
 
 const MCP_CHECK_TIMEOUT_MS = 5_000
@@ -59,48 +59,33 @@ export const mcp = defineService({
     const existing = inputId !== ''
       ? mcpRowItems(doc).find(({ node }) => String(node.get('id') ?? '') === inputId)
       : undefined
-
-    let id = inputId !== '' ? inputId : `mcp-${input.serverName}`
-    if (existing === undefined) {
-      const taken = takenIds(doc)
-      let suffix = 2
-      while (taken.has(id))
-        id = `mcp-${input.serverName}-${suffix++}`
+    if (existing !== undefined) {
+      updateRow(doc, existing.node, input)
+      savePatch(dirPath, doc)
+      return inputId
     }
 
-    const stdio = normalizeStdioCommand(input.command ?? '', input.args)
-    const config: Record<string, unknown> = input.transport === 'stdio'
-      ? {
-          serverName: input.serverName,
-          transport: input.transport,
-          command: stdio.command,
-          ...(!isEmpty(stdio.args) ? { args: stdio.args } : {}),
-          ...(!isEmpty(input.env) ? { env: input.env } : {}),
-          ...(!isEmpty(input.cwd) ? { cwd: input.cwd } : {}),
-        }
-      : {
-          serverName: input.serverName,
-          transport: input.transport,
-          url: input.url,
-          ...(!isEmpty(input.headers) ? { headers: input.headers } : {}),
-        }
-    const row: Record<string, unknown> = { id, name: MCP_PLUGIN, config }
-    if (input.disabled === true)
-      row.disabled = true
-
-    const node = toNode<YAMLMap>(row)
-    if (existing === undefined) {
-      list.add(node)
-    }
-    else if (existing.list !== undefined) {
-      existing.list.items.splice(existing.list.items.indexOf(existing.node), 1, node)
-    }
-    else {
-      rowSeq(doc).items.splice(rowSeq(doc).items.indexOf(existing.node), 1, node)
-    }
-
+    const id = freeId(doc, inputId !== '' ? inputId : `mcp-${input.serverName}`, input.serverName)
+    const node = toNode<YAMLMap>({ id, name: MCP_PLUGIN })
+    updateRow(doc, node, input)
+    list.add(node)
     savePatch(dirPath, doc)
     return id
+  },
+
+  copy(sourceDirPath: string, targetDirPath: string, id: string): string | undefined {
+    const source = mcpRowItems(loadPatch(sourceDirPath)).find(({ node }) => String(node.get('id') ?? '') === id)
+    if (source === undefined)
+      return undefined
+    const doc = loadPatch(targetDirPath)
+    const list = managedInsert(doc)
+    const node = source.node.clone() as YAMLMap
+    const serverName = String(node.getIn(['config', 'serverName']) ?? '')
+    const copyId = freeId(doc, `mcp-${serverName}`, serverName)
+    node.set('id', copyId)
+    list.add(node)
+    savePatch(targetDirPath, doc)
+    return copyId
   },
 
   remove(dirPath: string, id: string): boolean {
@@ -151,6 +136,15 @@ export const mcp = defineService({
 })
 
 // --- internal ---
+
+function freeId(doc: Document, preferred: string, serverName: string): string {
+  const taken = takenIds(doc)
+  let id = preferred
+  let suffix = 2
+  while (taken.has(id))
+    id = `mcp-${serverName}-${suffix++}`
+  return id
+}
 
 function resolveCommandOnPath(command: string, pathEnv: string, platform: string = process.platform): boolean {
   if (command.includes('/') || command.includes('\\'))

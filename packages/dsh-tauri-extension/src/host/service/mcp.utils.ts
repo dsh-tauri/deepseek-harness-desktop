@@ -2,9 +2,9 @@ import type { YAMLMap, YAMLSeq } from 'yaml'
 import type { McpInput, McpRow, McpScope } from './mcp.types'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { DSH_HOME } from 'dsh-tauri'
-import { compact, every, isObject, isString, isUndefined, omitBy } from 'lodash-es'
+import { compact, isEmpty, isObject, isPlainObject, isString, mapValues } from 'lodash-es'
 import { join } from 'pathe'
-import { Document, parseDocument } from 'yaml'
+import { Document, isMap, isNode, isScalar, isSeq, parseDocument } from 'yaml'
 import { MCP_PLUGIN, PATCH_FILE_NAME } from '../config/constants'
 
 const SERVER_NAME_RE = /^[\w-]{1,32}$/
@@ -50,20 +50,6 @@ export function normalizeMcpScope(value: unknown): McpScope {
 
 export function mcpScopeDir(scope: McpScope, profileDirPath: string): string {
   return scope === 'global' ? DSH_HOME : profileDirPath
-}
-
-export function mcpRowToInput(row: McpRow): McpInput {
-  const detail: Record<string, unknown> = row.transport === 'stdio'
-    ? { args: row.args, env: row.env, cwd: row.cwd }
-    : { headers: row.headers }
-  return {
-    id: '',
-    serverName: row.serverName,
-    transport: row.transport,
-    disabled: row.disabled,
-    ...(row.transport === 'stdio' ? { command: row.command } : { url: row.url }),
-    ...omitBy(detail, isUndefined),
-  }
 }
 
 export function validateMcpInput(input: McpInput): string | null {
@@ -166,6 +152,23 @@ export function readRows(dirPath: string): McpRow[] {
   return mcpRowItems(doc).map(({ node }) => rowToMcp(doc, node))
 }
 
+/** 原地改写已有行：只写表单管的字段，值没变的节点原样保留（`!!js` 标签、表单外的字段不丢）。 */
+export function updateRow(doc: Document, row: YAMLMap, input: McpInput): void {
+  const current = row.get('config', true)
+  const config = isMap(current) ? current : toNode<YAMLMap>({})
+  for (const [key, value] of Object.entries(formConfig(input))) {
+    if (isEmpty(value))
+      config.delete(key)
+    else
+      config.set(key, keepUnchanged(doc, config.get(key, true), value))
+  }
+  row.set('config', config)
+  if (input.disabled === true)
+    row.set('disabled', true)
+  else if (input.disabled === false)
+    row.delete('disabled')
+}
+
 // --- internal ---
 
 function assertPatchParses(path: string, doc: Document): void {
@@ -183,10 +186,60 @@ function isSeqNode(value: unknown): value is YAMLSeq<YAMLMap> {
   return typeof value === 'object' && value !== null && Array.isArray((value as YAMLSeq).items)
 }
 
-function isStringMap(value: unknown): value is Record<string, string> {
-  if (!isObject(value) || Array.isArray(value))
-    return false
-  return every(value, isString)
+function valueText(value: unknown): string {
+  return isString(value) ? value : JSON.stringify(value)
+}
+
+function textMap(value: unknown): Record<string, string> | undefined {
+  return isPlainObject(value) ? mapValues(value as Record<string, unknown>, valueText) : undefined
+}
+
+function formConfig(input: McpInput): Record<string, unknown> {
+  if (input.transport !== 'stdio') {
+    return {
+      serverName: input.serverName,
+      transport: input.transport,
+      url: input.url,
+      headers: input.headers,
+      command: undefined,
+      args: undefined,
+      env: undefined,
+      cwd: undefined,
+    }
+  }
+  const stdio = normalizeStdioCommand(input.command ?? '', input.args)
+  return {
+    serverName: input.serverName,
+    transport: input.transport,
+    command: stdio.command,
+    args: stdio.args,
+    env: input.env,
+    ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    url: undefined,
+    headers: undefined,
+  }
+}
+
+function keepUnchanged(doc: Document, current: unknown, next: unknown): unknown {
+  if (Array.isArray(next)) {
+    const items: unknown[] = isSeq(current) ? current.items : []
+    const kept = next.map((value, index) => keepUnchanged(doc, items[index], value))
+    return kept.length === items.length && kept.every((item, index) => item === items[index])
+      ? current
+      : toNode(kept)
+  }
+  if (isPlainObject(next)) {
+    const map = isMap(current) ? current : toNode<YAMLMap>({})
+    const keys = Object.keys(next as Record<string, unknown>)
+    for (const pair of [...map.items]) {
+      if (!keys.includes(String(isScalar(pair.key) ? pair.key.value : pair.key)))
+        map.delete(pair.key)
+    }
+    for (const [key, value] of Object.entries(next as Record<string, unknown>))
+      map.set(key, keepUnchanged(doc, map.get(key, true), value))
+    return map
+  }
+  return isNode(current) && valueText(current.toJS(doc)) === next ? current : toNode(next)
 }
 
 function rowToMcp(doc: Document, item: YAMLMap): McpRow {
@@ -194,16 +247,18 @@ function rowToMcp(doc: Document, item: YAMLMap): McpRow {
   const plain = (isObject(configNode) && typeof (configNode as { toJS?: unknown }).toJS === 'function'
     ? (configNode as { toJS: (document: Document) => unknown }).toJS(doc)
     : {}) as Record<string, unknown>
+  const env = textMap(plain.env)
+  const headers = textMap(plain.headers)
   return {
     id: String(item.get('id') ?? ''),
     serverName: String(plain.serverName ?? ''),
     transport: plain.transport === 'streamable-http' ? 'streamable-http' : 'stdio',
     disabled: item.get('disabled') === true,
     ...(typeof plain.command === 'string' && plain.command !== '' ? { command: plain.command } : {}),
-    ...(Array.isArray(plain.args) ? { args: plain.args.map(String) } : {}),
-    ...(isStringMap(plain.env) ? { env: plain.env } : {}),
+    ...(Array.isArray(plain.args) ? { args: plain.args.map(valueText) } : {}),
+    ...(env !== undefined ? { env } : {}),
     ...(typeof plain.cwd === 'string' && plain.cwd !== '' ? { cwd: plain.cwd } : {}),
     ...(typeof plain.url === 'string' && plain.url !== '' ? { url: plain.url } : {}),
-    ...(isStringMap(plain.headers) ? { headers: plain.headers } : {}),
+    ...(headers !== undefined ? { headers } : {}),
   }
 }
