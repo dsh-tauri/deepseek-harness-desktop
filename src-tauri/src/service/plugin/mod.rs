@@ -45,6 +45,7 @@ mod installed;
 mod internal;
 mod patch_entries;
 mod patch_guard;
+mod patch_yaml;
 mod preset;
 mod process;
 pub mod recovery;
@@ -83,6 +84,7 @@ pub(crate) use patch_guard::{
     patch_layer_paths, quarantine_active_patch_layers, quarantine_failure_message,
     quarantine_patch_layers_in, PatchQuarantineReport,
 };
+pub(crate) use patch_yaml::{parse_patch_layer, render_patch_layer};
 pub use preset::repo_url_of;
 pub(crate) use preset::{
     bundled_plugin_dir, bundled_plugin_dir_from, current_preset_hash, load_presets,

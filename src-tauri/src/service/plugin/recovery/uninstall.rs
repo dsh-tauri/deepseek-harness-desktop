@@ -8,6 +8,7 @@ use std::os::windows::fs::FileTypeExt;
 use std::path::Path;
 
 use crate::service::fs_guard;
+use crate::service::plugin::{parse_patch_layer, render_patch_layer};
 
 /// 从 manifest 中移除指定插件（`dependencies` + `dsh.profile.bundles`），返回是否有改动。
 pub(super) fn remove_plugin_from_manifest(manifest: &mut serde_json::Value, id: &str) -> bool {
@@ -131,7 +132,7 @@ pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
     let Ok(content) = fs::read_to_string(&path) else {
         return;
     };
-    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+    let Ok(doc) = parse_patch_layer(&content) else {
         return;
     };
     let Some(entries) = doc.as_sequence() else {
@@ -145,7 +146,7 @@ pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
     if kept.len() == entries.len() {
         return;
     }
-    if let Ok(rendered) = serde_yaml::to_string(&serde_yaml::Value::Sequence(kept)) {
+    if let Ok(rendered) = render_patch_layer(&serde_yaml::Value::Sequence(kept)) {
         let _ = fs::write(&path, rendered);
         log::info!("Stripped cordis.patch.yml entries for plugin {id}");
     }
@@ -412,5 +413,23 @@ mod tests {
         let kept_doc = serde_yaml::to_string(&serde_yaml::Value::Sequence(kept)).unwrap();
         assert!(kept_doc.contains("dsh-web-ui-all"));
         assert!(!kept_doc.contains("dsh-better-sidebar"));
+    }
+
+    #[test]
+    fn patch_strip_keeps_js_expressions_of_other_entries() {
+        let profile = tempfile::tempdir().unwrap();
+        let patch = profile.path().join("cordis.patch.yml");
+        std::fs::write(
+            &patch,
+            "- id: dsh-better-sidebar\n  foo: 1\n- id: dshmarket\n  config:\n    token: !!js process.env.TOKEN\n",
+        )
+        .unwrap();
+
+        strip_cordis_patch_for(profile.path(), "dsh-better-sidebar");
+
+        assert_eq!(
+            std::fs::read_to_string(&patch).unwrap(),
+            "- id: dshmarket\n  config:\n    token: !!js process.env.TOKEN\n"
+        );
     }
 }

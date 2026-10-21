@@ -249,7 +249,7 @@ fn repair_loader_state(
                 return Err(format!("{code}: {}: {error}", patch_path.display()));
             }
         };
-        let mut patch = serde_yaml::from_str::<serde_yaml::Value>(&raw).map_err(|e| {
+        let mut patch = super::parse_patch_layer(&raw).map_err(|e| {
             format!(
                 "INTERNAL_PLUGIN_PATCH_PARSE_FAILED: {}: {e}",
                 patch_path.display()
@@ -260,7 +260,7 @@ fn repair_loader_state(
                 pending = true;
                 continue;
             }
-            let rendered = serde_yaml::to_string(&patch)
+            let rendered = super::render_patch_layer(&patch)
                 .map_err(|e| format!("INTERNAL_PLUGIN_PATCH_RENDER_FAILED: {e}"))?;
             super::atomic_write::write_patch_layer_atomically(&patch_path, &rendered).map_err(
                 |e| {
@@ -1423,6 +1423,43 @@ mod tests {
             "{error}"
         );
         assert!(profile.join("cordis.patch.yml").is_dir());
+    }
+
+    #[test]
+    fn loader_repair_keeps_js_expressions_in_patch_layers() {
+        let temp = tempfile::tempdir().unwrap();
+        let profile = temp.path().join("profiles/tauri");
+        std::fs::create_dir_all(&profile).unwrap();
+        let patch = profile.join("cordis.patch.yml");
+        std::fs::write(
+            &patch,
+            "- insert:\n  - id: builtin\n  - id: user-plugin\n    config:\n      token: !!js process.env.TOKEN\n",
+        )
+        .unwrap();
+        let builtin = PreinstallPluginInfo {
+            id: "builtin".into(),
+            spec: "builtin".into(),
+            internal: true,
+            package: None,
+            version: None,
+            name: "builtin".into(),
+            description: String::new(),
+            repo_url: String::new(),
+            recommended: false,
+            fix: false,
+            default_checked: false,
+            default_unchecked: false,
+            win_only: false,
+        };
+
+        assert_eq!(
+            repair_loader_state(&profile, temp.path(), &[&builtin], &mut None, true),
+            Ok(false)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&patch).unwrap(),
+            "- insert:\n  - id: user-plugin\n    config:\n      token: !!js process.env.TOKEN\n"
+        );
     }
 
     #[test]

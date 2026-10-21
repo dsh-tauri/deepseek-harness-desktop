@@ -13,6 +13,8 @@ mod imp {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use crate::service::plugin::{parse_patch_layer, render_patch_layer};
+
     /// 历史注入块的自识别标记。
     const PATCH_MARKER: &str = "dsh-win-terminal-inspector";
 
@@ -68,7 +70,7 @@ mod imp {
 
         let retained: Vec<serde_yaml::Value> =
             seq.into_iter().filter(|el| !block_is_ours(el)).collect();
-        let out = serde_yaml::to_string(&serde_yaml::Value::Sequence(retained))
+        let out = render_patch_layer(&serde_yaml::Value::Sequence(retained))
             .map_err(|e| format!("PATCH_RENDER_FAILED: {e}"))?;
         write_file(&patch_path, &out).map_err(|e| format!("PATCH_PRUNE_FAILED: {e}"))
     }
@@ -78,8 +80,7 @@ mod imp {
         if content.trim().is_empty() {
             return Ok(serde_yaml::Value::Sequence(Vec::new()));
         }
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(content).map_err(|e| format!("PATCH_PARSE_FAILED: {e}"))?;
+        let doc = parse_patch_layer(content).map_err(|e| format!("PATCH_PARSE_FAILED: {e}"))?;
         match &doc {
             serde_yaml::Value::Sequence(_) => Ok(doc),
             serde_yaml::Value::Null => Ok(serde_yaml::Value::Sequence(Vec::new())),
@@ -202,6 +203,26 @@ mod imp {
 
             apply_at(&dir).unwrap();
             assert_eq!(std::fs::read_to_string(&patch).unwrap(), content);
+
+            std::fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn patch_prune_keeps_js_expressions() {
+            let dir = temp_dir("l");
+            std::fs::create_dir_all(&dir).unwrap();
+            let patch = dir.join("cordis.patch.yml");
+            std::fs::write(
+                &patch,
+                "- insert:\n    - id: win-terminal-inspector\n      name: dsh-win-terminal-inspector\n- id: some-row\n  config:\n    token: !!js process.env.TOKEN\n",
+            )
+            .unwrap();
+
+            apply_at(&dir).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&patch).unwrap(),
+                "- id: some-row\n  config:\n    token: !!js process.env.TOKEN\n"
+            );
 
             std::fs::remove_dir_all(&dir).ok();
         }

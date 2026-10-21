@@ -20,7 +20,10 @@ use tauri::AppHandle;
 use crate::config;
 use crate::service::fs_guard;
 use crate::service::plugin::compat::{self, PluginInspect};
-use crate::service::plugin::{inspect_specs, load_presets, packument, watch, ProfilePackageJson};
+use crate::service::plugin::{
+    inspect_specs, load_presets, packument, parse_patch_layer, render_patch_layer, watch,
+    ProfilePackageJson,
+};
 
 /// 发布时长策略豁免键（与 `profile::profile_release_age_excludes` 同源）。
 const POLICY_KEY: &str = "minimumReleaseAgeExclude";
@@ -319,7 +322,7 @@ fn patch_covered(source: &[Value], target: &Path) -> bool {
 /// 补丁层文件的顶层数组；文件缺失、读不出或不是数组时返回 `None`。
 fn patch_layer_entries(path: &Path) -> Option<Vec<Value>> {
     let content = fs::read_to_string(path).ok()?;
-    let document: Value = serde_yaml::from_str(&content).ok()?;
+    let document = parse_patch_layer(&content).ok()?;
     Some(document.as_sequence()?.clone())
 }
 
@@ -382,7 +385,7 @@ fn merge_patch(source: &Path, target: &Path) -> Result<bool, String> {
     if !added {
         return Ok(false);
     }
-    let rendered = serde_yaml::to_string(&Value::Sequence(entries))
+    let rendered = render_patch_layer(&Value::Sequence(entries))
         .map_err(|e| format!("PROFILE_MIGRATION_PATCH_RENDER: {e}"))?;
     fs::write(target.join(PATCH_FILE), rendered)
         .map_err(|e| format!("PROFILE_MIGRATION_PATCH_WRITE: {e}"))?;
@@ -632,6 +635,31 @@ mod tests {
         assert_eq!(items[1].covered, false);
 
         let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn merge_patch_keeps_js_expressions() {
+        let source = workspace("js-source");
+        let target = workspace("js-target");
+        fs::write(
+            source.join(PATCH_FILE),
+            "- id: new\n  config:\n    token: !!js process.env.TOKEN\n",
+        )
+        .unwrap();
+        fs::write(
+            target.join(PATCH_FILE),
+            "- id: local\n  name: !!js process.env.LOCAL_PLUGIN\n",
+        )
+        .unwrap();
+
+        assert!(merge_patch(&source, &target).unwrap());
+
+        assert_eq!(
+            fs::read_to_string(target.join(PATCH_FILE)).unwrap(),
+            "- id: local\n  name: !!js process.env.LOCAL_PLUGIN\n- id: new\n  config:\n    token: !!js process.env.TOKEN\n"
+        );
+        let _ = fs::remove_dir_all(&source);
         let _ = fs::remove_dir_all(&target);
     }
 

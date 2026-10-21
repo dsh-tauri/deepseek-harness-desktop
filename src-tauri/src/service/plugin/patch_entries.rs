@@ -25,6 +25,7 @@ use tauri::AppHandle;
 use super::atomic_write::write_patch_layer_atomically;
 use super::installed::ProfilePackageJson;
 use super::patch_guard::{backup_path, now_stamp, patch_layer_paths};
+use super::patch_yaml::{parse_patch_layer, render_patch_layer};
 
 /// 启动失败错误串的前缀；前端据此识别并渲染「移除悬空条目」入口。
 pub(crate) const PATCH_ENTRY_UNRESOLVED: &str = "PATCH_LAYER_ENTRY_UNRESOLVED";
@@ -110,7 +111,7 @@ pub(crate) fn strip_unresolved_entries_in(
         let Ok(raw) = std::fs::read_to_string(&layer) else {
             continue;
         };
-        let Ok(doc) = serde_yaml::from_str::<Value>(&raw) else {
+        let Ok(doc) = parse_patch_layer(&raw) else {
             continue;
         };
         let Some(entries) = doc.as_sequence() else {
@@ -124,7 +125,7 @@ pub(crate) fn strip_unresolved_entries_in(
         let backup = backup_path(&layer, "bak", &stamp);
         std::fs::copy(&layer, &backup)
             .map_err(|e| format!("PATCH_LAYER_STRIP_BACKUP_FAILED: {}: {e}", backup.display()))?;
-        let rendered = serde_yaml::to_string(&Value::Sequence(kept))
+        let rendered = render_patch_layer(&Value::Sequence(kept))
             .map_err(|e| format!("PATCH_LAYER_STRIP_RENDER_FAILED: {e}"))?;
         write_patch_layer_atomically(&layer, &rendered).map_err(|error| {
             format!(
@@ -157,7 +158,7 @@ fn scan_layer(
         return Vec::new();
     };
     // 解析不了的补丁层交给 patch_guard 的语法错误路径，不在这里重复报错。
-    let Ok(doc) = serde_yaml::from_str::<Value>(&raw) else {
+    let Ok(doc) = parse_patch_layer(&raw) else {
         return Vec::new();
     };
     let Some(entries) = doc.as_sequence() else {
@@ -218,6 +219,7 @@ fn dangling_package<'a>(
 ) -> Option<&'a str> {
     item.as_mapping()
         .and_then(|item| map_get(item, "name"))
+        .filter(|name| !matches!(name, Value::Tagged(_)))
         .and_then(Value::as_str)
         .filter(|name| {
             is_bare_package_name(name) && !package_resolvable(profile_dir, install_anchor, name)
@@ -555,7 +557,7 @@ mod tests {
         let home = tmp_dir("non-bare-home");
         std::fs::write(
             profile.join("cordis.patch.yml"),
-            "- insert:\n    - id: local\n      name: ./plugins/local\n    - id: abs\n      name: file:///tmp/plugin.js\n",
+            "- insert:\n    - id: local\n      name: ./plugins/local\n    - id: abs\n      name: file:///tmp/plugin.js\n    - id: env\n      name: !!js process.env.PLUGIN\n",
         )
         .unwrap();
 
@@ -653,6 +655,27 @@ mod tests {
         assert!(stripped.contains("untouched"), "{stripped}");
         assert!(!stripped.contains("dsh-gone"), "{stripped}");
         assert!(scan_unresolved_entries_in(&profile, &home, None).is_empty());
+        let _ = std::fs::remove_dir_all(&profile);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn strip_keeps_js_expressions_of_kept_entries() {
+        let profile = tmp_dir("js-strip-profile");
+        let home = tmp_dir("js-strip-home");
+        std::fs::write(
+            profile.join("cordis.patch.yml"),
+            "- insert:\n    - id: file-edit\n      name: dsh-file-edit\n- id: market\n  config:\n    token: !!js process.env.TOKEN\n",
+        )
+        .unwrap();
+
+        let report = strip_unresolved_entries_in(&profile, &home, None).unwrap();
+
+        assert_eq!(report.layers[0].removed, 1);
+        assert_eq!(
+            std::fs::read_to_string(profile.join("cordis.patch.yml")).unwrap(),
+            "- id: market\n  config:\n    token: !!js process.env.TOKEN\n"
+        );
         let _ = std::fs::remove_dir_all(&profile);
         let _ = std::fs::remove_dir_all(&home);
     }

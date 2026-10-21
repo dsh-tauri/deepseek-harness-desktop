@@ -15,7 +15,7 @@ use tauri::AppHandle;
 
 use crate::service::plugin::installed::profile_dir;
 use crate::service::plugin::recovery::{is_core_package, is_package_name, patch_entry_targets};
-use crate::service::plugin::{process, watch};
+use crate::service::plugin::{parse_patch_layer, process, render_patch_layer, watch};
 
 /// profile 层的 patch 覆盖文件。
 const PATCH_FILE: &str = "cordis.patch.yml";
@@ -208,18 +208,18 @@ pub(crate) fn add_patch_disable(profile: &Path, id: &str) -> Result<bool, String
     };
     let mut entries = match content.trim() {
         "" => Vec::new(),
-        raw => match serde_yaml::from_str::<serde_yaml::Value>(raw)
-            .map_err(|e| format!("DISABLE_PATCH_PARSE_FAILED: {e}"))?
-        {
-            serde_yaml::Value::Sequence(seq) => seq,
-            serde_yaml::Value::Null => Vec::new(),
-            _ => {
-                return Err(
-                    "DISABLE_PATCH_UNSUPPORTED_SHAPE: cordis.patch.yml top level is not a list"
-                        .to_string(),
-                )
+        raw => {
+            match parse_patch_layer(raw).map_err(|e| format!("DISABLE_PATCH_PARSE_FAILED: {e}"))? {
+                serde_yaml::Value::Sequence(seq) => seq,
+                serde_yaml::Value::Null => Vec::new(),
+                _ => {
+                    return Err(
+                        "DISABLE_PATCH_UNSUPPORTED_SHAPE: cordis.patch.yml top level is not a list"
+                            .to_string(),
+                    )
+                }
             }
-        },
+        }
     };
     let names = plugin_target_names(profile, id);
     let disabled_key = || serde_yaml::Value::String(DISABLED_KEY.to_string());
@@ -285,7 +285,7 @@ pub(crate) fn add_patch_disable(profile: &Path, id: &str) -> Result<bool, String
     if !changed {
         return Ok(false);
     }
-    let rendered = serde_yaml::to_string(&serde_yaml::Value::Sequence(entries))
+    let rendered = render_patch_layer(&serde_yaml::Value::Sequence(entries))
         .map_err(|e| format!("DISABLE_PATCH_RENDER_FAILED: {e}"))?;
     super::atomic_write::write_patch_layer_atomically(&path, &rendered)
         .map_err(|e| format!("DISABLE_PATCH_WRITE_FAILED: {e}"))?;
@@ -305,8 +305,8 @@ pub(crate) fn strip_patch_disable(profile: &Path, id: &str) -> Result<bool, Stri
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("ENABLE_PATCH_READ_FAILED: {error}")),
     };
-    let mut doc: serde_yaml::Value =
-        serde_yaml::from_str(&content).map_err(|e| format!("ENABLE_PATCH_PARSE_FAILED: {e}"))?;
+    let mut doc =
+        parse_patch_layer(&content).map_err(|e| format!("ENABLE_PATCH_PARSE_FAILED: {e}"))?;
     let Some(entries) = doc.as_sequence_mut() else {
         return Ok(false);
     };
@@ -337,7 +337,7 @@ pub(crate) fn strip_patch_disable(profile: &Path, id: &str) -> Result<bool, Stri
     if !changed {
         return Ok(false);
     }
-    let rendered = serde_yaml::to_string(&serde_yaml::Value::Sequence(kept))
+    let rendered = render_patch_layer(&serde_yaml::Value::Sequence(kept))
         .map_err(|e| format!("ENABLE_PATCH_RENDER_FAILED: {e}"))?;
     super::atomic_write::write_patch_layer_atomically(&path, &rendered)
         .map_err(|e| format!("ENABLE_PATCH_WRITE_FAILED: {e}"))?;
@@ -731,6 +731,38 @@ mod tests {
         let expected: serde_yaml::Value = serde_yaml::from_str(&before).unwrap();
         assert_eq!(doc, expected);
 
+        let _ = fs::remove_dir_all(&profile);
+    }
+
+    #[test]
+    fn disable_keeps_js_expressions_of_other_entries() {
+        let profile = build_profile("js-disable", "p");
+        write_patch(
+            &profile,
+            "- id: dshmarket\n  config:\n    token: !!js process.env.TOKEN\n",
+        );
+        disable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
+
+        assert_eq!(
+            read_patch(&profile),
+            "- id: dshmarket\n  config:\n    token: !!js process.env.TOKEN\n- id: dsh-better-sidebar\n  disabled: true\n"
+        );
+        let _ = fs::remove_dir_all(&profile);
+    }
+
+    #[test]
+    fn enable_keeps_js_expressions_of_other_entries() {
+        let profile = build_profile("js-enable", "q");
+        write_patch(
+            &profile,
+            "- id: dsh-better-sidebar\n  disabled: true\n- id: dshmarket\n  config:\n    token: !!js process.env.TOKEN\n",
+        );
+        enable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
+
+        assert_eq!(
+            read_patch(&profile),
+            "- id: dshmarket\n  config:\n    token: !!js process.env.TOKEN\n"
+        );
         let _ = fs::remove_dir_all(&profile);
     }
 
