@@ -74,6 +74,11 @@ describe('clipboard files bridge protocol', () => {
     }
   })
 
+  it('exposes the native paste entry point used by the right-click menu (issue #1190)', () => {
+    expect(shim).toContain('function pasteFromNative(target)')
+    expect(shim).toContain('window.__dsh_paste_clipboard__ = pasteFromNative')
+  })
+
   it('keeps the image bridge untouched (regression guard for #610)', () => {
     expect(shim).toContain(`var RES_TYPE = 'dsh://clipboard-image:reply'`)
     expect(iframe).toContain('read_clipboard_image')

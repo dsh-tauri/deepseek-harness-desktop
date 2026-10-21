@@ -18,7 +18,8 @@ export async function readClipboard(): Promise<string | null> {
     try {
       return await invoke<string | null>('read_clipboard_text')
     }
-    catch {
+    catch (error) {
+      console.warn('[rightclick] read_clipboard_text failed:', error)
       return null
     }
   }
@@ -26,9 +27,29 @@ export async function readClipboard(): Promise<string | null> {
     try {
       return await navigator.clipboard.readText()
     }
-    catch {}
+    catch (error) {
+      console.warn('[rightclick] navigator.clipboard.readText failed:', error)
+    }
   }
   return null
+}
+
+/**
+ * 剪贴板里没有纯文本时（复制的是文件/图片），交给宿主注入的 paste 垫片
+ * （`src-tauri/src/desktop/paste.rs` 的 `__dsh_paste_clipboard__`）向原生补读
+ * 并合成一次带附件的 paste（issue #1190）。浏览器直开没有该垫片。
+ */
+export async function pasteNativeClipboard(editable: HTMLElement): Promise<boolean> {
+  const bridge = (globalThis as { __dsh_paste_clipboard__?: (target: HTMLElement) => Promise<boolean> }).__dsh_paste_clipboard__
+  if (typeof bridge !== 'function')
+    return false
+  try {
+    return await bridge(editable)
+  }
+  catch (error) {
+    console.warn('[rightclick] native clipboard paste failed:', error)
+    return false
+  }
 }
 
 // --- internal ---

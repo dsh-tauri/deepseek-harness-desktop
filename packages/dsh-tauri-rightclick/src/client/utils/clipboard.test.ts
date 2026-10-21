@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readClipboard } from './clipboard'
+import { pasteNativeClipboard, readClipboard } from './clipboard'
 
 const invoke = vi.hoisted(() => vi.fn())
 
@@ -50,6 +51,27 @@ describe('readClipboard — 桌面载体', () => {
     invoke.mockRejectedValue(new Error('CLIPBOARD_TEXT_ACCESS: no clipboard'))
 
     await expect(readClipboard()).resolves.toBeNull()
+  })
+})
+
+describe('pasteNativeClipboard — 宿主 paste 垫片', () => {
+  it('没有垫片时按未处理返回，浏览器直开不额外弹错', async () => {
+    await expect(pasteNativeClipboard(document.createElement('div'))).resolves.toBe(false)
+  })
+
+  it('把目标元素交给垫片并透传是否已处理（issue #1190）', async () => {
+    const paste = vi.fn().mockResolvedValue(true)
+    vi.stubGlobal('__dsh_paste_clipboard__', paste)
+    const editable = document.createElement('div')
+
+    await expect(pasteNativeClipboard(editable)).resolves.toBe(true)
+    expect(paste).toHaveBeenCalledExactlyOnceWith(editable)
+  })
+
+  it('垫片抛错时按未处理返回，不把异常抛进菜单动作', async () => {
+    vi.stubGlobal('__dsh_paste_clipboard__', vi.fn().mockRejectedValue(new Error('bridge failed')))
+
+    await expect(pasteNativeClipboard(document.createElement('div'))).resolves.toBe(false)
   })
 })
 

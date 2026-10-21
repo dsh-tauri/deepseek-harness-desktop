@@ -33,15 +33,26 @@ pub(crate) const PASTE_SHIM_JS: &str = r#"(function () {
 
   var reqSeq = 0;
   var pending = {}; // id -> resolve（宿主回包按 type 分发，携带原始 data 调用）
+  // 宿主未回包（多层 iframe / 桥未挂载）时不能把右键菜单动作永久挂住。
+  var REQUEST_TIMEOUT_MS = 10000;
 
   function request(reqType) {
     return new Promise(function (resolve) {
       reqSeq += 1;
       var id = 'req-' + reqSeq;
-      pending[id] = resolve;
+      var timer = setTimeout(function () {
+        if (!pending[id]) return;
+        delete pending[id];
+        resolve(null);
+      }, REQUEST_TIMEOUT_MS);
+      pending[id] = function (data) {
+        clearTimeout(timer);
+        resolve(data);
+      };
       try {
         window.parent.postMessage({ source: REQ_SRC, type: reqType, id: id }, '*');
       } catch (_) {
+        clearTimeout(timer);
         delete pending[id];
         resolve(null);
       }
@@ -112,7 +123,8 @@ pub(crate) const PASTE_SHIM_JS: &str = r#"(function () {
     }
   }
 
-  // 把若干 File 塞进同一个 DataTransfer，派发一次合成 paste 给焦点元素
+  // 把若干 File 塞进同一个 DataTransfer，派发一次合成 paste 给焦点元素。
+  // 返回是否真的派发成功：菜单据此决定是否还要提示读取失败。
   function dispatchPasteWithFiles(target, files) {
     try {
       var dt = new DataTransfer();
@@ -127,19 +139,23 @@ pub(crate) const PASTE_SHIM_JS: &str = r#"(function () {
       }
       if (target.isConnected) {
         target.dispatchEvent(ev);
-      } else {
-        var active = document.activeElement;
-        if (active && isPasteTarget(active)) active.dispatchEvent(ev);
+        return true;
+      }
+      var active = document.activeElement;
+      if (active && isPasteTarget(active)) {
+        active.dispatchEvent(ev);
+        return true;
       }
     } catch (_) {}
+    return false;
   }
 
   // 把图片作为 File 塞进新的 DataTransfer，再派发合成 paste 给焦点元素
   function dispatchImagePaste(target, dataUrl) {
     var blob = dataUrlToBlob(dataUrl);
-    if (!blob) return;
+    if (!blob) return false;
     var file = new File([blob], 'clipboard-image.png', { type: blob.type || 'image/png' });
-    dispatchPasteWithFiles(target, [file]);
+    return dispatchPasteWithFiles(target, [file]);
   }
 
   // 把宿主回传的文件条目（data_url + 真实文件名/MIME）还原成 File 后一次性派发。
@@ -153,8 +169,26 @@ pub(crate) const PASTE_SHIM_JS: &str = r#"(function () {
       if (!blob) continue;
       files.push(new File([blob], entry.filename || 'clipboard-file', { type: entry.mime || blob.type || 'application/octet-stream' }));
     }
-    if (files.length > 0) dispatchPasteWithFiles(target, files);
-    return files.length;
+    if (files.length === 0) return false;
+    return dispatchPasteWithFiles(target, files);
+  }
+
+  // 先问文件：从文件管理器复制文件时剪贴板只有 uri-list（对 WebKit 表现为
+  // 无图无文本），命中即贴文件（issue #1160）；复制截图时文件列表为空，
+  // 落回原有图片通路（issue #610），两条路互不干扰。
+  function pasteFromNative(target) {
+    return request(REQ_FILES_TYPE).then(function (fileData) {
+      var entries = (fileData && fileData.files) || [];
+      if (entries.length > 0 && dispatchFilesPaste(target, entries)) return true;
+      // 剪贴板里确实有文件、但全部被拒（超限/不可读/目录）：宿主已 toast 说明原因，
+      // 这里不再落回图片通路——那只会再报一次「读不到图片」，把真实原因盖掉。
+      if (fileData && fileData.rejected && fileData.rejected.length > 0) return true;
+      return request(REQ_TYPE).then(function (imageData) {
+        var dataUrl = imageData && imageData.data_url;
+        if (!dataUrl) return false;
+        return dispatchImagePaste(target, dataUrl);
+      });
+    });
   }
 
   // 捕获阶段先于 dsh 应用自身监听：空剪贴板时接管并走原生读取。
@@ -162,6 +196,8 @@ pub(crate) const PASTE_SHIM_JS: &str = r#"(function () {
   // 且 `window.parent` 指向自身，postMessage 不会命中宿主（见 handleClipboardImage），
   // 这里直接把拦截限定在子 frame，避免对壳层输入产生任何干扰。
   if (window !== window.parent) {
+    // 右键菜单的「粘贴」只读得到纯文本；复制文件/图片时由菜单直接调用这里（issue #1190）。
+    window.__dsh_paste_clipboard__ = pasteFromNative;
     document.addEventListener('paste', function (event) {
       var dt = event.clipboardData;
       if (hasImageData(dt)) return;
@@ -171,20 +207,7 @@ pub(crate) const PASTE_SHIM_JS: &str = r#"(function () {
       if (!isPasteTarget(target)) return;
 
       event.preventDefault();
-      // 先问文件：从文件管理器复制文件时剪贴板只有 uri-list（对 WebKit 表现为
-      // 无图无文本），命中即贴文件（issue #1160）；复制截图时文件列表为空，
-      // 落回原有图片通路（issue #610），两条路互不干扰。
-      request(REQ_FILES_TYPE).then(function (fileData) {
-        var entries = (fileData && fileData.files) || [];
-        if (entries.length > 0 && dispatchFilesPaste(target, entries) > 0) return;
-        // 剪贴板里确实有文件、但全部被拒（超限/不可读/目录）：宿主已 toast 说明原因，
-        // 这里不再落回图片通路——那只会再报一次「读不到图片」，把真实原因盖掉。
-        if (fileData && fileData.rejected && fileData.rejected.length > 0) return;
-        return request(REQ_TYPE).then(function (imageData) {
-          var dataUrl = imageData && imageData.data_url;
-          if (dataUrl) dispatchImagePaste(target, dataUrl);
-        });
-      });
+      pasteFromNative(target);
     }, true);
   }
 })();"#;

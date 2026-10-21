@@ -24,7 +24,7 @@ import {
   supportsSessionPin,
   togglePinSession,
 } from '../service/menu'
-import { readClipboard } from '../utils/clipboard'
+import { pasteNativeClipboard, readClipboard } from '../utils/clipboard'
 import { pasteInto, replaceSelection, selectAll, selectSurface } from '../utils/editable'
 import { externalUrl, selectedUrl } from '../utils/url'
 import { redoShortcutLabel, shortcutLabel } from './context-menu.utils'
@@ -239,8 +239,12 @@ export function buildEditableMenu(composer: MenuComposer, editable: HTMLElement,
   composer.add(locale.text('copy'), () => composer.copyText(selection, locale.text('copied')), shortcutLabel('C'))
   composer.add(locale.text('paste'), async () => {
     const clipboard = await readClipboard()
-    if (clipboard === null)
+    if (clipboard === null) {
+      editable.focus()
+      if (await pasteNativeClipboard(editable))
+        return
       throw new Error(locale.text('clipboardReadFailed', { key: shortcutLabel('V') }))
+    }
     if (!pasteInto(editable, clipboard))
       throw new Error(locale.text('editPositionUnknown'))
   }, shortcutLabel('V'))
