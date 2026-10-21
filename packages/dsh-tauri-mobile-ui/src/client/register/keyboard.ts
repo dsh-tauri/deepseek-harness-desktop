@@ -22,6 +22,22 @@ export const registerMobileKeyboard = defineRegister<ClientContext>((controller,
       editor.blur()
   }
 
+  function fixedPage() {
+    return root.hasAttribute('data-dsh-mobile-sidebar') || root.scrollHeight - window.innerHeight <= 1
+  }
+
+  const scrollBy = window.scrollBy
+  function keepKeyboardPan(this: Window, ...args: unknown[]) {
+    if (!fixedPage() || !focusedEditor()?.closest(COMPOSER))
+      Reflect.apply(scrollBy, this, args)
+  }
+  // keep:effect Lexical reveals the caret after a JS delete with window.scrollBy; on a page that cannot scroll iOS turns it into dropping the keyboard pan.
+  window.scrollBy = keepKeyboardPan
+  controller.add(() => {
+    if (window.scrollBy === keepKeyboardPan)
+      window.scrollBy = scrollBy
+  })
+
   controller.listen('click', (event) => {
     if (!(event.target instanceof Element))
       return
@@ -75,8 +91,7 @@ export const registerMobileKeyboard = defineRegister<ClientContext>((controller,
       else
         root.style.removeProperty(VIEWPORT_HEIGHT)
     }
-    const fixedPage = root.hasAttribute('data-dsh-mobile-sidebar') || root.scrollHeight <= window.innerHeight
-    if ((composing || (active && editor === null && fixedPage)) && (viewport.offsetTop >= 1 || window.scrollY >= 1))
+    if ((composing || (active && editor === null && fixedPage())) && (viewport.offsetTop >= 1 || window.scrollY >= 1))
       window.scrollTo(0, 0)
   }
   const scheduleFit = (): void => {

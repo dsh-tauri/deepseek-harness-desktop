@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { Mock } from 'vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createLifecycleController } from '../../../../dsh-tauri/src/client/controller'
 import { registerMobileKeyboard } from './keyboard'
@@ -21,6 +22,8 @@ class FakeViewport extends EventTarget {
 let controller: ReturnType<typeof createLifecycleController>
 let editor: HTMLElement
 let viewport: FakeViewport
+let scrollBy: Mock<typeof window.scrollBy>
+const nativeScrollBy = window.scrollBy
 const labels: Record<string, string> = { 'input.send': '发送消息', 'input.send.queue': '排队发送', 'input.send.steer': '插话发送' }
 
 function touch(type: string, x: number, y: number, target: Element = document.querySelector('[data-conversation-scroll]')!) {
@@ -42,6 +45,8 @@ beforeEach(() => {
   editor.focus()
   viewport = new FakeViewport()
   Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+  scrollBy = vi.fn<typeof window.scrollBy>()
+  Object.defineProperty(window, 'scrollBy', { configurable: true, writable: true, value: scrollBy })
   controller = createLifecycleController()
   const register = registerMobileKeyboard as unknown as (controller: unknown, ctx: unknown) => void
   register(controller, { locale: { bind: () => (key: string) => labels[key] ?? key } })
@@ -55,6 +60,7 @@ afterEach(() => {
   Reflect.deleteProperty(window, 'visualViewport')
   Reflect.deleteProperty(window, 'matchMedia')
   Reflect.deleteProperty(document.documentElement, 'scrollHeight')
+  Object.defineProperty(window, 'scrollBy', { configurable: true, writable: true, value: nativeScrollBy })
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -117,6 +123,33 @@ describe('mobile composer keyboard dismissal', () => {
     touch('touchstart', 100, 100)
     touch('touchmove', 100, 130)
     expect(document.activeElement).toBe(editor)
+  })
+})
+
+describe('composer caret reveal on a page that cannot scroll', () => {
+  it('drops the window scroll Lexical makes after a JS delete in both layouts', () => {
+    window.scrollBy(0, 48)
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: window.innerHeight + 1 })
+    window.scrollBy(0, 48)
+    expect(scrollBy).not.toHaveBeenCalled()
+    document.documentElement.setAttribute('data-dsh-mobile-sidebar', '')
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: window.innerHeight + 900 })
+    window.scrollBy({ top: 48 })
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
+
+  it('still scrolls pages that can scroll and other inputs, and stops guarding after unload', () => {
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: window.innerHeight + 2 })
+    window.scrollBy(0, 48)
+    expect(scrollBy).toHaveBeenLastCalledWith(0, 48)
+    expect(scrollBy.mock.contexts.at(-1)).toBe(window)
+    Reflect.deleteProperty(document.documentElement, 'scrollHeight')
+    document.querySelector<HTMLInputElement>('#setting')!.focus()
+    window.scrollBy(0, 24)
+    expect(scrollBy).toHaveBeenLastCalledWith(0, 24)
+    editor.focus()
+    controller.dispose()
+    expect(window.scrollBy).toBe(scrollBy)
   })
 })
 
