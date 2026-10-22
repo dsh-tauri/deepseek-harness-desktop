@@ -100,20 +100,6 @@ jobs:
             bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
           done
 
-      # linuxdeploy 的 gstreamer 插件按 Debian 布局写扫描器路径，而产物把
-      # gst-plugin-scanner 放在 usr/lib/gstreamer-1.0/；路径不存在时 WebKit 枚举不到
-      # 音频源，getUserMedia 直接 NotAllowedError（桌面端麦克风没有权限弹窗、录音永远为空）。
-      # 同时剔除 libgstpython：它会为 gst-plugin-scanner 初始化 CPython，宿主 python 缺
-      # gi 时每次采集都打印 pygobject CRITICAL。本步同样重写 AppImage 字节，必须在签名前。
-      - name: Fix GStreamer scanner paths and drop the Python plugin from the AppImage
-        shell: bash
-        run: |
-          mapfile -d '' appimages < <(find src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
-          [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
-          for appimage in "${appimages[@]}"; do
-            bash scripts/fix-appimage-gstreamer.sh --require-removal "$appimage"
-          done
-
       - name: Normalize release asset names
         run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb
 
