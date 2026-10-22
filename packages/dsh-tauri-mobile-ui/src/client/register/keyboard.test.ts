@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { Mock } from 'vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createLifecycleController } from '../../../../dsh-tauri/src/client/controller'
 import { registerMobileKeyboard } from './keyboard'
@@ -12,10 +13,14 @@ vi.mock('dsh-tauri/client', () => ({
 let controller: ReturnType<typeof createLifecycleController>
 let editor: HTMLElement
 let viewport: FakeViewport
+let scrollBy: Mock<typeof window.scrollBy>
+const nativeScrollBy = window.scrollBy
 const labels: Record<string, string> = { 'input.send': '发送消息', 'input.send.queue': '排队发送', 'input.send.steer': '插话发送' }
 
 class FakeViewport extends EventTarget {
+  width = window.innerWidth
   height = window.innerHeight
+  offsetTop = 0
   scale = 1
 }
 
@@ -33,6 +38,10 @@ beforeEach(() => {
   editor.focus()
   viewport = new FakeViewport()
   Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+  Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: window.innerWidth })
+  Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: window.innerHeight })
+  scrollBy = vi.fn<typeof window.scrollBy>()
+  Object.defineProperty(window, 'scrollBy', { configurable: true, writable: true, value: scrollBy })
   controller = createLifecycleController()
   const register = registerMobileKeyboard as unknown as (controller: unknown, ctx: unknown) => void
   register(controller, { locale: { bind: () => (key: string) => labels[key] ?? key } })
@@ -41,6 +50,10 @@ beforeEach(() => {
 afterEach(() => {
   controller.dispose()
   Reflect.deleteProperty(window, 'visualViewport')
+  for (const key of ['clientWidth', 'clientHeight', 'scrollHeight'])
+    Reflect.deleteProperty(document.documentElement, key)
+  Object.defineProperty(window, 'scrollBy', { configurable: true, writable: true, value: nativeScrollBy })
+  document.documentElement.removeAttribute('data-dsh-mobile-sidebar')
   document.documentElement.removeAttribute('style')
   document.body.innerHTML = ''
   vi.restoreAllMocks()
@@ -130,14 +143,89 @@ describe('mobile keyboard viewport fit', () => {
   it('follows the keyboard height the iOS app reports', () => {
     const report = (height: number) => window.dispatchEvent(new CustomEvent('dsh-mobile-keyboard', { detail: { height } }))
     report(300)
-    expect(reserved()).toBe(`${window.innerHeight - 300}px`)
+    expect(reserved()).toBe(`${document.documentElement.clientHeight - 300}px`)
     report(0)
     expect(reserved()).toBe('')
   })
 
-  it('drops the reservation when the plugin unloads', () => {
+  it('keeps fitting when Safari zooms the page out without any pinch zoom', () => {
+    viewport.scale = 0.85
+    viewport.height = 322.3
+    viewport.dispatchEvent(new Event('resize'))
+    expect(reserved()).toBe('322px')
+  })
+
+  it('leaves a pinch-zoomed page to the browser', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    viewport.scale = 1.6
+    viewport.width = window.innerWidth / 1.6
+    viewport.height = 300
+    viewport.offsetTop = 200
+    viewport.dispatchEvent(new Event('resize'))
+    expect(reserved()).toBe('')
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('measures the keyboard against the layout height while iOS shrinks innerHeight during its pan', () => {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(322)
+    viewport.height = 322.3
+    viewport.dispatchEvent(new Event('resize'))
+    expect(reserved()).toBe('322px')
+    window.dispatchEvent(new CustomEvent('dsh-mobile-keyboard', { detail: { height: 300 } }))
+    expect(reserved()).toBe(`${document.documentElement.clientHeight - 300}px`)
+  })
+
+  it('pulls a composer pan back to the top once the page fits, but leaves other fields to iOS', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    viewport.height = 322.3
+    viewport.offsetTop = 503.5
+    viewport.dispatchEvent(new Event('resize'))
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0)
+    viewport.offsetTop = 0
+    vi.spyOn(window, 'scrollY', 'get').mockReturnValue(120)
+    viewport.dispatchEvent(new Event('scroll'))
+    expect(scrollTo).toHaveBeenCalledTimes(2)
+    document.querySelector<HTMLInputElement>('#setting')!.focus()
+    viewport.dispatchEvent(new Event('scroll'))
+    expect(scrollTo).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops the reservation and viewport listeners when the plugin unloads', () => {
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
     window.dispatchEvent(new CustomEvent('dsh-mobile-keyboard', { detail: { height: 300 } }))
     controller.dispose()
     expect(reserved()).toBe('')
+    viewport.height = 322.3
+    viewport.offsetTop = 503.5
+    viewport.dispatchEvent(new Event('scroll'))
+    expect(reserved()).toBe('')
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+})
+
+describe('composer caret reveal', () => {
+  it('drops the window scroll Lexical makes after a JS edit while the page cannot scroll', () => {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(322)
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: document.documentElement.clientHeight + 1 })
+    window.scrollBy(0, -294.5)
+    expect(scrollBy).not.toHaveBeenCalled()
+    document.documentElement.setAttribute('data-dsh-mobile-sidebar', '')
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: document.documentElement.clientHeight + 900 })
+    window.scrollBy({ top: -294.5 })
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
+
+  it('still scrolls pages that can scroll and other fields, and restores the native method on unload', () => {
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: document.documentElement.clientHeight + 2 })
+    window.scrollBy(0, 48)
+    expect(scrollBy).toHaveBeenLastCalledWith(0, 48)
+    expect(scrollBy.mock.contexts.at(-1)).toBe(window)
+    Reflect.deleteProperty(document.documentElement, 'scrollHeight')
+    document.querySelector<HTMLInputElement>('#setting')!.focus()
+    window.scrollBy(0, 24)
+    expect(scrollBy).toHaveBeenLastCalledWith(0, 24)
+    editor.focus()
+    controller.dispose()
+    expect(window.scrollBy).toBe(scrollBy)
   })
 })
