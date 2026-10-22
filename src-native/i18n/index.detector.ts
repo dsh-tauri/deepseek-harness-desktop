@@ -7,8 +7,12 @@ import { getLocales } from 'expo-localization'
  * 也就不需要把语言写回持久化存储。
  */
 export function detectLanguage(): string {
-  const tag = getLocales()[0]?.languageTag ?? 'en-US'
-  return tag.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US'
+  const tag = getLocales()[0]?.languageTag.toLowerCase() ?? 'en-US'
+  if (tag.startsWith('zh'))
+    return 'zh-CN'
+  if (tag.startsWith('ko'))
+    return 'ko-KR'
+  return 'en-US'
 }
 
 export const languageDetector: LanguageDetectorModule = {

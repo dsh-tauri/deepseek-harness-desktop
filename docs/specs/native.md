@@ -80,10 +80,10 @@ src-native/
 ### 3.1 i18n
 
 * `i18next` + `react-i18next` + `expo-localization`；`src-native/i18n/index.ts` 导出与应用同寿的 `i18n` 实例，非 React 模块（store、通知处理器）直接 `i18n.t('connection.xxx')`。
-* 语言资源静态打包进 bundle：`src-native/i18n/locales/zh-CN.json` 与 `en-US.json`，扁平 dot-notation key，并关闭 `keySeparator` / `nsSeparator`（与桌面端 `src/i18n` 约定一致）；`initAsync: false` 保证模块作用域内 `i18n.t` 立即可用。
-* `src-native/i18n/index.detector.ts` 是**同步**语言检测：`getLocales()[0].languageTag` 前缀 `zh` → `zh-CN`，否则 `en-US`。
+* 语言资源静态打包进 bundle：`src-native/i18n/locales/zh-CN.json`、`en-US.json` 与 `ko-KR.json`，扁平 dot-notation key，并关闭 `keySeparator` / `nsSeparator`（与桌面端 `src/i18n` 约定一致）；`initAsync: false` 保证模块作用域内 `i18n.t` 立即可用。
+* `src-native/i18n/index.detector.ts` 是**同步**语言检测：`getLocales()[0].languageTag` 前缀 `zh` → `zh-CN`、`ko` → `ko-KR`，否则 `en-US`。
 * **不持久化语言、没有语言切换入口**：语言唯一来源是设备区域设置。
-* 文案禁止硬编码在组件里，key 同步维护两个 locale 文件。
+* 文案禁止硬编码在组件里，key 同步维护三个 locale 文件。
 
 ### 3.2 apis
 
