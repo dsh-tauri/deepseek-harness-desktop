@@ -174,7 +174,7 @@ describe('i18n parity', () => {
     'profiles.reset_failed',
   ]
 
-  for (const locale of ['zh-CN', 'en-US']) {
+  for (const locale of ['zh-CN', 'en-US', 'ko-KR']) {
     it(`includes all profiles.clone* keys in ${locale}`, () => {
       const messages = JSON.parse(readFileSync(new URL(`../src/i18n/locales/${locale}.json`, import.meta.url), 'utf8')) as Record<string, unknown>
       for (const key of keys) {

@@ -63,7 +63,7 @@ useQuery({ queryFn: async () => fetchData() });
 
 * **自动记忆化**：已接入 `react-compiler`（target 19），**禁止使用** `useCallback` / `useMemo`。
 * **UI 组件优先**：优先使用 `src/components` 和 HeroUI 组件，减少自定义 CSS 类。
-* **i18n 规范**：禁止硬编码字符串。key 必须拍平（扁平点号命名，如 `setting.title`），同步维护 `src/i18n/locales/en-US.json` 与 `zh-CN.json`。
+* **i18n 规范**：禁止硬编码字符串。key 必须拍平（扁平点号命名，如 `setting.title`），同步维护 `src/i18n/locales/en-US.json`、`zh-CN.json` 与 `ko-KR.json`；三者的键集合、非空文案与 `{{placeholder}}` 由 `test/i18n-locales.test.ts` 守卫。
 
 ### 3.2 Hooks 使用指南 (`@reause/core`)
 

@@ -10,6 +10,7 @@ export const i18n = i18next
     fallbackLng: {
       'en-*': ['en-US'],
       'zh-*': ['zh-CN'],
+      'ko-*': ['ko-KR'],
       'default': ['en-US'],
     },
     resources,

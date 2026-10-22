@@ -160,6 +160,7 @@
   "ui.language": "语言",
   "ui.languages.zh": "中文",
   "ui.languages.en": "English",
+  "ui.languages.ko": "한국어",
   "ui.connection_status": "连接状态",
   "ui.running": "运行中",
   "ui.stopped": "已停止",

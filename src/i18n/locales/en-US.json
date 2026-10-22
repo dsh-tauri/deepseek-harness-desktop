@@ -160,6 +160,7 @@
   "ui.language": "Language",
   "ui.languages.zh": "Chinese",
   "ui.languages.en": "English",
+  "ui.languages.ko": "Korean",
   "ui.connection_status": "Connection",
   "ui.running": "Running",
   "ui.stopped": "Stopped",
