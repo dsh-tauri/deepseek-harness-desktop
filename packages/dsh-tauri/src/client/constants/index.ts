@@ -1,12 +1,16 @@
 export { PLUGIN_ID } from '../../shared/constants'
 
 /**
- * 触摸判据。`(hover: none)` 在部分 Android WebView（vivo V2353A，Android 14 /
- * Chrome 116）的 360px 视口被误报为 hover，改用语义更稳的 `(pointer: coarse)`：
- * 主指针是否为触摸，与 hover 能力无关。`(any-hover: none)` 保留，外接鼠标时
- * 为 false，用于区分「纯触屏」与「触屏 + 鼠标」。
+ * 触摸判据。只看指针能力，不含 hover 类查询。
+ *
+ * vivo V2353A（Android 14 / Chrome 116）在 360px 视口把 `(hover: none)` 与
+ * `(any-hover: none)` 一起报成 false，而 `(pointer: coarse)`、`(any-pointer: coarse)`
+ * 均为 true。hover 类查询一旦进入 `every` 合取，一条误报就让整块移动布局失效——
+ * CSS 头由本常量拼出，样式与脚本一起退回桌面。
+ *
+ * 代价：主指针为触摸的窄屏设备即使外接鼠标也判为移动端。
  */
-export const MOBILE_POINTER_QUERIES = ['(pointer: coarse)', '(any-pointer: coarse)', '(any-hover: none)'] as const
+export const MOBILE_POINTER_QUERIES = ['(pointer: coarse)', '(any-pointer: coarse)'] as const
 
 /**
  * issue #1128：官方布局在 1024px 以上走桌面，触屏笔记本同样命中指针查询；

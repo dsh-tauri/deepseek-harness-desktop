@@ -58,8 +58,8 @@ afterEach(() => {
   menuProps.mockClear()
 })
 
-function setup(mobile: boolean, secondaryMouse = false): void {
-  vi.stubGlobal('matchMedia', (query: string) => ({ matches: mobile && !(secondaryMouse && query === '(any-hover: none)') }))
+function setup(mobile: boolean, finePointer = false): void {
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: mobile && !(finePointer && query === '(pointer: coarse)') }))
   vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android 15)', clipboard: undefined })
   disposers.push(contextMenuFeature.call({}))
 }
@@ -103,8 +103,8 @@ describe('mobile context menu', () => {
     expect(document.querySelector('[role="menu"]')?.textContent).not.toMatch(/Ctrl\+|⌘|⇧/)
   })
 
-  it.each([{ mobile: false, mouse: false }, { mobile: true, mouse: true }])('keeps desktop editing menus with a mouse (%j)', ({ mobile, mouse }) => {
-    setup(mobile, mouse)
+  it.each([{ mobile: false, finePointer: false }, { mobile: true, finePointer: true }])('keeps desktop editing menus with a mouse (%j)', ({ mobile, finePointer }) => {
+    setup(mobile, finePointer)
     const editable = document.createElement('textarea')
     document.body.appendChild(editable)
     expect(contextmenu(editable).defaultPrevented).toBe(true)

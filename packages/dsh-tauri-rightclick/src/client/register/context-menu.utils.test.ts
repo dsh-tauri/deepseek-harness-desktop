@@ -41,9 +41,9 @@ describe('mobile shortcut hints', () => {
     expect(redoShortcutLabel()).toBe('')
   })
 
-  it('retains keyboard hints when a touch device has a secondary mouse', () => {
+  it('retains keyboard hints while the primary pointer is not a touch device', () => {
     stubUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    vi.stubGlobal('window', { matchMedia: (query: string) => ({ matches: query !== '(any-hover: none)' }) })
+    vi.stubGlobal('window', { matchMedia: (query: string) => ({ matches: query !== '(pointer: coarse)' && query !== '(any-pointer: coarse)' }) })
     expect(shortcutLabel('Z')).toBe('Ctrl+Z')
     expect(redoShortcutLabel()).toBe('Ctrl+Y')
   })

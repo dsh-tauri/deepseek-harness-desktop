@@ -4,7 +4,6 @@ import { detectMobileDevice, isMobileDevice, MOBILE_MEDIA_QUERIES } from './devi
 const MOBILE_QUERIES = [
   '(pointer: coarse)',
   '(any-pointer: coarse)',
-  '(any-hover: none)',
   '(max-width: 1023px)',
 ]
 
@@ -34,7 +33,6 @@ describe('isMobileDevice', () => {
     const probe = matcher({
       '(pointer: coarse)': true,
       '(any-pointer: coarse)': true,
-      '(any-hover: none)': true,
       '(max-width: 1023px)': true,
     })
 
@@ -42,13 +40,13 @@ describe('isMobileDevice', () => {
     expect(probe.queries).toEqual(MOBILE_QUERIES)
   })
 
-  it('treats a narrow WebView that misreports hover as mobile', () => {
+  it('treats a narrow WebView that reports both hover queries as unavailable as mobile', () => {
     const webview = matcher({
       '(pointer: coarse)': true,
       '(any-pointer: coarse)': true,
-      '(any-hover: none)': true,
       '(hover: none)': false,
       '(hover: hover)': true,
+      '(any-hover: none)': false,
       '(max-width: 1023px)': true,
     })
 
@@ -59,32 +57,22 @@ describe('isMobileDevice', () => {
     const touchDesktop = matcher({
       '(pointer: coarse)': true,
       '(any-pointer: coarse)': true,
-      '(any-hover: none)': true,
       '(max-width: 1023px)': false,
     })
 
     expect(isMobileDevice(touchDesktop.matches)).toBe(false)
   })
 
-  it('keeps every partially matching device on the desktop branch', () => {
+  it('keeps a device whose primary pointer is not touch on the desktop branch', () => {
     const mouseDesktop = matcher({ '(pointer: coarse)': false, '(any-pointer: coarse)': false, '(max-width: 1023px)': true })
-    const touchscreenLaptop = matcher({ '(pointer: coarse)': true, '(any-pointer: coarse)': true, '(any-hover: none)': false, '(max-width: 1023px)': true })
-    const hoverTouch = matcher({ '(pointer: coarse)': false, '(any-pointer: coarse)': true, '(any-hover: none)': true, '(max-width: 1023px)': true })
+    const hoverTouch = matcher({ '(pointer: coarse)': false, '(any-pointer: coarse)': true, '(max-width: 1023px)': true })
 
     expect(isMobileDevice(mouseDesktop.matches)).toBe(false)
-    expect(isMobileDevice(touchscreenLaptop.matches)).toBe(false)
     expect(isMobileDevice(hoverTouch.matches)).toBe(false)
   })
 
-  it('keeps a touchscreen with a secondary mouse on the desktop branch', () => {
-    const tabletWithMouse = matcher({
-      '(pointer: coarse)': true,
-      '(any-pointer: coarse)': true,
-      '(any-hover: hover)': true,
-      '(max-width: 1023px)': true,
-    })
-
-    expect(isMobileDevice(tabletWithMouse.matches)).toBe(false)
+  it('keeps hover out of the probe so a misreported hover cannot veto the layout', () => {
+    expect(MOBILE_MEDIA_QUERIES.join(' and ')).not.toMatch(/hover/)
   })
 
   it('uses the same 1024px breakpoint as the official layout', () => {
@@ -97,7 +85,6 @@ describe('detectMobileDevice', () => {
     const probe = matcher({
       '(pointer: coarse)': true,
       '(any-pointer: coarse)': true,
-      '(any-hover: none)': true,
       '(max-width: 1023px)': true,
     })
     stubWindow(probe.matchMedia)
@@ -110,7 +97,7 @@ describe('detectMobileDevice', () => {
     const probe = matcher({
       '(pointer: coarse)': true,
       '(any-pointer: coarse)': true,
-      '(any-hover: none)': true,
+      '(max-width: 1023px)': false,
     })
     stubWindow(probe.matchMedia)
 
