@@ -9,12 +9,15 @@ import { describe, expect, it } from 'vitest'
  */
 const LOCALES = ['en-US', 'zh-CN', 'ko-KR'] as const
 
-const readLocale = (locale: string): Record<string, string> =>
-  JSON.parse(readFileSync(new URL(`../src/i18n/locales/${locale}.json`, import.meta.url), 'utf8')) as Record<string, string>
+function readLocale(locale: string): Record<string, string> {
+  const url = new URL(`../src/i18n/locales/${locale}.json`, import.meta.url)
+  return JSON.parse(readFileSync(url, 'utf8')) as Record<string, string>
+}
 
 /** `{{name}}` / `{name}` 两种占位符写法都要保留。 */
-const placeholders = (value: string): string[] =>
-  [...value.matchAll(/\{\{?\w+\}?\}/g)].map(match => match[0]).sort()
+function placeholders(value: string): string[] {
+  return [...value.matchAll(/\{\{?\w+\}?\}/g)].map(match => match[0]).sort()
+}
 
 describe('i18n locale contract', () => {
   it('每个语言文件的键集合完全一致', () => {

@@ -39,7 +39,7 @@ describe('macOS native menu', () => {
       '&window_separator',
       '&bring_all_to_front',
     ])
-    expect(i18nSource).toContain('"menu.bring_all_to_front" => ("全部置于顶层", "Bring All to Front")')
+    expect(i18nSource).toContain('"menu.bring_all_to_front" => ("全部置于顶层", "Bring All to Front", "모두 앞으로")')
   })
 
   it('keeps the accepted native system menus at the top level', () => {
@@ -86,16 +86,16 @@ describe('macOS native menu', () => {
   })
 
   it.each([
-    ['desktop-config', 'application', 'menu.settings', '设置…', 'Settings…'],
-    ['desktop-profiles', 'profiles', 'menu.profiles', '档案管理…', 'Manage Profiles…'],
-    ['desktop-plugins', 'plugins', 'menu.plugins', '插件管理…', 'Manage Plugins…'],
-    ['desktop-harness', 'harness', 'menu.harness', '核心管理…', 'Manage Core…'],
-  ])('routes %s from its native item to the %s configuration tab', (action, tab, key, zh, en) => {
+    ['desktop-config', 'application', 'menu.settings', '设置…', 'Settings…', '설정…'],
+    ['desktop-profiles', 'profiles', 'menu.profiles', '档案管理…', 'Manage Profiles…', '프로파일 관리…'],
+    ['desktop-plugins', 'plugins', 'menu.plugins', '插件管理…', 'Manage Plugins…', '플러그인 관리…'],
+    ['desktop-harness', 'harness', 'menu.harness', '核心管理…', 'Manage Core…', '코어 관리…'],
+  ])('routes %s from its native item to the %s configuration tab', (action, tab, key, zh, en, ko) => {
     expect(builderSource).toMatch(new RegExp(`MenuItem::with_id\\(\\s*app,\\s*"${action}",\\s*crate::config::i18n::t\\("${key}"\\)`))
     const eventHandler = builderSource.slice(builderSource.indexOf('.on_menu_event(|app, event|'))
     expect(eventHandler).toMatch(new RegExp(`"${action}"[\\s\\S]*?app.emit_to\\(label, "macos-menu-action", event.id\\(\\).as_ref\\(\\)\\)`))
     expect(navbarSource).toMatch(new RegExp(`case '${action}':\\s*handleOpenConfig\\('${tab}'\\)`))
-    expect(i18nSource).toContain(`"${key}" => ("${zh}", "${en}")`)
+    expect(i18nSource).toContain(`"${key}" => ("${zh}", "${en}", "${ko}")`)
   })
 
   it('groups feedback links before run logs, developer tools and the task manager in Help', () => {
@@ -110,13 +110,13 @@ describe('macOS native menu', () => {
       '&toggle_devtools',
       '&task_manager',
     ])
-    expect(i18nSource).toContain('"menu.toggle_devtools" => ("切换开发者工具", "Toggle Developer Tools")')
-    expect(i18nSource).toContain('"menu.task_manager" => ("任务管理器", "Task Manager")')
+    expect(i18nSource).toContain('"menu.toggle_devtools" => ("切换开发者工具", "Toggle Developer Tools", "개발자 도구 전환")')
+    expect(i18nSource).toContain('"menu.task_manager" => ("任务管理器", "Task Manager", "작업 관리자")')
   })
 
   it('provides the native Run title in both languages', () => {
-    expect(i18nSource).toContain('"menu.run" => ("运行与管理", "Run & Manage")')
-    expect(i18nSource).toContain('"menu.restart" => ("重启 Harness", "Restart Harness")')
+    expect(i18nSource).toContain('"menu.run" => ("运行与管理", "Run & Manage", "실행 및 관리")')
+    expect(i18nSource).toContain('"menu.restart" => ("重启 Harness", "Restart Harness", "Harness 다시 시작")')
   })
 
   it('toggles the focused shell window from View without suppressing AppKit fullscreen in Window', () => {

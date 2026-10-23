@@ -35,12 +35,12 @@ describe('pet native interaction wiring', () => {
   })
 
   it.each([
-    ['pet.show_main_window', '显示主界面', 'Show Main Window'],
-    ['pet.close', '关闭宠物', 'Close Pet'],
-  ] as const)('keeps %s translated consistently in the shell and native menu', (key, chinese, english) => {
+    ['pet.show_main_window', '显示主界面', 'Show Main Window', '기본 창 표시'],
+    ['pet.close', '关闭宠物', 'Close Pet', '펫 닫기'],
+  ] as const)('keeps %s translated consistently in the shell and native menu', (key, chinese, english, korean) => {
     expect(zh[key]).toBe(chinese)
     expect(en[key]).toBe(english)
-    expect(translations).toContain(`"${key}" => ("${chinese}", "${english}")`)
+    expect(translations).toContain(`"${key}" => ("${chinese}", "${english}", "${korean}")`)
     expect(bridge).toContain(`config::i18n::t("${key}")`)
   })
 })
