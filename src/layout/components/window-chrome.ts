@@ -26,6 +26,7 @@ export function frameMode(maximized: boolean, fullscreen = false): string {
   return maximized ? 'flat' : 'inset'
 }
 
+/** 根据窗口状态计算并应用外框模式到 document dataset。 */
 export function applyFrameMode(maximized: boolean, fullscreen = false) {
   const mode = frameMode(maximized, fullscreen)
   if (mode)
@@ -42,6 +43,7 @@ export function useFrameChrome() {
   useWatch([maximized, fullscreen], () => applyFrameMode(maximized, fullscreen), { immediate: true })
 }
 
+/** 订阅 Tauri 原生窗口全屏状态并返回当前值。 */
 export function useFullscreen(enabled = true) {
   const [isFullscreen, setIsFullscreen] = useState(false)
 
@@ -97,6 +99,7 @@ export function useMacOSFullscreen() {
   return IS_MACOS && isFullscreen
 }
 
+/** 订阅 Tauri 原生窗口最大化状态并返回当前值。 */
 export function useMaximized(enabled = true) {
   const [isMaximized, setIsMaximized] = useState(false)
 

@@ -27,6 +27,7 @@ interface DownloadFinishedPayload {
   success: boolean
 }
 
+/** 桌面端壳层根组件：管理插件缓存、主题、窗口 chrome 与全局事件。 */
 export function App() {
   // —— 插件列表缓存同步 ——
   // 后端（`service/plugin/watch`）解析出完整插件列表后经 `dsh-plugins-updated` 推送，

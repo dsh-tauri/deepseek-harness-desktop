@@ -15,6 +15,7 @@ import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, normalizeAppearance } from '.
 /** 打开「原生透明」时一并给出的初始组合：内容区保持不透明、背景 80%、开启模糊。 */
 const TRANSPARENCY_DEFAULTS = { opacity: 80, blur: true, sidebarOnly: true }
 
+/** 外观设置面板：配色、终端、透明、外框与缩放。 */
 export function ConfigAppearance() {
   const { t } = useTranslation()
   const { appearance: saved, zoom_factor: zoomFactor } = useStore(store.setting)
