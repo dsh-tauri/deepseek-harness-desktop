@@ -13,7 +13,7 @@ describe('appearance preferences', () => {
   })
 
   it.each([[0, 20], [255, 100], [77.4, 77], [80, 80]])('normalizes opacity %s to %s', (input, opacity) => {
-    expect(normalizeAppearance({ palette: 'nord', terminal: true, opacity: input })).toEqual({ palette: 'nord', terminal: true, transparency: opacity < 100, opacity, blur: false, sidebarOnly: false })
+    expect(normalizeAppearance({ palette: 'nord', terminal: true, opacity: input })).toEqual({ palette: 'nord', terminal: true, transparency: opacity < 100, opacity, blur: false, sidebarOnly: false, frame: true })
   })
 
   it.each([[false, false], [true, true], [0, false], [1, true], [40, true]])('normalizes blur %s to %s', (input, expected) => {

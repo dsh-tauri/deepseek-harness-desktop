@@ -848,16 +848,27 @@ fn apply_windows_window_icon(window: &tauri::WebviewWindow<Wry>) {
     }
 }
 
+/// 窗口是否以透明建立：原生透明模式，或自绘外框需要透出四周阴影带。
+/// macOS 保留原生装饰（圆角与系统阴影都在），外框只补 1px 描边，无需透明窗。
+fn shell_window_transparent(appearance: &crate::config::Appearance) -> bool {
+    if cfg!(target_os = "macos") {
+        appearance.transparency
+    } else {
+        appearance.transparency || appearance.frame
+    }
+}
+
 fn with_shell_chrome<'a>(
     app: &'a tauri::AppHandle<Wry>,
     builder: WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>,
 ) -> tauri::Result<WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>> {
     let appearance = crate::config::get_store_dat_setting(app).appearance;
-    let transparent = appearance.transparency;
+    let transparent = shell_window_transparent(&appearance);
     let builder = builder
         .transparent(transparent)
         .initialization_script(format!(
-            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_STORE_FILE__ = {};",
+            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_FRAME__ = {}; window.__DSH_STORE_FILE__ = {};",
+            appearance.frame,
             serde_json::json!(crate::config::store_dat_file_name())
         ))
         // 启动期外观引导必须落在 document-start 且覆盖所有 frame：内嵌 dsh 的 boot 页
@@ -904,8 +915,10 @@ fn with_shell_chrome<'a>(
             crate::config::DshTheme::Dark => Some(tauri::Theme::Dark),
         });
 
+    // 自绘外框开启时关掉系统阴影：Windows DWM 会沿透明窗的矩形边缘再画一圈
+    // 方形原生阴影，与应用自绘的圆角阴影叠成双重描边；外框关闭时维持系统默认。
     #[cfg(not(target_os = "macos"))]
-    let builder = builder.decorations(false);
+    let builder = builder.decorations(false).shadow(!appearance.frame);
 
     #[cfg(not(any(windows, target_os = "macos")))]
     let _ = app;
@@ -1166,10 +1179,8 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
 /// macOS 未实现窗口底色接口，`set_background_color` 会返回错误并被忽略——那里由
 /// `config::apply_window_theme` 同步原生外观。
 fn apply_window_background(app: &tauri::AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
-    let background = if crate::config::get_store_dat_setting(app)
-        .appearance
-        .transparency
-    {
+    let appearance = crate::config::get_store_dat_setting(app).appearance;
+    let background = if shell_window_transparent(&appearance) {
         Some(tauri::webview::Color(0, 0, 0, 0))
     } else {
         crate::config::window_background(crate::config::get_dsh_theme(app), window.theme().ok())

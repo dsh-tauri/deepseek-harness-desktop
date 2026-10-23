@@ -9,6 +9,7 @@ pub struct Appearance {
     pub opacity: u8,
     pub blur: bool,
     pub sidebar_only: bool,
+    pub frame: bool,
 }
 
 impl Default for Appearance {
@@ -20,6 +21,7 @@ impl Default for Appearance {
             opacity: 100,
             blur: false,
             sidebar_only: false,
+            frame: true,
         }
     }
 }
@@ -44,6 +46,7 @@ impl From<serde_json::Value> for Appearance {
                     .is_some_and(|value| value.is_finite() && value > 0.0)
             }),
             sidebar_only: value["sidebarOnly"].as_bool().unwrap_or(false),
+            frame: value["frame"].as_bool().unwrap_or(true),
         };
         appearance.normalize();
         appearance
@@ -155,6 +158,22 @@ mod tests {
             .unwrap();
             assert_eq!(appearance.blur, expected, "{value}");
         }
+    }
+
+    #[test]
+    fn frame_defaults_on_and_round_trips_an_explicit_opt_out() {
+        let appearance: Appearance = serde_json::from_str("{}").unwrap();
+        assert!(appearance.frame);
+        assert_eq!(serde_json::to_value(&appearance).unwrap()["frame"], true);
+        let appearance: Appearance =
+            serde_json::from_value(serde_json::json!({"frame": false})).unwrap();
+        assert!(!appearance.frame);
+        let saved = serde_json::to_value(&appearance).unwrap();
+        assert_eq!(saved["frame"], false);
+        assert_eq!(
+            serde_json::from_value::<Appearance>(saved).unwrap(),
+            appearance
+        );
     }
 
     #[test]

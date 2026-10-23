@@ -26,7 +26,7 @@ let setting: (typeof import('./store'))['setting']
 beforeEach(async () => {
   vi.resetModules()
   mocks.saved = {
-    appearance: { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false },
+    appearance: { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false, frame: true },
     zoom_factor: 1,
     backup_include_credentials: true,
   }
@@ -161,7 +161,7 @@ describe('settings synchronization across windows', () => {
     mocks.invoke.mockRejectedValueOnce(new Error('native write failed'))
     await expect(setting.update({ appearance: { ...setting.appearance, palette: 'github' } })).rejects.toThrow('native write failed')
     expect(setting.appearance.palette).toBe('default')
-    expect(mocks.saved.appearance).toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false })
+    expect(mocks.saved.appearance).toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false, frame: true })
     expect(mocks.setItem).not.toHaveBeenCalled()
   })
 

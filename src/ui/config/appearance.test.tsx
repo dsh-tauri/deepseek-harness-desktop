@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { defineStore } from 'valtio-define'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { isMacOS } from '@/layout/components/window-chrome'
 import { APPEARANCE_DEFAULTS } from '../../../packages/dsh-tauri/src/shared/appearance'
 import { ConfigAppearance } from './appearance'
 
@@ -16,10 +17,15 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 afterEach(() => {
   cleanup()
   delete (window as any).__DSH_TRANSPARENT__
+  delete (window as any).__DSH_FRAME__
   vi.clearAllMocks()
 })
 
-function setup(fail = false, opacity = 70) {
+function setup(fail = false, opacity = 70, framed = true, transparent?: boolean) {
+  ;(window as any).__DSH_FRAME__ = framed
+  ;(window as any).__DSH_TRANSPARENT__ = transparent !== undefined
+    ? transparent
+    : (isMacOS() ? opacity < 100 : framed)
   const update = vi.fn(async (value) => {
     if (fail)
       throw new Error('disk write failed')
@@ -91,6 +97,37 @@ describe('appearance settings controls', () => {
     await waitFor(() => expect(update).toHaveBeenLastCalledWith({ appearance: expect.objectContaining({ blur: true }) }))
   })
 
+  it('flags a restart when the rounded frame is switched off from a framed native window', async () => {
+    const update = setup()
+    const toggle = screen.getByRole('switch', { name: 'appearance.frame' })
+    expect((toggle as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByTestId('dsh-appearance-restart')).toBeNull()
+    fireEvent.click(toggle)
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith({ appearance: expect.objectContaining({ frame: false }) }))
+    await waitFor(() => expect(screen.getByTestId('dsh-appearance-restart').textContent).toBe('appearance.restart'))
+  })
+
+  it('flags a restart while the native window is still waiting to be rebuilt without a frame', () => {
+    setup(false, 70, false)
+    expect(screen.getByTestId('dsh-appearance-restart').textContent).toBe('appearance.restart')
+  })
+
+  it('flags a restart on macOS when switching transparency on from a framed opaque window', async () => {
+    const spy = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Macintosh')
+    try {
+      const update = setup(false, 100, true, false)
+      const toggle = screen.getByRole('switch', { name: 'appearance.transparency' })
+      expect((toggle as HTMLInputElement).checked).toBe(false)
+      expect(screen.queryByTestId('dsh-appearance-restart')).toBeNull()
+      fireEvent.click(toggle)
+      await waitFor(() => expect(update).toHaveBeenLastCalledWith({ appearance: expect.objectContaining({ transparency: true }) }))
+      await waitFor(() => expect(screen.getByTestId('dsh-appearance-restart').textContent).toBe('appearance.restart'))
+    }
+    finally {
+      spy.mockRestore()
+    }
+  })
+
   it('exposes the existing device-local zoom in Appearance', async () => {
     const update = setup()
     const select = screen.getByTestId('dsh-appearance-zoom').closest('[data-slot="select"]')!.querySelector('select')!
@@ -103,9 +140,9 @@ describe('appearance settings controls', () => {
     const update = setup()
     const toggle = screen.getByRole('switch', { name: 'appearance.terminal' })
     fireEvent.click(toggle)
-    await waitFor(() => expect(update).toHaveBeenCalledWith({ appearance: { palette: 'nord', terminal: true, transparency: true, opacity: 70, blur: false, sidebarOnly: false } }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ appearance: { palette: 'nord', terminal: true, transparency: true, opacity: 70, blur: false, sidebarOnly: false, frame: true } }))
     await waitFor(() => expect((toggle as HTMLInputElement).checked).toBe(true))
-    expect(screen.getByTestId('dsh-appearance-restart').textContent).toBe('appearance.restart')
+    await waitFor(() => expect(screen.queryByTestId('dsh-appearance-restart')).toBeNull())
     const reset = screen.getByRole('button', { name: 'appearance.reset' }) as HTMLButtonElement
     await waitFor(() => expect(reset.disabled).toBe(false))
     fireEvent.click(reset)

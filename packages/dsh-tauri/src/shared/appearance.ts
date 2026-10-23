@@ -1,4 +1,4 @@
-export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false } as const
+export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false, frame: true } as const
 export const APPEARANCE_PALETTES = ['default', 'nord', 'solarized', 'forest', 'amber', 'github', 'github-dimmed', 'github-high-contrast'] as const
 
 export interface Appearance {
@@ -8,6 +8,7 @@ export interface Appearance {
   opacity: number
   blur: boolean
   sidebarOnly: boolean
+  frame: boolean
 }
 
 export function normalizeAppearance(value: unknown): Appearance {
@@ -22,6 +23,7 @@ export function normalizeAppearance(value: unknown): Appearance {
     opacity,
     blur: input?.blur === true || (typeof input?.blur === 'number' && input.blur > 0),
     sidebarOnly: input?.sidebarOnly === true,
+    frame: input?.frame === undefined ? true : input.frame === true,
   }
 }
 
