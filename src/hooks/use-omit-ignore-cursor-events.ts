@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useRef } from 'react'
+import { screenCoordinateScale, windowScreenPosition } from '@/utils/screen-coordinates'
 
 interface DeviceMousePosition {
   x: number
@@ -67,7 +68,7 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
     async function refreshWindowPosition(): Promise<void> {
       const revision = ++geometryRevision
       try {
-        const position = await appWindow.innerPosition()
+        const position = await windowScreenPosition(appWindow, true)
         if (!disposed && revision === geometryRevision) {
           windowPosition = position
           refreshFromState()
@@ -86,7 +87,7 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
       if (windowPosition === undefined)
         return undefined
       const rect = element.getBoundingClientRect()
-      const scale = globalThis.devicePixelRatio || 1
+      const scale = screenCoordinateScale()
       const left = windowPosition.x + rect.left * scale
       const top = windowPosition.y + rect.top * scale
       return x >= left && x <= left + rect.width * scale && y >= top && y <= top + rect.height * scale

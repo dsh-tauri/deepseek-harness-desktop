@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { UseWindowDraggableOptions, UseWindowDraggableResult } from './use-window-draggable'
+import { LogicalPosition } from '@tauri-apps/api/window'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clampPetWindowPosition } from '@/pet/hooks/use-pet-window-clamp'
 import { useWindowDraggable } from './use-window-draggable'
 
 /**
@@ -25,13 +27,20 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 /** 只 mock 窗口位置读写：跟手就是每帧把窗口绝对定位到弹簧算出的位置。 */
+const osType = vi.hoisted(() => vi.fn(() => 'windows'))
+vi.mock('@tauri-apps/plugin-os', () => ({ type: osType }))
+
 const windowMock = vi.hoisted(() => ({
+  scaleFactor: vi.fn<() => Promise<number>>(),
   outerPosition: vi.fn<() => Promise<{ x: number, y: number }>>(),
   setPosition: vi.fn<(position: { x: number, y: number }) => Promise<void>>(),
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => windowMock,
+  LogicalPosition: class LogicalPosition {
+    constructor(public x: number, public y: number) {}
+  },
   PhysicalPosition: class PhysicalPosition {
     x: number
     y: number
@@ -141,6 +150,9 @@ function lastPosition(): { x: number, y: number } {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  osType.mockReturnValue('windows')
+  windowMock.scaleFactor.mockReset()
+  windowMock.scaleFactor.mockResolvedValue(1)
   deviceListeners.clear()
   invokeMock.mockReset()
   invokeMock.mockResolvedValue(undefined)
@@ -224,6 +236,95 @@ describe('useWindowDraggable', () => {
 
     emitCursor(CURSOR.x + 12, CURSOR.y)
     expect(result.current.dragging).toBe(true)
+  })
+
+  it('macOS 按原生窗口缩放读取逻辑位置，跨缩放后仍按逻辑坐标拖动', async () => {
+    osType.mockReturnValue('macos')
+    vi.stubGlobal('devicePixelRatio', 2)
+    windowMock.outerPosition.mockResolvedValue({ x: 1200, y: 600 })
+    windowMock.scaleFactor.mockResolvedValue(2)
+    const { result } = renderHook(() => useDraggable())
+
+    emitCursor(650, 350)
+    await press(result.current)
+    emitCursor(656, 350)
+    expect(result.current.dragging).toBe(true)
+    frames(60)
+    expect(lastPosition()).toEqual({ x: 606, y: 300 })
+    expect(lastPosition()).toBeInstanceOf(LogicalPosition)
+
+    vi.stubGlobal('devicePixelRatio', 1)
+    windowMock.scaleFactor.mockResolvedValue(1)
+    emitCursor(-250, 450)
+    frames(60)
+    expect(lastPosition()).toEqual({ x: -300, y: 400 })
+  })
+
+  it.each([
+    { direction: '右', dx: 600, dy: 0, screenX: 1000, screenY: 0 },
+    { direction: '左', dx: -600, dy: 0, screenX: -1000, screenY: 0 },
+    { direction: '下', dx: 0, dy: 600, screenX: 0, screenY: 1000 },
+    { direction: '上', dx: 0, dy: -600, screenX: 0, screenY: -1000 },
+  ])('慢速向$direction拖动时能越过相邻屏幕边界', async ({ dx, dy, screenX, screenY }) => {
+    const geometry = { x: 0, y: 0, width: 100, height: 100, body: { left: 0, top: 0, right: 100, bottom: 100 } }
+    const areas = [
+      { x: 0, y: 0, width: 1000, height: 1000 },
+      { x: screenX, y: screenY, width: 1000, height: 1000 },
+    ]
+    windowMock.outerPosition.mockResolvedValue({ x: 450, y: 450 })
+    const { result } = renderHook(() => useDraggable({
+      clampPosition: (position, target) => clampPetWindowPosition(position, geometry, false, areas, 1, target),
+    }))
+    emitCursor(500, 500)
+    await press(result.current)
+    emitButton(true)
+
+    for (let step = 1; step <= 60; step += 1) {
+      emitCursor(500 + dx * step / 60, 500 + dy * step / 60)
+      frames(10)
+    }
+    frames(60)
+
+    expect(lastPosition()).toEqual({ x: 450 + dx, y: 450 + dy })
+    release(result.current)
+    expect(lastPosition()).toEqual({ x: 450 + dx, y: 450 + dy })
+  })
+
+  it('可从第一屏跨间隙拖到第三屏再返回，最外边缘仍保持本体可见', async () => {
+    const geometry = { x: 0, y: 0, width: 100, height: 100, body: { left: 0, top: 0, right: 100, bottom: 100 } }
+    const areas = [
+      { x: -1000, y: 0, width: 1000, height: 1000 },
+      { x: 0, y: 0, width: 1000, height: 1000 },
+      { x: 1100, y: 0, width: 1000, height: 1000 },
+    ]
+    windowMock.outerPosition.mockResolvedValue({ x: -550, y: 450 })
+    const { result } = renderHook(() => useDraggable({
+      clampPosition: (position, target) => clampPetWindowPosition(position, geometry, false, areas, 1, target),
+    }))
+    emitCursor(-500, 500)
+    await press(result.current)
+    emitButton(true)
+    for (let x = -490; x <= 1600; x += 10) {
+      emitCursor(x, 500)
+      frames(4)
+    }
+    frames(60)
+    expect(lastPosition()).toEqual({ x: 1550, y: 450 })
+
+    emitCursor(3000, 500)
+    frames(60)
+    expect(lastPosition()).toEqual({ x: 2000, y: 450 })
+    for (let x = 3000; x >= -500; x -= 10) {
+      emitCursor(x, 500)
+      frames(4)
+    }
+    frames(60)
+    expect(lastPosition()).toEqual({ x: -550, y: 450 })
+
+    emitCursor(-2000, 500)
+    frames(60)
+    release(result.current)
+    expect(lastPosition()).toEqual({ x: -1000, y: 450 })
   })
 
   it('方向按累计水平位移判定，拖拽停顿时归零', async () => {

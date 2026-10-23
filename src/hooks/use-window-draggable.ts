@@ -1,16 +1,17 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useRafFn, useTimeoutFn } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useRef, useState } from 'react'
 import { useListen } from '@/hooks/use-listen'
+import { nativeScreenPosition, screenCoordinateScale, windowScreenPosition } from '@/utils/screen-coordinates'
 
 /** 拖拽的水平方向。 */
 type DragDirection = 'left' | 'right'
 
 /**
- * `device-mouse-move` 事件载荷：全局光标位置（虚拟屏幕物理像素，
- * 与窗口 `outerPosition()` 同一坐标系）。对应后端 `MouseCursorPos`。
+ * `device-mouse-move` 事件载荷：macOS 使用全局逻辑点，其他平台使用物理像素。
+ * 窗口位置通过 `windowScreenPosition` 转到同一坐标系。
  */
 interface DeviceMousePosition {
   x: number
@@ -39,8 +40,8 @@ export interface UseWindowDraggableResult {
 /** 拖拽钩子的夹取与回调。 */
 export interface UseWindowDraggableOptions {
   /**
-   * 每帧把弹簧算出的窗口位置夹进可见区域（物理像素，与窗口 `outerPosition()` 同一
-   * 坐标系），返回夹取后的位置。
+   * 每帧把弹簧算出的窗口位置夹进可见区域，按未夹取的目标位置选择显示器。
+   * macOS 使用逻辑点，其他平台使用物理像素。
    *
    * 等价于上游 playground `usePetDrag` 的 `getBounds`：上游在弹簧循环里就把盒子夹进
    * 舞台，因此「按在边界不放」不会在弹簧里攒下越界位移、松手后突然弹出去。这里同样在
@@ -48,7 +49,7 @@ export interface UseWindowDraggableOptions {
    * `src/pet/hooks/use-pet-window-clamp.ts`，边界取自 `bodyBounds` 的宠物本体/脚底），
    * 否则贴边松手会被飞行的越界修正弹回来。
    */
-  clampPosition: (position: { x: number, y: number }) => { x: number, y: number }
+  clampPosition: (position: { x: number, y: number }, target: { x: number, y: number }) => { x: number, y: number }
   /**
    * 命中箱上按下左键（真正「抓住宠物」）时触发，早于读窗口位置的异步调用；右键、
    * 非主指针、以及已有手势进行中的按下都不会触发。
@@ -70,7 +71,7 @@ export interface UseWindowDraggableOptions {
 
 /**
  * 手势门槛（CSS px）：与上游 playground `usePetDrag` 的 `Math.hypot(dx, dy) < 5` 一致，
- * 门槛内按单击处理（组件的挤压反馈）。换算成物理像素时乘 `devicePixelRatio`。
+ * 门槛内按单击处理（组件的挤压反馈）。非 macOS 平台乘 `devicePixelRatio`。
  */
 const DRAG_START_THRESHOLD = 5
 /** 方向判定阈值（CSS px）：与上游 `Math.abs(x - last.x) >= 3` 一致。 */
@@ -89,7 +90,7 @@ const DRAG_DIRECTION_IDLE_TIMEOUT = 350
 /** 会话兜底阈值：超过此时长没有新的光标样本，且左键状态未知/已松开时收尾拖拽。 */
 const DRAG_SESSION_TIMEOUT = 1500
 
-/** 一次拖拽手势的状态（位置/速度与窗口、光标流同一坐标系：虚拟屏幕物理像素）。 */
+/** 一次拖拽手势的状态（位置/速度与窗口、光标流同一坐标系：统一屏幕坐标）。 */
 interface Gesture {
   /** 指针 id：只有同一根指针的 pointerup 才结束会话。 */
   pointerId: number
@@ -124,7 +125,7 @@ interface Gesture {
  * 就是窗口本身，`clientX` 是相对窗口的坐标 —— 窗口一移动，同一个光标位置的
  * `clientX` 就反向变化，形成「窗口动过 → 增量变小 → 窗口不再动」的反馈：既抖，
  * 又会把窗口留在指针后面追不上。后端设备流给的是**与窗口位置同一坐标系**的全局
- * 物理像素，与窗口自身的移动无关，因此弹簧目标可以写成绝对量
+ * 屏幕坐标，与窗口自身的移动无关，因此弹簧目标可以写成绝对量
  * `base + (cursor - anchor)`，窗口必然收敛到指针处（静止时零偏移）。
  * 附带好处：命中箱一旦被判定为「指针已离开」而切成穿透态，DOM `pointermove`
  * 会断流，全局流不受影响（`useOmitIgnoreCursorEvents` 的命中判定用的也是它）。
@@ -232,7 +233,7 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
     }
     // 先夹取再取整（见 `clampPosition`）：把弹簧状态本身限制在可见区域内，
     // 越界位移不会攒起来在松手后弹出去（上游同样在弹簧循环里夹盒子）。
-    const clamped = clampRef.current({ x: gesture.x, y: gesture.y })
+    const clamped = clampRef.current({ x: gesture.x, y: gesture.y }, { x: targetX, y: targetY })
     gesture.x = clamped.x
     gesture.y = clamped.y
     // 窗口位置取整：亚像素位置在 Windows 上会被系统四舍五入，抖动比丢精度更显眼。
@@ -242,7 +243,7 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       return
     appliedRef.current = { x: nextX, y: nextY }
     void getCurrentWindow()
-      .setPosition(new PhysicalPosition(nextX, nextY))
+      .setPosition(nativeScreenPosition(nextX, nextY))
       .catch(() => {})
   }, { immediate: false })
   rafRef.current = raf
@@ -304,7 +305,7 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
     armSessionTimer()
     // 不调用 preventDefault：取消 pointerdown 会抑制兼容鼠标事件，文本选择/触屏滚动
     // 已由样式（select-none / touch-none）防护。
-    void getCurrentWindow().outerPosition().then((position) => {
+    void windowScreenPosition(getCurrentWindow()).then((position) => {
       if (gestureRef.current !== gesture)
         return
       gesture.base = { x: position.x, y: position.y }
@@ -334,7 +335,7 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       gesture.directionAnchor = { x: payload.x, y: payload.y }
       return
     }
-    const scale = globalThis.devicePixelRatio || 1
+    const scale = screenCoordinateScale()
     const dx = payload.x - gesture.anchor.x
     const dy = payload.y - gesture.anchor.y
     if (!gesture.engaged) {

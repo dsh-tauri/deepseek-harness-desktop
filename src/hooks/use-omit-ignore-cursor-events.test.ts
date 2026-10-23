@@ -11,12 +11,16 @@ const native = vi.hoisted(() => ({
   moved: vi.fn(),
   resized: vi.fn(),
   label: 'pet',
+  osType: vi.fn(() => 'windows'),
+  scaleFactor: vi.fn(),
 }))
+vi.mock('@tauri-apps/plugin-os', () => ({ type: native.osType }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: native.listen }))
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     label: native.label,
+    scaleFactor: native.scaleFactor,
     innerPosition: native.position,
     isVisible: native.visible,
     onMoved: native.moved,
@@ -71,6 +75,8 @@ beforeEach(() => {
   handlers.clear()
   disposers.length = 0
   native.label = 'pet'
+  native.osType.mockReturnValue('windows')
+  native.scaleFactor.mockResolvedValue(1)
   native.position.mockResolvedValue({ x: 100, y: 100 })
   native.visible.mockResolvedValue(true)
   native.moved.mockImplementation(handler => subscribe('moved', handler))
@@ -293,6 +299,24 @@ describe('pet cursor input lifecycle', () => {
     await emit('device-mouse-move', { x: 400, y: 400 })
     await emit('device-mouse-move', { x: 300, y: 300 })
     expect(requests()).toEqual([true, false])
+  })
+
+  it('hit-tests macOS logical cursor coordinates across monitors with different scales', async () => {
+    native.osType.mockReturnValue('macos')
+    vi.stubGlobal('devicePixelRatio', 2)
+    native.scaleFactor.mockResolvedValue(2)
+    native.position.mockResolvedValue({ x: 200, y: 200 })
+    renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
+    await flush()
+    await emit('device-mouse-move', { x: 250, y: 150 })
+    await emit('device-mouse-move', { x: 120, y: 120 })
+    expect(requests()).toEqual([true, false])
+
+    native.scaleFactor.mockResolvedValue(1)
+    native.position.mockResolvedValue({ x: -400, y: 100 })
+    await emit('moved', {})
+    await emit('device-mouse-move', { x: -380, y: 120 })
+    expect(requests()).toEqual([true, false, true, false])
   })
 
   it('does not bind pet input handling to the main window', async () => {

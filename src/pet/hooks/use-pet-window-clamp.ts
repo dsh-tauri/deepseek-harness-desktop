@@ -1,10 +1,10 @@
-import type { Monitor } from '@tauri-apps/api/window'
 import type { PetGeometry, PetRef } from 'dsh-pet-component'
 import { availableMonitors } from '@tauri-apps/api/window'
 import { useEffect, useRef } from 'react'
+import { monitorScreenWorkArea, screenCoordinateScale } from '@/utils/screen-coordinates'
 import { bodyBounds } from './use-pet-physics.helpers'
 
-/** 显示器工作区（物理像素，与窗口 `outerPosition()`、设备光标流同一坐标系）。 */
+/** 显示器工作区：macOS 使用全局逻辑点，其他平台使用物理像素。 */
 export interface PetWorkArea {
   x: number
   y: number
@@ -12,7 +12,7 @@ export interface PetWorkArea {
   height: number
 }
 
-/** 窗口左上角位置（物理像素）。 */
+/** 窗口左上角位置，与设备光标流使用同一屏幕坐标系。 */
 export interface PetWindowPosition {
   x: number
   y: number
@@ -34,7 +34,7 @@ export interface PetWindowPosition {
  *
  * 换算与 `src/pet/hooks/use-pet-physics.ts` 的 `startFlight` 完全一致：工作区换算到
  * 逻辑像素当舞台，`bodyBounds` 给出本体相对舞台的边界，再减去 `geometry.x/y` 得到窗口
- * 位置（窗口逻辑位置 = 容器逻辑位置 − `geometry.x/y`），最后乘回 `scale` 得物理像素。
+ * 位置（窗口逻辑位置 = 容器逻辑位置 − `geometry.x/y`），最后乘回 `scale` 得屏幕坐标。
  */
 export function clampPetWindowPosition(
   position: PetWindowPosition,
@@ -42,10 +42,11 @@ export function clampPetWindowPosition(
   dsh: boolean,
   areas: readonly PetWorkArea[],
   scale: number,
+  target: PetWindowPosition = position,
 ): PetWindowPosition {
   if (areas.length === 0)
     return position
-  const area = selectWorkArea(position, geometry, areas, scale)
+  const area = selectWorkArea(target, geometry, areas, scale)
   const stage = {
     x: area.x / scale,
     y: area.y / scale,
@@ -68,7 +69,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * 选宠物本体所在的显示器工作区：本体中心落在哪个工作区就用哪个，跨屏间隙时取最近的
+ * 按未夹取目标的本体中心选屏，避免每帧夹取把拖拽困在原屏；跨屏间隙时取最近的
  * 一个（与后端 `move_pet_window` 按窗口中心选屏、间隙取最近显示器同理，只是这里用
  * 本体中心，与夹取边界同一套计算）。
  */
@@ -103,26 +104,17 @@ function distanceSquared(area: PetWorkArea, x: number, y: number): number {
 /** 读取显示器工作区列表并写入 ref；失败时保留上一次的列表。 */
 function loadWorkAreas(areasRef: { current: readonly PetWorkArea[] }): void {
   void availableMonitors()
-    .then((monitors) => { areasRef.current = monitors.map(toWorkArea) })
+    .then((monitors) => { areasRef.current = monitors.map(monitorScreenWorkArea) })
     .catch(() => {})
-}
-
-function toWorkArea(monitor: Monitor): PetWorkArea {
-  return {
-    x: monitor.workArea.position.x,
-    y: monitor.workArea.position.y,
-    width: monitor.workArea.size.width,
-    height: monitor.workArea.size.height,
-  }
 }
 
 /** 桌宠窗口的「按本体夹取」控制器。 */
 export interface PetWindowClampControls {
   /**
    * 传给 `useWindowDraggable({ clampPosition })`：用实时 `pet.geometry` 与缓存的显示器
-   * 工作区夹取窗口位置（物理像素）。`geometry` 还没就绪或工作区还没读到时不夹取。
+   * 工作区夹取窗口位置。`geometry` 还没就绪或工作区还没读到时不夹取。
    */
-  clampPosition: (position: PetWindowPosition) => PetWindowPosition
+  clampPosition: (position: PetWindowPosition, target?: PetWindowPosition) => PetWindowPosition
   /** 重新读取显示器工作区：抓取时调用，插拔显示器后立刻生效（无需重开应用）。 */
   refreshWorkAreas: () => void
 }
@@ -146,7 +138,7 @@ export function usePetWindowClamp(pet: PetRef, kind: 'dsh' | 'codex' | undefined
     loadWorkAreas(areasRef)
   }
 
-  function clampPosition(position: PetWindowPosition): PetWindowPosition {
+  function clampPosition(position: PetWindowPosition, target: PetWindowPosition = position): PetWindowPosition {
     const geometry = pet.geometry
     if (geometry === null)
       return position
@@ -155,7 +147,8 @@ export function usePetWindowClamp(pet: PetRef, kind: 'dsh' | 'codex' | undefined
       geometry,
       kindRef.current === 'dsh',
       areasRef.current,
-      globalThis.devicePixelRatio || 1,
+      screenCoordinateScale(),
+      target,
     )
   }
 

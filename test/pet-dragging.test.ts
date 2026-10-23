@@ -68,7 +68,7 @@ describe('pet dragging follows the pointer (upstream spring feel)', () => {
   it('clamps every follow frame to the pet body bounds so edge drops stay on the edge', () => {
     // 跟手每帧夹取（上游 `getBounds` 的等价物），边界与飞行共用 `bodyBounds`。
     expect(app).toContain('const { clampPosition, refreshWorkAreas } = usePetWindowClamp(pet, source?.kind)')
-    expect(hook).toContain('clampRef.current({ x: gesture.x, y: gesture.y })')
+    expect(hook).toContain('clampRef.current({ x: gesture.x, y: gesture.y }, { x: targetX, y: targetY })')
     expect(readSource('src/pet/hooks/use-pet-window-clamp.ts')).toContain('bodyBounds(geometry, stage.width, stage.height, dsh)')
     // 收尾只落盘：整窗夹取会把贴边松手的宠物推开一段（透明留白的宽度）。
     expect(hook).toContain('void invoke(\'persist_pet_window_position\').catch(() => {})')

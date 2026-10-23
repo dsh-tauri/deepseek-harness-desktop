@@ -1,9 +1,11 @@
 import type { PetPhysicsEvent, PetRef, PhysicsParams } from 'dsh-pet-component'
 import type { DragSample, ThrowBounds, ThrowState } from './use-pet-physics.helpers'
 import { useRafFn } from '@reause/core'
-import { currentMonitor, getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window'
+import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window'
+import { type } from '@tauri-apps/plugin-os'
 import { useEffect, useRef } from 'react'
 import { useListen } from '@/hooks/use-listen'
+import { monitorScreenWorkArea, nativeScreenPosition, screenCoordinateScale, windowScreenPosition } from '@/utils/screen-coordinates'
 import { reportPetIssue } from '../utils/log'
 import { bodyBounds, estimateReleaseVelocity, stepThrow } from './use-pet-physics.helpers'
 
@@ -29,7 +31,7 @@ const TRAIL_LIMIT = 64
  *   组件回吐的 `PetPhysicsEvent` 才带着合并后的 `physics`（prop > 配置 > 默认），速度的
  *   `throwPower` 放大因此只能在那里做 —— 默认值 1 时与组件参考实现完全等价；
  * - **单位是 CSS px**：重力/速度都按组件默认参数的语义（CSS px/s）算，写回窗口时乘
- *   `devicePixelRatio` 换成物理像素；Retina 上不去换算，观感速度会差一倍；
+ *   `devicePixelRatio` 换成物理像素；macOS 直接写逻辑点，避免跨屏缩放产生跳变；
  * - 单宠物窗口没有宠物间碰撞，`physics.petCollision` 与 `pet.bounce` 不适用；
  * - **抛射开关默认关闭**（issue #930）：`throwEnabled` 为假时松手只结算并清状态，
  *   不请求甩出，因此没有飞行也没有撞边回弹；拖拽本身照常工作。
@@ -59,7 +61,7 @@ export function usePetPhysics(pet: PetRef, kind: 'dsh' | 'codex' | undefined, th
     flight.state = { x: next.x, y: next.y, vx: next.vx, vy: next.vy }
     // 窗口位置取整：亚像素位置在 Windows 上会被系统四舍五入，抖动比丢精度更显眼。
     void getCurrentWindow()
-      .setPosition(new PhysicalPosition(
+      .setPosition(nativeScreenPosition(
         Math.round((next.x - flight.originX) * flight.scale),
         Math.round((next.y - flight.originY) * flight.scale),
       ))
@@ -75,31 +77,80 @@ export function usePetPhysics(pet: PetRef, kind: 'dsh' | 'codex' | undefined, th
 
   useEffect(() => {
     // keep:effect 拖拽的每帧 setPosition 同样触发 Moved，甩动轨迹以窗口位移为准
+    const appWindow = getCurrentWindow()
+    const logical = type() === 'macos'
     let disposed = false
-    let unlisten: (() => void) | undefined
+    let sampleRevision = 0
+    let sampling = false
+    let samplePending = false
+    let nativeScale: number | undefined
+    const unlisteners: Array<() => void> = []
 
-    void getCurrentWindow()
-      .onMoved((event) => {
-        if (!pressedRef.current)
+    function setNativeScale(scale: number): void {
+      if (nativeScale !== undefined && nativeScale !== scale) {
+        trailRef.current = []
+        sampleRevision++
+      }
+      nativeScale = scale
+    }
+
+    function appendSample(sample: DragSample): void {
+      const samples = trailRef.current
+      samples.push(sample)
+      if (samples.length > TRAIL_LIMIT)
+        samples.splice(0, samples.length - TRAIL_LIMIT)
+    }
+
+    function queueSample(): void {
+      samplePending = true
+      if (sampling)
+        return
+      sampling = true
+      samplePending = false
+      const samples = trailRef.current
+      const revision = sampleRevision
+      void windowScreenPosition(appWindow).then((position) => {
+        if (disposed || !pressedRef.current || trailRef.current !== samples || revision !== sampleRevision)
           return
+        setNativeScale(position.scaleFactor)
+        appendSample({ t: performance.now(), x: position.x, y: position.y })
+      }).catch(error => reportPetIssue('fling-position', error)).finally(() => {
+        sampling = false
+        if (!disposed && pressedRef.current && samplePending)
+          queueSample()
+      })
+    }
+
+    const subscriptions = [appWindow.onMoved((event) => {
+      if (!pressedRef.current)
+        return
+      if (!logical) {
         const scale = window.devicePixelRatio
-        const samples = trailRef.current
-        samples.push({ t: performance.now(), x: event.payload.x / scale, y: event.payload.y / scale })
-        if (samples.length > TRAIL_LIMIT)
-          samples.splice(0, samples.length - TRAIL_LIMIT)
-      })
-      .then((fn) => {
+        appendSample({ t: performance.now(), x: event.payload.x / scale, y: event.payload.y / scale })
+        return
+      }
+      // macOS 的 Moved 与缩放事件没有先后保证，按原生快照采样，避免混用缩放。
+      queueSample()
+    })]
+    if (logical) {
+      subscriptions.push(appWindow.onScaleChanged(({ payload }) => {
+        setNativeScale(payload.scaleFactor)
+      }))
+    }
+    for (const subscription of subscriptions) {
+      void subscription.then((unlisten) => {
         if (disposed)
-          fn()
+          unlisten()
         else
-          unlisten = fn
-      })
-      .catch(error => reportPetIssue('fling-moved', error))
+          unlisteners.push(unlisten)
+      }).catch(error => reportPetIssue('fling-moved', error))
+    }
 
     return () => {
       disposed = true
       stopFlight()
-      unlisten?.()
+      for (const unlisten of unlisteners)
+        unlisten()
     }
   }, [])
 
@@ -170,22 +221,22 @@ export function usePetPhysics(pet: PetRef, kind: 'dsh' | 'codex' | undefined, th
   /** 组件校验后的甩出请求：读出几何与屏幕工作区，把这次甩动变成一次飞行。 */
   async function startFlight(event: PetPhysicsEvent, id: number): Promise<void> {
     try {
-      const [monitor, position] = await Promise.all([currentMonitor(), getCurrentWindow().outerPosition()])
+      const [monitor, position] = await Promise.all([currentMonitor(), windowScreenPosition(getCurrentWindow())])
       // 等待期间被下一次甩动或抓取顶掉：这次请求作废。
       if (monitor === null || id !== flightIdRef.current)
         return
 
-      const scale = window.devicePixelRatio
-      const area = monitor.workArea
-      // 工作区与窗口位置都是物理像素，除 dpr 换成视口 px（= CSS px）后才能和组件几何对齐。
+      const scale = screenCoordinateScale()
+      const area = monitorScreenWorkArea(monitor)
+      // macOS 已使用逻辑坐标，其他平台需按 dpr 换算到组件的 CSS px。
       const stage = {
-        x: area.position.x / scale,
-        y: area.position.y / scale,
-        width: area.size.width / scale,
-        height: area.size.height / scale,
+        x: area.x / scale,
+        y: area.y / scale,
+        width: area.width / scale,
+        height: area.height / scale,
       }
       const local = bodyBounds(event.geometry, stage.width, stage.height, kindRef.current === 'dsh')
-      const origin = position.toLogical(scale)
+      const origin = { x: position.x / scale, y: position.y / scale }
 
       flightRef.current = {
         // 组件几何挂在本窗口的视口上：容器屏幕坐标 = 窗口逻辑位置 + 视口原点。
@@ -222,7 +273,7 @@ interface Flight {
   /** 容器（宠物）在窗口视口里的原点：窗口位置 = 飞行位置 - 原点。 */
   originX: number
   originY: number
-  /** 起飞行时的 `devicePixelRatio`（= Tauri 缩放系数），每帧换算窗口位置用。 */
+  /** 窗口写回坐标的缩放，macOS 为 1，其他平台为起飞时的 devicePixelRatio。 */
   scale: number
 }
 

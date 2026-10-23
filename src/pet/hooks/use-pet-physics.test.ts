@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { PetPhysicsEvent, PetRef } from 'dsh-pet-component'
 import type { PetPhysicsControls } from './use-pet-physics'
+import { LogicalPosition } from '@tauri-apps/api/window'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePetPhysics } from './use-pet-physics'
@@ -16,18 +17,28 @@ vi.mock('@/hooks/use-listen', () => ({
 
 const mocks = vi.hoisted(() => {
   const movedHandlers: Array<(event: { payload: { x: number, y: number } }) => void> = []
+  const scaleHandlers: Array<(event: { payload: { scaleFactor: number } }) => void> = []
   return {
     movedHandlers,
+    scaleHandlers,
     monitor: vi.fn<() => Promise<unknown>>(),
+    osType: vi.fn(() => 'windows'),
     window: {
       outerPosition: vi.fn<() => Promise<unknown>>(),
+      scaleFactor: vi.fn<() => Promise<number>>(),
       setPosition: vi.fn<(position: unknown) => Promise<void>>(),
       onMoved: vi.fn<(handler: (event: { payload: { x: number, y: number } }) => void) => Promise<() => void>>(),
+      onScaleChanged: vi.fn<(handler: (event: { payload: { scaleFactor: number } }) => void) => Promise<() => void>>(),
     },
   }
 })
 
+vi.mock('@tauri-apps/plugin-os', () => ({ type: mocks.osType }))
+
 vi.mock('@tauri-apps/api/window', () => ({
+  LogicalPosition: class {
+    constructor(public x: number, public y: number) {}
+  },
   PhysicalPosition: class {
     constructor(public x: number, public y: number) {}
   },
@@ -107,11 +118,29 @@ function flingGesture(controls: PetPhysicsControls, clock: { now: number }): voi
 describe('usePetPhysics', () => {
   const clock = { now: 0 }
 
+  async function nativeMove(t: number, x: number, y: number, scale: number): Promise<void> {
+    clock.now = t
+    mocks.window.scaleFactor.mockResolvedValue(scale)
+    mocks.window.outerPosition.mockResolvedValue({ x: x * scale, y: y * scale })
+    dragWindow(clock, [{ t, x: x * scale, y: y * scale }])
+    await act(async () => {})
+  }
+
+  function changeScale(scaleFactor: number): void {
+    act(() => {
+      for (const handler of mocks.scaleHandlers)
+        handler({ payload: { scaleFactor } })
+    })
+  }
+
   beforeEach(() => {
     clock.now = 0
     deviceListeners.clear()
     mocks.movedHandlers.length = 0
+    mocks.scaleHandlers.length = 0
     vi.clearAllMocks()
+    mocks.osType.mockReturnValue('windows')
+    mocks.window.scaleFactor.mockResolvedValue(1)
     vi.useFakeTimers()
     vi.spyOn(performance, 'now').mockImplementation(() => clock.now)
     mocks.monitor.mockResolvedValue({ workArea: WORK_AREA })
@@ -120,6 +149,10 @@ describe('usePetPhysics', () => {
       toLogical: () => ({ ...WINDOW_POSITION }),
     })
     mocks.window.setPosition.mockResolvedValue(undefined)
+    mocks.window.onScaleChanged.mockImplementation((handler) => {
+      mocks.scaleHandlers.push(handler)
+      return Promise.resolve(() => {})
+    })
     mocks.window.onMoved.mockImplementation((handler) => {
       mocks.movedHandlers.push(handler)
       return Promise.resolve(() => {})
@@ -130,6 +163,7 @@ describe('usePetPhysics', () => {
     cleanup()
     vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('抓住宠物后松开左键，按窗口轨迹估速并请求组件甩出，轨迹随下一次抓取清空', () => {
@@ -236,6 +270,183 @@ describe('usePetPhysics', () => {
     expect(pet.squash.mock.calls[0][0] as number).toBeGreaterThan(0)
     const positions = mocks.window.setPosition.mock.calls.map(([position]) => position as { x: number, y: number })
     expect(Math.max(...positions.map(position => position.y))).toBeLessThanOrEqual(980)
+  })
+
+  it('macOS 按实际窗口逻辑位置采样，跨缩放后保留甩动速度', async () => {
+    mocks.osType.mockReturnValue('macos')
+    vi.stubGlobal('devicePixelRatio', 2)
+    const pet = createPet()
+    const { result } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    grab(result.current)
+    await nativeMove(0, 900, 500, 2)
+    await nativeMove(40, 940, 500, 2)
+    vi.stubGlobal('devicePixelRatio', 1)
+    await nativeMove(80, 980, 500, 1)
+    await nativeMove(120, 1020, 500, 1)
+    clock.now = 121
+    pressMouse(false)
+
+    expect(pet.fling).toHaveBeenCalledOnce()
+    expect(pet.fling.mock.calls[0][0].vx).toBeCloseTo(873.125538, 5)
+    expect(pet.fling.mock.calls[0][0].vy).toBe(0)
+  })
+
+  it.each(['moved-first', 'scale-first'])('macOS 在 %s 交错时序和滞后 DPR 下仍按原生逻辑位移甩动', async (order) => {
+    mocks.osType.mockReturnValue('macos')
+    vi.stubGlobal('devicePixelRatio', 2)
+    const pet = createPet()
+    const { result } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    grab(result.current)
+    await nativeMove(0, 900, 500, 2)
+    await nativeMove(40, 940, 500, 2)
+    if (order === 'scale-first')
+      changeScale(1)
+    await nativeMove(80, 980, 500, 1)
+    if (order === 'moved-first')
+      changeScale(1)
+    for (const [t, x] of [[120, 1020], [160, 1060], [200, 1100]])
+      await nativeMove(t, x, 500, 1)
+    clock.now = 201
+    pressMouse(false)
+
+    expect(pet.fling).toHaveBeenCalledOnce()
+    expect(pet.fling.mock.calls[0][0].vx).toBeCloseTo(873.125538, 5)
+    expect(pet.fling.mock.calls[0][0].vy).toBe(0)
+  })
+
+  it('macOS 首个新缩放 Moved 先到后立即松手时，不用跨缩放轨迹制造猛甩', async () => {
+    mocks.osType.mockReturnValue('macos')
+    vi.stubGlobal('devicePixelRatio', 2)
+    const pet = createPet()
+    const { result } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    grab(result.current)
+    await nativeMove(0, 900, 500, 2)
+    await nativeMove(40, 940, 500, 2)
+    await nativeMove(80, 980, 500, 1)
+    clock.now = 81
+    pressMouse(false)
+
+    expect(pet.fling).not.toHaveBeenCalled()
+    changeScale(1)
+    expect(pet.fling).not.toHaveBeenCalled()
+  })
+
+  it.each([1, 6])('macOS 每次 IPC 延迟 %sms 且每 16ms 连续 Moved 时，采样不会被后续帧饿死', async (delay) => {
+    mocks.osType.mockReturnValue('macos')
+    const startedAt = Date.now()
+    vi.spyOn(performance, 'now').mockImplementation(() => Date.now() - startedAt)
+    let pending = 0
+    let maxPending = 0
+    function nativeReply<T>(value: () => T): Promise<T> {
+      pending++
+      maxPending = Math.max(maxPending, pending)
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          pending--
+          resolve(value())
+        }, delay)
+      })
+    }
+    mocks.window.scaleFactor.mockImplementation(() => nativeReply(() => 1))
+    mocks.window.outerPosition.mockImplementation(() => nativeReply(() => ({ x: 500 + Date.now() - startedAt, y: 500 })))
+    const pet = createPet()
+    const { result } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    grab(result.current)
+    for (let frame = 0; frame < 20; frame += 1) {
+      setTimeout(() => {
+        for (const handler of mocks.movedHandlers)
+          handler({ payload: { x: 500 + frame * 16, y: 500 } })
+      }, frame * 16)
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(320)
+    })
+    pressMouse(false)
+
+    expect(pet.fling).toHaveBeenCalledOnce()
+    expect(pet.fling.mock.calls[0][0].vx).toBeCloseTo(873.125538, 5)
+    expect(pet.fling.mock.calls[0][0].vy).toBe(0)
+    expect(maxPending).toBe(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3 * delay)
+    })
+    expect(pet.fling).toHaveBeenCalledOnce()
+  })
+
+  it('macOS 上一次抓取晚到的位置快照不会污染下一次甩动', async () => {
+    mocks.osType.mockReturnValue('macos')
+    mocks.window.scaleFactor.mockResolvedValue(2)
+    let resolvePosition!: (position: { x: number, y: number }) => void
+    mocks.window.outerPosition.mockReturnValueOnce(new Promise((resolve) => {
+      resolvePosition = resolve
+    }))
+    const pet = createPet()
+    const { result } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    grab(result.current)
+    dragWindow(clock, [{ t: 0, x: 1800, y: 1000 }])
+    await act(async () => {})
+    pressMouse(false)
+    expect(pet.fling).not.toHaveBeenCalled()
+
+    grab(result.current)
+    await nativeMove(200, 900, 500, 2)
+    await act(async () => {
+      resolvePosition({ x: 10000, y: 10000 })
+    })
+    await nativeMove(240, 940, 500, 2)
+    await nativeMove(280, 980, 500, 2)
+    clock.now = 281
+    pressMouse(false)
+
+    expect(pet.fling).toHaveBeenCalledOnce()
+    expect(pet.fling.mock.calls[0][0].vx).toBeCloseTo(873.125538, 5)
+    expect(pet.fling.mock.calls[0][0].vy).toBe(0)
+  })
+
+  it('macOS 卸载会清理 Moved 和晚到的 ScaleChanged 订阅', async () => {
+    mocks.osType.mockReturnValue('macos')
+    const disposeMoved = vi.fn()
+    const disposeScale = vi.fn()
+    let resolveScale!: (unlisten: () => void) => void
+    mocks.window.onMoved.mockResolvedValueOnce(disposeMoved)
+    mocks.window.onScaleChanged.mockReturnValueOnce(new Promise((resolve) => {
+      resolveScale = resolve
+    }))
+    const pet = createPet()
+    const { unmount } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    await act(async () => {})
+    unmount()
+    await act(async () => {
+      resolveScale(disposeScale)
+    })
+
+    expect(disposeMoved).toHaveBeenCalledOnce()
+    expect(disposeScale).toHaveBeenCalledOnce()
+  })
+
+  it('macOS 飞行按显示器与窗口各自缩放读取几何，并写回逻辑坐标', async () => {
+    mocks.osType.mockReturnValue('macos')
+    vi.stubGlobal('devicePixelRatio', 2)
+    mocks.monitor.mockResolvedValue({
+      scaleFactor: 1,
+      workArea: { position: { x: -1280, y: -200 }, size: { width: 1280, height: 1024 } },
+    })
+    mocks.window.scaleFactor.mockResolvedValue(1)
+    mocks.window.outerPosition.mockResolvedValue({ x: -500, y: 400, toLogical: (scale: number) => ({ x: -500 / scale, y: 400 / scale }) })
+    const pet = createPet()
+    const { result } = renderHook(() => usePetPhysics(pet.ref, 'codex', true))
+    act(() => {
+      result.current.onFling(flingEvent(600, 0))
+    })
+    await act(async () => {})
+    advanceFrames(2)
+
+    const first = mocks.window.setPosition.mock.calls[1][0]
+    expect(first).toBeInstanceOf(LogicalPosition)
+    expect(first).toEqual({ x: -490, y: 400 })
+    advanceFrames(120)
+    const positions = mocks.window.setPosition.mock.calls.map(([position]) => position as { x: number, y: number })
+    expect(Math.max(...positions.map(position => position.y))).toBe(724)
   })
 
   it('飞行中在别处点击（全屏左键按下）不停窗口，也不会被当成甩动', async () => {

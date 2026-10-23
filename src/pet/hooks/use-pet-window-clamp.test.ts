@@ -11,6 +11,9 @@ import { clampPetWindowPosition, usePetWindowClamp } from './use-pet-window-clam
  * （「左右上边缘松开，会弹开 Pet」）。
  */
 
+const osType = vi.hoisted(() => vi.fn(() => 'windows'))
+vi.mock('@tauri-apps/plugin-os', () => ({ type: osType }))
+
 const availableMonitorsMock = vi.hoisted(() => vi.fn<() => Promise<unknown[]>>())
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -51,12 +54,14 @@ async function settlePromises(): Promise<void> {
 }
 
 beforeEach(() => {
+  osType.mockReturnValue('windows')
   availableMonitorsMock.mockReset()
   availableMonitorsMock.mockResolvedValue([{ workArea: { position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 } } }])
 })
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -136,6 +141,22 @@ describe('usePetWindowClamp', () => {
 
     expect(clamped.x).toBe(1300)
     expect(clamped.y).toBeCloseTo(796.6667, 3)
+  })
+
+  it('macOS 混合缩放屏幕按各自缩放还原工作区，允许负坐标', async () => {
+    osType.mockReturnValue('macos')
+    vi.stubGlobal('devicePixelRatio', 2)
+    availableMonitorsMock.mockResolvedValue([
+      { scaleFactor: 2, workArea: { position: { x: 0, y: 0 }, size: { width: 3840, height: 2160 } } },
+      { scaleFactor: 1, workArea: { position: { x: -1280, y: -200 }, size: { width: 1280, height: 1024 } } },
+    ])
+    const { result } = renderHook(() => usePetWindowClamp(fakePetRef(GEOMETRY), 'dsh'))
+    await settlePromises()
+
+    expect(result.current.clampPosition({ x: -1000, y: 0 })).toEqual({ x: -1000, y: 0 })
+    expect(result.current.clampPosition({ x: 5000, y: 400 })).toEqual({ x: 1300, y: 400 })
+    vi.stubGlobal('devicePixelRatio', 1)
+    expect(result.current.clampPosition({ x: -5000, y: 0 })).toEqual({ x: -1680, y: 0 })
   })
 
   it('refreshWorkAreas 重新读取显示器列表（插拔显示器后立刻生效）', async () => {
