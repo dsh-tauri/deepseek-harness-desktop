@@ -35,6 +35,12 @@ const PRESETS_PATH = '/api/tauri/model/presets'
 const ENDPOINT_MODELS_PATH = '/api/tauri/model/endpoint/models'
 const CONFIG_OPEN_PATH = '/api/tauri/model/config/open'
 
+/** 共享 RPC 通道（`dsh-client-connection`）：模型页的 `settings/mutate` 与目录读取都走它。 */
+const RPC_CHANNEL = '/api'
+
+/** 设置卡片选择器：正常卡片与「待配置」卡片都算一行。 */
+const PROVIDER_ROWS = '[class*="rowCard"], [class*="setupCard"]'
+
 /** 设置文件名（`packages/dsh-tauri-model/src/shared/constants.ts`）。 */
 const SETTINGS_FILE = 'settings.yaml'
 
@@ -191,6 +197,89 @@ describe('L2 客户端', () => {
     await browser.close()
   })
 
+  /**
+   * 模型排序：断言对象是**真实内核模型目录里的顺序**，不是页面自报。
+   *
+   * 模型行序就是配置里 `models` 数组的顺序（内核逐项 map，不做任何排序），页面把数组写回
+   * 配置后内核会重载并重排目录，因此断言取自 `session/modelCatalog`。
+   */
+  const ORDER_ROUTE = 'e2e-order-route'
+  const ORDER_MODELS = ['m-one', 'm-two', 'm-three']
+  const MOVE_DOWN = '下移'
+
+  /** 共享通道的 RPC 调用：信封见 `dsh-client-connection`，远端载荷恰含一个纯对象 `args`。 */
+  async function rpc(method: string, payload: unknown): Promise<Record<string, unknown>> {
+    const response = await fetch(url(`${RPC_CHANNEL}/${method}`), {
+      method: 'POST',
+      headers: { ...apiHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'e2e-1', method, payload }),
+    })
+    expect(response.status, `RPC ${method} 必须被通道接受`).toBe(200)
+    const envelope = await response.json() as { result?: { ok?: boolean, value?: unknown, error?: unknown } }
+    const result = envelope.result ?? {}
+    expect(result.ok, `RPC ${method} 必须成功：${JSON.stringify(result.error)}`).toBe(true)
+    return result.value as Record<string, unknown>
+  }
+
+  /** 内核模型目录里被测分组的模型顺序。 */
+  async function catalogModels(): Promise<string[]> {
+    const value = await rpc('session/modelCatalog', { args: {} })
+    const groups = (value.groups ?? []) as { id: string, models: { id: string }[] }[]
+    return (groups.find(group => group.id === ORDER_ROUTE)?.models ?? []).map(model => model.id)
+  }
+
+  it('验证模型行的上移/下移真的改变内核模型目录的顺序', async () => {
+    let app: Awaited<ReturnType<typeof newDshPage>> | undefined
+    try {
+      // 种子路由落在共享 scratch profile 上：从这里开始就必须被 finally 保护，
+      // 否则种完之后的任何一步失败都会把路由留在库里，拖垮后面依赖「无可用提供商」的用例。
+      await rpc('settings/mutate', {
+        args: {
+          ns: 'llm-pi-ai',
+          ops: [{
+            op: 'set',
+            path: ['providers', ORDER_ROUTE],
+            value: {
+              displayName: ORDER_ROUTE,
+              api: 'openai-completions',
+              baseURL: 'http://127.0.0.1:9/v1',
+              models: ORDER_MODELS.map(id => ({ id, name: id })),
+            },
+          }],
+        },
+      })
+      expect(await catalogModels(), '前置：目录必须先按声明序就位').toEqual(ORDER_MODELS)
+
+      app = await newDshPage(browser)
+      await openSettings(app.page, app.frame, app.syntheticFallbacks)
+      await selectSettingsSection(app.page, app.frame, '模型', app.syntheticFallbacks)
+
+      const row = app.frame.locator(PROVIDER_ROWS).filter({ hasText: ORDER_ROUTE }).first()
+      await row.locator('button[aria-label^="编辑"]').click()
+      // 模型列表在「自定义设置」折叠区里：不展开则行存在但不可见（点击会一直等可见）。
+      await row.locator('[class*="customizedSummary"]').click()
+
+      // 行内第一个输入框就是模型 ID；位置选择器不依赖语言。
+      const firstId = row.locator('[class*="modelEntry"] input').first()
+      await expect.poll(async () => await firstId.inputValue(), { timeout: 15_000, message: '编辑面板必须列出已声明的模型' })
+        .toBe('m-one')
+
+      // 真实鼠标点击：按下时浏览器会把焦点交给按钮，焦点保活必须覆盖这条路径。
+      await row.locator(`button[aria-label="${MOVE_DOWN} 1"]`).click()
+      await row.getByRole('button', { name: '保存' }).click()
+
+      await expect.poll(catalogModels, { timeout: 20_000, message: '应用后内核模型目录必须真的换序' })
+        .toEqual(['m-two', 'm-one', 'm-three'])
+
+      expectNoSyntheticFallbacks(app)
+      expect(app.errors, '模型重排不得抛出应用级错误').toEqual([])
+    }
+    finally {
+      if (app !== undefined)
+        await app.close()
+      await rpc('settings/mutate', { args: { ns: 'llm-pi-ai', ops: [{ op: 'unset', path: ['providers', ORDER_ROUTE] }] } })
+    }
+  })
   it('验证模型设置分区由本插件接管且不重复', async () => {
     const app = await newDshPage(browser)
     try {
