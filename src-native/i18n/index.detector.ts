@@ -12,6 +12,8 @@ export function detectLanguage(): string {
     return 'zh-CN'
   if (tag.startsWith('ko'))
     return 'ko-KR'
+  if (tag.startsWith('ru'))
+    return 'ru-RU'
   return 'en-US'
 }
 

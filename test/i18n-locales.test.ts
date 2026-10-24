@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
  * 每个 `src/i18n/locales/*.json` 都是扁平 dot-notation key。新增语言时最容易漏的是
  * 「键集合」「空文案」「占位符」三件事，所以在单元层面统一把关，避免运行时才发现回退。
  */
-const LOCALES = ['en-US', 'zh-CN', 'ko-KR'] as const
+const LOCALES = ['en-US', 'zh-CN', 'ko-KR', 'ru-RU'] as const
 
 function readLocale(locale: string): Record<string, string> {
   const url = new URL(`../src/i18n/locales/${locale}.json`, import.meta.url)

@@ -17,11 +17,11 @@ describe('menu restart backend contract', () => {
     expect(builderSource).toContain('desktop-copy-run-logs')
   })
 
-  it('provides menu.restart i18n key with zh/en/ko translations', () => {
+  it('provides menu.restart i18n key with zh/en/ko/ru translations', () => {
     // 断言键→值的关系，而非孤立 token：要求 "menu.restart" 同时映射到
-    // 中文/英文/韩文都明确重启的是 Harness，避免 token 出现在无关代码中时仍能通过。
+    // 中文/英文/韩文/俄文都明确重启的是 Harness，避免 token 出现在无关代码中时仍能通过。
     expect(i18nSource).toMatch(
-      /"menu\.restart"\s*=>\s*\("重启 Harness",\s*"Restart Harness",\s*"Harness 다시 시작"\)/,
+      /"menu\.restart"\s*=>\s*\("重启 Harness",\s*"Restart Harness",\s*"Harness 다시 시작",\s*"Перезапустить Harness"\)/,
     )
   })
 })
