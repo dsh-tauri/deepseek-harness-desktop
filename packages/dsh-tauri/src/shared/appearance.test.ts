@@ -13,7 +13,7 @@ describe('appearance preferences', () => {
   })
 
   it.each([[0, 20], [255, 100], [77.4, 77], [80, 80]])('normalizes opacity %s to %s', (input, opacity) => {
-    expect(normalizeAppearance({ palette: 'nord', terminal: true, opacity: input })).toEqual({ palette: 'nord', terminal: true, transparency: opacity < 100, opacity, blur: false, sidebarOnly: false })
+    expect(normalizeAppearance({ palette: 'nord', terminal: true, opacity: input })).toEqual({ palette: 'nord', terminal: true, transparency: opacity < 100, opacity, blur: false, sidebarOnly: false, frame: true })
   })
 
   it.each([[false, false], [true, true], [0, false], [1, true], [40, true]])('normalizes blur %s to %s', (input, expected) => {
@@ -84,6 +84,7 @@ describe('appearance preferences', () => {
   })
 })
 
+/** 按 WCAG 公式计算 sRGB 十六进制颜色的相对亮度。 */
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map((offset) => {
     const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255

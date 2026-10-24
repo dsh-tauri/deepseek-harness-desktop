@@ -14,6 +14,7 @@ import { toast } from '@/utils/toast'
 import { store } from '../store'
 import { Recovery } from '../ui/plugin/recovery'
 import { Webview } from './components/webview'
+import { useFrameChrome } from './components/window-chrome'
 import '../i18n'
 
 /** 桌面端自更新轮询间隔：Rust 侧不缓存，改为低频轮询以免触发 GitHub 未认证限流（60 次/小时/IP） */
@@ -26,6 +27,7 @@ interface DownloadFinishedPayload {
   success: boolean
 }
 
+/** 桌面端壳层根组件：管理插件缓存、主题、窗口 chrome 与全局事件。 */
 export function App() {
   // —— 插件列表缓存同步 ——
   // 后端（`service/plugin/watch`）解析出完整插件列表后经 `dsh-plugins-updated` 推送，
@@ -45,6 +47,7 @@ export function App() {
   // 唤醒锁一旦生效就立刻释放。
   useWakelockRelease()
   useThemeAdaptive()
+  useFrameChrome()
 
   // 仅开发模式：快捷键预览「插件异常修复界面」，便于快速看到实际 UI（不影响生产构建）。
   //   Ctrl+Shift+1 → 运行期异常对话框（应用仍在运行）

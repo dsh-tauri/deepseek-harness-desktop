@@ -78,6 +78,10 @@
   --color-panel-hover: #2c2c2e;        /* sidebar-nav-item-hover (bluish-850) */
   --color-line: rgba(255, 255, 255, 0.12);   /* border-l2 #ffffff1f */
   --color-line-strong: rgba(255, 255, 255, 0.2); /* border-l4 #fff3 */
+  /* === 自绘窗口外框 token === */
+  --frame-inset: 16px;
+  --frame-radius: 12px;
+  --color-frame-border: rgba(255, 255, 255, 0.14);
   --color-ink: #f9fafb;                /* label-primary (bluish-50) */
   --color-info: #7aaaff;               /* state-business-primary (deepseek-400) */
   --color-info-hover: #4176e6;         /* button-info-hover (deepseek-500) */
@@ -113,6 +117,7 @@ html[data-theme="light"] {
   --backdrop: rgba(0, 0, 0, 0.24);
   --color-canvas: #ffffff;             /* bg-base (bluish-00) */
   --color-startup: #ffffff;            /* 启动页底色：默认与画布同色 */
+  --color-frame-border: rgba(0, 0, 0, 0.55);
   --color-panel: #f9fafb;              /* specific-sidebar-fill (bluish-50) */
   --color-panel-2: #f5f6f7;            /* bg-module-platform / selector (bluish-60) */
   --color-panel-hover: #f1f3f5;        /* sidebar-nav-item-hover (bluish-75) */
@@ -182,5 +187,50 @@ html[data-theme="light"] {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-size: 14px;
   }
+}
+
+/* === 自绘窗口外框（圆角 + 描边 + 阴影，对齐 Claude Desktop 观感） ===
+   非 macOS 平台窗口无系统装饰，圆角与阴影只能应用自绘：窗口按需透明。
+   裁剪不能挂在 body 上：body 的 overflow 按规范会传播给视口（自身 used
+   overflow 回落 visible），border-radius 永远裁不到子内容；因此 body 只做
+   fixed 锚点（translateZ 让 toast / 弹窗等 fixed 后代有稳定包含块），画框
+   与裁剪全部由 #root 承担。#root 必须显式清掉 base 层的 min-height/height
+   （百分比对 fixed 元素以视口为基准，会把底边整条推出窗口外，内容被窗口
+   底边硬切）；画布底色同步下沉到 shell-root（#root 不铺底色，透明窗下才
+   不会把阴影带涂实）。
+   inset = 常规内缩外框；flat = 最大化时撤掉内缩与圆角；border = macOS 保留
+   原生圆角与系统阴影，只补 1px 描边。dataset 由 window-chrome 按窗口状态维护。 */
+html[data-dsh-frame] body {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  transform: translateZ(0);
+}
+
+html[data-dsh-frame] #root {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html[data-dsh-frame] [data-testid="dsh-shell-root"] {
+  height: 100%;
+  width: 100%;
+  background: var(--color-canvas);
+}
+
+html[data-dsh-frame="inset"] #root {
+  inset: var(--frame-inset);
+  border-radius: var(--frame-radius);
+  border: 1px solid var(--color-frame-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28), 0 0 14px rgba(0, 0, 0, 0.22);
+}
+
+html[data-dsh-frame="border"] #root {
+  border-radius: 10px;
+  border: 1px solid var(--color-frame-border);
 }
 

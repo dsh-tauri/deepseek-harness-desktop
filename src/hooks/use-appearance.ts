@@ -10,6 +10,7 @@ import { useDshStyle } from './use-dsh-style'
 import { useIframeMessage } from './use-iframe-message'
 import { useIframePost } from './use-iframe-post'
 
+/** 将外观偏好同步到 iframe、生成动态 CSS 并管理原生背景效果。 */
 export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
   const { appearance, hydrated } = useStore(store.setting)
   const [dshStyle] = useDshStyle()
@@ -73,7 +74,9 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
     return ''
   const { canvas, panel, surface, text, muted, accent, border } = appearanceColors(value, scheme)
   return [
-    alpha < 100 ? 'html,body{background:transparent!important}' : '',
+    // 自绘外框把画布底色下沉到了 shell-root（main.css），透明模式必须一并放掉，
+    // 否则内容区被实心 canvas 垫住、桌面颜色透不出来。
+    alpha < 100 ? 'html,body,[data-testid="dsh-shell-root"]{background:transparent!important}' : '',
     `html[data-theme]{--color-canvas:${canvas};--color-startup:${appearanceStartupFill(value, canvas)};--color-panel:${panel};--color-panel-2:${surface};--color-ink:${text};--color-info:${accent};--foreground:${text};--muted:${muted};--background:${canvas};--surface:${panel};--surface-secondary:${surface};--surface-tertiary:${surface};${border ? `--color-line:${border};--color-line-strong:${border};--color-btn-border:${border};--border:${border};--separator:${border};--field-border:${border};` : ''}}`,
     `[data-testid="dsh-navbar-root"]{background:${appearanceSidebarFill(canvas, panel, alpha < 100, alpha)}!important;${backdropFilter === 'none' ? '' : `backdrop-filter:${backdropFilter};-webkit-backdrop-filter:${backdropFilter};`}}`,
     alpha < 100 && value.sidebarOnly ? `[data-testid="dsh-config-dialog"]{background:${panel}!important}` : '',

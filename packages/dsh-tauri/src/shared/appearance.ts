@@ -1,4 +1,4 @@
-export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false } as const
+export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false, frame: true } as const
 export const APPEARANCE_PALETTES = ['default', 'nord', 'solarized', 'forest', 'amber', 'github', 'github-dimmed', 'github-high-contrast'] as const
 
 export interface Appearance {
@@ -8,8 +8,10 @@ export interface Appearance {
   opacity: number
   blur: boolean
   sidebarOnly: boolean
+  frame: boolean
 }
 
+/** 将任意输入规范化到合法的外观偏好对象。 */
 export function normalizeAppearance(value: unknown): Appearance {
   const input = value as (Omit<Partial<Appearance>, 'blur'> & { blur?: unknown }) | null
   const opacity = typeof input?.opacity === 'number' && Number.isFinite(input.opacity)
@@ -22,9 +24,11 @@ export function normalizeAppearance(value: unknown): Appearance {
     opacity,
     blur: input?.blur === true || (typeof input?.blur === 'number' && input.blur > 0),
     sidebarOnly: input?.sidebarOnly === true,
+    frame: input?.frame === undefined ? true : input.frame === true,
   }
 }
 
+/** 根据透明状态返回侧边栏填充色：半透明时混合 canvas 与透明，否则用 panel。 */
 export function appearanceSidebarFill(canvas: string, panel: string, translucent: boolean, percent: number): string {
   return translucent ? `color-mix(in srgb,${canvas} ${percent}%,transparent)` : panel
 }
@@ -66,11 +70,13 @@ const PALETTES: Record<Appearance['palette'], Record<'dark' | 'light', Palette>>
   'github-high-contrast': { dark: ['#010409', '#151b23', '#151b23', '#ffffff', '#b7bdc8', '#74b9ff', '#b7bdc8'], light: ['#ffffff', '#eff2f5', '#e6eaef', '#010409', '#454c54', '#023b95', '#454c54'] },
 }
 
+/** 按当前配色与深浅模式返回预定义色板元组。 */
 export function appearanceColors(appearance: Appearance, scheme: 'dark' | 'light') {
   const [canvas, panel, surface, text, muted, accent, border] = PALETTES[appearance.palette][scheme]
   return { canvas, panel, surface, text, muted, accent, border }
 }
 
+/** 为自定义配色生成覆盖默认主题的 CSS token 映射。 */
 export function appearanceTokens(appearance: Appearance): Record<string, { dark: string, light: string }> {
   if (appearance.palette === 'default' && (!appearance.transparency || appearance.opacity === 100))
     return {}

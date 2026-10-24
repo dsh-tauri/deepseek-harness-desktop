@@ -26,7 +26,7 @@ let setting: (typeof import('./store'))['setting']
 beforeEach(async () => {
   vi.resetModules()
   mocks.saved = {
-    appearance: { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false },
+    appearance: { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false, frame: true },
     zoom_factor: 1,
     backup_include_credentials: true,
   }
@@ -53,11 +53,13 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
+/** 模拟跨窗口原生设置更新事件分发。 */
 async function nativeUpdate(value: Record<string, unknown>) {
   mocks.saved = structuredClone(value)
   await Promise.all([...mocks.listeners].map(callback => callback({ payload: structuredClone(value) })))
 }
 
+/** 创建一个可外部 resolve 的延迟 Promise。 */
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => {
@@ -161,7 +163,7 @@ describe('settings synchronization across windows', () => {
     mocks.invoke.mockRejectedValueOnce(new Error('native write failed'))
     await expect(setting.update({ appearance: { ...setting.appearance, palette: 'github' } })).rejects.toThrow('native write failed')
     expect(setting.appearance.palette).toBe('default')
-    expect(mocks.saved.appearance).toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false })
+    expect(mocks.saved.appearance).toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false, frame: true })
     expect(mocks.setItem).not.toHaveBeenCalled()
   })
 
