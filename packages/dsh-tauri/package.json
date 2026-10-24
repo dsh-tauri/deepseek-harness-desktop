@@ -19,7 +19,9 @@
     "deepseek-harness",
     "bridge"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "**/modules/valtio-define.ts"
+  ],
   "exports": {
     ".": "./dist/index.js",
     "./client": {
