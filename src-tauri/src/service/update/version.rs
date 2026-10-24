@@ -10,8 +10,17 @@ pub(super) fn current_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// 发行版仓库（Copr、AUR、Flathub 等）构建时注入 `DSH_DISTRO_MANAGED`：升级交给系统包
+/// 管理器，应用内不检查、不下载、退出时也不拉起安装包，否则会在包管理器的安装之外再装一份
+/// AppImage（issue #1230）。
+pub(super) const DISTRO_MANAGED: bool = option_env!("DSH_DISTRO_MANAGED").is_some();
+
 pub(super) fn supports_stable_updates(identifier: &str) -> bool {
-    identifier != "dsh-tauri-nightly"
+    stable_updates_allowed(identifier, DISTRO_MANAGED)
+}
+
+fn stable_updates_allowed(identifier: &str, distro_managed: bool) -> bool {
+    !distro_managed && identifier != "dsh-tauri-nightly"
 }
 
 /// 解析版本号为 semver（容忍 `v` 前缀）；非合法 semver 返回 `None`。
@@ -191,13 +200,24 @@ mod tests {
 
     #[test]
     fn nightly_does_not_receive_stable_installers() {
-        assert!(!supports_stable_updates("dsh-tauri-nightly"));
+        assert!(!stable_updates_allowed("dsh-tauri-nightly", false));
     }
 
     #[test]
     fn stable_and_legacy_identifiers_keep_stable_updates() {
         for identifier in ["dsh-tauri", "io.github.hairyf.deepseek-harness-desktop"] {
-            assert!(supports_stable_updates(identifier));
+            assert!(stable_updates_allowed(identifier, false));
+        }
+    }
+
+    #[test]
+    fn distro_managed_builds_never_receive_installers() {
+        for identifier in [
+            "dsh-tauri",
+            "dsh-tauri-nightly",
+            "io.github.hairyf.deepseek-harness-desktop",
+        ] {
+            assert!(!stable_updates_allowed(identifier, true));
         }
     }
 

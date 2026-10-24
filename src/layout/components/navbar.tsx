@@ -22,6 +22,7 @@ import { Else, If, Then } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
 import { useStore } from 'valtio-define'
 import { queryKeys } from '@/config/query-keys'
+import { DISTRO_MANAGED_QUERY } from '@/hooks/use-distro-managed'
 import { DSH_VIEW_COMMANDS, shortcutHint, useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useListen } from '@/hooks/use-listen'
@@ -366,6 +367,11 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
       const identifier = await queryClient.ensureQueryData(APP_IDENTIFIER_QUERY)
       if (identifier === 'dsh-tauri-nightly') {
         await invoke('open_external_url', { url: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/nightly' })
+        return
+      }
+      // 发行版仓库构建（issue #1230）：应用内不检查更新，否则只会误报「已是最新」
+      if (await queryClient.ensureQueryData(DISTRO_MANAGED_QUERY)) {
+        toast(t('update.distro_managed'), {})
         return
       }
       const info = await store.desktopUpdater.check()

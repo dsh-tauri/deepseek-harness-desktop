@@ -101,6 +101,13 @@ macOS 也可通过 Homebrew 安装：
 brew install dsh-tauri/desktop/deepseek-harness
 ```
 
+Fedora 43+（x64 / ARM64）可通过 Copr 仓库安装，升级随 `dnf upgrade` 进行，应用内更新已关闭；想跟进预发布版可改装 `dsh-tauri-beta`（与 `dsh-tauri` 互斥，用 `sudo dnf swap dsh-tauri dsh-tauri-beta` 切换）：
+
+```bash
+sudo dnf copr enable fairyband/dsh-tauri
+sudo dnf install dsh-tauri        # 正式版
+```
+
 - 普通安装包首次启动需联网下载缺失的运行时与内核；Git 功能需要可用的 Git。
 - 包含 `Bundle` 后缀为离线安装包（`_Bundle_*.exe`、`_Bundle_*.deb`、两种 `_Bundle_*.dmg`）。
 - 本地运行不等于完全离线：模型服务、插件安装、更新与桌宠预设素材仍可能联网。

@@ -6,6 +6,8 @@
  */
 export const queryKeys = {
   appIdentifier: ['app_identifier'] as const,
+  /** 是否由系统包管理器管理更新（发行版仓库构建，导航栏检查更新与自动更新开关共用） */
+  distroManaged: ['distro_managed'] as const,
   taskManager: ['task_manager'] as const,
   taskManagerLogs: ['task_manager_logs'] as const,
   /** 运行时信息（版本 / 端口 / 路径，debug 面板） */

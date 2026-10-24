@@ -1,0 +1,110 @@
+# 模板：由 .copr/srpm.sh 从 package.json / tauri.conf.json / Cargo.toml / constants.rs 填值后
+# 生成 SRPM。构建需要联网（Node、pnpm、cargo 依赖），Copr 项目须开启 enable_net。
+%global appname @APPNAME@
+%global binname @BINNAME@
+# Tauri 按 productName 在 /usr/lib/<productName> 下查找资源，路径不能改
+%global appdir %{_prefix}/lib/%{appname}
+%global debug_package %{nil}
+# 资源里插件依赖的 shebang 会被自动推导成依赖系统 nodejs，实际由应用自带的 Node 运行
+%global __requires_exclude ^/usr/bin/node$
+
+Name:           @NAME@
+Version:        @VERSION@
+Release:        @RELEASE@%{?dist}
+Summary:        @SUMMARY@
+License:        MIT
+URL:            https://github.com/dsh-tauri/deepseek-harness-desktop
+Source0:        %{name}-%{version}.tar.gz
+ExclusiveArch:  x86_64 aarch64
+
+BuildRequires:  cargo
+BuildRequires:  rust
+BuildRequires:  gcc
+BuildRequires:  make
+BuildRequires:  git-core
+BuildRequires:  curl
+BuildRequires:  pkgconfig(webkit2gtk-4.1)
+BuildRequires:  pkgconfig(gtk+-3.0)
+BuildRequires:  pkgconfig(openssl)
+BuildRequires:  pkgconfig(x11)
+BuildRequires:  pkgconfig(xtst)
+BuildRequires:  pkgconfig(dbus-1)
+BuildRequires:  pkgconfig(bzip2)
+BuildRequires:  pkgconfig(librsvg-2.0)
+BuildRequires:  libappindicator-gtk3-devel
+
+Requires:       libappindicator-gtk3
+Requires:       gstreamer1-plugins-good
+Recommends:     gstreamer1-plugins-bad-free
+# dsh-tauri 与 dsh-tauri-beta 安装同一组文件，只能二选一；切换渠道用 dnf swap
+Conflicts:      @CONFLICTS@
+
+%description
+@DESCRIPTION@
+
+%prep
+%autosetup -n %{name}-%{version}
+
+%build
+export CI=true
+# 关闭应用内自更新：升级交给 dnf（见 src-tauri/src/service/update/version.rs）
+export DSH_DISTRO_MANAGED=copr
+export CARGO_HOME="$PWD/.cargo-home"
+export npm_config_cache="$PWD/.npm-cache"
+# 用 Node.js 官方构建（与上游 CI 的 setup-node 同源）：Fedora 的 libnode（nodejs22 / nodejs24
+# 均复现）在 Copr mock 里于 V8 正则编译与 Intl.Segmenter 处 SIGSEGV，pnpm 必崩
+node_version=@NODE_VERSION@
+%ifarch x86_64
+node_arch=x64
+%else
+node_arch=arm64
+%endif
+node_dist="node-$node_version-linux-$node_arch"
+curl -fsSL --retry 3 -o "$node_dist.tar.gz" "https://nodejs.org/dist/$node_version/$node_dist.tar.gz"
+curl -fsSL --retry 3 -o SHASUMS256.txt "https://nodejs.org/dist/$node_version/SHASUMS256.txt"
+grep " $node_dist.tar.gz\$" SHASUMS256.txt | sha256sum -c -
+tar -xzf "$node_dist.tar.gz"
+export PATH="$PWD/$node_dist/bin:$PATH"
+node --version
+pnpm_version=$(sed -n 's/.*"packageManager": "pnpm@\([^"]*\)".*/\1/p' package.json)
+npm install --no-save --no-audit --no-fund --prefix "$PWD/.pnpm" "pnpm@$pnpm_version"
+export PATH="$PWD/.pnpm/node_modules/.bin:$PATH"
+pnpm install --frozen-lockfile
+pnpm tauri build --no-bundle
+
+%install
+install -Dpm0755 src-tauri/target/release/%{binname} %{buildroot}%{_bindir}/%{binname}
+install -dm0755 "%{buildroot}%{appdir}"
+cp -a src-tauri/resources "%{buildroot}%{appdir}/resources"
+install -Dpm0644 src-tauri/icons/32x32.png "%{buildroot}%{appdir}/icons/32x32.png"
+install -Dpm0644 src-tauri/icons/32x32.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/%{binname}.png
+install -Dpm0644 src-tauri/icons/128x128.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/%{binname}.png
+install -Dpm0644 src-tauri/icons/128x128@2x.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/%{binname}.png
+install -Dpm0644 src-tauri/icons/icon.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/%{binname}.png
+# 与 Tauri 自带 rpm 同名同内容：深链与自启动按这个 desktop 文件注册。
+# Categories 对应 tauri.conf.json 的 category = DeveloperTool
+install -dm0755 %{buildroot}%{_datadir}/applications
+cat > "%{buildroot}%{_datadir}/applications/%{appname}.desktop" <<EOF
+[Desktop Entry]
+Categories=Development;
+Comment=%{summary}
+Exec=%{binname}
+StartupWMClass=%{binname}
+Icon=%{binname}
+Name=%{appname}
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/@SCHEME@
+EOF
+
+%files
+%license LICENSE
+%doc README.md
+%{_bindir}/%{binname}
+"%{appdir}"
+"%{_datadir}/applications/%{appname}.desktop"
+%{_datadir}/icons/hicolor/*/apps/%{binname}.png
+
+%changelog
+* @DATE@ @PACKAGER@ - %{version}-%{release}
+- Copr release build

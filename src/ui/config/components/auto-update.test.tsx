@@ -5,7 +5,7 @@ import { defineStore } from 'valtio-define'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConfigAutoUpdate } from './auto-update'
 
-const mocks = vi.hoisted(() => ({ setting: {} as any, toast: vi.fn() }))
+const mocks = vi.hoisted(() => ({ setting: {} as any, toast: vi.fn(), distroManaged: false }))
 vi.mock('@/store', () => ({
   store: {
     get setting() {
@@ -14,11 +14,13 @@ vi.mock('@/store', () => ({
   },
 }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
+vi.mock('@/hooks/use-distro-managed', () => ({ useDistroManaged: () => mocks.distroManaged }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  mocks.distroManaged = false
 })
 
 function setup(initial: boolean, fail = false) {
@@ -73,5 +75,17 @@ describe('automatic update setting', () => {
 
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('messages.auto_update_failed', { variant: 'danger' }))
     expect(autoUpdateSwitch().checked).toBe(true)
+  })
+
+  it('disables the switch and explains why when the package manager delivers updates', () => {
+    mocks.distroManaged = true
+    const update = setup(true)
+
+    expect(autoUpdateSwitch().checked).toBe(false)
+    expect(autoUpdateSwitch().disabled).toBe(true)
+    expect(screen.getByText('ui.auto_update_distro_hint')).toBeTruthy()
+    expect(screen.queryByText('ui.auto_update_hint')).toBeNull()
+    fireEvent.click(autoUpdateSwitch())
+    expect(update).not.toHaveBeenCalled()
   })
 })

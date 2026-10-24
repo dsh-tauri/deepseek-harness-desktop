@@ -36,6 +36,11 @@ pub use about::{about, DesktopAboutInfo};
 pub use install::{check, download, open_installer, DesktopDownloadProgress, DesktopUpdateInfo};
 pub use pending::launch_pending_installer;
 
+/// 是否为发行版仓库构建（见 [`version`] 的 `DISTRO_MANAGED`），前端据此提示改用包管理器更新。
+pub fn distro_managed() -> bool {
+    version::DISTRO_MANAGED
+}
+
 /// 自动更新（静默下载后退出时自动安装）是否生效。
 ///
 /// 唯一真值是设置页「自动更新」开关：关闭后只剩用户显式发起的链路（「检查更新」

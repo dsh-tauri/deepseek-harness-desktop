@@ -102,6 +102,13 @@ En macOS también podés instalar por Homebrew:
 brew install dsh-tauri/desktop/deepseek-harness
 ```
 
+En Fedora 43+ (x64 / ARM64) podés instalar desde el repositorio Copr. Las actualizaciones llegan con `dnf upgrade` y la actualización dentro de la app queda desactivada. Para versiones preliminares instalá `dsh-tauri-beta` (es incompatible con `dsh-tauri`; cambiá con `sudo dnf swap dsh-tauri dsh-tauri-beta`):
+
+```bash
+sudo dnf copr enable fairyband/dsh-tauri
+sudo dnf install dsh-tauri        # estable
+```
+
 - Los instaladores normales necesitan red en el primer arranque para descargar los componentes faltantes del runtime y del núcleo. Las funciones Git necesitan un Git disponible.
 - Los nombres con sufijo `Bundle` son instaladores sin conexión (`_Bundle_*.exe`, `_Bundle_*.deb` y dos `_Bundle_*.dmg`).
 - Ejecutar localmente no significa estar totalmente sin conexión: modelos, instalación de plugins, actualizaciones y recursos de mascotas predefinidas pueden usar red.

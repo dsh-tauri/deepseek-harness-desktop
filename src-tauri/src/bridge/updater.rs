@@ -28,6 +28,12 @@ pub async fn open_desktop_installer(app_handle: AppHandle, path: String) -> Resu
     update::open_installer(&app_handle, path).await
 }
 
+/// 是否由系统包管理器管理更新（发行版仓库构建）：前端据此提示改用包管理器更新
+#[tauri::command]
+pub fn is_desktop_distro_managed() -> bool {
+    update::distro_managed()
+}
+
 /// 关于对话框信息（版本 / 发布时间 / 版权 / 仓库）
 #[tauri::command]
 pub async fn get_desktop_about(app_handle: AppHandle) -> Result<update::DesktopAboutInfo, String> {

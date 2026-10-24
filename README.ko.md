@@ -102,6 +102,13 @@ macOS에서는 Homebrew로도 설치할 수 있습니다:
 brew install dsh-tauri/desktop/deepseek-harness
 ```
 
+Fedora 43+(x64 / ARM64)에서는 Copr 저장소로 설치할 수 있습니다. 업데이트는 `dnf upgrade`로 받으며 앱 내 업데이트는 비활성화됩니다. 프리릴리스를 쓰려면 `dsh-tauri-beta`를 설치하세요(`dsh-tauri`와 동시에 설치할 수 없으며 `sudo dnf swap dsh-tauri dsh-tauri-beta`로 전환합니다):
+
+```bash
+sudo dnf copr enable fairyband/dsh-tauri
+sudo dnf install dsh-tauri        # 정식 버전
+```
+
 - 일반 설치 프로그램은 첫 실행 시 누락된 런타임 및 코어 구성 요소를 다운로드하기 위해 네트워크가 필요합니다. Git 기능을 사용하려면 Git을 실행할 수 있어야 합니다.
 - 이름에 `Bundle` 접미사가 있는 파일은 오프라인 설치 프로그램입니다(`_Bundle_*.exe`, `_Bundle_*.deb`, 두 종류의 `_Bundle_*.dmg`).
 - 로컬 실행이 완전한 오프라인 실행을 의미하지는 않습니다. 모델 서비스, 플러그인 설치, 업데이트, 사전 설정된 펫 미디어는 여전히 네트워크를 사용할 수 있습니다.

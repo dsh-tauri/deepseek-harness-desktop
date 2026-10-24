@@ -18,6 +18,8 @@ import { desktopUpdater } from '../src/store/modules/desktop-updater'
 vi.mock('@/store', async () => ({
   store: { desktopUpdater: (await import('../src/store/modules/desktop-updater')).desktopUpdater },
 }))
+const toastMock = vi.hoisted(() => vi.fn())
+vi.mock('@/utils/toast', () => ({ toast: toastMock }))
 vi.mock('@/layout/components/remote-switcher', () => ({
   RemoteSwitcher: function RemoteSwitcher() { return null },
 }))
@@ -49,6 +51,7 @@ const UPDATE_INFO = {
 const getAppIdentifier = vi.fn<() => Promise<string>>()
 const openExternalUrl = vi.fn()
 const checkDesktopUpdate = vi.fn()
+const isDistroManaged = vi.fn<() => boolean>()
 let client: QueryClient
 let i18n: I18n
 
@@ -78,6 +81,8 @@ beforeEach(async () => {
   getAppIdentifier.mockReset().mockResolvedValue('dsh-tauri')
   openExternalUrl.mockReset()
   checkDesktopUpdate.mockReset().mockResolvedValue(null)
+  isDistroManaged.mockReset().mockReturnValue(false)
+  toastMock.mockReset()
   mockWindows('main')
   mockIPC((command, args) => {
     if (command === 'plugin:app|identifier')
@@ -86,6 +91,8 @@ beforeEach(async () => {
       return openExternalUrl(args)
     if (command === 'check_desktop_update')
       return checkDesktopUpdate()
+    if (command === 'is_desktop_distro_managed')
+      return isDistroManaged()
     if (command === 'get_dsh_plugins')
       return []
     if (command === 'plugin:window|is_maximized')
@@ -152,6 +159,24 @@ describe('navbar build channel', () => {
     await waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith({ url: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/nightly' }))
     expect(check).not.toHaveBeenCalled()
     expect(screen.queryByTestId('navbar-test-update-dialog')).toBeNull()
+  })
+
+  it('points package-manager installs to the package manager instead of reporting up to date', async () => {
+    isDistroManaged.mockReturnValue(true)
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    await waitFor(() => expect(toastMock).toHaveBeenCalledExactlyOnceWith(zhCN['update.distro_managed'], {}))
+    expect(checkDesktopUpdate).not.toHaveBeenCalled()
+    expect(toastMock).not.toHaveBeenCalledWith(zhCN['update.up_to_date'], expect.anything())
+  })
+
+  it('still reports up to date for regular installs', async () => {
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    await waitFor(() => expect(toastMock).toHaveBeenCalledExactlyOnceWith(zhCN['update.up_to_date'], {}))
+    expect(checkDesktopUpdate).toHaveBeenCalledOnce()
   })
 
   it.each([
