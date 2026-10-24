@@ -15,7 +15,7 @@ void petI18n.init({
 
 export function setPetLanguage(language?: string | null): void {
   const value = (language || (typeof navigator === 'undefined' ? 'en' : navigator.language)).toLowerCase()
-  void petI18n.changeLanguage(value.startsWith('zh') ? 'zh-CN' : value.startsWith('ko') ? 'ko-KR' : 'en-US')
+  void petI18n.changeLanguage(value.startsWith('zh') ? 'zh-CN' : value.startsWith('ko') ? 'ko-KR' : value.startsWith('ru') ? 'ru-RU' : 'en-US')
   if (typeof document !== 'undefined')
     document.documentElement.lang = petI18n.language
 }

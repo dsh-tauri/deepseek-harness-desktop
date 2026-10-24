@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <samp><a href="https://dshtauri.mintlify.site/zh-CN/installation">Download</a> · <a href="./README.en.md">English</a> · <a href="./README.es.md">Español</a> · <a href="./README.ko.md">한국어</a> · <a href="https://dshtauri.mintlify.site">文档</a> · <strong>中文</strong></samp>
+  <samp><a href="https://dshtauri.mintlify.site/zh-CN/installation">Download</a> · <a href="./README.en.md">English</a> · <a href="./README.es.md">Español</a> · <a href="./README.ru.md">Русский</a> · <a href="./README.ko.md">한국어</a> · <a href="https://dshtauri.mintlify.site">文档</a> · <strong>中文</strong></samp>
 </p>
 
 <p align="center">

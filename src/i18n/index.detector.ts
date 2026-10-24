@@ -6,23 +6,27 @@ import { resources } from './index.resource'
 /** 语言偏好持久化 key，与 setting store 保持同步 */
 export const LANGUAGE_STORAGE_KEY = 'deepseek-harness-desktop-language'
 
-/** 后端 `set_language` 接受的语言短码：zh / ko / en */
-function backendLanguage(language: string): 'zh' | 'ko' | 'en' {
+/** 后端 `set_language` 接受的语言短码：zh / ko / en / ru */
+function backendLanguage(language: string): 'zh' | 'ko' | 'en' | 'ru' {
   const lower = language.toLowerCase()
   if (lower.startsWith('zh'))
     return 'zh'
   if (lower.startsWith('ko'))
     return 'ko'
+  if (lower.startsWith('ru'))
+    return 'ru'
   return 'en'
 }
 
 /** 浏览器语言 → 已打包的资源 id（默认英文） */
-function browserLocale(language: string): 'zh-CN' | 'ko-KR' | 'en-US' {
+function browserLocale(language: string): 'zh-CN' | 'ko-KR' | 'en-US' | 'ru-RU' {
   const lower = language.toLowerCase()
   if (lower.startsWith('zh'))
     return 'zh-CN'
   if (lower.startsWith('ko'))
     return 'ko-KR'
+  if (lower.startsWith('ru'))
+    return 'ru-RU'
   return 'en-US'
 }
 

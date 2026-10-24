@@ -750,5 +750,6 @@
   "network.test_timeout": "프록시 응답이 없습니다: 요청 시간이 초과되었습니다",
   "network.test_connect": "프록시에 연결하지 못했습니다. 주소와 포트를 확인하십시오.",
   "network.test_status": "프록시에 연결되었지만 업데이트 서버가 {{status}}을(를) 반환했습니다.",
-  "network.test_failed": "프록시 테스트에 실패했습니다"
+  "network.test_failed": "프록시 테스트에 실패했습니다",
+  "ui.languages.ru": "Русский"
 }
