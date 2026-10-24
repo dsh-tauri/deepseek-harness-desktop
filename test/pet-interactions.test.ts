@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import en from '../src/i18n/locales/en-US.json'
 import zh from '../src/i18n/locales/zh-CN.json'
+import ru from '../src/i18n/locales/ru-RU.json'
 import { readSource } from './setup/read-source'
 
 const bridge = readSource('src-tauri/src/bridge/pet.rs')
@@ -35,12 +36,13 @@ describe('pet native interaction wiring', () => {
   })
 
   it.each([
-    ['pet.show_main_window', '显示主界面', 'Show Main Window', '기본 창 표시'],
-    ['pet.close', '关闭宠物', 'Close Pet', '펫 닫기'],
-  ] as const)('keeps %s translated consistently in the shell and native menu', (key, chinese, english, korean) => {
+    ['pet.show_main_window', '显示主界面', 'Show Main Window', '기본 창 표시', 'Показать главное окно'],
+    ['pet.close', '关闭宠物', 'Close Pet', '펫 닫기', 'Закрыть питомца'],
+  ] as const)('keeps %s translated consistently in the shell and native menu', (key, chinese, english, korean, russian) => {
     expect(zh[key]).toBe(chinese)
     expect(en[key]).toBe(english)
-    expect(translations).toContain(`"${key}" => ("${chinese}", "${english}", "${korean}")`)
+    expect(ru[key]).toBe(russian)
+    expect(translations).toContain(`"${key}" => ("${chinese}", "${english}", "${korean}", "${russian}")`)
     expect(bridge).toContain(`config::i18n::t("${key}")`)
   })
 })

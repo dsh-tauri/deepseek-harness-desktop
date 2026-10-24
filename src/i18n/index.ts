@@ -11,6 +11,7 @@ export const i18n = i18next
       'en-*': ['en-US'],
       'zh-*': ['zh-CN'],
       'ko-*': ['ko-KR'],
+      'ru-*': ['ru-RU'],
       'default': ['en-US'],
     },
     resources,
