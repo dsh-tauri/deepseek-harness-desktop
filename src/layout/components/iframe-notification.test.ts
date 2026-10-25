@@ -88,7 +88,7 @@ describe('iframe desktop settings bridge', () => {
   })
 
   it('does not treat normal dialog cancellation as a failure', async () => {
-    mocks.openConfigDialog.mockRejectedValue(undefined)
+    mocks.openConfigDialog.mockRejectedValue(false)
     mocks.onMessage!({ type: 'dsh://desktop-settings:open' })
     await settle()
     expect(mocks.openConfigDialog).toHaveBeenCalledOnce()

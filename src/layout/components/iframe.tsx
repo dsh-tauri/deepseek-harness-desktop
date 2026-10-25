@@ -403,7 +403,9 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     switch (data.type) {
       case 'dsh://desktop-settings:open':
         void openConfigDialog({ tab: 'application' }).catch((error: unknown) => {
-          if (error === undefined)
+          // overlastic 的 `cancel` 就是 deferred 的 reject：关闭浮层（onOpenChange(false)）
+          // 会让 Promise 以取消值拒绝，属正常取消，只有真正的异常才算打开失败（issue #1234）。
+          if (!(error instanceof Error))
             return
           console.error('[Iframe] failed to open desktop settings:', error)
           toast(t('messages.open_settings_failed'), { variant: 'danger' })
