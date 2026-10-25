@@ -137,6 +137,10 @@ vi.mock('react-native', () => ({
   Platform: { OS: 'android' },
   Linking: { openURL: vi.fn(async () => {}), openSettings: vi.fn(async () => {}) },
   useWindowDimensions: () => ({ width: 440, height: 900 }),
+  Dimensions: { get: () => ({ width: 440, height: 900 }) },
+  Keyboard: {
+    addListener: () => ({ remove: () => {} }),
+  },
   AppState: {
     get currentState() { return native.appState.currentState },
     addEventListener: (_event: string, listener: (state: string) => void) => {

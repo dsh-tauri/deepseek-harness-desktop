@@ -1939,6 +1939,9 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             }
             tauri::WindowEvent::ScaleFactorChanged { .. } => {
                 if window.label() == crate::desktop::pet::PET_WINDOW_LABEL {
+                    // 窗口事件回调在主线程，可以重读 Xft.dpi（用户可能刚改了缩放）。
+                    #[cfg(target_os = "linux")]
+                    crate::desktop::pet::refresh_page_extra_scale();
                     crate::desktop::pet::apply_pet_size(window.app_handle());
                 }
             }

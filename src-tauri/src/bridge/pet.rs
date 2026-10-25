@@ -770,7 +770,10 @@ pub fn set_pet_ignore_cursor_events(window: WebviewWindow, ignore: bool) -> Resu
     Ok(ignore)
 }
 
-/// 桌宠可交互区域（窗口内 CSS px，与 GTK 逻辑坐标一致）。
+/// 桌宠可交互区域（窗口内**设备像素** = CSS px × `devicePixelRatio`）。
+///
+/// 不能直接用 CSS px：KDE 分数缩放 + XWayland 下 WebKitGTK 按 `Xft.dpi` 给页面 1.5 倍，
+/// GTK 缩放系数却是 1，两者不同口径。由 [`apply_pet_input_region`] 按 GTK 缩放系数换算。
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct PetInputRect {
     pub x: f64,
@@ -825,10 +828,12 @@ fn apply_pet_input_region(window: &WebviewWindow, rect: PetInputRect) {
             return;
         }
     };
-    let left = rect.x.floor() as i32;
-    let top = rect.y.floor() as i32;
-    let width = ((rect.x + rect.width).ceil() as i32 - left).max(0);
-    let height = ((rect.y + rect.height).ceil() as i32 - top).max(0);
+    // 设备像素 → GTK 窗口坐标（输入形状用后者）。
+    let scale = f64::from(gtk_window.scale_factor().max(1));
+    let left = (rect.x / scale).floor() as i32;
+    let top = (rect.y / scale).floor() as i32;
+    let width = (((rect.x + rect.width) / scale).ceil() as i32 - left).max(0);
+    let height = (((rect.y + rect.height) / scale).ceil() as i32 - top).max(0);
     let region = gtk::cairo::Region::create_rectangle(&gtk::cairo::RectangleInt::new(
         left, top, width, height,
     ));

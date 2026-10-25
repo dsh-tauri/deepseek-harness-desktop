@@ -108,6 +108,19 @@ describe('pet cursor input lifecycle', () => {
     expect(native.invoke).toHaveBeenCalledWith('start_pet_mouse_stream')
   })
 
+  it('sends the linux input region in device pixels under a fractional device pixel ratio', async () => {
+    native.os = 'linux'
+    vi.stubGlobal('devicePixelRatio', 1.5)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0)
+      return 1
+    })
+    renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
+    await flush()
+    const regions = native.invoke.mock.calls.filter(([command]) => command === 'set_pet_input_region')
+    expect(regions).toEqual([['set_pet_input_region', { rect: { x: 15, y: 15, width: 150, height: 150 } }]])
+  })
+
   it('applies outside and inside hit tests without duplicate native writes', async () => {
     renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
     await flush()

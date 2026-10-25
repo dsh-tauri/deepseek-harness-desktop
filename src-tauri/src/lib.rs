@@ -65,18 +65,34 @@ pub fn run() -> Result<(), String> {
         // 同上，logger::init() 尚未执行，只能用 eprintln
         eprintln!("[wayland] set GDK_BACKEND=x11 so the pet window can stay on top (issue #649)");
     }
-    // NVIDIA 驱动 + Wayland：只关 DMABUF renderer（见 `should_disable_dmabuf_renderer`）。
-    // 必须在上面强制 XWayland 之后判定，否则会把已经切到 x11 的用户也算进来。
+    // 在强制 XWayland 之后判定，避免对已切到 x11 的用户应用 issue #1234 的规避。
     if should_disable_dmabuf_renderer(
         &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
         &std::env::var("WAYLAND_SOCKET").unwrap_or_default(),
         &std::env::var("GDK_BACKEND").unwrap_or_default(),
         nvidia_driver_loaded(),
-    ) && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err()
+        std::env::var_os("WAYLAND_DISPLAY").is_none()
+            && std::env::var_os("XDG_RUNTIME_DIR")
+                .filter(|directory| !directory.is_empty())
+                .is_some_and(|directory| {
+                    std::path::Path::new(&directory).join("wayland-0").exists()
+                }),
+    ) && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
     {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         // 同上，logger::init() 尚未执行，只能用 eprintln
-        eprintln!("[wayland] set WEBKIT_DISABLE_DMABUF_RENDERER for NVIDIA on Wayland (issue #1234)");
+        eprintln!(
+            "[wayland] set WEBKIT_DISABLE_DMABUF_RENDERER for NVIDIA on Wayland (issue #1234)"
+        );
+    }
+    // 桌宠 VP9-alpha 视频改走软件解码（见 `vpx_va_rank_override`）。必须在任何 WebView
+    // 建出之前设置：WebKitWebProcess 启动时继承环境，GStreamer 初始化时读一次。
+    #[cfg(target_os = "linux")]
+    if let Some(ranks) =
+        vpx_va_rank_override(&std::env::var("GST_PLUGIN_FEATURE_RANK").unwrap_or_default())
+    {
+        std::env::set_var("GST_PLUGIN_FEATURE_RANK", ranks);
+        eprintln!("[gstreamer] disabled VA-API VP8/VP9 decoders for WebKitGTK video");
     }
     // 初始化日志系统
     logger::init();
@@ -180,34 +196,20 @@ fn should_apply_wayland_egl_workaround(session_type: &str, appimage_present: boo
     session_type == "wayland" && appimage_present
 }
 
-/// NVIDIA 驱动在 Wayland 下是否要关掉 WebKitGTK 的 DMABUF renderer。
-///
-/// WebKitGTK 2.52 的 DMABUF 渲染通路在 NVIDIA 驱动 + 原生 Wayland 上会整窗停绘，
-/// 随后进程 SIGSEGV（issue #1234：关掉设置浮层时崩溃，且栈已不可回溯）。这里只关
-/// DMABUF、保留合成：与 AppImage 那条兜底不同，连合成一起关会打掉透明桌宠窗口与
-/// 视频渲染。
-///
-/// 判定偏「宁可多关」：只有确认跑不到 Wayland 时才放过——没有 `WAYLAND_DISPLAY`
-/// 也没有继承来的 `WAYLAND_SOCKET`（沙箱/portal 交接时只有后者），或 `GDK_BACKEND`
-/// 恰好只写 `x11`（无回落后备）。`x11,wayland` 这类列表不算，X11 打不开时 GTK 会
-/// 顺延到 Wayland，否则就会漏掉真正会崩的那种组合。代价是显式写列表的用户白关一次
-/// DMABUF，丢一点渲染性能，不会崩。
-///
-/// 纯函数、不读环境，三条 CI 腿都能跑单测；驱动探测在 `nvidia_driver_loaded`。
+/// issue #1234：只关 DMABUF、保留合成；后端列表可能回落到 Wayland，仅排除纯 x11。
 pub(crate) fn should_disable_dmabuf_renderer(
     wayland_display: &str,
     wayland_socket: &str,
     gdk_backend: &str,
     nvidia_driver: bool,
+    default_socket_present: bool,
 ) -> bool {
     nvidia_driver
-        && (!wayland_display.is_empty() || !wayland_socket.is_empty())
+        && (!wayland_display.is_empty() || !wayland_socket.is_empty() || default_socket_present)
         && gdk_backend != "x11"
 }
 
-/// NVIDIA 驱动是否在跑：`/proc/driver/nvidia/version` 由 nvidia 内核模块暴露，
-/// nouveau 与无独显的主机没有这个节点。开源内核模块（nvidia-open）也带这个节点，
-/// 这里不区分——两者的用户态渲染栈相同，DMABUF 崩溃风险也一样，多关一次只是掉点性能。
+/// nvidia-open 与闭源内核模块共用用户态渲染栈，均需规避 issue #1234；nouveau 不匹配。
 fn nvidia_driver_loaded() -> bool {
     cfg!(target_os = "linux") && std::path::Path::new("/proc/driver/nvidia/version").exists()
 }
@@ -258,6 +260,58 @@ pub(crate) fn should_force_xwayland(
         && !pet_overlay_supported(wayland_display, gdk_backend)
         && gdk_backend.is_empty()
         && !display.is_empty()
+}
+
+/// 把 GStreamer VA-API 的 VP8/VP9 解码器（含 alpha 解码 bin）降为 NONE 后的
+/// `GST_PLUGIN_FEATURE_RANK`；无需改动时返回 `None`。
+///
+/// 桌宠素材是 VP9-alpha `.webm`。WebKitGTK 把解码交给系统 GStreamer，
+/// `vavp9alphadecodebin`（rank 267）压过软件 `vp9alphadecodebin`（266）抢到解码；
+/// Intel iHD 驱动在把 VA surface 映射给 GL 上传时（`gst_va_surface_copy` →
+/// `KernelDll_AllocateStates`）SIGSEGV，WebKitWebProcess 整个崩掉，桌宠随之消失。
+/// 只关 `vavp9dec` 不够：alpha bin 按名字直接建内部解码器，不看它的 rank。
+/// Windows（WebView2 自带 libvpx）与 macOS（HEVC-alpha 走 AVFoundation）不经过这条路径。
+///
+/// 只动 VP8/VP9：宠物视频很小，软件解码开销可以忽略；H.264 / AV1 等硬解不受影响。
+/// 非默认显卡的特性名带设备节点（`varenderD129vp9dec`），按常见节点范围一并列出，
+/// 不存在的特性名 GStreamer 直接忽略。用户在变量里已写过的特性保持权威，不覆盖。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn vpx_va_rank_override(existing: &str) -> Option<String> {
+    let mut features = vec![
+        "vavp9dec".to_string(),
+        "vavp8dec".to_string(),
+        "vavp9alphadecodebin".to_string(),
+        "vavp8alphadecodebin".to_string(),
+        // 旧版 gstreamer-vaapi 插件
+        "vaapivp9dec".to_string(),
+        "vaapivp8dec".to_string(),
+    ];
+    for node in 128..136 {
+        features.push(format!("varenderD{node}vp9dec"));
+        features.push(format!("varenderD{node}vp8dec"));
+        features.push(format!("vavp9renderD{node}alphadecodebin"));
+        features.push(format!("vavp8renderD{node}alphadecodebin"));
+    }
+    let specified: Vec<&str> = existing
+        .split(',')
+        .filter_map(|entry| entry.split(':').next())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    let additions: Vec<String> = features
+        .into_iter()
+        .filter(|name| !specified.contains(&name.as_str()))
+        .map(|name| format!("{name}:NONE"))
+        .collect();
+    if additions.is_empty() {
+        return None;
+    }
+    let existing = existing.trim().trim_end_matches(',');
+    Some(if existing.is_empty() {
+        additions.join(",")
+    } else {
+        format!("{existing},{}", additions.join(","))
+    })
 }
 
 /// [`pet_overlay_supported`] 的环境变量读取版本，供查询命令与建窗路径共用。
@@ -321,21 +375,61 @@ mod tests {
 
     #[test]
     fn dmabuf_disabled_only_for_nvidia_on_native_wayland() {
-        // 命中的组合：NVIDIA 驱动 + 有 Wayland 套接字。
-        assert!(should_disable_dmabuf_renderer("wayland-0", "", "", true));
-        assert!(should_disable_dmabuf_renderer("wayland-0", "", "wayland", true));
-        assert!(should_disable_dmabuf_renderer("wayland-0", "", "wayland,x11", true));
-        // 带回落后备的列表不算 X11：X11 打不开时 GTK 会顺延到 Wayland，宁可多关。
-        assert!(should_disable_dmabuf_renderer("wayland-0", "", "x11,wayland", true));
-        // 只有继承来的套接字（沙箱/portal 交接，WAYLAND_DISPLAY 为空）同样是原生 Wayland。
-        assert!(should_disable_dmabuf_renderer("", "4", "", true));
-        // 只写 x11 且无后备：确定跑在 XWayland 上，不碰渲染参数。
-        assert!(!should_disable_dmabuf_renderer("wayland-0", "", "x11", true));
-        // 无 NVIDIA / nouveau：系统 WebKit 的 DMABUF 通路正常。
-        assert!(!should_disable_dmabuf_renderer("wayland-0", "", "", false));
-        assert!(!should_disable_dmabuf_renderer("wayland-0", "", "x11,wayland", false));
-        // 两个 Wayland 变量都为空（X11 会话、macOS / Windows）：判定恒为 false。
-        assert!(!should_disable_dmabuf_renderer("", "", "", true));
-        assert!(!should_disable_dmabuf_renderer("", "", "wayland", true));
+        for (display, socket, backend, nvidia, expected) in [
+            ("wayland-0", "", "", true, true),
+            ("wayland-0", "", "wayland", true, true),
+            ("wayland-0", "", "wayland,x11", true, true),
+            ("wayland-0", "", "x11,wayland", true, true),
+            ("", "4", "", true, true),
+            ("wayland-0", "", "x11", true, false),
+            ("wayland-0", "", "", false, false),
+            ("wayland-0", "", "x11,wayland", false, false),
+            ("", "", "", true, false),
+            ("", "", "wayland", true, false),
+        ] {
+            assert_eq!(
+                should_disable_dmabuf_renderer(display, socket, backend, nvidia, false),
+                expected,
+                "display={display:?}, socket={socket:?}, backend={backend:?}, nvidia={nvidia}"
+            );
+        }
+    }
+
+    #[test]
+    fn dmabuf_detects_default_wayland_socket_without_environment_hints() {
+        assert!(should_disable_dmabuf_renderer("", "", "", true, true));
+        assert!(should_disable_dmabuf_renderer(
+            "",
+            "",
+            "x11,wayland",
+            true,
+            true
+        ));
+        assert!(!should_disable_dmabuf_renderer("", "", "x11", true, true));
+        assert!(!should_disable_dmabuf_renderer("", "", "", false, true));
+    }
+
+    #[test]
+    fn vpx_va_rank_override_disables_alpha_bins_and_keeps_user_entries() {
+        let ranks = vpx_va_rank_override("").unwrap();
+        let entries: Vec<&str> = ranks.split(',').collect();
+        // 只关 vavp9dec 不够：真正崩溃的路径是 alpha 解码 bin。
+        assert!(entries.contains(&"vavp9alphadecodebin:NONE"));
+        assert!(entries.contains(&"vavp9dec:NONE"));
+        // 第二块显卡的特性名带设备节点。
+        assert!(entries.contains(&"vavp9renderD129alphadecodebin:NONE"));
+        assert!(entries.contains(&"varenderD129vp9dec:NONE"));
+        // 其他编解码器不动。
+        assert!(!ranks.contains("h264"));
+
+        // 用户已有的条目原样保留在前面，且对同名特性保持权威。
+        let ranks = vpx_va_rank_override("vavp9dec:PRIMARY,foo:MAX").unwrap();
+        assert!(ranks.starts_with("vavp9dec:PRIMARY,foo:MAX,"));
+        assert!(!ranks.contains("vavp9dec:NONE"));
+        assert!(ranks.contains("vavp9alphadecodebin:NONE"));
+
+        // 已全部写过：不改环境。
+        let full = vpx_va_rank_override("").unwrap();
+        assert_eq!(vpx_va_rank_override(&full), None);
     }
 }

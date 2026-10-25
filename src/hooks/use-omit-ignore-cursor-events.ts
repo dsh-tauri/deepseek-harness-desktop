@@ -73,7 +73,15 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
       const element = elementRef.current
       if (disposed || element === null)
         return
-      const { x, y, width, height } = element.getBoundingClientRect()
+      // 按 `devicePixelRatio` 换成设备像素再交给 Rust（Rust 再按 GTK 缩放系数换回 GTK 坐标）：
+      // KDE 分数缩放 + XWayland 下页面是 1.5、GTK 是 1，直接传 CSS 坐标会让输入形状
+      // 缩成 2/3 并偏向左上角，宠物中间点不到。
+      const scale = globalThis.devicePixelRatio || 1
+      const bounds = element.getBoundingClientRect()
+      const x = bounds.x * scale
+      const y = bounds.y * scale
+      const width = bounds.width * scale
+      const height = bounds.height * scale
       const rect = { x, y, width, height }
       if (appliedRegion !== undefined && appliedRegion.x === x && appliedRegion.y === y && appliedRegion.width === width && appliedRegion.height === height)
         return

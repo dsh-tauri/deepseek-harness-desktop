@@ -151,17 +151,93 @@ pub fn pet_window_logical_size(percent: f64, aspect: f64) -> (f64, f64) {
     )
 }
 
+/// Linux：WebKitGTK 页面缩放里 GTK 缩放系数之外的部分，千分比存储。
+///
+/// 实测（WebKitGTK 2.54，KDE）页面 `devicePixelRatio` =
+/// GTK 缩放系数 × `gtk-xft-dpi`/96 × `GDK_DPI_SCALE`（XWayland 下）：
+/// `Xft.dpi=144` → 1.5；再加 `GDK_DPI_SCALE=0.8333` → 1.25；`GDK_SCALE=2` → 3。
+/// 原生 Wayland 下 dpr 只等于 GTK 缩放系数，该部分取 1。
+/// `gtk::Settings` 只能在主线程读，而建窗跑在异步任务里，所以在主线程算好缓存在这里。
+#[cfg(target_os = "linux")]
+static PAGE_EXTRA_SCALE_MILLI: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(1000);
+
+/// 由 `gtk-xft-dpi`（1/1024 DPI，未设置为 -1）与 `GDK_DPI_SCALE` 推出页面额外缩放。
+#[cfg(target_os = "linux")]
+fn linux_page_extra_scale(gdk_x11: bool, xft_dpi_1024: i32, gdk_dpi_scale: Option<&str>) -> f64 {
+    if !gdk_x11 {
+        return 1.0;
+    }
+    let dpi = if xft_dpi_1024 > 0 {
+        f64::from(xft_dpi_1024) / 1024.0 / 96.0
+    } else {
+        1.0
+    };
+    let env = gdk_dpi_scale
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1.0);
+    dpi * env
+}
+
+/// 重新读取页面额外缩放并缓存。**必须在主线程调用**（app setup / 窗口事件回调）。
+#[cfg(target_os = "linux")]
+pub fn refresh_page_extra_scale() {
+    use gtk::prelude::GtkSettingsExt;
+    // GDK 走 X11（XWayland）时 WebKitGTK 才按 Xft.dpi 放大页面；判定与置顶能力共用。
+    let gdk_x11 = crate::pet_overlay_supported_env();
+    let xft_dpi = gtk::Settings::default()
+        .map(|settings| settings.gtk_xft_dpi())
+        .unwrap_or(-1);
+    let scale = linux_page_extra_scale(
+        gdk_x11,
+        xft_dpi,
+        std::env::var("GDK_DPI_SCALE").ok().as_deref(),
+    );
+    PAGE_EXTRA_SCALE_MILLI.store(
+        (scale * 1000.0).round().clamp(250.0, 8000.0) as u32,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Linux：一个 CSS 像素对应多少物理像素（= 页面 `devicePixelRatio`），与前端
+/// `usePetWindowSize` / 输入形状同一口径。
+#[cfg(target_os = "linux")]
+fn pet_page_scale(gtk_scale: f64) -> f64 {
+    let extra =
+        f64::from(PAGE_EXTRA_SCALE_MILLI.load(std::sync::atomic::Ordering::Relaxed)) / 1000.0;
+    gtk_scale * extra
+}
+
+/// Linux：当前设置下桌宠窗口的物理尺寸（CSS 尺寸 × 页面缩放）。
+#[cfg(target_os = "linux")]
+fn pet_window_physical_size<R: Runtime>(app: &AppHandle<R>, gtk_scale: f64) -> (u32, u32) {
+    let (width, height) =
+        pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
+    let scale = pet_page_scale(gtk_scale);
+    (
+        (width * scale).round() as u32,
+        (height * scale).round() as u32,
+    )
+}
+
 /// 实时应用宠物大小：窗口已存在时直接重设尺寸（设置页拖动条拖动中实时调用）。
 pub fn apply_pet_size<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
         return;
     };
-    let (width, height) =
-        pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
-    if window
-        .set_size(tauri::LogicalSize::new(width, height))
-        .is_ok()
-    {
+    #[cfg(target_os = "linux")]
+    let size: tauri::Size = {
+        let (width, height) = pet_window_physical_size(app, window.scale_factor().unwrap_or(1.0));
+        tauri::PhysicalSize::new(width, height).into()
+    };
+    #[cfg(not(target_os = "linux"))]
+    let size: tauri::Size = {
+        let (width, height) =
+            pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
+        tauri::LogicalSize::new(width, height).into()
+    };
+    if window.set_size(size).is_ok() {
         // 放大后重新夹紧当前位置，避免窗口右侧或底部被推出当前显示器。
         let _ = move_pet_window(app, 0, 0);
     }
@@ -367,6 +443,13 @@ pub fn ensure_pet_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Webvie
     }
 
     let window = builder.build()?;
+    // Linux：`inner_size` 按 GTK 缩放系数解释，与页面缩放不同口径（XWayland + 分数缩放），
+    // 建好后立刻按页面缩放改成物理尺寸，后续默认定位也按这个尺寸算。
+    #[cfg(target_os = "linux")]
+    {
+        let (width, height) = pet_window_physical_size(app, window.scale_factor().unwrap_or(1.0));
+        let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+    }
     let app_for_pos = app_handle.clone();
     let saved = get_pet_window_position(&app_for_pos);
     if let (Some(x), Some(y)) = (saved.x, saved.y) {
@@ -394,12 +477,22 @@ fn position_on_any_monitor<R: Runtime>(window: &WebviewWindow<R>, x: i32, y: i32
     };
     // 以当前设置的窗口逻辑尺寸 × 缩放系数近似命中矩形，允许窗口底部/右侧
     // 探出一点点也不误判。
-    let (lw, lh) = pet_window_logical_size(
-        get_pet_size_percent(window.app_handle()),
-        pet_window_aspect(window.app_handle()),
-    );
-    let w = (lw * window.scale_factor().unwrap_or(1.0)) as i32;
-    let h = (lh * window.scale_factor().unwrap_or(1.0)) as i32;
+    #[cfg(target_os = "linux")]
+    let (w, h) = {
+        let (w, h) = pet_window_physical_size(app, window.scale_factor().unwrap_or(1.0));
+        (w as i32, h as i32)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (w, h) = {
+        let (lw, lh) = pet_window_logical_size(
+            get_pet_size_percent(window.app_handle()),
+            pet_window_aspect(window.app_handle()),
+        );
+        (
+            (lw * window.scale_factor().unwrap_or(1.0)) as i32,
+            (lh * window.scale_factor().unwrap_or(1.0)) as i32,
+        )
+    };
     let hit_left = x;
     let hit_top = y;
     let hit_right = x + w;
@@ -423,9 +516,19 @@ fn place_pet_at_default<R: Runtime>(window: &WebviewWindow<R>) {
     let mon_pos = monitor.position();
     let mon_size = monitor.size();
     // 距屏幕右下角 32px 的物理偏移；尺寸 = 当前设置逻辑尺寸 × 屏幕缩放系数。
-    let (lw, lh) = pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
-    let w = (lw * monitor.scale_factor()) as i32;
-    let h = (lh * monitor.scale_factor()) as i32;
+    #[cfg(target_os = "linux")]
+    let (w, h) = {
+        let (w, h) = pet_window_physical_size(app, monitor.scale_factor());
+        (w as i32, h as i32)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (w, h) = {
+        let (lw, lh) = pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
+        (
+            (lw * monitor.scale_factor()) as i32,
+            (lh * monitor.scale_factor()) as i32,
+        )
+    };
     let x = mon_pos.x + mon_size.width as i32 - w - 32;
     let y = mon_pos.y + mon_size.height as i32 - h - 96;
     let _ = window.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
@@ -476,6 +579,9 @@ pub fn set_pet_window_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) -> 
 /// webview 都不该存在（隐藏窗口同样会加载 pet.html、播放动画）。窗口此后由
 /// [`set_pet_window_visible`] 按需创建/销毁。
 pub fn init_pet_window<R: Runtime>(app: &AppHandle<R>) {
+    // setup 跑在主线程：趁此缓存页面额外缩放，之后异步建窗时也能用。
+    #[cfg(target_os = "linux")]
+    refresh_page_extra_scale();
     if !crate::config::get_store_dat_setting(app).pet_enabled {
         // 全新安装默认不启用桌宠：不预创建窗口（也顺带不触发 Linux 未 realize
         // 窗口的穿透请求路径）。
@@ -602,5 +708,23 @@ mod tests {
             (0, 0),
             "窗口大于显示器时应贴齐显示器左上角"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_page_extra_scale_matches_measured_webkitgtk_ratios() {
+        let dpi = |value: f64| (value * 1024.0) as i32;
+        // XWayland + KDE 150%：Xft.dpi=144 → 页面 1.5。
+        assert!((linux_page_extra_scale(true, dpi(144.0), None) - 1.5).abs() < 1e-9);
+        // 再叠 GDK_DPI_SCALE（实测 0.8333 → 1.25、1.3333 → 2）。
+        assert!((linux_page_extra_scale(true, dpi(144.0), Some("0.8333")) - 1.25).abs() < 1e-3);
+        assert!((linux_page_extra_scale(true, dpi(144.0), Some("1.3333")) - 2.0).abs() < 1e-3);
+        // 120% / 125% 等任意 DPI 按比例。
+        assert!((linux_page_extra_scale(true, dpi(120.0), None) - 1.25).abs() < 1e-9);
+        // 未设置 / 非法值回落 1。
+        assert_eq!(linux_page_extra_scale(true, -1, Some("abc")), 1.0);
+        assert_eq!(linux_page_extra_scale(true, dpi(96.0), Some("0")), 1.0);
+        // 原生 Wayland：页面缩放只等于 GTK 缩放系数，Xft.dpi 不参与。
+        assert_eq!(linux_page_extra_scale(false, dpi(144.0), Some("1.5")), 1.0);
     }
 }
