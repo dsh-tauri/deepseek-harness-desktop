@@ -65,6 +65,18 @@ pub fn run() -> Result<(), String> {
         // 同上，logger::init() 尚未执行，只能用 eprintln
         eprintln!("[wayland] set GDK_BACKEND=x11 so the pet window can stay on top (issue #649)");
     }
+    // NVIDIA 驱动 + Wayland：只关 DMABUF renderer（见 `should_disable_dmabuf_renderer`）。
+    // 必须在上面强制 XWayland 之后判定，否则会把已经切到 x11 的用户也算进来。
+    if should_disable_dmabuf_renderer(
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        &std::env::var("GDK_BACKEND").unwrap_or_default(),
+        nvidia_driver_loaded(),
+    ) && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err()
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        // 同上，logger::init() 尚未执行，只能用 eprintln
+        eprintln!("[wayland] set WEBKIT_DISABLE_DMABUF_RENDERER for NVIDIA on Wayland (issue #1234)");
+    }
     // 初始化日志系统
     logger::init();
     log::info!(
@@ -165,6 +177,34 @@ pub fn run() -> Result<(), String> {
 /// AppImage 运行时必带 `APPIMAGE` 环境变量（runtime 规范），以此判定打包形态。
 fn should_apply_wayland_egl_workaround(session_type: &str, appimage_present: bool) -> bool {
     session_type == "wayland" && appimage_present
+}
+
+/// NVIDIA 驱动在 Wayland 下是否要关掉 WebKitGTK 的 DMABUF renderer。
+///
+/// WebKitGTK 2.52 的 DMABUF 渲染通路在 NVIDIA 驱动 + 原生 Wayland 上会整窗停绘，
+/// 随后进程 SIGSEGV（issue #1234：关掉设置浮层时崩溃，且栈已不可回溯）。这里只关
+/// DMABUF、保留合成：与 AppImage 那条兜底不同，连合成一起关会打掉透明桌宠窗口与
+/// 视频渲染。
+///
+/// 判定偏「宁可多关」：只有确认跑不到 Wayland 时才放过——没有 Wayland 套接字，或
+/// `GDK_BACKEND` 恰好只写 `x11`（无回落后备）。`x11,wayland` 这类列表不算，X11
+/// 打不开时 GTK 会顺延到 Wayland，否则就会漏掉真正会崩的那种组合。代价是显式写
+/// 列表的用户白关一次 DMABUF，丢一点渲染性能，不会崩。
+///
+/// 纯函数、不读环境，三条 CI 腿都能跑单测；驱动探测在 `nvidia_driver_loaded`。
+pub(crate) fn should_disable_dmabuf_renderer(
+    wayland_display: &str,
+    gdk_backend: &str,
+    nvidia_driver: bool,
+) -> bool {
+    nvidia_driver && !wayland_display.is_empty() && gdk_backend != "x11"
+}
+
+/// NVIDIA 驱动是否在跑：`/proc/driver/nvidia/version` 由 nvidia 内核模块暴露，
+/// nouveau 与无独显的主机没有这个节点。开源内核模块（nvidia-open）也带这个节点，
+/// 这里不区分——两者的用户态渲染栈相同，DMABUF 崩溃风险也一样，多关一次只是掉点性能。
+fn nvidia_driver_loaded() -> bool {
+    cfg!(target_os = "linux") && std::path::Path::new("/proc/driver/nvidia/version").exists()
 }
 
 /// 桌宠窗口的置顶与绝对定位能力是否可用。
@@ -272,5 +312,23 @@ mod tests {
         assert!(!should_force_xwayland(true, "", "", ":0"));
         // macOS / Windows：三个变量都为空，GDK_BACKEND 在那里也无意义。
         assert!(!should_force_xwayland(true, "", "", ""));
+    }
+
+    #[test]
+    fn dmabuf_disabled_only_for_nvidia_on_native_wayland() {
+        // 命中的组合：NVIDIA 驱动 + 有 Wayland 套接字。
+        assert!(should_disable_dmabuf_renderer("wayland-0", "", true));
+        assert!(should_disable_dmabuf_renderer("wayland-0", "wayland", true));
+        assert!(should_disable_dmabuf_renderer("wayland-0", "wayland,x11", true));
+        // 带回落后备的列表不算 X11：X11 打不开时 GTK 会顺延到 Wayland，宁可多关。
+        assert!(should_disable_dmabuf_renderer("wayland-0", "x11,wayland", true));
+        // 只写 x11 且无后备：确定跑在 XWayland 上，不碰渲染参数。
+        assert!(!should_disable_dmabuf_renderer("wayland-0", "x11", true));
+        // 无 NVIDIA / nouveau：系统 WebKit 的 DMABUF 通路正常。
+        assert!(!should_disable_dmabuf_renderer("wayland-0", "", false));
+        assert!(!should_disable_dmabuf_renderer("wayland-0", "x11,wayland", false));
+        // 没有 Wayland 套接字（X11 会话、macOS / Windows）：判定恒为 false。
+        assert!(!should_disable_dmabuf_renderer("", "", true));
+        assert!(!should_disable_dmabuf_renderer("", "wayland", true));
     }
 }
