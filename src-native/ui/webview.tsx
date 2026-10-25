@@ -55,15 +55,25 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
   if (Platform.OS !== 'ios')
     edges.push('bottom')
   const shim = createNotificationShim(address.id, nonce, edges)
-  // keep:effect The WebView keeps its frame under the iOS keyboard, so the page has to reserve the covered height itself; the keyboard top comes from the frame event so docked, resized and floating keyboards all report their real overlap.
+  // keep:effect Neither platform shrinks the WebView under its keyboard — iOS keeps the frame and Android runs edge-to-edge, where `adjustResize` no longer resizes the window — so the page has to reserve the covered height itself. iOS derives the overlap from the frame event so docked, resized and floating keyboards all report their real top; Android only exposes the keyboard height, which is already in DIP and therefore comparable with CSS px.
   useEffect(() => {
-    if (Platform.OS !== 'ios')
-      return
-    const subscription = Keyboard.addListener('keyboardWillChangeFrame', (event) => {
-      const covered = Dimensions.get('window').height - event.endCoordinates.screenY
-      ref.current?.injectJavaScript(keyboardHeightScript(address.id, covered))
+    if (Platform.OS === 'ios') {
+      const subscription = Keyboard.addListener('keyboardWillChangeFrame', (event) => {
+        const covered = Dimensions.get('window').height - event.endCoordinates.screenY
+        ref.current?.injectJavaScript(keyboardHeightScript(address.id, covered))
+      })
+      return () => subscription.remove()
+    }
+    const shown = Keyboard.addListener('keyboardDidShow', (event) => {
+      ref.current?.injectJavaScript(keyboardHeightScript(address.id, event.endCoordinates.height))
     })
-    return () => subscription.remove()
+    const hidden = Keyboard.addListener('keyboardDidHide', () => {
+      ref.current?.injectJavaScript(keyboardHeightScript(address.id, 0))
+    })
+    return () => {
+      shown.remove()
+      hidden.remove()
+    }
   }, [address.id])
   // keep:effect Mirror native visibility into the authenticated loaded document.
   useEffect(() => {
