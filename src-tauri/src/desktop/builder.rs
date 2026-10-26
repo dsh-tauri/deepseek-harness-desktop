@@ -889,6 +889,12 @@ fn with_shell_chrome<'a>(
         .additional_browser_args(WINDOWS_SHELL_BROWSER_ARGS)
         .icon(app.default_window_icon().unwrap().clone())?;
 
+    #[cfg(target_os = "linux")]
+    let builder = match app.default_window_icon() {
+        Some(icon) => builder.icon(icon.clone())?,
+        None => builder,
+    };
+
     #[cfg(target_os = "macos")]
     let builder = builder
         .decorations(true)
