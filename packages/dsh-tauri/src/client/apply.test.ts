@@ -5,6 +5,7 @@ import { apply, inject } from './index'
 
 // effect 标签是 `ctx.effect` 的卸载日志标识：与 `client/apply.ts` 逐字一致。
 const EXPECTED_LABELS = [
+  'dsh-tauri: key repeat normalization (issue #1172)',
   'dsh-tauri: appearance',
   'dsh-tauri: style (sidebar background)',
   'dsh-tauri: sidebar (toggle command + collapsed report)',
@@ -283,8 +284,8 @@ describe('apply', () => {
     expect(env.labels).toEqual(EXPECTED_LABELS)
     expect(env.styles).toHaveLength(1)
     expect(env.sent.filter(message => message.type === 'dsh://plugin-error')).toEqual([])
-    expect(env.windowListeners()).toBe(3)
-    expect(env.documentListeners()).toBe(3)
+    expect(env.windowListeners()).toBe(4)
+    expect(env.documentListeners()).toBe(5)
 
     for (const dispose of disposers.splice(0))
       await dispose()
