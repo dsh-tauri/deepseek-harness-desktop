@@ -222,6 +222,10 @@ html[data-dsh-frame] [data-testid="dsh-shell-root"] {
   background: var(--color-canvas);
 }
 
+html[data-dsh-frame="inset"] body {
+  clip-path: inset(0 round var(--frame-radius));
+}
+
 html[data-dsh-frame="inset"] #root {
   inset: var(--frame-inset);
   border-radius: var(--frame-radius);
