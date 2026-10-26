@@ -662,6 +662,25 @@ pub(super) fn terminate_stale_harness_processes_at(dsh_bin: &Path) -> Result<(),
 }
 
 #[cfg(windows)]
+#[derive(Debug, PartialEq, Eq)]
+enum OrphanDecision {
+    Terminate,
+    AlreadyExited,
+    Mismatch,
+}
+
+#[cfg(windows)]
+fn confirm_orphan_decision(running: bool, expected: u64, observed: u64) -> OrphanDecision {
+    if expected == 0 || expected != observed {
+        OrphanDecision::Mismatch
+    } else if running {
+        OrphanDecision::Terminate
+    } else {
+        OrphanDecision::AlreadyExited
+    }
+}
+
+#[cfg(windows)]
 fn terminate_confirmed_process(pid: u32, created: u64) -> Result<bool, String> {
     use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{
@@ -703,16 +722,21 @@ fn terminate_confirmed_process(pid: u32, created: u64) -> Result<bool, String> {
             "HARNESS_CLEANUP_FAILED: cannot verify process {pid}"
         ));
     }
-    let matches = state == WAIT_TIMEOUT
-        && created != 0
-        && (u64::from(creation.dwHighDateTime) << 32 | u64::from(creation.dwLowDateTime))
-            == created;
-    let result = if matches {
-        log::warn!("Terminating confirmed orphan Harness process {pid}");
-        terminate_windows_process(pid, handle, kill_pid_tree).map(|()| true)
-    } else {
-        log::warn!("Skipping orphan Harness process {pid}: creation time or process state changed (expected {created}, observed {})", u64::from(creation.dwHighDateTime) << 32 | u64::from(creation.dwLowDateTime));
-        Ok(false)
+    let observed = u64::from(creation.dwHighDateTime) << 32 | u64::from(creation.dwLowDateTime);
+    let decision = confirm_orphan_decision(state == WAIT_TIMEOUT, created, observed);
+    let result = match decision {
+        OrphanDecision::Terminate => {
+            log::warn!("Terminating confirmed orphan Harness process {pid}");
+            terminate_windows_process(pid, handle, kill_pid_tree).map(|()| true)
+        }
+        OrphanDecision::AlreadyExited => {
+            log::warn!("Confirmed orphan Harness process {pid} already exited or is exiting");
+            Ok(true)
+        }
+        OrphanDecision::Mismatch => {
+            log::warn!("Skipping orphan Harness process {pid}: creation time mismatch (expected {created}, observed {observed})");
+            Ok(false)
+        }
     };
     unsafe { CloseHandle(handle) };
     result
@@ -2240,6 +2264,17 @@ setTimeout(() => process.exit(0), 60000);
             std::panic::resume_unwind(error);
         }
         assert!(exited.success());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn orphan_decision_treats_exiting_process_as_terminated() {
+        assert_eq!(confirm_orphan_decision(true, 7, 7), OrphanDecision::Terminate);
+        assert_eq!(confirm_orphan_decision(false, 7, 7), OrphanDecision::AlreadyExited);
+        assert_eq!(confirm_orphan_decision(true, 7, 8), OrphanDecision::Mismatch);
+        assert_eq!(confirm_orphan_decision(false, 7, 8), OrphanDecision::Mismatch);
+        assert_eq!(confirm_orphan_decision(true, 0, 0), OrphanDecision::Mismatch);
+        assert_eq!(confirm_orphan_decision(false, 0, 0), OrphanDecision::Mismatch);
     }
 
     #[cfg(windows)]
