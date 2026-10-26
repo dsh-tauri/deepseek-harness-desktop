@@ -265,7 +265,10 @@ function runFallback(userAgent: string, withRtc = false, language = 'en-US') {
       addEventListener(this: FallbackNode, type: string, fn: () => void) { this.listeners[type] = fn },
       append(this: FallbackNode, ...nodes: FallbackNode[]) { this.children.push(...nodes) },
       remove(this: FallbackNode) { this.isConnected = false },
-      appendChild(this: FallbackNode, node: FallbackNode) { node.isConnected = true; mounted.push(node) },
+      appendChild(this: FallbackNode, node: FallbackNode) {
+        node.isConnected = true
+        mounted.push(node)
+      },
       style: {},
     },
   })
@@ -286,11 +289,10 @@ function runFallback(userAgent: string, withRtc = false, language = 'en-US') {
 }
 
 describe('webrtc fallback', () => {
-  it('throws NotSupportedError and offers the browser when WebKitGTK lacks WebRTC', () => {
+  it('keeps RTCPeerConnection undefined and offers the browser when WebKitGTK lacks WebRTC', () => {
     const { sandbox, posted, mounted } = runFallback(WEBKITGTK_UA)
-    const Ctor = sandbox.RTCPeerConnection as new () => unknown
 
-    expect(() => new Ctor()).toThrow(expect.objectContaining({ name: 'NotSupportedError' }))
+    expect(sandbox.RTCPeerConnection).toBeUndefined()
     expect(mounted).toHaveLength(1)
     const [message, open] = mounted[0]!.children
     expect(message!.textContent).toContain('WebRTC')
@@ -304,7 +306,7 @@ describe('webrtc fallback', () => {
 
   it('localizes the prompt', () => {
     const { sandbox, mounted } = runFallback(WEBKITGTK_UA, false, 'zh-CN')
-    expect(() => new (sandbox.RTCPeerConnection as new () => unknown)()).toThrow()
+    expect(sandbox.RTCPeerConnection).toBeUndefined()
     expect(mounted[0]!.children[0]!.textContent).toContain('实时语音')
   })
 

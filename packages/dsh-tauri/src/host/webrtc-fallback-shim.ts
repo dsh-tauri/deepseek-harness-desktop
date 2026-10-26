@@ -35,10 +35,15 @@ export const WEBRTC_FALLBACK_SCRIPT = `(() => {
     panel.append(message, button(text.open, openInBrowser), button(text.close, () => panel.remove()));
     (document.body || document.documentElement).appendChild(panel);
   };
-  function RTCPeerConnection() {
-    show();
-    throw new DOMException("WebRTC is unavailable in this WebKitGTK build", "NotSupportedError");
-  }
-  Object.defineProperty(globalThis, "RTCPeerConnection", { value: RTCPeerConnection, writable: true, configurable: true });
+  Object.defineProperty(globalThis, "RTCPeerConnection", {
+    get() {
+      show();
+      return undefined;
+    },
+    set(value) {
+      Object.defineProperty(globalThis, "RTCPeerConnection", { value, writable: true, configurable: true });
+    },
+    configurable: true
+  });
   Object.defineProperty(globalThis, "__dshWebRtcFallback", { value: true });
 })();`
