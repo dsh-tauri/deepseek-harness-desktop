@@ -403,17 +403,9 @@ pub fn claim(identifier: &str) -> Result<Option<SingleInstance>, String> {
             _mutex: mutex,
         }));
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let owner = loop {
-        if let Some(owner) = find_owner(identifier, std::process::id())? {
-            break owner;
-        }
-        if Instant::now() >= deadline {
-            return Err(
-                "SINGLE_INSTANCE_TARGET_MISSING: existing mutex has no ready target".into(),
-            );
-        }
-        thread::sleep(Duration::from_millis(10));
+    let Some(owner) = wait_owner(identifier, std::process::id(), Duration::from_secs(5))? else {
+        log::warn!("SINGLE_INSTANCE_TARGET_MISSING: mutex held but no ready target, exiting quietly (issue #1125)");
+        return Ok(None);
     };
     target.stop()?;
     let cwd =
@@ -439,6 +431,23 @@ pub fn claim(identifier: &str) -> Result<Option<SingleInstance>, String> {
         request.send(owner)?;
     }
     Ok(None)
+}
+
+fn wait_owner(
+    identifier: &str,
+    excluded_pid: u32,
+    timeout: Duration,
+) -> Result<Option<HWND>, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(owner) = find_owner(identifier, excluded_pid)? {
+            return Ok(Some(owner));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn find_owner(identifier: &str, excluded_pid: u32) -> Result<Option<HWND>, String> {
@@ -586,6 +595,27 @@ mod tests {
                 .is_null()
         );
         Target::start(&identifier).unwrap().stop().unwrap();
+    }
+
+    #[test]
+    fn follower_without_ready_target_exits_quietly_instead_of_failing() {
+        let identifier = format!(
+            "single-instance-missing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let name = wide(&format!("{identifier}-sim"));
+        let raw = unsafe { CreateMutexW(null(), 0, name.as_ptr()) };
+        assert!(!raw.is_null());
+        let _held = unsafe { OwnedHandle::from_raw_handle(raw) };
+        assert_eq!(
+            wait_owner(&identifier, std::process::id(), Duration::from_millis(50)).unwrap(),
+            None
+        );
+        assert!(claim(&identifier).unwrap().is_none());
     }
 
     #[test]
