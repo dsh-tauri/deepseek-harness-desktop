@@ -702,7 +702,7 @@
   "appearance.terminal": "터미널 모드",
   "appearance.terminal_description": "기존 글꼴을 유지하면서 사이드바를 숨깁니다. 왼쪽 위의 사이드바 버튼으로 다시 표시할 수 있습니다.",
   "appearance.frame": "둥근 창 프레임",
-  "appearance.frame_description": "창에 둥근 모서리, 테두리, 그림자를 그립니다. macOS는 기본 둥근 모서리를 유지하고 테두리만 추가합니다.",
+  "appearance.frame_description": "창에 둥근 모서리, 테두리, 그림자를 그립니다. Windows는 창 가장자리에 맞춰 그리고, macOS는 기본 둥근 모서리를 유지하며 테두리만 추가합니다.",
   "appearance.transparency": "네이티브 투명 효과 사용",
   "appearance.transparency_description": "창 배경을 반투명하게 하여 바탕 화면의 색상이 비치도록 합니다.",
   "appearance.sidebar_only": "콘텐츠 영역은 불투명하게 유지",

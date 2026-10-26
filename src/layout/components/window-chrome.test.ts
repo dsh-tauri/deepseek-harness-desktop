@@ -28,4 +28,25 @@ describe('rounded frame chrome mode', () => {
     applyFrameMode(false, true)
     expect(document.documentElement.dataset.dshFrame).toBe('flat')
   })
+
+  it('keeps the frame flush to the window edge on Windows', () => {
+    ;(window as any).__DSH_FRAME__ = true
+    const descriptor = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent')
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/141.0.0.0',
+    })
+    try {
+      expect(frameMode(false)).toBe('border')
+      expect(frameMode(true)).toBe('flat')
+      applyFrameMode(false)
+      expect(document.documentElement.dataset.dshFrame).toBe('border')
+    }
+    finally {
+      if (descriptor)
+        Object.defineProperty(window.navigator, 'userAgent', descriptor)
+      else
+        delete (window.navigator as any).userAgent
+    }
+  })
 })

@@ -198,8 +198,9 @@ html[data-theme="light"] {
    （百分比对 fixed 元素以视口为基准，会把底边整条推出窗口外，内容被窗口
    底边硬切）；画布底色同步下沉到 shell-root（#root 不铺底色，透明窗下才
    不会把阴影带涂实）。
-   inset = 常规内缩外框；flat = 最大化时撤掉内缩与圆角；border = macOS 保留
-   原生圆角与系统阴影，只补 1px 描边。dataset 由 window-chrome 按窗口状态维护。 */
+   inset = Linux 常规内缩外框；flat = 最大化时撤掉内缩与圆角；border = Windows /
+   macOS 贴边圆角，只补 1px 描边（Windows 的 resize 热区贴着窗口矩形，内缩后
+   会落在可见边框之外）。dataset 由 window-chrome 按窗口状态维护。 */
 html[data-dsh-frame] body {
   position: fixed;
   inset: 0;
