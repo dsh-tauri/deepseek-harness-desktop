@@ -149,6 +149,14 @@ describe('appimage host stack selection (#789, #1209)', () => {
     expect(config.bundle.linux.deb.depends).toEqual(expect.arrayContaining(['gstreamer1.0-plugins-good', 'gstreamer1.0-plugins-bad']))
   })
 
+  it('keeps libsoup-2.4 and its GStreamer plugins out of the image (#1165)', () => {
+    for (const name of ['libsoup-2.4.so*', 'libgst*.so*', 'libgupnp*.so*'])
+      expect(fixScript).toContain(name)
+    expect(fixScript).toContain('still links libsoup-2.4')
+    expect(fixScript).toContain('libgstsoup.so')
+    expect(fixScript).toContain('libgstwebrtc.so')
+  })
+
   it.skipIf(process.platform !== 'linux').each([
     [false, false],
     [false, true],
@@ -174,6 +182,9 @@ describe('appimage host stack selection (#789, #1209)', () => {
         'usr/lib/libgstbase-1.0.so.0',
         'usr/lib/libgstapp-1.0.so.0',
         'usr/lib/gstreamer-1.0/libgstautodetect.so',
+        'usr/lib/gstreamer-1.0/libgstsoup.so',
+        'usr/lib/gstreamer-1.0/libgstwebrtc.so',
+        'usr/lib/libsoup-2.4.so.1',
         'usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner',
         'usr/libexec/gstreamer-1.0/gst-ptp-helper',
         'apprun-hooks/linuxdeploy-plugin-gstreamer.sh',

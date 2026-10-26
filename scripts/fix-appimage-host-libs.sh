@@ -45,6 +45,8 @@ readonly EXCLUDED_MEDIA=(
   gst-plugin-scanner
   gst-ptp-helper
   linuxdeploy-plugin-gstreamer.sh
+  'libsoup-2.4.so*'
+  'libgupnp*.so*'
 )
 
 # 在镜像中扫描 squashfs 4.0 superblock：magic "hsqs"，版本字段 s_major/s_minor == 4/0，
@@ -162,7 +164,7 @@ if [ ! -d "$tree" ]; then
 fi
 
 removed=()
-# #1209：整套媒体栈交给宿主，避免版本混用。
+# #1209：整套媒体栈交给宿主，避免版本混用。#1165：libsoup-2.4 混进 WebKitGTK 的 libsoup-3 进程会 SIGTRAP，打包物里不得残留。
 for lib in "${EXCLUDED_LIBS[@]}" "${EXCLUDED_MEDIA[@]}"; do
   while IFS= read -r -d '' found; do
     rm -rf "$found"
@@ -245,6 +247,18 @@ for lib in "${EXCLUDED_LIBS[@]}" "${EXCLUDED_MEDIA[@]}"; do
     verdict=1
   fi
 done
+if find "$verified" -type f \( -name 'libgstsoup.so' -o -name 'libgstwebrtc.so' \) -print -quit | grep -q .; then
+  echo "fix-appimage-host-libs: verification failed, libsoup-2.4 GStreamer plugins are still bundled (#1165)" >&2
+  verdict=1
+fi
+if command -v readelf >/dev/null 2>&1; then
+  while IFS= read -r -d '' elf; do
+    if readelf -d "$elf" 2>/dev/null | grep -q 'NEEDED.*libsoup-2[.]4'; then
+      echo "fix-appimage-host-libs: verification failed, ${elf#"$verified"/} still links libsoup-2.4 (#1165)" >&2
+      verdict=1
+    fi
+  done < <(find "$verified/usr" -type f \( -name '*.so' -o -name '*.so.*' \) -print0)
+fi
 if [ -f "$verified/AppRun.wrapped" ] && grep -aEq "$GSTREAMER_NATIVE_PATTERN" "$verified/AppRun.wrapped"; then
   echo "fix-appimage-host-libs: verification failed, native AppRun still overrides the host GStreamer path" >&2
   verdict=1
