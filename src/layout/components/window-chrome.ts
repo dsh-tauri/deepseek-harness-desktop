@@ -35,17 +35,22 @@ export function applyFrameMode(maximized: boolean, fullscreen = false) {
     delete document.documentElement.dataset.dshFrame
 }
 
-/** 最大化或全屏时撤掉外框内缩与圆角（阴影会被屏幕边缘裁出硬边），还原后再画回。 */
+/** 最大化或全屏时撤掉外框内缩与圆角（阴影会被屏幕边缘裁出硬边），还原后再画回。
+ * 跳过 hooks 初始 `undefined` 状态，避免覆盖 `bootstrap()` 已设置好的首帧模式。 */
 export function useFrameChrome() {
   const framed = typeof window !== 'undefined' && (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
   const maximized = useMaximized(framed)
   const fullscreen = useFullscreen(framed)
-  useWatch([maximized, fullscreen], () => applyFrameMode(maximized, fullscreen), { immediate: true })
+  useWatch([maximized, fullscreen], () => {
+    if (maximized === undefined || fullscreen === undefined)
+      return
+    applyFrameMode(maximized, fullscreen)
+  }, { immediate: true })
 }
 
-/** 订阅 Tauri 原生窗口全屏状态并返回当前值。 */
-export function useFullscreen(enabled = true) {
-  const [isFullscreen, setIsFullscreen] = useState(false)
+/** 订阅 Tauri 原生窗口全屏状态并返回当前值；初始 `undefined` 表示尚未同步。 */
+export function useFullscreen(enabled = true): boolean | undefined {
+  const [isFullscreen, setIsFullscreen] = useState<boolean | undefined>(undefined)
 
   // keep:effect 订阅 Tauri 原生窗口全屏状态与 resize 变化
   useEffect(() => {
@@ -94,14 +99,14 @@ export function useFullscreen(enabled = true) {
 }
 
 /** macOS 原生全屏时收起整条壳层导航栏。 */
-export function useMacOSFullscreen() {
+export function useMacOSFullscreen(): boolean {
   const isFullscreen = useFullscreen(IS_MACOS)
-  return IS_MACOS && isFullscreen
+  return IS_MACOS && Boolean(isFullscreen)
 }
 
-/** 订阅 Tauri 原生窗口最大化状态并返回当前值。 */
-export function useMaximized(enabled = true) {
-  const [isMaximized, setIsMaximized] = useState(false)
+/** 订阅 Tauri 原生窗口最大化状态并返回当前值；初始 `undefined` 表示尚未同步。 */
+export function useMaximized(enabled = true): boolean | undefined {
+  const [isMaximized, setIsMaximized] = useState<boolean | undefined>(undefined)
 
   useEffect(() => {
     if (!enabled || !hasNativeWindow())
