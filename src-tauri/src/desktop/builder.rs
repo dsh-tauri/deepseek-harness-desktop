@@ -854,7 +854,7 @@ fn shell_window_transparent(appearance: &crate::config::Appearance) -> bool {
     if cfg!(target_os = "macos") {
         appearance.transparency
     } else {
-        appearance.transparency || appearance.frame
+        (appearance.transparency || appearance.frame) && !crate::shell_window_opaque()
     }
 }
 
