@@ -195,7 +195,7 @@ fn resolve_heal_port(configured: u16, heal_target: u16, heal_target_free: bool) 
     }
 }
 
-fn attach_requested(value: Option<&str>) -> bool {
+pub(super) fn attach_requested(value: Option<&str>) -> bool {
     matches!(value, Some("1") | Some("true"))
 }
 
@@ -249,6 +249,8 @@ pub async fn start(app_handle: tauri::AppHandle) -> Result<(), String> {
         status::emit_status(&app_handle);
         return Ok(());
     }
+
+    super::process::decline_attach();
 
     // 清理 RedirectionGuard(448) 逃逸重拉标记：本进程正常走到启动说明处于干净上下文，
     // 移除标记保证下次自更新后仍能触发逃逸重拉。
@@ -1250,6 +1252,24 @@ mod tests {
         assert!(!attach_requested(Some("0")));
         assert!(!attach_requested(Some("")));
         assert!(!attach_requested(None));
+    }
+
+    #[test]
+    fn startup_sweep_waits_for_attach_decision() {
+        let process = include_str!("process.rs");
+        let take = process
+            .split("pub(super) fn take_startup_sweep(")
+            .nth(1)
+            .unwrap()
+            .split("static ATTACH_DECLINED")
+            .next()
+            .unwrap();
+        assert!(take.find("attach_pending()").unwrap() < take.find("STARTUP_SWEEP_DONE").unwrap());
+        let launch = include_str!("launch.rs");
+        let start = launch.split("pub async fn start(").nth(1).unwrap();
+        assert!(
+            start.find("attachable_core(port)").unwrap() < start.find("decline_attach()").unwrap()
+        );
     }
 
     #[tokio::test]
