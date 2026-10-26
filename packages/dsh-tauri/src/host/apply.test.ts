@@ -3,6 +3,7 @@ import { createContext, runInContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from './apply'
 import { MEDIA_RECORDER_SHIM_SCRIPT } from './media-recorder-shim'
+import { TEXT_AUTOSPACE_SHIM_SCRIPT } from './text-autospace-shim'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -190,5 +191,47 @@ describe('media recorder mime default', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0]?.options).toEqual({ mimeType: 'audio/webm;codecs=opus' })
+  })
+})
+
+interface FakeStyle {
+  attrs: Record<string, string>
+  textContent: string
+  setAttribute: (name: string, value: string) => void
+}
+
+function runAutospace(userAgent: string) {
+  const appended: FakeStyle[] = []
+  const style: FakeStyle = { attrs: {}, textContent: '', setAttribute(name, value) { this.attrs[name] = value } }
+  const sandbox: Record<string, unknown> = {
+    navigator: { userAgent },
+    document: { createElement: () => style, head: { appendChild: (node: FakeStyle) => { appended.push(node) } } },
+  }
+  runInContext(TEXT_AUTOSPACE_SHIM_SCRIPT, createContext(sandbox))
+  return appended
+}
+
+describe('text autospace override', () => {
+  it('injects the style row into the head', () => {
+    vi.stubEnv('DSH_TAURI_EMBEDDED', '1')
+    const rows = activate().collect()
+
+    const row = rows.find(item => item.kind === 'script' && item.text === TEXT_AUTOSPACE_SHIM_SCRIPT)
+    expect(row?.kind === 'script' ? row.placement : undefined).toBe('head')
+  })
+
+  it('disables text-autospace under WebKitGTK', () => {
+    const appended = runAutospace(WEBKITGTK_UA)
+
+    expect(appended).toHaveLength(1)
+    expect(appended[0]?.textContent).toBe('html,body{text-autospace:no-autospace!important}')
+  })
+
+  it('leaves Chromium pages alone', () => {
+    expect(runAutospace(CHROME_UA)).toHaveLength(0)
+  })
+
+  it('leaves macOS WebKit alone', () => {
+    expect(runAutospace('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15')).toHaveLength(0)
   })
 })

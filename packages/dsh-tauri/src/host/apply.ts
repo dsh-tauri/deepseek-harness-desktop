@@ -4,10 +4,12 @@ import { PLUGIN_ID } from '../shared/constants'
 import { MEDIA_RECORDER_SHIM_SCRIPT } from './media-recorder-shim'
 import { server } from './server'
 import { gate } from './service/gate'
+import { TEXT_AUTOSPACE_SHIM_SCRIPT } from './text-autospace-shim'
 
 const GATE_EFFECT = `${PLUGIN_ID}: gate`
 const ACCOUNT_EFFECT = `${PLUGIN_ID}: account desktop marker`
 const MEDIA_RECORDER_EFFECT = `${PLUGIN_ID}: media recorder mime default`
+const TEXT_AUTOSPACE_EFFECT = `${PLUGIN_ID}: text autospace off`
 const ROUTES_EFFECT = `${PLUGIN_ID}: routes`
 
 /**
@@ -38,5 +40,8 @@ export function apply(ctx: HostContext): void {
     ctx.effect(() => ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'script', placement: 'head', text: MEDIA_RECORDER_SHIM_SCRIPT })
     }), MEDIA_RECORDER_EFFECT)
+    ctx.effect(() => ctx.on('webserver/index-inject', (table) => {
+      table.push({ kind: 'script', placement: 'head', text: TEXT_AUTOSPACE_SHIM_SCRIPT })
+    }), TEXT_AUTOSPACE_EFFECT)
   }
 }
