@@ -702,7 +702,7 @@
   "appearance.terminal": "Terminal mode",
   "appearance.terminal_description": "Hide the sidebar while keeping the original fonts. Use the top-left sidebar button to reveal it.",
   "appearance.frame": "Rounded window frame",
-  "appearance.frame_description": "Draw rounded corners, a border, and a shadow around the window. Windows draws flush to the window edge; macOS keeps native corners and adds only the border.",
+  "appearance.frame_description": "Draw rounded corners and a border around the window, without an outer shadow. macOS keeps native corners and adds only the border.",
   "appearance.transparency": "Enable native transparency",
   "appearance.transparency_description": "Make the window background translucent so the desktop colours show through.",
   "appearance.sidebar_only": "Keep content area opaque",

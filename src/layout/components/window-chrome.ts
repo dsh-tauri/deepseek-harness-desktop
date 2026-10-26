@@ -9,28 +9,19 @@ export function isMacOS(): boolean {
 }
 export const IS_MACOS = isMacOS()
 
-/** Windows 的不可见 resize 边框贴在窗口矩形边缘，内缩会把它推到可见边框之外。 */
-export function isWindows(): boolean {
-  return typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows')
-}
-
 /** 浏览器预览与 jsdom 没有原生窗口，原生调用必须在此拦截，不能靠 catch 兜底。 */
 function hasNativeWindow(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-/** 自绘外框模式：'' 关闭；全屏统一 flat；最大化 flat；macOS / Windows 贴边补描边 border；Linux 常规内缩 inset。 */
+/** 自绘外框模式：'' 关闭；最大化 / 全屏统一 flat；常规窗口贴边画圆角与描边。 */
 export function frameMode(maximized: boolean, fullscreen = false): string {
   const frame = (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
   if (!frame)
     return ''
-  if (fullscreen)
+  if (fullscreen || maximized)
     return 'flat'
-  if (maximized)
-    return 'flat'
-  if (isMacOS() || isWindows())
-    return 'border'
-  return 'inset'
+  return 'border'
 }
 
 /** 根据窗口状态计算并应用外框模式到 document dataset。 */

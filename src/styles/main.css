@@ -79,8 +79,7 @@
   --color-line: rgba(255, 255, 255, 0.12);   /* border-l2 #ffffff1f */
   --color-line-strong: rgba(255, 255, 255, 0.2); /* border-l4 #fff3 */
   /* === 自绘窗口外框 token === */
-  --frame-inset: 16px;
-  --frame-radius: 12px;
+  --frame-radius: 10px;
   --color-frame-border: rgba(255, 255, 255, 0.14);
   --color-ink: #f9fafb;                /* label-primary (bluish-50) */
   --color-info: #7aaaff;               /* state-business-primary (deepseek-400) */
@@ -189,23 +188,22 @@ html[data-theme="light"] {
   }
 }
 
-/* === 自绘窗口外框（圆角 + 描边 + 阴影，对齐 Claude Desktop 观感） ===
-   非 macOS 平台窗口无系统装饰，圆角与阴影只能应用自绘：窗口按需透明。
-   裁剪不能挂在 body 上：body 的 overflow 按规范会传播给视口（自身 used
-   overflow 回落 visible），border-radius 永远裁不到子内容；因此 body 只做
-   fixed 锚点（translateZ 让 toast / 弹窗等 fixed 后代有稳定包含块），画框
-   与裁剪全部由 #root 承担。#root 必须显式清掉 base 层的 min-height/height
-   （百分比对 fixed 元素以视口为基准，会把底边整条推出窗口外，内容被窗口
-   底边硬切）；画布底色同步下沉到 shell-root（#root 不铺底色，透明窗下才
-   不会把阴影带涂实）。
-   inset = Linux 常规内缩外框；flat = 最大化时撤掉内缩与圆角；border = Windows /
-   macOS 贴边圆角，只补 1px 描边（Windows 的 resize 热区贴着窗口矩形，内缩后
-   会落在可见边框之外）。dataset 由 window-chrome 按窗口状态维护。 */
+/* === 自绘窗口外框（圆角 + 描边，对齐 Claude Desktop 观感） ===
+   非 macOS 平台窗口无系统装饰，圆角与描边只能应用自绘：窗口按需透明。
+   画框与裁剪全部由 #root 承担；body 只做 fixed 锚点（translateZ 让 toast /
+   弹窗等 fixed 后代有稳定包含块），并用 clip-path 兜住 portal 溢出到圆角外的
+   内容。#root 必须显式清掉 base 层的 min-height/height（百分比对 fixed 元素
+   以视口为基准，会把底边整条推出窗口外，内容被窗口底边硬切）；画布底色同步
+   下沉到 shell-root（#root 不铺底色，透明窗下才不会把边框涂实）。
+   flat = 最大化 / 全屏时撤掉圆角；border = 常规窗口贴齐窗口矩形画圆角与描边，
+   不留阴影带——Windows 的不可见 resize 边框贴着窗口矩形，内缩会让拉伸热区落
+   在可见边框之外。dataset 由 window-chrome 按窗口状态维护。 */
 html[data-dsh-frame] body {
   position: fixed;
   inset: 0;
   margin: 0;
   transform: translateZ(0);
+  clip-path: inset(0 round var(--frame-radius));
 }
 
 html[data-dsh-frame] #root {
@@ -223,19 +221,8 @@ html[data-dsh-frame] [data-testid="dsh-shell-root"] {
   background: var(--color-canvas);
 }
 
-html[data-dsh-frame="inset"] body {
-  clip-path: inset(0 round var(--frame-radius));
-}
-
-html[data-dsh-frame="inset"] #root {
-  inset: var(--frame-inset);
-  border-radius: var(--frame-radius);
-  border: 1px solid var(--color-frame-border);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28), 0 0 14px rgba(0, 0, 0, 0.22);
-}
-
 html[data-dsh-frame="border"] #root {
-  border-radius: 10px;
+  border-radius: var(--frame-radius);
   border: 1px solid var(--color-frame-border);
 }
 
