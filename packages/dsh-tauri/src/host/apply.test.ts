@@ -202,10 +202,16 @@ interface FakeStyle {
 
 function runAutospace(userAgent: string) {
   const appended: FakeStyle[] = []
-  const style: FakeStyle = { attrs: {}, textContent: '', setAttribute(name, value) { this.attrs[name] = value } }
+  const style: FakeStyle = {
+    attrs: {},
+    textContent: '',
+    setAttribute(name, value) {
+      this.attrs[name] = value
+    },
+  }
   const sandbox: Record<string, unknown> = {
     navigator: { userAgent },
-    document: { createElement: () => style, head: { appendChild: (node: FakeStyle) => { appended.push(node) } } },
+    document: { createElement: () => style, head: { appendChild: (node: FakeStyle) => appended.push(node) } },
   }
   runInContext(TEXT_AUTOSPACE_SHIM_SCRIPT, createContext(sandbox))
   return appended
