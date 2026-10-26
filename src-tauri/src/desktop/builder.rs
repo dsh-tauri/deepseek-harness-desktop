@@ -853,8 +853,10 @@ fn apply_windows_window_icon(window: &tauri::WebviewWindow<Wry>) {
 fn shell_window_transparent(appearance: &crate::config::Appearance) -> bool {
     if cfg!(target_os = "macos") {
         appearance.transparency
-    } else {
+    } else if cfg!(target_os = "linux") {
         (appearance.transparency || appearance.frame) && !crate::shell_window_opaque()
+    } else {
+        appearance.transparency || appearance.frame
     }
 }
 
