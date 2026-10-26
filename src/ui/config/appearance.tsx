@@ -23,8 +23,6 @@ export function ConfigAppearance() {
   const [opacity, setOpacity] = useState<number>()
   const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
   const nativeFrame = (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
-  // macOS 仅在 transparency 开启时建透明窗；非 macOS 下外框或 transparency 任意开启即透明窗。
-  // 仅当外框开关变动，或目标窗口透明形态与当前原生窗口不一致时，才需要重启生效。
   const expectedTransparent = isMacOS() ? appearance.transparency : (appearance.transparency || appearance.frame)
   const restartPending = appearance.frame !== nativeFrame || expectedTransparent !== transparent
   const { mutate: save, isPending } = useMutation({
