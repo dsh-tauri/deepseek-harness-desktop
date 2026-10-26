@@ -209,6 +209,30 @@ pub(crate) fn should_disable_dmabuf_renderer(
         && gdk_backend != "x11"
 }
 
+pub(crate) fn should_opaque_shell_window(
+    opt_in: bool,
+    nvidia_driver: bool,
+    wayland_display: &str,
+    session_type: &str,
+    gdk_backend: &str,
+) -> bool {
+    opt_in
+        || (nvidia_driver
+            && gdk_backend.split(',').next() == Some("x11")
+            && (!wayland_display.is_empty() || session_type == "wayland"))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn shell_window_opaque() -> bool {
+    should_opaque_shell_window(
+        std::env::var_os("DSH_OPAQUE_WINDOW").is_some(),
+        nvidia_driver_loaded(),
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        &std::env::var("XDG_SESSION_TYPE").unwrap_or_default(),
+        &std::env::var("GDK_BACKEND").unwrap_or_default(),
+    )
+}
+
 /// nvidia-open 与闭源内核模块共用用户态渲染栈，均需规避 issue #1234；nouveau 不匹配。
 fn nvidia_driver_loaded() -> bool {
     cfg!(target_os = "linux") && std::path::Path::new("/proc/driver/nvidia/version").exists()
@@ -431,5 +455,39 @@ mod tests {
         // 已全部写过：不改环境。
         let full = vpx_va_rank_override("").unwrap();
         assert_eq!(vpx_va_rank_override(&full), None);
+    }
+
+    #[test]
+    fn opaque_shell_window_only_for_nvidia_xwayland_or_opt_in() {
+        assert!(should_opaque_shell_window(true, false, "", "", ""));
+        assert!(should_opaque_shell_window(
+            false,
+            true,
+            "wayland-0",
+            "wayland",
+            "x11"
+        ));
+        assert!(should_opaque_shell_window(
+            false,
+            true,
+            "",
+            "wayland",
+            "x11,wayland"
+        ));
+        assert!(!should_opaque_shell_window(
+            false,
+            true,
+            "wayland-0",
+            "wayland",
+            ""
+        ));
+        assert!(!should_opaque_shell_window(false, true, "", "x11", "x11"));
+        assert!(!should_opaque_shell_window(
+            false,
+            false,
+            "wayland-0",
+            "wayland",
+            "x11"
+        ));
     }
 }

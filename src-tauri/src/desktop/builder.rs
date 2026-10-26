@@ -853,6 +853,9 @@ fn with_shell_chrome<'a>(
     builder: WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>,
 ) -> tauri::Result<WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>> {
     let appearance = crate::config::get_store_dat_setting(app).appearance;
+    #[cfg(target_os = "linux")]
+    let transparent = appearance.transparency && !crate::shell_window_opaque();
+    #[cfg(not(target_os = "linux"))]
     let transparent = appearance.transparency;
     let builder = builder
         .transparent(transparent)
