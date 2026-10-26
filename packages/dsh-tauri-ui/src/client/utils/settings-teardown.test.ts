@@ -59,4 +59,25 @@ describe('scheduleSettingsTeardown', () => {
     frames.flush()
     expect(document.documentElement.style.transform).toBe('')
   })
+
+  it('保留根节点原有 inline transform', () => {
+    document.documentElement.style.transform = 'scale(1)'
+    const frames = createFrames()
+    scheduleSettingsTeardown(vi.fn(), frames.request, frames.cancel)
+    frames.flush()
+    frames.flush()
+    expect(document.documentElement.style.transform).toBe('translateZ(0)')
+    frames.flush()
+    expect(document.documentElement.style.transform).toBe('scale(1)')
+  })
+
+  it('重绘期间取消会立即还原 transform', () => {
+    const frames = createFrames()
+    const cancel = scheduleSettingsTeardown(vi.fn(), frames.request, frames.cancel)
+    frames.flush()
+    frames.flush()
+    expect(document.documentElement.style.transform).toBe('translateZ(0)')
+    cancel()
+    expect(document.documentElement.style.transform).toBe('')
+  })
 })
