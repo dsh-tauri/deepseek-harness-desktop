@@ -851,11 +851,16 @@ fn apply_windows_window_icon(window: &tauri::WebviewWindow<Wry>) {
 /// 窗口是否以透明建立：原生透明模式，或自绘外框需要透出四周阴影带。
 /// macOS 保留原生装饰（圆角与系统阴影都在），外框只补 1px 描边，无需透明窗。
 fn shell_window_transparent(appearance: &crate::config::Appearance) -> bool {
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         appearance.transparency
-    } else if cfg!(target_os = "linux") {
+    }
+    #[cfg(target_os = "linux")]
+    {
         (appearance.transparency || appearance.frame) && !crate::shell_window_opaque()
-    } else {
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
         appearance.transparency || appearance.frame
     }
 }
