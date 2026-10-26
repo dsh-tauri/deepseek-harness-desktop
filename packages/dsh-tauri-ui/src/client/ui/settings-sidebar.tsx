@@ -18,6 +18,7 @@ import {
 
 import { locale } from '../locales'
 import { store } from '../store'
+import { scheduleSettingsTeardown } from '../utils/settings-teardown'
 
 export interface SettingsSidebarProps {
   useSessions: SelectorHook<SessionListState>
@@ -38,7 +39,14 @@ const Icons: Record<string, IconComponent | undefined> = {
 }
 
 export function SettingsSidebar(_props: SettingsSidebarProps): ReactElement | null {
-  const ui = useStore(store.settings, { sync: true })
+  const live = useStore(store.settings, { sync: true })
+  const openSnapshotRef = useRef(live)
+  if (live.open)
+    openSnapshotRef.current = { ...live }
+  const ui = live.open ? live : { ...openSnapshotRef.current, open: false }
+  const [mounted, setMounted] = useState(live.open)
+  if (live.open && !mounted)
+    setMounted(true)
   const { rows } = useStore(store.sections)
   locale.useLocale()
   const searchRef = useRef<HTMLInputElement>(null)
@@ -93,7 +101,13 @@ export function SettingsSidebar(_props: SettingsSidebarProps): ReactElement | nu
     searchRef.current?.focus()
   }, [ui.open])
 
-  if (!ui.open)
+  useEffect(() => {
+    if (live.open)
+      return
+    return scheduleSettingsTeardown(() => setMounted(false))
+  }, [live.open])
+
+  if (!mounted)
     return null
 
   const railWidth = ui.railWidth ?? RAIL_WIDTH_DEFAULT
@@ -112,7 +126,7 @@ export function SettingsSidebar(_props: SettingsSidebarProps): ReactElement | nu
     <>
       <div
         ref={dialogRef}
-        style={ui.chatContentWidth === undefined ? undefined : { '--dsh-chat-content-width': ui.chatContentWidth } as CSSProperties}
+        style={{ ...(ui.chatContentWidth === undefined ? {} : { '--dsh-chat-content-width': ui.chatContentWidth }), ...(ui.open ? {} : { visibility: 'hidden', contentVisibility: 'hidden', pointerEvents: 'none' }) } as CSSProperties}
         className="fixed inset-0 z-[1000] flex bg-[var(--dsw-specific-sidebar-fill)] text-primary [--dsh-chat-content-width:748px] [--dsh-composer-card-max-width:calc(var(--dsh-chat-content-width)_+_32px)] [--dsh-composer-side-clearance:16px]"
         data-slot-sidebar="dsh-tauri-ui"
         data-shortcut-modal="settings"
@@ -183,7 +197,7 @@ export function SettingsSidebar(_props: SettingsSidebarProps): ReactElement | nu
           </div>
         </div>
       </div>
-      {typeof useModalLayer === 'function' && <SettingsModalLayer dialog={dialogRef} />}
+      {ui.open && typeof useModalLayer === 'function' && <SettingsModalLayer dialog={dialogRef} />}
     </>
   )
 }
