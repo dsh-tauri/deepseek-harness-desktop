@@ -1010,6 +1010,7 @@ pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
         // 进程终止涉及 WaitForSingleObject（至多 5s）与 taskkill/kill 等同步阻塞
         // 调用，移出 Tokio 执行线程避免卡住其他并发任务（WARN-7/P2-#20）。
         launch_guard().store(false, Ordering::SeqCst);
+        super::instances::set_attached_core(false);
         tauri::async_runtime::spawn_blocking(move || {
             super::instances::scope_sync(profile, terminate_owned_process)
         })
