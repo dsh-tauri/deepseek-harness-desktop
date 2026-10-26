@@ -1,16 +1,53 @@
 import type { PointerEvent } from 'react'
+import { useWatch } from '@reause/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
 
 /** WKWebView 的 macOS UA 稳定包含 Macintosh，用于切换平台原生窗口 chrome。 */
-export const IS_MACOS = navigator.userAgent.includes('Macintosh')
+export function isMacOS(): boolean {
+  return typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
+}
+export const IS_MACOS = isMacOS()
 
-/** macOS 原生全屏时收起整条壳层导航栏。 */
-export function useMacOSFullscreen() {
+/** 浏览器预览与 jsdom 没有原生窗口，原生调用必须在此拦截，不能靠 catch 兜底。 */
+function hasNativeWindow(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+/** 自绘外框模式：'' 关闭；全屏统一 flat；非 macOS 常规 inset / 最大化 flat；macOS 常规仅补描边 border。 */
+export function frameMode(maximized: boolean, fullscreen = false): string {
+  const frame = (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
+  if (!frame)
+    return ''
+  if (fullscreen)
+    return 'flat'
+  if (isMacOS())
+    return 'border'
+  return maximized ? 'flat' : 'inset'
+}
+
+export function applyFrameMode(maximized: boolean, fullscreen = false) {
+  const mode = frameMode(maximized, fullscreen)
+  if (mode)
+    document.documentElement.dataset.dshFrame = mode
+  else
+    delete document.documentElement.dataset.dshFrame
+}
+
+/** 最大化或全屏时撤掉外框内缩与圆角（阴影会被屏幕边缘裁出硬边），还原后再画回。 */
+export function useFrameChrome() {
+  const framed = typeof window !== 'undefined' && (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
+  const maximized = useMaximized(framed)
+  const fullscreen = useFullscreen(framed)
+  useWatch([maximized, fullscreen], () => applyFrameMode(maximized, fullscreen), { immediate: true })
+}
+
+export function useFullscreen(enabled = true) {
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // keep:effect 订阅 Tauri 原生窗口全屏状态与 resize 变化
   useEffect(() => {
-    if (!IS_MACOS)
+    if (!enabled || !hasNativeWindow())
       return
 
     const appWindow = getCurrentWindow()
@@ -49,15 +86,24 @@ export function useMacOSFullscreen() {
       mounted = false
       unlisten?.()
     }
-  }, [])
+  }, [enabled])
 
   return isFullscreen
 }
 
-export function useMaximized() {
+/** macOS 原生全屏时收起整条壳层导航栏。 */
+export function useMacOSFullscreen() {
+  const isFullscreen = useFullscreen(IS_MACOS)
+  return IS_MACOS && isFullscreen
+}
+
+export function useMaximized(enabled = true) {
   const [isMaximized, setIsMaximized] = useState(false)
 
   useEffect(() => {
+    if (!enabled || !hasNativeWindow())
+      return
+
     const appWindow = getCurrentWindow()
     let mounted = true
     let unlisten: (() => void) | undefined
@@ -94,7 +140,7 @@ export function useMaximized() {
       mounted = false
       unlisten?.()
     }
-  }, [])
+  }, [enabled])
 
   return isMaximized
 }
