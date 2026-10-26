@@ -53,11 +53,13 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
+/** 模拟跨窗口原生设置更新事件分发。 */
 async function nativeUpdate(value: Record<string, unknown>) {
   mocks.saved = structuredClone(value)
   await Promise.all([...mocks.listeners].map(callback => callback({ payload: structuredClone(value) })))
 }
 
+/** 创建一个可外部 resolve 的延迟 Promise。 */
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => {

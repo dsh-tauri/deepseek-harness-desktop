@@ -10,6 +10,7 @@ import { useDshStyle } from './use-dsh-style'
 import { useIframeMessage } from './use-iframe-message'
 import { useIframePost } from './use-iframe-post'
 
+/** 将外观偏好同步到 iframe、生成动态 CSS 并管理原生背景效果。 */
 export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
   const { appearance, hydrated } = useStore(store.setting)
   const [dshStyle] = useDshStyle()

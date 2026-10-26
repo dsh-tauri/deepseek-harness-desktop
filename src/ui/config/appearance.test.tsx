@@ -21,6 +21,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+/** 渲染外观设置面板并返回模拟的 update 函数。 */
 function setup(fail = false, opacity = 70, framed = true, transparent?: boolean) {
   ;(window as any).__DSH_FRAME__ = framed
   ;(window as any).__DSH_TRANSPARENT__ = transparent !== undefined
