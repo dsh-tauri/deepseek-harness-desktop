@@ -28,6 +28,8 @@ use super::ProcessOwner;
 use super::PREINSTALL_LOG_EVENT;
 
 const MIN_TRUSTED_PNPM_MAJOR: u32 = 10;
+#[cfg(windows)]
+const WINDOWS_SPACE_PROBE_ARG: &str = "--config.dsh-probe=with space";
 const PNPM_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const PNPM_PROBE_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const PNPM_PROBE_REAP_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
@@ -413,6 +415,8 @@ fn pnpm_probe_command(
     bin_dir: Option<&Path>,
 ) -> std::process::Command {
     let mut command = std::process::Command::new(pnpm);
+    #[cfg(windows)]
+    command.arg(WINDOWS_SPACE_PROBE_ARG);
     command.arg("--version");
     if let Some(path) = pnpm_probe_path(pnpm, node, bin_dir) {
         command.env("PATH", path);
@@ -1023,6 +1027,36 @@ mod tests {
             Some(11)
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn pnpm_probe_rejects_shim_that_breaks_on_space_arguments() {
+        let _test_guard = TEST_PROCESS_LOCK.lock().await;
+        let root = tempfile::tempdir().unwrap();
+        let broken = root.path().join("Author Software").join("pnpm.cmd");
+        std::fs::create_dir_all(broken.parent().unwrap()).unwrap();
+        std::fs::write(
+            &broken,
+            "@echo off\r\nset \"all=%*\"\r\nif not \"%all%\"==\"%all: =%\" (\r\n  echo 'C:\\Users\\JT\\AppData\\Local\\Author' is not recognized 1>&2\r\n  exit /b 1\r\n)\r\necho 12.4.2\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            pnpm_major_version_at_bounded(&broken, None, None, new_process_owner())
+                .await
+                .unwrap(),
+            None
+        );
+
+        let healthy = root.path().join("Healthy Dir").join("pnpm.cmd");
+        std::fs::create_dir_all(healthy.parent().unwrap()).unwrap();
+        std::fs::write(&healthy, "@echo off\r\necho 12.4.2\r\n").unwrap();
+        assert_eq!(
+            pnpm_major_version_at_bounded(&healthy, None, None, new_process_owner())
+                .await
+                .unwrap(),
+            Some(12)
+        );
     }
 
     #[tokio::test]
