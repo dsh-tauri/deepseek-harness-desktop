@@ -94,7 +94,7 @@ Download the installer for your platform and architecture from [Releases](https:
 | --- | --- | --- |
 | Windows | Windows 10+, WebView2 | x64 `.exe` / `.msi` |
 | macOS | macOS 12+; web UI requires Safari 17.4+ capabilities | Intel / Apple Silicon `.dmg` |
-| Linux | WebKit2GTK 4.1 runtime libraries | x64 `.AppImage` / `.deb` |
+| Linux | WebKit2GTK 4.1 and GStreamer ≥ 1.24 (the AppImage uses the host GLib, WebKit and media stack) | x64 `.AppImage` / `.deb` |
 
 macOS also supports Homebrew installation:
 

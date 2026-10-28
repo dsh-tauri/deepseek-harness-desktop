@@ -93,7 +93,7 @@
 | --- | --- | --- |
 | Windows | Windows 10+、WebView2 | x64 `.exe` / `.msi` |
 | macOS | macOS 12+；Web 界面需 Safari 17.4+ 能力 | Intel / Apple Silicon `.dmg` |
-| Linux | WebKit2GTK 4.1 运行库 | x64 `.AppImage` / `.deb` |
+| Linux | WebKit2GTK 4.1、GStreamer ≥ 1.24（AppImage 使用宿主的 GLib、WebKit 与媒体栈） | x64 `.AppImage` / `.deb` |
 
 macOS 也可通过 Homebrew 安装：
 

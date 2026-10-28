@@ -38,6 +38,14 @@ readonly GTK_HOOK=apprun-hooks/linuxdeploy-plugin-gtk.sh
 readonly GDK_OVERRIDE_PATTERN='^[[:space:]]*export[[:space:]]+GDK_BACKEND=x11([[:space:]]+#.*)?[[:space:]]*$'
 readonly GSTREAMER_SOURCE_PATTERN='^[[:space:]]*source[[:space:]].*apprun-hooks/linuxdeploy-plugin-gstreamer[.]sh[[:space:]]*$'
 readonly GSTREAMER_NATIVE_PATTERN='GST_PLUGIN_SYSTEM_PATH(_1_0)?='
+# #1269：宿主 GStreamer(>=1.24) 链接新版 GLib，镜像里 22.04 的 GLib 2.72 被 LD_LIBRARY_PATH 置顶后缺 g_once_init_leave_pointer，加载器在 main() 前中止。
+readonly EXCLUDED_GLIB=(
+  'libglib-2.0.so*'
+  'libgobject-2.0.so*'
+  'libgio-2.0.so*'
+  'libgmodule-2.0.so*'
+  'libgthread-2.0.so*'
+)
 readonly EXCLUDED_MEDIA=(
   'libgst*.so*'
   gstreamer-1.0
@@ -165,7 +173,7 @@ fi
 
 removed=()
 # #1209：整套媒体栈交给宿主，避免版本混用。#1165：libsoup-2.4 混进 WebKitGTK 的 libsoup-3 进程会 SIGTRAP，打包物里不得残留。
-for lib in "${EXCLUDED_LIBS[@]}" "${EXCLUDED_MEDIA[@]}"; do
+for lib in "${EXCLUDED_LIBS[@]}" "${EXCLUDED_GLIB[@]}" "${EXCLUDED_MEDIA[@]}"; do
   while IFS= read -r -d '' found; do
     rm -rf "$found"
     removed+=("${found#"$tree"/}")
@@ -241,7 +249,7 @@ else
   fi
 fi
 
-for lib in "${EXCLUDED_LIBS[@]}" "${EXCLUDED_MEDIA[@]}"; do
+for lib in "${EXCLUDED_LIBS[@]}" "${EXCLUDED_GLIB[@]}" "${EXCLUDED_MEDIA[@]}"; do
   if find "$verified" -name "$lib" -print -quit | grep -q .; then
     echo "fix-appimage-host-libs: verification failed, $lib is still bundled" >&2
     verdict=1

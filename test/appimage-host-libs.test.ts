@@ -149,6 +149,11 @@ describe('appimage host stack selection (#789, #1209)', () => {
     expect(config.bundle.linux.deb.depends).toEqual(expect.arrayContaining(['gstreamer1.0-plugins-good', 'gstreamer1.0-plugins-bad']))
   })
 
+  it('keeps the GLib stack out of the image so the host GStreamer resolves host GLib (#1269)', () => {
+    for (const name of ['libglib-2.0.so*', 'libgobject-2.0.so*', 'libgio-2.0.so*', 'libgmodule-2.0.so*', 'libgthread-2.0.so*'])
+      expect(fixScript).toContain(name)
+  })
+
   it('keeps libsoup-2.4 and its GStreamer plugins out of the image (#1165)', () => {
     for (const name of ['libsoup-2.4.so*', 'libgst*.so*', 'libgupnp*.so*'])
       expect(fixScript).toContain(name)
@@ -176,6 +181,9 @@ describe('appimage host stack selection (#789, #1209)', () => {
       chmodSync(join(tree, 'usr/bin/app'), 0o755)
       writeFileSync(join(tree, 'usr/lib/libwebkit2gtk-4.1.so.0'), 'keep WebKit')
       writeFileSync(join(tree, 'usr/lib/libgssapi_krb5.so.2'), 'keep unrelated library')
+      const glibPaths = ['usr/lib/libglib-2.0.so.0.7200.4', 'usr/lib/libgobject-2.0.so.0', 'usr/lib/libgio-2.0.so.0', 'usr/lib/libgmodule-2.0.so.0', 'usr/lib/libgthread-2.0.so.0']
+      for (const path of glibPaths)
+        writeFileSync(join(tree, path), 'drop bundled glib')
       const mediaPaths = [
         'usr/lib/libgstreamer-1.0.so.0',
         'usr/lib/libgstreamer-1.0.so.0.2003.0',
@@ -208,7 +216,7 @@ describe('appimage host stack selection (#789, #1209)', () => {
       const output = join(work, 'unpacked')
       execFileSync('unsquashfs', ['-d', output, image], { stdio: 'ignore' })
       const hook = join(output, 'apprun-hooks/linuxdeploy-plugin-gtk.sh')
-      for (const path of mediaPaths)
+      for (const path of [...glibPaths, ...mediaPaths])
         expect(lstatSync(join(output, path), { throwIfNoEntry: false }), `${path} must come from the host`).toBeUndefined()
       expect(readFileSync(join(output, 'usr/lib/libgssapi_krb5.so.2'), 'utf8')).toBe('keep unrelated library')
       expect(readFileSync(join(output, 'AppRun'), 'utf8')).not.toContain('linuxdeploy-plugin-gstreamer.sh')
