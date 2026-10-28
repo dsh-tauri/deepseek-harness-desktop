@@ -20,7 +20,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<McpActionResult |
       event.res.status = 404
       return { error: 'server row not found' }
     }
-    return { ok: true, restartNeeded: !deps.hotReload() }
+    return { ok: true, restartNeeded: !(await deps.reload()) }
   }
   catch (error) {
     event.res.status = 500

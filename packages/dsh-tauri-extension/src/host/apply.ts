@@ -12,6 +12,11 @@ const DEFAULT_PROFILE = 'web'
 
 export type { Config } from './apply.types'
 
+interface HmrHandle {
+  runExclusive: <T>(operation: () => Promise<T>) => Promise<T>
+  reconcileProfile?: () => Promise<{ restartReason?: string }>
+}
+
 export const name = PLUGIN_ID
 
 export const inject = ['webServer', 'skills', 'connection', 'credentials']
@@ -26,9 +31,22 @@ export function apply(ctx: HostContext, config?: Config): void {
   ctx.inject(inject, (hostCtx) => {
     resetProviderRuntime()
     const remountProvider = (): Promise<void> => provider.start(packagedSkillsDir())
-    const hotReload = (): boolean => {
+    const hmr = (): HmrHandle | undefined => {
       try {
-        return hostCtx.get('hmr') !== undefined
+        return hostCtx.get('hmr') as HmrHandle | undefined
+      }
+      catch {
+        return undefined
+      }
+    }
+    const hotReload = (): boolean => hmr() !== undefined
+    const reload = async (): Promise<boolean> => {
+      const handle = hmr()
+      if (handle?.reconcileProfile === undefined)
+        return handle !== undefined
+      try {
+        const outcome = await handle.runExclusive(() => handle.reconcileProfile!())
+        return outcome.restartReason === undefined
       }
       catch {
         return false
@@ -36,7 +54,7 @@ export function apply(ctx: HostContext, config?: Config): void {
     }
     const profileDirPath = profile.peek(config?.profile ?? profile.resolve() ?? DEFAULT_PROFILE)
     ctx.effect(
-      () => server(hostCtx, { profileDirPath, remountProvider, hotReload }),
+      () => server(hostCtx, { profileDirPath, remountProvider, hotReload, reload }),
       'dsh-tauri-extension: routes',
     )
     ctx.effect(() => {

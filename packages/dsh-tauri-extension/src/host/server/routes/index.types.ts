@@ -2,6 +2,7 @@ export interface ExtensionRouteDeps {
   profileDirPath: string
   remountProvider: () => Promise<void>
   hotReload: () => boolean
+  reload: () => Promise<boolean>
 }
 
 export interface ActionResult {

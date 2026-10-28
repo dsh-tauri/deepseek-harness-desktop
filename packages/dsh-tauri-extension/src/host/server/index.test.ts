@@ -104,11 +104,12 @@ function createHarness(): Harness {
 
 const disposers: Array<() => void> = []
 
-function mount(harness: Harness, hotReload = false): () => void {
+function mount(harness: Harness, hotReload = false, reload: () => Promise<boolean> = async () => hotReload): () => void {
   const dispose = server(harness.ctx as Context, {
     profileDirPath: join(harness.dir, 'profiles', 'web'),
     remountProvider: async () => {},
     hotReload: () => hotReload,
+    reload,
   })
   disposers.push(dispose)
   return dispose
@@ -303,6 +304,29 @@ describe('能力管理器路由声明', () => {
     const response = await fetch(`${base}${P}/mcp`)
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ servers: [], restartNeeded: false })
+
+    dispose()
+  })
+
+  it('写盘成功后触发 reload，restartNeeded 取决于 reload 结果', async () => {
+    const harness = createHarness()
+    dirs.push(harness.dir)
+    const reload = vi.fn(async () => false)
+    const dispose = mount(harness, true, reload)
+    const base = await listen(harness.registered)
+    const input = { serverName: 'probe', transport: 'streamable-http', url: 'https://mcp.example.test/mcp', disabled: false }
+    const headers = { 'content-type': 'application/json' }
+
+    const saved = await (await fetch(`${base}${P}/mcp`, { method: 'POST', headers, body: JSON.stringify(input) })).json() as { id: string, restartNeeded: boolean }
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(saved.restartNeeded).toBe(true)
+
+    reload.mockResolvedValue(true)
+    const toggled = await (await fetch(`${base}${P}/mcp/toggle`, { method: 'POST', headers, body: JSON.stringify({ id: saved.id, disabled: true }) })).json()
+    expect(toggled).toEqual({ ok: true, restartNeeded: false })
+    const removed = await (await fetch(`${base}${P}/mcp`, { method: 'DELETE', headers, body: JSON.stringify({ id: saved.id }) })).json()
+    expect(removed).toEqual({ ok: true, restartNeeded: false })
+    expect(reload).toHaveBeenCalledTimes(3)
 
     dispose()
   })

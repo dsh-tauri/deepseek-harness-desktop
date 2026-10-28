@@ -20,7 +20,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<McpSaveResponse |
     }
     const scope = normalizeMcpScope(body.scope)
     const id = mcp.save(mcpScopeDir(scope, deps.profileDirPath), body)
-    return { ok: true, id, restartNeeded: !deps.hotReload() }
+    return { ok: true, id, restartNeeded: !(await deps.reload()) }
   }
   catch (error) {
     event.res.status = 500

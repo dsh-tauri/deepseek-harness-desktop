@@ -81,4 +81,43 @@ describe('apply provider lifecycle', () => {
     disposers.push(effects.get('dsh-tauri-extension: routes')!())
     expect(server.__host_instance!.options.hotReload()).toBe(true)
   })
+
+  function mountWithHmr(hmr: unknown): NonNullable<typeof server.__host_instance>['options'] {
+    const effects = new Map<string, () => (() => void)>()
+    const host = {
+      marker: 'host',
+      webServer: { register: vi.fn(() => () => {}) },
+      get: (name: string) => (name === 'hmr' ? hmr : undefined),
+    }
+    const ctx = {
+      inject: vi.fn((_names: string[], callback: (context: unknown) => unknown) => callback(host)),
+      effect: vi.fn((effect: () => (() => void), label: string) => effects.set(label, effect)),
+    }
+    apply(ctx as unknown as HostContext)
+    disposers.push(effects.get('dsh-tauri-extension: routes')!())
+    return server.__host_instance!.options
+  }
+
+  it('reload 在 hmr 上串行执行 profile 重组并在无 restartReason 时视为已生效', async () => {
+    const reconcileProfile = vi.fn(async () => ({ warnings: [], pending: [] }))
+    const runExclusive = vi.fn(<T>(operation: () => Promise<T>) => operation())
+    const options = mountWithHmr({ runExclusive, reconcileProfile })
+    await expect(options.reload()).resolves.toBe(true)
+    expect(runExclusive).toHaveBeenCalledOnce()
+    expect(reconcileProfile).toHaveBeenCalledOnce()
+  })
+
+  it('reload 遇到 restartReason 或重组失败时报告需重启', async () => {
+    const runExclusive = <T>(operation: () => Promise<T>) => operation()
+    const withReason = mountWithHmr({ runExclusive, reconcileProfile: async () => ({ restartReason: 'package-moved' }) })
+    await expect(withReason.reload()).resolves.toBe(false)
+    disposers.splice(0).forEach(dispose => dispose())
+    const failing = mountWithHmr({ runExclusive, reconcileProfile: async () => Promise.reject(new Error('boom')) })
+    await expect(failing.reload()).resolves.toBe(false)
+  })
+
+  it('reload 在没有 hmr 时报告需重启', async () => {
+    const options = mountWithHmr(undefined)
+    await expect(options.reload()).resolves.toBe(false)
+  })
 })

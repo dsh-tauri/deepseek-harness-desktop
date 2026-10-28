@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
       event.res.status = 404
       return { error: 'server row not found' }
     }
-    return { ok: true, id: createdId, scope, restartNeeded: !deps.hotReload() }
+    return { ok: true, id: createdId, scope, restartNeeded: !(await deps.reload()) }
   }
   catch (error) {
     event.res.status = 500
