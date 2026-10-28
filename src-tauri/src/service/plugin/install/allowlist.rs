@@ -264,6 +264,17 @@ fn apply_allow_build_keys(content: &str, keys: &[String]) -> Result<String, Stri
         dirty = true;
     }
 
+    for (key, value) in allow_builds.iter_mut() {
+        if value.as_bool().is_none()
+            && key
+                .as_str()
+                .is_some_and(|key| keys.contains(&dep_path_to_name(key)))
+        {
+            *value = Value::Bool(true);
+            dirty = true;
+        }
+    }
+
     // `allowBuilds` 的借用已在上面循环结束后释放（NLL），此处才能对 `map`
     // 再次取可变引用处理 `onlyBuiltDependencies`。
     //
@@ -544,6 +555,43 @@ onlyBuiltDependencies:
         let base = "packages:\n  - .\nnodeLinker: hoisted\nautoInstallPeers: false\nallowBuilds:\n  node-pty: true\nonlyBuiltDependencies:\n  - node-pty\n";
         let out = apply_allow_build_keys(base, &["node-pty".to_string()]).unwrap();
         assert_eq!(out, base);
+    }
+
+    #[test]
+    fn apply_settles_pnpm_pending_build_entry() {
+        let base = "\
+allowBuilds:
+  '@modusensus/dsh-mneme': true
+  '@modusensus/dsh-mneme@https://codeload.github.com/modusensus/dsh-mneme/tar.gz/add7c451...': set this to true or false
+  '@modusensus/dsh-mneme@https://codeload.github.com/modusensus/dsh-mneme/tar.gz/denied': false
+  '@modusensus/dsh-mneme-extra@https://example.com/other.tgz': set this to true or false
+onlyBuiltDependencies:
+  - '@modusensus/dsh-mneme'
+";
+        let keys = parse_allowlist_keys(
+            "[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: @modusensus/dsh-mneme@https://codeload.github.com/modusensus/dsh-mneme/tar.gz/add7c451...\n",
+        );
+        assert_eq!(keys, vec!["@modusensus/dsh-mneme".to_string()]);
+        let out = apply_allow_build_keys(base, &keys).unwrap();
+        let map = allow_builds_map(&out);
+        assert_eq!(
+            map.get("@modusensus/dsh-mneme@https://codeload.github.com/modusensus/dsh-mneme/tar.gz/add7c451..."),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            map.get("@modusensus/dsh-mneme@https://codeload.github.com/modusensus/dsh-mneme/tar.gz/denied"),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(
+            map.get("@modusensus/dsh-mneme-extra@https://example.com/other.tgz"),
+            Some(&Value::String("set this to true or false".to_string()))
+        );
+        let doc: Value = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(
+            doc["onlyBuiltDependencies"],
+            Value::Sequence(vec![Value::String("@modusensus/dsh-mneme".to_string())])
+        );
+        assert_eq!(apply_allow_build_keys(&out, &keys).unwrap(), out);
     }
 
     #[test]
