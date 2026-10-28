@@ -33,7 +33,7 @@ export function applyFrameMode(maximized: boolean, fullscreen = false) {
     delete document.documentElement.dataset.dshFrame
 }
 
-/** 最大化或全屏时撤掉外框内缩与圆角（阴影会被屏幕边缘裁出硬边），还原后再画回。
+/** 最大化或全屏时撤掉圆角与描边（会被屏幕边缘裁出硬边），还原后再画回。
  * 跳过 hooks 初始 `undefined` 状态，避免覆盖 `bootstrap()` 已设置好的首帧模式。 */
 export function useFrameChrome() {
   const framed = typeof window !== 'undefined' && (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true

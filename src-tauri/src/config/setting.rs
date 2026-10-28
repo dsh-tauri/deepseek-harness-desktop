@@ -834,7 +834,6 @@ mod tests {
                 blur: true,
                 transparency: true,
                 sidebar_only: true,
-                frame: false,
             },
             harness_max_heap_mb: Some(4096),
             zoom_factor: 1.6,

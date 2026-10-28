@@ -23,8 +23,8 @@ async function bootstrap() {
     preference,
     window.matchMedia('(prefers-color-scheme: dark)').matches,
   )
-  // 外框模式首帧就要定对：恢复出的最大化/全屏窗口若按常规 inset 绘制，会带一圈错误
-  // 的内缩与阴影。此后窗口状态变化由 `useFrameChrome` 订阅维护。
+  // 外框模式首帧就要定对：恢复出的最大化/全屏窗口若按常规 border 绘制，会带出
+  // 被屏幕边缘裁硬的圆角。此后窗口状态变化由 `useFrameChrome` 订阅维护。
   try {
     const appWindow = getCurrentWindow()
     const [maximized, fullscreen] = await Promise.all([

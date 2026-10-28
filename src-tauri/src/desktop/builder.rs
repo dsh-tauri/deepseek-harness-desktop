@@ -848,20 +848,18 @@ fn apply_windows_window_icon(window: &tauri::WebviewWindow<Wry>) {
     }
 }
 
-/// 窗口是否以透明建立：原生透明模式，或自绘外框需要透出四周阴影带。
-/// macOS 保留原生装饰（圆角与系统阴影都在），外框只补 1px 描边，无需透明窗。
+/// 窗口是否以透明建立：Linux 上自绘圆角边框恒需要透明窗透出圆角外的四角，
+/// NVIDIA/XWayland 等需要不透明窗口的场景（shell_window_opaque）回退直角窗口；
+/// 其余平台跟随「原生透明」设置。
 fn shell_window_transparent(appearance: &crate::config::Appearance) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        appearance.transparency
-    }
     #[cfg(target_os = "linux")]
     {
-        (appearance.transparency || appearance.frame) && !crate::shell_window_opaque()
+        let _ = appearance;
+        !crate::shell_window_opaque()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(target_os = "linux"))]
     {
-        appearance.transparency || appearance.frame
+        appearance.transparency
     }
 }
 
@@ -871,11 +869,12 @@ fn with_shell_chrome<'a>(
 ) -> tauri::Result<WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>> {
     let appearance = crate::config::get_store_dat_setting(app).appearance;
     let transparent = shell_window_transparent(&appearance);
+    // 自绘圆角边框仅 Linux 启用：随透明窗一起建立，opaque 回退窗口退回直角。
+    let frame = cfg!(target_os = "linux") && transparent;
     let builder = builder
         .transparent(transparent)
         .initialization_script(format!(
-            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_FRAME__ = {}; window.__DSH_STORE_FILE__ = {};",
-            appearance.frame,
+            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_FRAME__ = {frame}; window.__DSH_STORE_FILE__ = {};",
             serde_json::json!(crate::config::store_dat_file_name())
         ))
         // 启动期外观引导必须落在 document-start 且覆盖所有 frame：内嵌 dsh 的 boot 页
@@ -928,10 +927,8 @@ fn with_shell_chrome<'a>(
             crate::config::DshTheme::Dark => Some(tauri::Theme::Dark),
         });
 
-    // 自绘外框开启时关掉系统阴影：Windows DWM 会沿透明窗的矩形边缘再画一圈
-    // 方形原生阴影，与应用自绘的圆角阴影叠成双重描边；外框关闭时维持系统默认。
     #[cfg(not(target_os = "macos"))]
-    let builder = builder.decorations(false).shadow(!appearance.frame);
+    let builder = builder.decorations(false);
 
     #[cfg(not(any(windows, target_os = "macos")))]
     let _ = app;

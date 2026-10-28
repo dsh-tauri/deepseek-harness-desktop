@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { Panel } from '@/components/panel'
-import { isMacOS } from '@/layout/components/window-chrome'
 import { store } from '@/store'
 import { ZOOM_FACTOR_DEFAULT, ZOOM_FACTOR_OPTIONS } from '@/store/modules/setting'
 import { toast } from '@/utils/toast'
@@ -15,16 +14,16 @@ import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, normalizeAppearance } from '.
 /** 打开「原生透明」时一并给出的初始组合：内容区保持不透明、背景 80%、开启模糊。 */
 const TRANSPARENCY_DEFAULTS = { opacity: 80, blur: true, sidebarOnly: true }
 
-/** 外观设置面板：配色、终端、透明、外框与缩放。 */
 export function ConfigAppearance() {
   const { t } = useTranslation()
   const { appearance: saved, zoom_factor: zoomFactor } = useStore(store.setting)
   const appearance = normalizeAppearance(saved)
   const [opacity, setOpacity] = useState<number>()
   const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
-  const nativeFrame = (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
-  const expectedTransparent = isMacOS() ? appearance.transparency : (appearance.transparency || appearance.frame)
-  const restartPending = appearance.frame !== nativeFrame || expectedTransparent !== transparent
+  // Linux 自绘圆角边框的窗口恒为透明窗（透明度是前端渲染参数），无需重启；
+  // 其余平台透明窗在启动时建立，改动 transparency 需要退出重开。
+  const framed = (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
+  const restartPending = (framed ? true : appearance.transparency) !== transparent
   const { mutate: save, isPending } = useMutation({
     mutationFn: (update: AppSettingUpdate) => store.setting.update(update),
     onError: () => toast(t('appearance.save_failed'), { variant: 'danger' }),
@@ -111,23 +110,6 @@ export function ConfigAppearance() {
       <div className="border-t border-line/30" />
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <Typography type="body-sm" weight="medium">{t('appearance.frame')}</Typography>
-            <Description>{t('appearance.frame_description')}</Description>
-          </div>
-          <Switch
-            aria-label={t('appearance.frame')}
-            isSelected={appearance.frame}
-            isDisabled={isPending}
-            onChange={frame => save({ appearance: { ...appearance, frame } })}
-          >
-            <Switch.Content data-testid="dsh-appearance-frame">
-              <Switch.Control><Switch.Thumb /></Switch.Control>
-            </Switch.Content>
-          </Switch>
-        </div>
-
         <div className="flex items-center justify-between gap-2">
           <div>
             <Typography type="body-sm" weight="medium">{t('appearance.transparency')}</Typography>
