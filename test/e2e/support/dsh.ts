@@ -27,7 +27,7 @@ const READY_RE = /http:\/\/127\.0\.0\.1:\d\S*/
 /** 就绪等待上限（冷启 dsh web + 插件装配）。 */
 const READY_TIMEOUT_MS = 120_000
 
-const MINIMUM_CORE_VERSION = '0.1.7-rc.1'
+const MINIMUM_CORE_VERSION = '0.2.1-rc.4'
 
 /* ==========================================
  * 类型定义 (Type Definitions)

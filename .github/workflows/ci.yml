@@ -91,7 +91,7 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p 'test_ios_*.py' -v
 
       - name: Install rc.2 core for desktop admission regression
-        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-admission" --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2
+        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-admission" --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.4
 
       - name: Test desktop admission against rc.2 gateway
         env:
@@ -148,7 +148,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        core: [0.2.1-rc.2, 0.1.7-rc.1]
+        core: [0.2.1-rc.4]
     env:
       DSH_E2E_CORE_VERSION: ${{ matrix.core }}
     steps:

@@ -21,7 +21,7 @@
   <a href="https://github.com/dsh-tauri/deepseek-harness-desktop/releases">
     <img src="https://img.shields.io/github/v/release/dsh-tauri/deepseek-harness-desktop?&label=Release&color=4D6BFE" alt="Release" />
   </a>
-  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.2-4d6bfe" alt="Recommended DSH 0.2.1-rc.2" />
+  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.4-4d6bfe" alt="Recommended DSH 0.2.1-rc.4" />
   <img src="https://img.shields.io/github/license/dsh-tauri/deepseek-harness-desktop" alt="MIT License" />
   <br>
   <img src="https://img.shields.io/github/downloads/dsh-tauri/deepseek-harness-desktop/total?&label=downloads&color=4D6BFE" alt="Downloads" />
@@ -142,8 +142,8 @@ Windows startup failures show a native dialog with the underlying error. For `ST
 
 | Current baseline | Version |
 | --- | --- |
-| Recommended Harness core | `0.2.1-rc.2` |
-| Minimum supported core | `0.1.7-rc.1`; not a compatibility guarantee for every plugin |
+| Recommended Harness core | `0.2.1-rc.4` |
+| Minimum supported core | `0.2.1-rc.4`; not a compatibility guarantee for every plugin |
 
 Older cores are no longer supported. Earlier compatibility records describe history, not the current support range.
 

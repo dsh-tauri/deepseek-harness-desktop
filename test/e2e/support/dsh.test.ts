@@ -39,12 +39,12 @@ describe('独立 CLI 与用户目录隔离', () => {
     expect(() => resolveDshCommand(), '缺入口不得回退到其他核心').toThrow('绝对路径')
   })
 
-  it.each(['0.1.5-rc.2', '0.1.7-beta.1', 'unknown'])('拒绝最低基线之前或非法的版本：%s', (version) => {
+  it.each(['0.1.7-rc.1', '0.2.1-rc.3', 'unknown'])('拒绝最低基线之前或非法的版本：%s', (version) => {
     vi.stubEnv('DSH_E2E_DSH_BIN', cli(version))
-    expect(() => resolveDshCommand(), '老核心不得继续作为适配基线').toThrow('最低版本为 0.1.7-rc.1')
+    expect(() => resolveDshCommand(), '老核心不得继续作为适配基线').toThrow('最低版本为 0.2.1-rc.4')
   })
 
-  it.each(['0.1.7-rc.1', '0.2.1-rc.1', '0.2.1-rc.2'])('独立实物 CLI 精确匹配时放行：%s', (version) => {
+  it.each(['0.2.1-rc.4', '0.2.1-rc.5', '0.2.2-alpha.2'])('独立实物 CLI 精确匹配时放行：%s', (version) => {
     const entry = cli(version)
     vi.stubEnv('DSH_E2E_DSH_BIN', entry)
     vi.stubEnv('DSH_E2E_CORE_VERSION', version)
@@ -52,13 +52,13 @@ describe('独立 CLI 与用户目录隔离', () => {
   })
 
   it('声明版本与实际包不一致必须失败', () => {
-    vi.stubEnv('DSH_E2E_DSH_BIN', cli('0.1.7-rc.1'))
-    vi.stubEnv('DSH_E2E_CORE_VERSION', '0.2.1-rc.1')
-    expect(() => resolveDshCommand(), '错误版本 lane 不得被当成已验证').toThrow('要求 0.2.1-rc.1，实际 0.1.7-rc.1')
+    vi.stubEnv('DSH_E2E_DSH_BIN', cli('0.2.1-rc.4'))
+    vi.stubEnv('DSH_E2E_CORE_VERSION', '0.2.1-rc.5')
+    expect(() => resolveDshCommand(), '错误版本 lane 不得被当成已验证').toThrow('要求 0.2.1-rc.5，实际 0.2.1-rc.4')
   })
 
   it.each(['package', 'file', 'ancestor'])('补丁目标经 %s 外链越界时必须在读取前拒绝', (layout) => {
-    const entry = cli('0.2.1-rc.1')
+    const entry = cli('0.2.1-rc.4')
     vi.stubEnv('DSH_E2E_DSH_BIN', entry)
     const outside = join(root, 'outside', 'node_modules', '@deepseek-ai', 'dsh-client-ui-renderer')
     mkdirSync(join(outside, 'lib'), { recursive: true })
@@ -84,7 +84,7 @@ describe('独立 CLI 与用户目录隔离', () => {
   })
 
   it('真实无效 Node 命令立即失败并清理 profile，不等待就绪超时', async () => {
-    const entry = cli('0.2.1-rc.1')
+    const entry = cli('0.2.1-rc.4')
     vi.stubEnv('DSH_E2E_DSH_BIN', entry)
     vi.stubEnv('DSH_E2E_NODE_BIN', join(root, 'missing-node'))
     const scoped = join(root, 'cli', 'node_modules', '@deepseek-ai')

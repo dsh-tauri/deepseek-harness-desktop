@@ -39,7 +39,7 @@ function sessionFor(respond: (command: string) => RemoteExecResult | Promise<Rem
   }
 }
 
-function servingSession(html: string, packageVersion = '0.1.7-rc.1', name = '@deepseek-ai/dsh', identity = snapshot()) {
+function servingSession(html: string, packageVersion = '0.2.1-rc.4', name = '@deepseek-ai/dsh', identity = snapshot()) {
   return sessionFor((command) => {
     if (command.includes('REMOTE_DSH_LISTENER_PACKAGE'))
       return ok(JSON.stringify({ name, version: packageVersion }))
@@ -57,13 +57,13 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('actual remote listener admission', () => {
   it('rejects an old serving release even when the managed tree could be new', async () => {
-    const session = servingSession(bootHtml('0.1.7-rc.0'), '0.2.1-rc.1')
+    const session = servingSession(bootHtml('0.1.7-rc.0'), '0.2.1-rc.4')
     await expect(ensureRemoteInstance(session, profile, config)).rejects.toThrow(/REMOTE_DSH_VERSION_UNSUPPORTED/)
     expect(session.commands).toHaveLength(1)
   })
 
   it('admits a supported serving release without reading an unrelated old managed tree', async () => {
-    const session = servingSession(bootHtml('0.2.1-rc.1'), '0.1.2-rc.1')
+    const session = servingSession(bootHtml('0.2.1-rc.4'), '0.1.2-rc.1')
     await expect(ensureRemoteInstance(session, profile, config)).resolves.toBe('fixture.invalid:3080')
     expect(session.commands).toHaveLength(2)
     expect(session.commands.some(command => command.includes('REMOTE_DSH_PACKAGE'))).toBe(false)
@@ -75,7 +75,7 @@ describe('actual remote listener admission', () => {
   })
 
   it.each(['Linux', 'Darwin'])('admits the floor graph without release only with the actual %s listener package', async (os) => {
-    const session = servingSession(bootHtml(), '0.1.7-rc.1', '@deepseek-ai/dsh', snapshot(undefined, os))
+    const session = servingSession(bootHtml(), '0.2.1-rc.4', '@deepseek-ai/dsh', snapshot(undefined, os))
     await expect(ensureRemoteInstance(session, profile, config)).resolves.toBe('fixture.invalid:3080')
     expect(session.commands.filter(command => command.includes('REMOTE_DSH_LISTENER_PID'))).toHaveLength(2)
     expect(session.commands.some(command => command.includes('--version'))).toBe(false)
@@ -113,7 +113,7 @@ describe('actual remote listener admission', () => {
   })
 
   it('binds a relative script to the listener cwd', async () => {
-    const session = servingSession(bootHtml(), '0.1.7-rc.1', '@deepseek-ai/dsh', snapshot(['/usr/bin/node', './dsh/lib/bin.js']))
+    const session = servingSession(bootHtml(), '0.2.1-rc.4', '@deepseek-ai/dsh', snapshot(['/usr/bin/node', './dsh/lib/bin.js']))
     await expect(ensureRemoteInstance(session, profile, config)).resolves.toBe('fixture.invalid:3080')
     const metadata = session.commands.find(command => command.includes('REMOTE_DSH_LISTENER_PACKAGE')) ?? ''
     expect(metadata).toContain('REMOTE_DSH_LISTENER_ENTRY=\'./dsh/lib/bin.js\'')
@@ -136,7 +136,7 @@ describe('actual remote listener admission', () => {
   it('admits a supported auth fence only from the actual listener package', async () => {
     const session = sessionFor((command) => {
       if (command.includes('REMOTE_DSH_LISTENER_PACKAGE'))
-        return ok('{"name":"@deepseek-ai/dsh","version":"0.1.7-rc.1"}')
+        return ok('{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.4"}')
       if (command.includes('REMOTE_DSH_LISTENER_PID'))
         return ok(snapshot())
       if (command.includes('-w'))
@@ -147,7 +147,7 @@ describe('actual remote listener admission', () => {
   })
 
   it('accepts a global dsh symlink entry before resolving its package', async () => {
-    const session = servingSession(bootHtml(), '0.1.7-rc.1', '@deepseek-ai/dsh', snapshot(['/usr/bin/node', '/usr/local/bin/dsh']))
+    const session = servingSession(bootHtml(), '0.2.1-rc.4', '@deepseek-ai/dsh', snapshot(['/usr/bin/node', '/usr/local/bin/dsh']))
     await expect(ensureRemoteInstance(session, profile, config)).resolves.toBe('fixture.invalid:3080')
     const metadata = session.commands.find(command => command.includes('REMOTE_DSH_LISTENER_PACKAGE')) ?? ''
     expect(metadata).toContain('while [ -L "$REMOTE_DSH_LISTENER_ENTRY" ]')
@@ -168,7 +168,7 @@ describe('actual remote listener admission', () => {
       const bin = join(sandbox, entry)
       mkdirSync(dirname(bin), { recursive: true })
       writeFileSync(bin, '')
-      writeFileSync(join(sandbox, entry.split('/')[0]!, 'package.json'), JSON.stringify({ name, version: '0.1.7-rc.1' }))
+      writeFileSync(join(sandbox, entry.split('/')[0]!, 'package.json'), JSON.stringify({ name, version: '0.2.1-rc.4' }))
       const identity = `Linux\n424242\n${shellPath(sandbox)}\n123 456\n/usr/bin/node\0./${entry}\0`
       const session = sessionFor(async (command) => {
         if (command.includes('REMOTE_DSH_LISTENER_PACKAGE')) {
@@ -209,7 +209,7 @@ describe('actual remote listener admission', () => {
         throw new Error('managed provisioning must not run')
       if (command.includes('-w'))
         return ok('export const ready = true\n200')
-      return started ? ok(bootHtml('0.2.1-rc.1')) : { code: 7, stdout: '', stderr: 'not running' }
+      return started ? ok(bootHtml('0.2.1-rc.4')) : { code: 7, stdout: '', stderr: 'not running' }
     })
     await expect(ensureRemoteInstance(session, { ...profile, startCommand: 'fixture-custom-start' }, config)).resolves.toBe('fixture.invalid:3080')
     expect(started).toBe(true)

@@ -21,7 +21,7 @@
   <a href="https://github.com/dsh-tauri/deepseek-harness-desktop/releases">
     <img src="https://img.shields.io/github/v/release/dsh-tauri/deepseek-harness-desktop?&label=Release&color=4D6BFE" alt="Релиз" />
   </a>
-  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.2-4d6bfe" alt="Рекомендуемый DSH 0.2.1-rc.2" />
+  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.4-4d6bfe" alt="Рекомендуемый DSH 0.2.1-rc.4" />
   <img src="https://img.shields.io/github/license/dsh-tauri/deepseek-harness-desktop" alt="Лицензия MIT" />
   <br>
   <img src="https://img.shields.io/github/downloads/dsh-tauri/deepseek-harness-desktop/total?&label=downloads&color=4D6BFE" alt="Загрузки" />
@@ -135,8 +135,8 @@ brew install dsh-tauri/desktop/deepseek-harness
 
 | Текущая база | Версия |
 | --- | --- |
-| Рекомендуемое ядро Harness | `0.2.1-rc.2` |
-| Минимальная поддерживаемая версия ядра | `0.1.7-rc.1`; это не гарантия совместимости с каждым плагином |
+| Рекомендуемое ядро Harness | `0.2.1-rc.4` |
+| Минимальная поддерживаемая версия ядра | `0.2.1-rc.4`; это не гарантия совместимости с каждым плагином |
 
 Более старые ядра больше не поддерживаются. Ранее записанные сведения о совместимости описывают историю, а не текущий диапазон поддержки.
 

@@ -2,7 +2,7 @@
 
 [English](<./DEVELOPMENT.md>) · [中文](<./DEVELOPMENT.zh.md>) · [README](<../README.md>)
 
-Tauri 2 + React 19：前端位于 [`src/`](<../src/>)，Rust 后端位于 [`src-tauri/`](<../src-tauri/>)，插件位于 [`packages/`](<../packages/>)。推荐 Harness 内核：`0.2.1-rc.2`；最低支持内核：`0.1.7-rc.1`。更早内核不再支持，旧兼容日志只记录历史，不构成当前支持承诺；本轮范围见[当前兼容记录](<../packages/dsh-tauri/docs/compatibility-0.2.1-rc.2.md>)。
+Tauri 2 + React 19：前端位于 [`src/`](<../src/>)，Rust 后端位于 [`src-tauri/`](<../src-tauri/>)，插件位于 [`packages/`](<../packages/>)。推荐 Harness 内核：`0.2.1-rc.4`；最低支持内核：`0.2.1-rc.4`。更早内核不再支持，旧兼容日志只记录历史，不构成当前支持承诺；本轮范围见[当前兼容记录](<../packages/dsh-tauri/docs/compatibility-0.2.1-rc.4.md>)。
 
 修改前先读 [AGENTS.md](<../AGENTS.md>) 与[路由规范](<./specs/devlopment.md>)。禁止查看受限归档目录，插件改动期间禁止执行构建。
 

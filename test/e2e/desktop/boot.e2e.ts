@@ -97,7 +97,7 @@ describe('桌面端启动冒烟', () => {
     })
 
     expect(info.node_version, '未解析到可用 Node 运行时').not.toBe('')
-    expect(info.dsh_version, '冷装配必须实际启动推荐的 rc.2 核心').toBe('0.2.1-rc.2')
+    expect(info.dsh_version, '冷装配必须实际启动推荐的 rc.4 核心').toBe('0.2.1-rc.4')
     expect(resolve(info.data_dir), '真实核心数据根必须隔离在本次 scratch').toBe(resolve(app!.home, 'home', '.dsh.dev'))
     const logRelative = relative(app!.downloadCacheDir, info.log_path)
     expect(isAbsolute(logRelative) || logRelative === '..' || logRelative.startsWith('../') || logRelative.startsWith('..\\'), '真实核心日志不得写入用户运行实例目录').toBe(false)

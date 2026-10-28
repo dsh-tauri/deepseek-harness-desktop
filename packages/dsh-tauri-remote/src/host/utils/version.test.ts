@@ -24,7 +24,7 @@ const RELEASES = [
 describe('parseVersionFromTag', () => {
   it('extracts the semver from build-id tags', () => {
     expect(parseVersionFromTag('dsh-0.1.2-rc.1-33729514615')).toBe('0.1.2-rc.1')
-    expect(parseVersionFromTag('dsh-0.2.1-rc.2-39022695148')).toBe('0.2.1-rc.2')
+    expect(parseVersionFromTag('dsh-0.2.1-rc.4-40372188763')).toBe('0.2.1-rc.4')
     expect(parseVersionFromTag('dsh-0.1.0-rc.8-32342588167')).toBe('0.1.0-rc.8')
     // Bare dsh-prefixed tags always lose their last dash segment (the build-id
     // convention) — matching the retired Rust parser exactly.
@@ -51,10 +51,10 @@ describe('isPreviewTag', () => {
 
 describe('pickReleaseTag', () => {
   it('keeps the manifest recommendation when a newer alpha package is listed', () => {
-    const releases = [{ tag: 'dsh-0.2.2-alpha.1-42', prerelease: false }, { tag: 'dsh-0.2.1-rc.2-39022695148', prerelease: false }, ...RELEASES]
+    const releases = [{ tag: 'dsh-0.2.2-alpha.1-42', prerelease: false }, { tag: 'dsh-0.2.1-rc.4-40372188763', prerelease: false }, ...RELEASES]
     expect(pickReleaseTag(releases)).toEqual({
-      tag: 'dsh-0.2.1-rc.2-39022695148',
-      version: '0.2.1-rc.2',
+      tag: 'dsh-0.2.1-rc.4-40372188763',
+      version: '0.2.1-rc.4',
       source: 'recommended',
       notes: [],
     })
@@ -127,7 +127,7 @@ describe('pickReleaseTag', () => {
 
   it('falls back to the known stable tag when the release list is unavailable', () => {
     const resolved = pickReleaseTag(undefined)
-    expect(resolved).toMatchObject({ tag: 'dsh-0.2.1-rc.2-39022695148', version: '0.2.1-rc.2', source: 'fallback' })
+    expect(resolved).toMatchObject({ tag: 'dsh-0.2.1-rc.4-40372188763', version: '0.2.1-rc.4', source: 'fallback' })
     expect(resolved.notes[0]).toContain('回退已知稳定 tag')
   })
 

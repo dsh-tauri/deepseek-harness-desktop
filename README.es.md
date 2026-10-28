@@ -21,7 +21,7 @@
   <a href="https://github.com/dsh-tauri/deepseek-harness-desktop/releases">
     <img src="https://img.shields.io/github/v/release/dsh-tauri/deepseek-harness-desktop?&label=Release&color=4D6BFE" alt="Release" />
   </a>
-  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.2-4d6bfe" alt="DSH recomendado 0.2.1-rc.2" />
+  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.4-4d6bfe" alt="DSH recomendado 0.2.1-rc.4" />
   <img src="https://img.shields.io/github/license/dsh-tauri/deepseek-harness-desktop" alt="MIT License" />
   <br>
   <img src="https://img.shields.io/github/downloads/dsh-tauri/deepseek-harness-desktop/total?&label=downloads&color=4D6BFE" alt="Downloads" />
@@ -142,8 +142,8 @@ Windows muestra los errores de inicio en un diálogo nativo. Para `STARTUP_LOW_I
 
 | Base actual | Versión |
 | --- | --- |
-| Núcleo Harness recomendado | `0.2.1-rc.2` |
-| Núcleo mínimo compatible | `0.1.7-rc.1`; no garantiza compatibilidad con todos los plugins |
+| Núcleo Harness recomendado | `0.2.1-rc.4` |
+| Núcleo mínimo compatible | `0.2.1-rc.4`; no garantiza compatibilidad con todos los plugins |
 
 Los núcleos anteriores ya no son compatibles. Los registros previos describen hechos históricos, no el soporte actual.
 

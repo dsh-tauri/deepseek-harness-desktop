@@ -1,8 +1,8 @@
 {
   "engines": {
     "dsh": {
-      "recommend": "0.2.1-rc.2",
-      "minimum": "0.1.7-rc.1"
+      "recommend": "0.2.1-rc.4",
+      "minimum": "0.2.1-rc.4"
     },
     "node": {
       "version": ">=22.22.0"
@@ -43,8 +43,8 @@
     },
     "dsh": {
       "engine": {
-        "recommend": "0.2.1-rc.2",
-        "minimum": "0.1.7-rc.1"
+        "recommend": "0.2.1-rc.4",
+        "minimum": "0.2.1-rc.4"
       },
       "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",
       "managedRoot": "$AppData/dependencies/dsh",

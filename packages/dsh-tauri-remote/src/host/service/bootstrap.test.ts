@@ -45,8 +45,8 @@ const profile: MachineProfile = {
 
 const PKG_REPO = 'dsh-tauri-desk/deepseek-harness-pkg'
 
-const DSH_VERSION = '0.2.1-rc.2'
-const DSH_TAG = 'dsh-0.2.1-rc.2-39022695148'
+const DSH_VERSION = '0.2.1-rc.4'
+const DSH_TAG = 'dsh-0.2.1-rc.4-40372188763'
 const DSH_TGZ = `dsh-${DSH_VERSION}.tgz`
 const NPM_TGZ = `https://registry.npmjs.org/@deepseek-ai/dsh/-/${DSH_TGZ}`
 const MIRROR_TGZ = `https://registry.npmmirror.com/@deepseek-ai/dsh/-/${DSH_TGZ}`
@@ -102,7 +102,7 @@ function stubGithub(): void {
 
 class FakeSession implements RemoteSession {
   commands: string[] = []
-  dshVersion = '0.2.1-rc.2'
+  dshVersion = '0.2.1-rc.4'
 
   constructor(private readonly responder: (command: string, index: number) => RemoteExecResult) {}
 
@@ -297,7 +297,7 @@ describe('planRemoteInstall', () => {
     }))
     if (plan.dsh.kind !== 'pkg-zip')
       throw new Error('expected pkg-zip')
-    expect(plan.dsh.tag).toBe('dsh-0.2.1-rc.2-39022695148')
+    expect(plan.dsh.tag).toBe('dsh-0.2.1-rc.4-40372188763')
     expect(plan.notes.join('\n')).toContain('release 列表获取失败')
   })
 
@@ -305,11 +305,11 @@ describe('planRemoteInstall', () => {
     const repos: string[] = []
     const plan = await planRemoteInstall('Linux 6.8 x86_64', {
       installRepo: 'https://github.com/my-org/deepseek-harness-pkg.git',
-      installRef: '0.1.7-rc.1',
+      installRef: '0.2.1-rc.4',
     }, {
       listReleases: (repo) => {
         repos.push(repo)
-        return Promise.resolve([{ tag: 'dsh-0.1.7-rc.1-42', prerelease: false }, ...RELEASES])
+        return Promise.resolve([{ tag: 'dsh-0.2.1-rc.4-42', prerelease: false }, ...RELEASES])
       },
       listAssets: () => Promise.resolve(LINUX_ASSETS),
       npmDist: () => Promise.reject(new Error('unused')),
@@ -317,7 +317,7 @@ describe('planRemoteInstall', () => {
     expect(repos).toEqual(['my-org/deepseek-harness-pkg'])
     if (plan.dsh.kind !== 'pkg-zip')
       throw new Error('expected pkg-zip')
-    expect(plan.dsh.tag).toBe('dsh-0.1.7-rc.1-42')
+    expect(plan.dsh.tag).toBe('dsh-0.2.1-rc.4-42')
   })
 
   it('rejects platforms outside the matrix before any network use', async () => {
@@ -594,7 +594,7 @@ describe('install script execution (real POSIX sh)', () => {
     // dsh dist: the npm package layout (package.json + lib/bin.js).
     const dshStage = join(work, 'dsh-stage')
     mkdirSync(join(dshStage, 'package', 'lib'), { recursive: true })
-    writeFileSync(join(dshStage, 'package', 'package.json'), '{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.2"}\n')
+    writeFileSync(join(dshStage, 'package', 'package.json'), '{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.4"}\n')
     writeFileSync(join(dshStage, 'package', 'lib', 'bin.js'), '#!/usr/bin/env node\nvoid 0\n')
     const dshTgz = join(served, DSH_TGZ)
     await promisify(execFile)('tar', ['-czf', dshTgz, '-C', dshStage, 'package'])
@@ -1050,7 +1050,7 @@ describe('credentials copy execution (real POSIX sh)', () => {
 const BOOT_HTML = [
   '<html><head>',
   '<script src="/plugins/??@deepseek-ai/dsh-client-modules/client.js&amp;rev=1"></script>',
-  '</head><body><script>globalThis["__DSH_BOOT__"] = {"release":{"version":"0.2.1-rc.2"},"entries":[{"url":"/plugins/@deepseek-ai/dsh-client-ui-layout/client.js"}]};</script></body></html>',
+  '</head><body><script>globalThis["__DSH_BOOT__"] = {"release":{"version":"0.2.1-rc.4"},"entries":[{"url":"/plugins/@deepseek-ai/dsh-client-ui-layout/client.js"}]};</script></body></html>',
 ].join('')
 
 const BOOTSTRAP = {
@@ -1093,7 +1093,7 @@ describe('ensureRemoteInstance', () => {
   it('accepts the supported auth fence when no boot manifest is exposed', async () => {
     const session = new FakeSession((command) => {
       if (command.includes('REMOTE_DSH_LISTENER_PACKAGE'))
-        return { code: 0, stdout: '{"name":"@deepseek-ai/dsh","version":"0.1.7-rc.1"}', stderr: '' }
+        return { code: 0, stdout: '{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.4"}', stderr: '' }
       if (command.includes('REMOTE_DSH_LISTENER_PID'))
         return { code: 0, stdout: 'Linux\n424242\n/opt/work\n123 456\n/usr/bin/node\0/opt/dsh/lib/bin.js\0', stderr: '' }
       if (command.includes('/dev/null'))

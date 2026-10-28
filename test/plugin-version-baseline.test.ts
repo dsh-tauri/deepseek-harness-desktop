@@ -40,19 +40,19 @@ describe('运行插件最低内核声明', () => {
     expect(plugins.map(({ directory }) => directory).sort()).toEqual(expectedPlugins)
   })
 
-  it.each(plugins)('$directory 明确声明最低内核为 0.1.7-rc.1', ({ manifest }) => {
-    expect(manifest.engines?.dsh).toBe('>=0.1.7-rc.1')
+  it.each(plugins)('$directory 明确声明最低内核为 0.2.1-rc.4', ({ manifest }) => {
+    expect(manifest.engines?.dsh).toBe('>=0.2.1-rc.4')
   })
 
   describe.each(plugins)('$directory 的内核版本准入', ({ manifest }) => {
     it.each([
-      ['0.1.7-rc.1', true],
-      ['0.1.7', true],
-      ['0.1.8-alpha.1', true],
-      ['0.2.1-rc.1', true],
-      ['0.2.1-rc.2', true],
-      ['0.1.7-rc.0', false],
-      ['0.1.7-alpha.1', false],
+      ['0.2.1-rc.4', true],
+      ['0.2.1-rc.5', true],
+      ['0.2.1', true],
+      ['0.2.2-alpha.2', true],
+      ['0.2.1-rc.3', false],
+      ['0.2.1-rc.2', false],
+      ['0.1.7-rc.1', false],
       ['0.1.6', false],
     ] as const)('%s 的准入结果为 %s', (version, expected) => {
       const range = manifest.engines?.dsh

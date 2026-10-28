@@ -638,17 +638,17 @@ mod tests {
     #[test]
     fn shipped_manifest_keeps_recommendation_and_minimum_in_sync() {
         let manifest = shipped_manifest();
-        assert_eq!(manifest.engines.dsh.recommend, "0.2.1-rc.2");
-        assert_eq!(manifest.engines.dsh.minimum, "0.1.7-rc.1");
+        assert_eq!(manifest.engines.dsh.recommend, "0.2.1-rc.4");
+        assert_eq!(manifest.engines.dsh.minimum, "0.2.1-rc.4");
         let raw = std::fs::read_to_string(source_manifest_path()).unwrap();
         let value: serde_json::Value = serde_json::from_str(&strip_jsonc(&raw)).unwrap();
         assert_eq!(
             value["dependencies"]["dsh"]["engine"]["recommend"],
-            "0.2.1-rc.2"
+            "0.2.1-rc.4"
         );
         assert_eq!(
             value["dependencies"]["dsh"]["engine"]["minimum"],
-            "0.1.7-rc.1"
+            "0.2.1-rc.4"
         );
         for (id, floor_req) in [
             ("dsh-better-sidebar", "^0.21.1"),

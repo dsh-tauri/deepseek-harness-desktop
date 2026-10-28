@@ -21,7 +21,7 @@
   <a href="https://github.com/dsh-tauri/deepseek-harness-desktop/releases">
     <img src="https://img.shields.io/github/v/release/dsh-tauri/deepseek-harness-desktop?&label=Release&color=4D6BFE" alt="Release" />
   </a>
-  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.2-4d6bfe" alt="Recommended DSH 0.2.1-rc.2" />
+  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.4-4d6bfe" alt="Recommended DSH 0.2.1-rc.4" />
   <img src="https://img.shields.io/github/license/dsh-tauri/deepseek-harness-desktop" alt="MIT License" />
   <br>
   <img src="https://img.shields.io/github/downloads/dsh-tauri/deepseek-harness-desktop/total?&label=downloads&color=4D6BFE" alt="Downloads" />
@@ -142,8 +142,8 @@ Windows에서 시작에 실패하면 네이티브 대화 상자에 원인 오류
 
 | 현재 기준 | 버전 |
 | --- | --- |
-| 권장 Harness 코어 | `0.2.1-rc.2` |
-| 지원하는 최소 코어 | `0.1.7-rc.1`; 모든 플러그인의 호환성을 보장하지는 않음 |
+| 권장 Harness 코어 | `0.2.1-rc.4` |
+| 지원하는 최소 코어 | `0.2.1-rc.4`; 모든 플러그인의 호환성을 보장하지는 않음 |
 
 이전 코어는 더 이상 지원하지 않습니다. 과거의 호환성 기록은 이력을 나타낼 뿐, 현재 지원 범위를 의미하지 않습니다.
 
