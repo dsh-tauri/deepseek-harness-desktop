@@ -404,6 +404,12 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
                 );
                 tokio::time::sleep(RETRY_DELAY).await;
             }
+            Err(e) if e.raw_os_error() == Some(32) => {
+                return Err(std::io::Error::new(
+                    e.kind(),
+                    format!("{e}; end node.exe processes still using the core directory in Task Manager or restart Windows, then retry"),
+                ))
+            }
             Err(e) => return Err(e),
         }
     }

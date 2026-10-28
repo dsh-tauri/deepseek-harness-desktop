@@ -459,14 +459,131 @@ fn decode_windows_command_line(buffer: &[usize], returned: usize) -> Option<Stri
 }
 
 #[cfg(windows)]
-fn windows_process_snapshot(target_pid: Option<u32>) -> Result<Vec<u8>, String> {
+type QueryProcess = unsafe extern "system" fn(
+    windows_sys::Win32::Foundation::HANDLE,
+    u32,
+    *mut std::ffi::c_void,
+    u32,
+    *mut u32,
+) -> i32;
+
+#[cfg(windows)]
+fn path_within(path: &str, dir: &str) -> bool {
+    let norm = |value: &str| {
+        value
+            .trim_start_matches(r"\\?\")
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    };
+    let (path, dir) = (norm(path), norm(dir));
+    path == dir
+        || path
+            .strip_prefix(&dir)
+            .is_some_and(|rest| rest.starts_with('\\'))
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn windows_process_cwd(pid: u32, query: QueryProcess) -> Option<String> {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    let handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+    let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+    let raw = handle.as_raw_handle();
+    let mut basic = [0usize; 6];
+    let mut returned = 0;
+    if unsafe { query(raw, 0, basic.as_mut_ptr().cast(), 48, &mut returned) } < 0 {
+        return None;
+    }
+    let read = |address: usize, buffer: *mut u8, length: usize| unsafe {
+        ReadProcessMemory(
+            raw,
+            address as *const _,
+            buffer.cast(),
+            length,
+            std::ptr::null_mut(),
+        ) != 0
+    };
+    let mut parameters = 0usize;
+    if basic[1] == 0 || !read(basic[1] + 0x20, (&mut parameters as *mut usize).cast(), 8) {
+        return None;
+    }
+    let mut header = [0usize; 2];
+    if parameters == 0 || !read(parameters + 0x38, header.as_mut_ptr().cast(), 16) {
+        return None;
+    }
+    let length = (header[0] & 0xffff) as usize;
+    if length == 0 || length % 2 != 0 || header[1] == 0 {
+        return None;
+    }
+    let mut units = vec![0u16; length / 2];
+    if !read(header[1], units.as_mut_ptr().cast(), length) {
+        return None;
+    }
+    String::from_utf16(&units).ok()
+}
+
+#[cfg(all(windows, not(target_pointer_width = "64")))]
+fn windows_process_cwd(_pid: u32, _query: QueryProcess) -> Option<String> {
+    None
+}
+
+// issue #1266：句柄锁只来自 CWD 与打开的文件，命令行会被转发层改写，故按 CWD 与已加载模块判定。
+#[cfg(windows)]
+fn windows_holds_core(pid: u32, core: &str, query: QueryProcess) -> bool {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, Module32NextW, TH32CS_SNAPMODULE,
+        TH32CS_SNAPMODULE32,
+    };
+
+    if windows_process_cwd(pid, query).is_some_and(|cwd| path_within(&cwd, core)) {
+        return true;
+    }
+    let snapshot =
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return false;
+    }
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+    let mut module: MODULEENTRY32W = unsafe { std::mem::zeroed() };
+    module.dwSize = std::mem::size_of::<MODULEENTRY32W>() as u32;
+    let mut present = unsafe { Module32FirstW(snapshot.as_raw_handle(), &mut module) };
+    while present != 0 {
+        let length = module
+            .szExePath
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(module.szExePath.len());
+        if String::from_utf16(&module.szExePath[..length])
+            .is_ok_and(|path| path_within(&path, core))
+        {
+            return true;
+        }
+        present = unsafe { Module32NextW(snapshot.as_raw_handle(), &mut module) };
+    }
+    false
+}
+
+#[cfg(windows)]
+fn windows_process_snapshot(
+    target_pid: Option<u32>,
+    core_dir: Option<&str>,
+) -> Result<Vec<u8>, String> {
     use std::collections::HashMap;
     use std::os::windows::io::FromRawHandle;
-    use windows_sys::Win32::Foundation::{
-        ERROR_NO_MORE_FILES, FILETIME, HANDLE, INVALID_HANDLE_VALUE,
-    };
+    use windows_sys::Win32::Foundation::{ERROR_NO_MORE_FILES, FILETIME, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
     };
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -475,8 +592,6 @@ fn windows_process_snapshot(target_pid: Option<u32>) -> Result<Vec<u8>, String> 
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
-    type QueryProcess =
-        unsafe extern "system" fn(HANDLE, u32, *mut std::ffi::c_void, u32, *mut u32) -> i32;
     let module_name: Vec<_> = "ntdll.dll".encode_utf16().chain(Some(0)).collect();
     let module = unsafe { GetModuleHandleW(module_name.as_ptr()) };
     if module.is_null() {
@@ -601,9 +716,6 @@ fn windows_process_snapshot(target_pid: Option<u32>) -> Result<Vec<u8>, String> 
         let Some(command_line) = &process.command_line else {
             continue;
         };
-        if target_pid.is_none() && !command_line.contains("--no-open") {
-            continue;
-        }
         let mut next = *parent;
         let mut ancestors = Vec::new();
         for _ in 0..8 {
@@ -613,12 +725,26 @@ fn windows_process_snapshot(target_pid: Option<u32>) -> Result<Vec<u8>, String> 
             ancestors.push(ancestor.clone());
             next = *parent;
         }
+        let holds_core = target_pid.is_none()
+            && pid != std::process::id()
+            && core_dir.is_some_and(|core| windows_holds_core(pid, core, query));
+        let in_harness_tree = command_line.contains("--no-open")
+            || ancestors.iter().any(|ancestor| {
+                ancestor
+                    .command_line
+                    .as_deref()
+                    .is_some_and(|command| command.contains("--no-open"))
+            });
+        if target_pid.is_none() && !in_harness_tree && !holds_core {
+            continue;
+        }
         let entry = WindowsProcessEntry {
             pid,
             created: process.created,
             command_line: command_line.clone(),
             ancestors,
             ancestors_truncated: processes.contains_key(&next),
+            holds_core,
         };
         serde_json::to_writer(&mut output, &entry).map_err(|error| {
             format!("HARNESS_SWEEP_FAILED: process snapshot serialization failed: {error}")
@@ -630,7 +756,13 @@ fn windows_process_snapshot(target_pid: Option<u32>) -> Result<Vec<u8>, String> 
 
 #[cfg(windows)]
 pub(super) fn terminate_stale_harness_processes_at(dsh_bin: &Path) -> Result<(), String> {
-    let output = windows_process_snapshot(None)?;
+    let core_dir = dsh_bin
+        .ancestors()
+        .find(|dir| {
+            dir.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("dependencies"))
+        })
+        .and_then(Path::to_str);
+    let output = windows_process_snapshot(None, core_dir)?;
     let dsh_bin = dsh_bin
         .to_str()
         .ok_or("HARNESS_SWEEP_FAILED: invalid entry path")?;
@@ -684,8 +816,8 @@ fn confirm_orphan_decision(running: bool, expected: u64, observed: u64) -> Orpha
 fn terminate_confirmed_process(pid: u32, created: u64) -> Result<bool, String> {
     use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-        PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        PROCESS_TERMINATE, WaitForSingleObject,
     };
 
     let handle = unsafe {
@@ -734,7 +866,9 @@ fn terminate_confirmed_process(pid: u32, created: u64) -> Result<bool, String> {
             Ok(true)
         }
         OrphanDecision::Mismatch => {
-            log::warn!("Skipping orphan Harness process {pid}: creation time mismatch (expected {created}, observed {observed})");
+            log::warn!(
+                "Skipping orphan Harness process {pid}: creation time mismatch (expected {created}, observed {observed})"
+            );
             Ok(false)
         }
     };
@@ -756,7 +890,7 @@ pub(super) fn terminate_windows_process(
         _ => {
             return Err(format!(
                 "HARNESS_CLEANUP_FAILED: cannot query process {pid}"
-            ))
+            ));
         }
     }
     kill_tree(pid);
@@ -798,7 +932,7 @@ pub(super) fn reclaim_orphan_port(dsh_bin: &Path, port: u16) -> Result<bool, Str
     {
         return Ok(false);
     }
-    let output = match windows_process_snapshot(Some(pid)) {
+    let output = match windows_process_snapshot(Some(pid), None) {
         Ok(output) => output,
         Err(error) => {
             log::warn!("PORT_OWNER: port={port} pid={pid} ownership=unknown: {error}");
@@ -854,6 +988,8 @@ struct WindowsProcessEntry {
     ancestors: Vec<WindowsProcessAncestor>,
     #[serde(default, rename = "ancestorsTruncated")]
     ancestors_truncated: bool,
+    #[serde(default, rename = "holdsCore")]
+    holds_core: bool,
 }
 
 #[cfg(windows)]
@@ -886,7 +1022,45 @@ fn windows_relay_arguments(
     windows_harness_arguments(&command[matched.end()..], dsh_bin)
 }
 
+fn orphan_root(
+    pid: u32,
+    created: u64,
+    arguments: &[String],
+    mut child_is_relay: bool,
+    ancestors: &[WindowsProcessAncestor],
+    dsh_bin: &str,
+    owned_pid: Option<u32>,
+) -> Option<(u32, u64)> {
+    let mut root = (pid, created);
+    let mut descendant = created;
+    let mut seen = vec![pid];
+    for ancestor in ancestors {
+        if ancestor.created > descendant {
+            break;
+        }
+        let relay = windows_relay_arguments(ancestor, dsh_bin).as_deref() == Some(arguments);
+        let shim = child_is_relay
+            && ancestor.name.eq_ignore_ascii_case("node.exe")
+            && ancestor.command_line.as_deref().is_some_and(|command| {
+                windows_harness_arguments(command, dsh_bin).as_deref() == Some(arguments)
+            });
+        if ancestor.created == 0
+            || Some(ancestor.pid) == owned_pid
+            || seen.contains(&ancestor.pid)
+            || !(relay || shim)
+        {
+            return None;
+        }
+        seen.push(ancestor.pid);
+        root = (ancestor.pid, ancestor.created);
+        descendant = ancestor.created;
+        child_is_relay = relay;
+    }
+    (Some(root.0) != owned_pid).then_some(root)
+}
+
 // issue #1122：只穿过同一命令的 cmd 转发层及其直接 node 垫片，仍须向上确认真实宿主。
+// issue #1266：会话子进程命令行不含入口，但持有核心目录时，从其最近的入口祖先起按同一规则找根。
 #[cfg(windows)]
 fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> Vec<(u32, u64)> {
     let mut targets: Vec<(u32, u64)> = Vec::new();
@@ -897,42 +1071,48 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
         if entry.created == 0 || entry.ancestors_truncated || Some(entry.pid) == owned_pid {
             continue;
         }
-        let Some(arguments) = windows_harness_arguments(&entry.command_line, dsh_bin) else {
-            continue;
+        let root = if let Some(arguments) = windows_harness_arguments(&entry.command_line, dsh_bin)
+        {
+            orphan_root(
+                entry.pid,
+                entry.created,
+                &arguments,
+                false,
+                &entry.ancestors,
+                dsh_bin,
+                owned_pid,
+            )
+        } else if entry.holds_core {
+            entry
+                .ancestors
+                .iter()
+                .enumerate()
+                .find_map(|(index, ancestor)| {
+                    let relay = windows_relay_arguments(ancestor, dsh_bin);
+                    let arguments = relay.clone().or_else(|| {
+                        ancestor
+                            .command_line
+                            .as_deref()
+                            .and_then(|command| windows_harness_arguments(command, dsh_bin))
+                    })?;
+                    Some(orphan_root(
+                        ancestor.pid,
+                        ancestor.created,
+                        &arguments,
+                        relay.is_some(),
+                        &entry.ancestors[index + 1..],
+                        dsh_bin,
+                        owned_pid,
+                    ))
+                })
+                .flatten()
+        } else {
+            None
         };
-        let mut root = (entry.pid, entry.created);
-        let mut descendant = entry.created;
-        let mut child_is_relay = false;
-        let mut seen = vec![entry.pid];
-        let mut owned = false;
-        for ancestor in &entry.ancestors {
-            if ancestor.created > descendant {
-                break;
+        if let Some(root) = root {
+            if !targets.contains(&root) {
+                targets.push(root);
             }
-            let relay = windows_relay_arguments(ancestor, dsh_bin).as_ref() == Some(&arguments);
-            let shim = child_is_relay
-                && ancestor.name.eq_ignore_ascii_case("node.exe")
-                && ancestor.command_line.as_deref().is_some_and(|command| {
-                    windows_harness_arguments(command, dsh_bin).as_ref() == Some(&arguments)
-                });
-            if ancestor.created == 0
-                || Some(ancestor.pid) == owned_pid
-                || seen.contains(&ancestor.pid)
-                || !(relay || shim)
-            {
-                owned = true;
-                break;
-            }
-            seen.push(ancestor.pid);
-            root = (ancestor.pid, ancestor.created);
-            descendant = ancestor.created;
-            child_is_relay = relay;
-        }
-        if owned || Some(root.0) == owned_pid {
-            continue;
-        }
-        if !targets.contains(&root) {
-            targets.push(root);
         }
     }
     targets
@@ -1169,11 +1349,12 @@ mod tests {
                 "{effect} must run inside resolved profile scope"
             );
         }
-        assert!(stop
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .collect::<String>()
-            .ends_with("}).await}"));
+        assert!(
+            stop.chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+                .ends_with("}).await}")
+        );
     }
 
     #[test]
@@ -1236,10 +1417,14 @@ mod tests {
             .unwrap();
         assert!(
             reclaim.find("super::instances::profiles()").unwrap()
-                < reclaim.find("windows_process_snapshot(Some(pid))").unwrap()
+                < reclaim
+                    .find("windows_process_snapshot(Some(pid), None)")
+                    .unwrap()
         );
-        assert!(reclaim
-            .contains("super::instances::scope_sync(profile, owned_process_pid) == Some(pid)"));
+        assert!(
+            reclaim
+                .contains("super::instances::scope_sync(profile, owned_process_pid) == Some(pid)")
+        );
     }
 
     /// 构造一个测试用 `OwnedProcess`（跨平台处理 Windows 句柄字段）。
@@ -1373,7 +1558,7 @@ mod tests {
 
     #[test]
     fn shutdown_gate_rejects_every_profile_after_inflight_registration() {
-        use std::sync::{mpsc, Mutex, TryLockError};
+        use std::sync::{Mutex, TryLockError, mpsc};
         use std::time::Duration;
 
         let shutdown = Mutex::new(false);
@@ -1443,9 +1628,11 @@ mod tests {
             launching.store(true, Ordering::SeqCst);
             drop(guard);
             assert!(launching.load(Ordering::SeqCst));
-            assert!(!super::super::instances::instance_of("guard-owner-test")
-                .launching
-                .load(Ordering::SeqCst));
+            assert!(
+                !super::super::instances::instance_of("guard-owner-test")
+                    .launching
+                    .load(Ordering::SeqCst)
+            );
             launching.store(false, Ordering::SeqCst);
         });
     }
@@ -1511,16 +1698,20 @@ mod tests {
 
         super::super::instances::scope_sync(profile.into(), || {
             assert_eq!(status::get_status(), status::Status::Stopped);
-            assert!(register_owned_process(None, || Ok((test_owned(42), ())))
-                .unwrap()
-                .is_some());
+            assert!(
+                register_owned_process(None, || Ok((test_owned(42), ())))
+                    .unwrap()
+                    .is_some()
+            );
             status::set_status(status::Status::Running);
-            assert!(on_owned_process_exit_at(
-                41,
-                |_| panic!("stale exit must not report"),
-                |_| panic!("stale exit must not notify"),
-            )
-            .is_none());
+            assert!(
+                on_owned_process_exit_at(
+                    41,
+                    |_| panic!("stale exit must not report"),
+                    |_| panic!("stale exit must not notify"),
+                )
+                .is_none()
+            );
             assert_eq!(owned_process_pid(), Some(42));
             assert_eq!(status::get_status(), status::Status::Running);
             take_owned_process();
@@ -1561,13 +1752,15 @@ mod tests {
         .await;
         assert!(second.is_err());
         drop(first);
-        assert!(tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            acquire_core_transition()
-        )
-        .await
-        .expect("transition lock should be available after release")
-        .is_ok());
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                acquire_core_transition()
+            )
+            .await
+            .expect("transition lock should be available after release")
+            .is_ok()
+        );
     }
 
     /// 两个切换请求不能重叠：第一个释放转换锁后，第二个才可进入。
@@ -1672,7 +1865,9 @@ mod tests {
         ));
         // 真身独立命中：包装层与真身各自被枚举到，任一层被回收都会释放端口
         assert!(is_harness_command_line(
-            &format!("/home/u/.asdf/installs/nodejs/22.22.0/bin/node {bin} --profile web --port 3080 --no-open"),
+            &format!(
+                "/home/u/.asdf/installs/nodejs/22.22.0/bin/node {bin} --profile web --port 3080 --no-open"
+            ),
             bin
         ));
     }
@@ -1684,8 +1879,8 @@ mod tests {
         use std::os::windows::process::CommandExt;
         use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+            WaitForSingleObject,
         };
 
         let root = tempfile::Builder::new()
@@ -1809,7 +2004,7 @@ setTimeout(() => process.exit(0), 60000);
                 );
                 retain(listener);
                 retain(ready["mcp"].as_u64().unwrap() as u32);
-                let snapshot = windows_process_snapshot(Some(listener)).unwrap();
+                let snapshot = windows_process_snapshot(Some(listener), None).unwrap();
                 let selected = orphan_harness_pids(&snapshot, bin.to_str().unwrap(), None);
                 assert!(
                     fs::rename(&core, case.join("renamed")).is_err(),
@@ -1936,7 +2131,7 @@ setTimeout(() => process.exit(0), 60000);
         use std::os::windows::process::CommandExt;
         use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
         };
 
         let root = std::env::temp_dir().join(format!(
@@ -1996,7 +2191,9 @@ setTimeout(() => process.exit(0), 60000);
                     .parse::<u16>()
                     .unwrap();
                 assert!(super::super::utils::is_port_in_use(port));
-                assert!(reclaim_orphan_port(&bin, port).expect("reclaim temporary orphan listener"));
+                assert!(
+                    reclaim_orphan_port(&bin, port).expect("reclaim temporary orphan listener")
+                );
                 assert!(!super::super::utils::is_port_in_use(port));
                 assert_eq!(
                     unsafe { WaitForSingleObject(handle, 5000) },
@@ -2086,9 +2283,11 @@ setTimeout(() => process.exit(0), 60000);
         unsafe { CloseHandle(handle) };
         let _ = child.kill();
         let _ = child.wait();
-        assert!(result
-            .unwrap_err()
-            .starts_with("HARNESS_CLEANUP_FAILED: cannot terminate process"));
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with("HARNESS_CLEANUP_FAILED: cannot terminate process")
+        );
         assert!(alive);
     }
 
@@ -2211,7 +2410,7 @@ setTimeout(() => process.exit(0), 60000);
             let expected =
                 u64::from(creation.dwHighDateTime) << 32 | u64::from(creation.dwLowDateTime);
             let started = std::time::Instant::now();
-            let output = windows_process_snapshot(Some(child.id())).unwrap();
+            let output = windows_process_snapshot(Some(child.id()), None).unwrap();
             eprintln!("native target snapshot: {:?}", started.elapsed());
             let entries = String::from_utf8(output).unwrap();
             let entries: Vec<WindowsProcessEntry> = entries
@@ -2234,7 +2433,7 @@ setTimeout(() => process.exit(0), 60000);
             assert_ne!(entry.ancestors[0].created, 0);
             assert!(!entry.ancestors_truncated || entry.ancestors.len() == 8);
             let started = std::time::Instant::now();
-            let output = windows_process_snapshot(None).unwrap();
+            let output = windows_process_snapshot(None, None).unwrap();
             eprintln!("native full snapshot: {:?}", started.elapsed());
             let entries = String::from_utf8(output).unwrap();
             let entry = entries
@@ -2269,12 +2468,30 @@ setTimeout(() => process.exit(0), 60000);
     #[cfg(windows)]
     #[test]
     fn orphan_decision_treats_exiting_process_as_terminated() {
-        assert_eq!(confirm_orphan_decision(true, 7, 7), OrphanDecision::Terminate);
-        assert_eq!(confirm_orphan_decision(false, 7, 7), OrphanDecision::AlreadyExited);
-        assert_eq!(confirm_orphan_decision(true, 7, 8), OrphanDecision::Mismatch);
-        assert_eq!(confirm_orphan_decision(false, 7, 8), OrphanDecision::Mismatch);
-        assert_eq!(confirm_orphan_decision(true, 0, 0), OrphanDecision::Mismatch);
-        assert_eq!(confirm_orphan_decision(false, 0, 0), OrphanDecision::Mismatch);
+        assert_eq!(
+            confirm_orphan_decision(true, 7, 7),
+            OrphanDecision::Terminate
+        );
+        assert_eq!(
+            confirm_orphan_decision(false, 7, 7),
+            OrphanDecision::AlreadyExited
+        );
+        assert_eq!(
+            confirm_orphan_decision(true, 7, 8),
+            OrphanDecision::Mismatch
+        );
+        assert_eq!(
+            confirm_orphan_decision(false, 7, 8),
+            OrphanDecision::Mismatch
+        );
+        assert_eq!(
+            confirm_orphan_decision(true, 0, 0),
+            OrphanDecision::Mismatch
+        );
+        assert_eq!(
+            confirm_orphan_decision(false, 0, 0),
+            OrphanDecision::Mismatch
+        );
     }
 
     #[cfg(windows)]
@@ -2287,7 +2504,7 @@ setTimeout(() => process.exit(0), 60000);
             .spawn()
             .unwrap();
         let result = terminate_confirmed_process(child.id(), 1);
-        let snapshot = windows_process_snapshot(Some(child.id())).unwrap();
+        let snapshot = windows_process_snapshot(Some(child.id()), None).unwrap();
         let entry: WindowsProcessEntry = serde_json::from_slice(&snapshot).unwrap();
         let sub_microsecond = entry.created / 10 * 10 + (entry.created + 1) % 10;
         let precise_result = terminate_confirmed_process(child.id(), sub_microsecond);
@@ -2299,6 +2516,51 @@ setTimeout(() => process.exit(0), 60000);
         assert!(
             alive,
             "PID creation time mismatch must preserve the process"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_within_matches_core_dir_on_component_boundary() {
+        let core = r"C:\Users\u\AppData\Roaming\dsh-tauri\dependencies\dsh";
+        assert!(path_within(core, core));
+        assert!(path_within(&format!(r"{core}\"), core));
+        assert!(path_within(
+            &format!(r"\\?\{}\node_modules\x.node", core.to_uppercase()),
+            core
+        ));
+        assert!(!path_within(&format!("{core}-0.2.1-rc.3-1"), core));
+        assert!(!path_within(r"C:\Users\u\other", core));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn core_holder_without_entry_cmdline_resolves_to_orphan_relay_root() {
+        let bin = r"C:\x\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js";
+        let shim = format!(r#""C:\nvmd\bin\node.exe" "{bin}" --profile web --port 3080 --no-open"#);
+        let relay = format!(r#"cmd.exe /C node "{bin}" --profile web --port 3080 --no-open"#);
+        let line = |holds: bool| {
+            serde_json::json!({
+                "pid": 10, "created": 100, "commandLine": "node.exe runner.js", "holdsCore": holds,
+                "ancestors": [
+                    { "pid": 20, "created": 90, "name": "node.exe", "commandLine": "node.exe real-host.js" },
+                    { "pid": 30, "created": 50, "name": "cmd.exe", "commandLine": relay },
+                    { "pid": 40, "created": 40, "name": "node.exe", "commandLine": shim },
+                ],
+            })
+            .to_string()
+        };
+        assert_eq!(
+            orphan_harness_pids(line(true).as_bytes(), bin, None),
+            vec![(40, 40)]
+        );
+        assert_eq!(
+            orphan_harness_pids(line(false).as_bytes(), bin, None),
+            vec![]
+        );
+        assert_eq!(
+            orphan_harness_pids(line(true).as_bytes(), bin, Some(40)),
+            vec![]
         );
     }
 
@@ -2491,21 +2753,27 @@ setTimeout(() => process.exit(0), 60000);
         let flags = r#"--max-old-space-size=8192 --report-directory="C:\用户 data\logs""#;
         let patch = r#"--patch "C:\用户 data\cordis.patch.yml" "#;
         let mut options = chain.clone();
-        options["commandLine"] = serde_json::json!(service
-            .replace("node.exe ", &format!("node.exe {flags} "))
-            .replace("--port", &format!("{patch}--port")));
-        options["ancestors"][0]["commandLine"] = serde_json::json!(relay
-            .replace("node.exe ", &format!("node.exe {flags} "))
-            .replace("--port", &format!("{patch}--port")));
-        options["ancestors"][1]["commandLine"] = serde_json::json!(shim
-            .replace(r#"node.exe" "#, &format!(r#"node.exe" {flags} "#))
-            .replace("--port", &format!("{patch}--port")));
+        options["commandLine"] = serde_json::json!(
+            service
+                .replace("node.exe ", &format!("node.exe {flags} "))
+                .replace("--port", &format!("{patch}--port"))
+        );
+        options["ancestors"][0]["commandLine"] = serde_json::json!(
+            relay
+                .replace("node.exe ", &format!("node.exe {flags} "))
+                .replace("--port", &format!("{patch}--port"))
+        );
+        options["ancestors"][1]["commandLine"] = serde_json::json!(
+            shim.replace(r#"node.exe" "#, &format!(r#"node.exe" {flags} "#))
+                .replace("--port", &format!("{patch}--port"))
+        );
         assert_eq!(select(&options, None), vec![(103, 1001)]);
-        options["ancestors"][1]["commandLine"] = serde_json::json!(options["ancestors"][1]
-            ["commandLine"]
-            .as_str()
-            .unwrap()
-            .replace("8192", "4096"));
+        options["ancestors"][1]["commandLine"] = serde_json::json!(
+            options["ancestors"][1]["commandLine"]
+                .as_str()
+                .unwrap()
+                .replace("8192", "4096")
+        );
         assert_eq!(select(&options, None), vec![]);
         let mut reused_shim = chain.clone();
         reused_shim["ancestors"][1]["created"] = serde_json::json!(1004);
@@ -2664,7 +2932,7 @@ setTimeout(() => process.exit(0), 60000);
         use std::os::windows::process::CommandExt;
         use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
         };
 
         fn read_pid(path: &std::path::Path) -> u32 {
