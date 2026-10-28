@@ -1,6 +1,6 @@
 import type { GetApiTauriSchedulerHistoryResponse, GetApiTauriSchedulerTasksResponse } from '../apis/index.type'
 
-export type ScheduleKind = 'once' | 'hourly' | 'daily' | 'interval' | 'workdays' | 'weekly' | 'monthly' | 'custom'
+export type ScheduleKind = 'once' | 'hourly' | 'daily' | 'interval' | 'workdays' | 'weekly' | 'monthly' | 'custom' | 'cron'
 
 export type Weekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU'
 
@@ -16,6 +16,7 @@ export type ScheduleForm = (
   | { kind: 'weekly', weekdays: readonly Weekday[], time: string }
   | { kind: 'monthly', day: number, time: string }
   | { kind: 'custom', everyDays: number, anchor?: string, time: string }
+  | { kind: 'cron', expression: string }
 ) & { timeZone?: string }
 
 export interface PermissionOption {

@@ -11,7 +11,20 @@ const MAX_EVERY_DAYS = 366
 const MAX_CALENDAR_ATTEMPTS = 400
 const WEEKDAY_NUMBER: Record<Weekday, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 0 }
 
+const MAX_CRON_DAYS = 366 * 8
+const CRON_MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
 type CalendarSchedule = Exclude<Schedule, { kind: 'once' | 'interval' }>
+type CronSchedule = Extract<Schedule, { kind: 'cron' }>
+
+interface CronSpec {
+  slots: number[]
+  days: Set<number>
+  months: Set<number>
+  weekdays: Set<number>
+  daysRestricted: boolean
+  weekdaysRestricted: boolean
+}
 
 const isInstant = (value: unknown): boolean => isString(value) && isFinite(new Date(value).getTime())
 const isTimeValue = (value: unknown): boolean => isString(value) && parseTimeToMinutes(value) !== undefined
@@ -81,6 +94,8 @@ export function validateSchedule(schedule: unknown): schedule is Schedule {
       return isIntegerInRange(value.day, 32) && isTimeValue(value.time)
     case 'weekly':
       return isTimeValue(value.time) && isArray(value.weekdays) && !isEmpty(value.weekdays) && value.weekdays.every(day => WEEKDAYS.includes(day))
+    case 'cron':
+      return isString(value.expression) && parseCron(value.expression) !== undefined
     default:
       return false
   }
@@ -93,6 +108,78 @@ export function localTimeZone(): string {
   catch {
     return 'UTC'
   }
+}
+
+function parseCronField(field: string, min: number, max: number): Set<number> | undefined {
+  const values = new Set<number>()
+  for (const part of field.split(',')) {
+    const match = /^(?:(\*)|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/.exec(part)
+    if (!match)
+      return undefined
+    const step = match[4] === undefined ? 1 : Number(match[4])
+    const start = match[1] ? min : Number(match[2])
+    const end = match[1] ? max : match[3] !== undefined ? Number(match[3]) : match[4] === undefined ? start : max
+    if (step < 1 || start < min || end > max || start > end)
+      return undefined
+    for (let value = start; value <= end; value += step)
+      values.add(value)
+  }
+  return values
+}
+
+function parseCron(expression: string): CronSpec | undefined {
+  const fields = expression.trim().split(/\s+/)
+  if (fields.length !== 5)
+    return undefined
+  const minutes = parseCronField(fields[0], 0, 59)
+  const hours = parseCronField(fields[1], 0, 23)
+  const days = parseCronField(fields[2], 1, 31)
+  const months = parseCronField(fields[3], 1, 12)
+  const weekdays = parseCronField(fields[4], 0, 7)
+  if (!minutes || !hours || !days || !months || !weekdays)
+    return undefined
+  const daysRestricted = !fields[2].startsWith('*')
+  const weekdaysRestricted = !fields[4].startsWith('*')
+  const reachable = weekdaysRestricted || [...months].some(month => [...days].some(day => day <= CRON_MONTH_DAYS[month - 1]))
+  if (!reachable)
+    return undefined
+  return {
+    slots: [...hours].flatMap(hour => [...minutes].map(minute => hour * 60 + minute)).sort((a, b) => a - b),
+    days,
+    months,
+    weekdays: new Set([...weekdays].map(day => day % 7)),
+    daysRestricted,
+    weekdaysRestricted,
+  }
+}
+
+function cronDayMatches(spec: CronSpec, date: Date): boolean {
+  if (!spec.months.has(date.getUTCMonth() + 1))
+    return false
+  const dayMatch = spec.days.has(date.getUTCDate())
+  const weekdayMatch = spec.weekdays.has(date.getUTCDay())
+  return spec.daysRestricted && spec.weekdaysRestricted ? dayMatch || weekdayMatch : dayMatch && weekdayMatch
+}
+
+function cronOccurrence(schedule: CronSchedule, formatter: Intl.DateTimeFormat, from: number, direction: 1 | -1): number | undefined {
+  const spec = parseCron(schedule.expression)
+  if (spec === undefined)
+    return undefined
+  const fromLocal = zonedEpoch(formatter, from)
+  const slots = direction === 1 ? spec.slots : [...spec.slots].reverse()
+  let cursor = Math.floor(fromLocal / DAY_MS) * DAY_MS
+  for (let attempt = 0; attempt < MAX_CRON_DAYS && isEpoch(cursor); attempt++) {
+    if (cronDayMatches(spec, new Date(cursor))) {
+      for (const slot of slots) {
+        const local = cursor + slot * MINUTE_MS
+        const target = localInstant(formatter, local)
+        if (target !== undefined && (direction === 1 ? target > from : target <= from))
+          return target
+      }
+    }
+    cursor += direction * DAY_MS
+  }
+  return undefined
 }
 
 function intervalRemainder(epoch: number, base: number, step: number): number {
@@ -156,6 +243,8 @@ function calendarOccurrence(schedule: CalendarSchedule, from: number, direction:
   const formatter = calendarFormatter(schedule.timeZone)
   if (formatter === undefined)
     return undefined
+  if (schedule.kind === 'cron')
+    return cronOccurrence(schedule, formatter, from, direction)
   const minutes = schedule.kind === 'hourly' ? schedule.minute : parseTimeToMinutes(schedule.time)
   if (minutes === undefined)
     return undefined

@@ -56,6 +56,7 @@ const SCHEDULE_KEYS: Record<ScheduleKind, LocaleKey> = {
   weekly: 'scheduleWeekly',
   monthly: 'scheduleMonthly',
   custom: 'scheduleCustom',
+  cron: 'scheduleCron',
 }
 const MINUTE_OPTIONS: SelectOption[] = Array.from({ length: 60 }, (_, minute) => ({ value: String(minute), label: `: ${String(minute).padStart(2, '0')}` }))
 const VALUE_CLASS = 'flex-[0_1_auto] min-w-0 max-w-full min-h-[32px] h-auto gap-[6px] px-[8px] rounded-[18px] bg-transparent text-primary [font-family:inherit] text-[14px] font-normal leading-[1.6] hover:not-disabled:bg-hover focus-visible:shadow-focus-ring'
@@ -360,7 +361,7 @@ export function TaskForm({ t, options, sessions, workspaces, onClose, onSaved, t
                         <>
                           {form.schedule.kind === 'monthly' ? <RuleRow label={t('scheduleMonthDay')}><input className={INPUT_CLASS} type="number" min={1} max={31} required value={form.schedule.day} aria-label={t('scheduleMonthDay')} onChange={event => setSchedule({ day: Number(event.target.value) })} /></RuleRow> : null}
                           {form.schedule.kind === 'custom' ? <RuleRow label={t('scheduleEveryDays')}><input className={INPUT_CLASS} type="number" min={1} max={366} required value={form.schedule.everyDays} aria-label={t('scheduleEveryDays')} onChange={event => setSchedule({ everyDays: Number(event.target.value) })} /></RuleRow> : null}
-                          <RuleRow label={t('scheduleTime')}><TimePicker disabled={locked} seconds={false} value={form.schedule.time} label={t('scheduleTime')} hourLabel={t('picker.hour')} minuteLabel={t('picker.minute')} secondLabel={t('picker.second')} onChange={time => setSchedule({ time })} /></RuleRow>
+                          {form.schedule.kind === 'cron' ? <RuleRow label={t('scheduleCronExpression')}><input className={INPUT_CLASS} type="text" required spellCheck={false} placeholder="0 8-22 * * *" disabled={locked} value={form.schedule.expression} aria-label={t('scheduleCronExpression')} onChange={event => setSchedule({ expression: event.target.value })} /></RuleRow> : <RuleRow label={t('scheduleTime')}><TimePicker disabled={locked} seconds={false} value={form.schedule.time} label={t('scheduleTime')} hourLabel={t('picker.hour')} minuteLabel={t('picker.minute')} secondLabel={t('picker.second')} onChange={time => setSchedule({ time })} /></RuleRow>}
                           {form.schedule.kind === 'weekly' ? <RuleRow label={t('scheduleWeekdays')}><div className="flex flex-wrap justify-end gap-[4px] py-[6px]" role="group" aria-label={t('scheduleWeekdays')}>{WEEKDAYS.map(day => <Checkbox key={day} size="xs" checked={form.schedule.kind === 'weekly' && form.schedule.weekdays.includes(day)} onChange={(checked) => { setForm(state => state.schedule.kind !== 'weekly' ? state : { ...state, schedule: { ...state.schedule, weekdays: checked ? [...state.schedule.weekdays, day] : state.schedule.weekdays.filter(value => value !== day) } }) }}>{t(WEEKDAY_KEYS[day])}</Checkbox>)}</div></RuleRow> : null}
                         </>
                       )}

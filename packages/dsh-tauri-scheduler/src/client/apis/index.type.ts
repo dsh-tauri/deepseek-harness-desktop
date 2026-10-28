@@ -5,7 +5,7 @@ export type GetApiTauriSchedulerTasksResponse = {
     status: "active" | "inactive";
     sessionId?: undefined | string;
     name: string;
-    schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+    schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string } | { kind: "cron"; expression: string; timeZone: string };
     prompt: string;
     recommendationId?: undefined | string;
     workspaceId?: undefined | string;
@@ -34,7 +34,7 @@ export type PostApiTauriSchedulerTasksResponse = {
         status: "active" | "inactive";
         sessionId?: undefined | string;
         name: string;
-        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string } | { kind: "cron"; expression: string; timeZone: string };
         prompt: string;
         recommendationId?: undefined | string;
         workspaceId?: undefined | string;
@@ -64,7 +64,7 @@ export type PutApiTauriSchedulerTasksResponse = {
         status: "active" | "inactive";
         sessionId?: undefined | string;
         name: string;
-        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string } | { kind: "cron"; expression: string; timeZone: string };
         prompt: string;
         recommendationId?: undefined | string;
         workspaceId?: undefined | string;
@@ -95,7 +95,7 @@ export type PostApiTauriSchedulerTasksToggleResponse = {
         status: "active" | "inactive";
         sessionId?: undefined | string;
         name: string;
-        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+        schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string } | { kind: "cron"; expression: string; timeZone: string };
         prompt: string;
         recommendationId?: undefined | string;
         workspaceId?: undefined | string;
@@ -144,7 +144,7 @@ export interface PostApiTauriSchedulerTasksBody {
   delivery: "this-session" | "new-session";
   sessionId?: undefined | string;
   name: string;
-  schedule: { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string };
+  schedule: { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string } | { kind: "cron"; expression: string; timeZone?: undefined | string };
   prompt: string;
   recommendationId?: undefined | string;
   workspaceId?: undefined | string;
@@ -162,7 +162,7 @@ export interface PutApiTauriSchedulerTasksBody {
     status: "active" | "inactive";
     sessionId?: undefined | string;
     name: string;
-    schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string };
+    schedule: { kind: "once"; at: string; timeZone: string } | { kind: "hourly"; minute: number; timeZone: string } | { kind: "daily"; time: string; timeZone: string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone: string } | { kind: "workdays"; time: string; timeZone: string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone: string } | { kind: "monthly"; day: number; time: string; timeZone: string } | { kind: "custom"; everyDays: number; anchor: string; time: string; timeZone: string } | { kind: "cron"; expression: string; timeZone: string };
     prompt: string;
     recommendationId?: undefined | string;
     workspaceId?: undefined | string;
@@ -182,7 +182,7 @@ export interface PutApiTauriSchedulerTasksBody {
   delivery?: undefined | "this-session" | "new-session";
   sessionId?: undefined | string;
   name?: undefined | string;
-  schedule?: undefined | { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string };
+  schedule?: undefined | { kind: "once"; at: string; timeZone?: undefined | string } | { kind: "hourly"; minute: number; timeZone?: undefined | string } | { kind: "daily"; time: string; timeZone?: undefined | string } | { kind: "interval"; everyMinutes: number; anchor?: undefined | string; timeZone?: undefined | string } | { kind: "workdays"; time: string; timeZone?: undefined | string } | { kind: "weekly"; weekdays: ("MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU")[]; time: string; timeZone?: undefined | string } | { kind: "monthly"; day: number; time: string; timeZone?: undefined | string } | { kind: "custom"; everyDays: number; anchor?: undefined | string; time: string; timeZone?: undefined | string } | { kind: "cron"; expression: string; timeZone?: undefined | string };
   prompt?: undefined | string;
   recommendationId?: undefined | string;
   workspaceId?: undefined | string;

@@ -10,6 +10,7 @@ export function defaultScheduleFor(kind: ScheduleForm['kind'], timeZone = new In
     case 'interval': return { kind, everyMinutes: 30, timeZone }
     case 'monthly': return { kind, day: 1, time: '09:00', timeZone }
     case 'custom': return { kind, everyDays: 2, time: '09:00', timeZone }
+    case 'cron': return { kind, expression: '0 9 * * *', timeZone }
     case 'weekly': return { kind, weekdays: ['MO'], time: '09:00', timeZone }
     case 'workdays': return { kind, time: '09:00', timeZone }
     default: return { kind: 'daily', time: '09:00', timeZone }

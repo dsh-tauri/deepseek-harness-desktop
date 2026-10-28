@@ -73,7 +73,13 @@ export interface CustomSchedule {
   timeZone: string
 }
 
-export type SchedulerSchedule = OnceSchedule | HourlySchedule | DailySchedule | IntervalSchedule | WorkdaysSchedule | WeeklySchedule | MonthlySchedule | CustomSchedule
+export interface CronSchedule {
+  kind: 'cron'
+  expression: string
+  timeZone: string
+}
+
+export type SchedulerSchedule = OnceSchedule | HourlySchedule | DailySchedule | IntervalSchedule | WorkdaysSchedule | WeeklySchedule | MonthlySchedule | CustomSchedule | CronSchedule
 
 export type RunTrigger = 'schedule' | 'manual'
 
@@ -88,6 +94,7 @@ export type SchedulerScheduleInput
     | { kind: 'weekly', weekdays: readonly Weekday[], time: string, timeZone?: string }
     | { kind: 'monthly', day: number, time: string, timeZone?: string }
     | { kind: 'custom', everyDays: number, anchor?: string, time: string, timeZone?: string }
+    | { kind: 'cron', expression: string, timeZone?: string }
 
 export type TaskDelivery = 'this-session' | 'new-session'
 

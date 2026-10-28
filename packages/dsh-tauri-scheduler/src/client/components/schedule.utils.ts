@@ -26,6 +26,8 @@ export function describeSchedule(schedule: ScheduleForm, t: Translate): string {
       return `${t('scheduleMonthly')} ${schedule.day} ${schedule.time}`
     case 'custom':
       return `${t('scheduleCustom')} ${schedule.everyDays}${t('dayShort')} ${schedule.time}`
+    case 'cron':
+      return `${t('scheduleCron')} ${schedule.expression}`
     case 'workdays':
       return `${t('scheduleWorkdays')} ${schedule.time}`
     case 'weekly':

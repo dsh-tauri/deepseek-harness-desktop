@@ -341,3 +341,41 @@ describe('validateSchedule', () => {
     expect(validateSchedule({ kind: 'daily', time: '08:00', timeZone })).toBe(false)
   })
 })
+
+describe('cron schedule', () => {
+  const cron = (expression: string, timeZone = 'UTC'): Schedule => ({ kind: 'cron', expression, timeZone })
+
+  it.each([
+    ['0 8-22 * * *', '2026-01-01T07:30:00Z', '2026-01-01T08:00:00Z'],
+    ['0 8-22 * * *', '2026-01-01T22:00:00Z', '2026-01-02T08:00:00Z'],
+    ['*/15 9 * * *', '2026-01-01T09:15:00Z', '2026-01-01T09:30:00Z'],
+    ['0,30 9-10 * * 1-5', '2026-01-03T00:00:00Z', '2026-01-05T09:00:00Z'],
+    ['0 0 * * 7', '2026-01-01T00:00:00Z', '2026-01-04T00:00:00Z'],
+    ['0 12 29 2 *', '2026-01-01T00:00:00Z', '2028-02-29T12:00:00Z'],
+    ['0 6 1,15 * 1', '2026-01-02T00:00:00Z', '2026-01-05T06:00:00Z'],
+    ['0 6 1,15 * 1', '2026-01-13T00:00:00Z', '2026-01-15T06:00:00Z'],
+    ['5/20 3 * * *', '2026-01-01T03:06:00Z', '2026-01-01T03:25:00Z'],
+  ])('next of %s after %s is %s', (expression, from, expected) => {
+    expect(nextOccurrence(cron(expression), timestamp(from))).toBe(timestamp(expected))
+  })
+
+  it('evaluates the hour window in the schedule zone', () => {
+    expect(nextOccurrence(cron('0 8-22 * * *', 'Asia/Shanghai'), timestamp('2026-01-01T14:00:00Z'))).toBe(timestamp('2026-01-02T00:00:00Z'))
+  })
+
+  it('skips a wall-clock time that does not exist on spring-forward day', () => {
+    expect(nextOccurrence(cron('30 2 * * *', 'America/New_York'), timestamp('2026-03-07T08:00:00Z'))).toBe(timestamp('2026-03-09T06:30:00Z'))
+  })
+
+  it('latestDueOccurrence returns the most recent slot not after now', () => {
+    expect(latestDueOccurrence(cron('0 8-22 * * *'), timestamp('2026-01-01T08:00:00Z'), timestamp('2026-01-01T11:30:00Z'))).toBe(timestamp('2026-01-01T11:00:00Z'))
+  })
+
+  it.each(['0 8-22 * *', '0 8-22 * * * *', '60 * * * *', '* 24 * * *', '* * 0 * *', '* * * 13 *', '* * * * 8', '*/0 * * * *', '5-1 * * * *', 'a * * * *', '0 8- * * *', '0 0 31 2 *', '0 0 30 2 *', ''])('rejects invalid expression %j', (expression) => {
+    expect(validateSchedule(cron(expression))).toBe(false)
+  })
+
+  it('rejects a non-string expression', () => {
+    expect(validateSchedule({ kind: 'cron', expression: 5, timeZone: 'UTC' })).toBe(false)
+  })
+})

@@ -48,6 +48,8 @@ function isSchedule(value: unknown): value is TaskView['schedule'] {
         && value.everyMinutes >= 1 && value.everyMinutes < 525_601 && (value.anchor === undefined || isTimestamp(value.anchor))
     case 'custom':
       return isTime(value.time) && isPositiveInteger(value.everyDays) && value.everyDays <= 366 && isTimestamp(value.anchor)
+    case 'cron':
+      return typeof value.expression === 'string' && value.expression.trim() !== ''
     default:
       return false
   }

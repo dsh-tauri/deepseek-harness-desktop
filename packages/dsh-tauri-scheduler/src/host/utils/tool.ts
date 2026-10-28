@@ -2,7 +2,7 @@ import { SCHEDULE_KINDS } from '../../shared/constants'
 
 export const scheduleParameters = {
   type: 'object',
-  description: 'Schedule spec: once/hourly/daily/interval/workdays/weekly/monthly/custom.',
+  description: 'Schedule spec: once/hourly/daily/interval/workdays/weekly/monthly/custom/cron.',
   properties: {
     kind: { type: 'string', enum: [...SCHEDULE_KINDS] },
     timeZone: { type: 'string', description: 'IANA time zone for the calendar schedule; defaults to the host zone.' },
@@ -13,6 +13,7 @@ export const scheduleParameters = {
     at: { type: 'string', description: 'ISO timestamp for kind=once.' },
     minute: { type: 'number', description: 'Minute of hour for kind=hourly.' },
     day: { type: 'number', description: 'Day of month for kind=monthly.' },
+    expression: { type: 'string', description: 'Five-field cron "min hour day month weekday" for kind=cron; day and weekday both restricted match either.' },
     weekdays: { type: 'array', items: { type: 'string' }, description: '["MO","TU",...] for kind=weekly.' },
   },
   required: ['kind'],

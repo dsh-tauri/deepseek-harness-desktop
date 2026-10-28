@@ -116,6 +116,7 @@ function isScheduleForm(value: unknown): value is ScheduleForm {
       && schedule.weekdays.every(day => WEEKDAYS.includes(day))
     case 'monthly': return typeof schedule.day === 'number' && typeof schedule.time === 'string'
     case 'custom': return typeof schedule.everyDays === 'number' && typeof schedule.time === 'string' && (schedule.anchor === undefined || typeof schedule.anchor === 'string')
+    case 'cron': return typeof schedule.expression === 'string'
     default: return false
   }
 }

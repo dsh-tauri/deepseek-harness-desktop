@@ -26,7 +26,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 }
 
 /** 计划类型集合（与 DSH automation 工具的语义一一对应）。 */
-export const SCHEDULE_KINDS = ['once', 'hourly', 'daily', 'interval', 'workdays', 'weekly', 'monthly', 'custom'] as const
+export const SCHEDULE_KINDS = ['once', 'hourly', 'daily', 'interval', 'workdays', 'weekly', 'monthly', 'custom', 'cron'] as const
 
 /** 星期枚举（IATA 三字母，与 DSH automation 一致）。 */
 export const WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'] as const
