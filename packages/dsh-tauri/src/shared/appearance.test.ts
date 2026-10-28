@@ -84,7 +84,6 @@ describe('appearance preferences', () => {
   })
 })
 
-/** 按 WCAG 公式计算 sRGB 十六进制颜色的相对亮度。 */
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map((offset) => {
     const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255

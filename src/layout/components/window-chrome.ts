@@ -4,13 +4,10 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
 
 /** WKWebView 的 macOS UA 稳定包含 Macintosh，用于切换平台原生窗口 chrome。 */
-export function isMacOS(): boolean {
-  return typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
-}
-export const IS_MACOS = isMacOS()
+export const IS_MACOS = typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
 
 /** 浏览器预览与 jsdom 没有原生窗口，原生调用必须在此拦截，不能靠 catch 兜底。 */
-function hasNativeWindow(): boolean {
+export function hasNativeWindow(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
@@ -24,7 +21,6 @@ export function frameMode(maximized: boolean, fullscreen = false): string {
   return 'border'
 }
 
-/** 根据窗口状态计算并应用外框模式到 document dataset。 */
 export function applyFrameMode(maximized: boolean, fullscreen = false) {
   const mode = frameMode(maximized, fullscreen)
   if (mode)
@@ -33,8 +29,7 @@ export function applyFrameMode(maximized: boolean, fullscreen = false) {
     delete document.documentElement.dataset.dshFrame
 }
 
-/** 最大化或全屏时撤掉圆角与描边（会被屏幕边缘裁出硬边），还原后再画回。
- * 跳过 hooks 初始 `undefined` 状态，避免覆盖 `bootstrap()` 已设置好的首帧模式。 */
+/** 等待原生状态就绪后再覆盖 bootstrap 的首帧模式。 */
 export function useFrameChrome() {
   const framed = typeof window !== 'undefined' && (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
   const maximized = useMaximized(framed)
@@ -46,7 +41,6 @@ export function useFrameChrome() {
   }, { immediate: true })
 }
 
-/** 订阅 Tauri 原生窗口全屏状态并返回当前值；初始 `undefined` 表示尚未同步。 */
 export function useFullscreen(enabled = true): boolean | undefined {
   const [isFullscreen, setIsFullscreen] = useState<boolean | undefined>(undefined)
 
@@ -72,14 +66,17 @@ export function useFullscreen(enabled = true): boolean | undefined {
 
     async function setupListener() {
       try {
-        await syncFullscreen()
         const stopListening = await appWindow.onResized(() => {
           void syncFullscreen()
         })
-        if (mounted)
+        if (mounted) {
           unlisten = stopListening
-        else
+        }
+        else {
           stopListening()
+          return
+        }
+        await syncFullscreen()
       }
       catch (error) {
         console.error('[Navbar] failed to listen for fullscreen state:', error)
@@ -102,7 +99,6 @@ export function useMacOSFullscreen(): boolean {
   return IS_MACOS && Boolean(isFullscreen)
 }
 
-/** 订阅 Tauri 原生窗口最大化状态并返回当前值；初始 `undefined` 表示尚未同步。 */
 export function useMaximized(enabled = true): boolean | undefined {
   const [isMaximized, setIsMaximized] = useState<boolean | undefined>(undefined)
 
@@ -127,14 +123,17 @@ export function useMaximized(enabled = true): boolean | undefined {
 
     async function setupListener() {
       try {
-        await syncMaximized()
         const stopListening = await appWindow.onResized(() => {
           void syncMaximized()
         })
-        if (mounted)
+        if (mounted) {
           unlisten = stopListening
-        else
+        }
+        else {
           stopListening()
+          return
+        }
+        await syncMaximized()
       }
       catch (error) {
         console.error('[Navbar] failed to listen for maximized state:', error)

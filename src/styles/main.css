@@ -188,21 +188,15 @@ html[data-theme="light"] {
   }
 }
 
-/* === 自绘窗口外框（圆角 + 描边，对齐 Claude Desktop 观感） ===
-   非 macOS 平台窗口无系统装饰，圆角与描边只能应用自绘：窗口按需透明。
-   画框与裁剪全部由 #root 承担；body 只做 fixed 锚点（translateZ 让 toast /
-   弹窗等 fixed 后代有稳定包含块），并用 clip-path 兜住 portal 溢出到圆角外的
-   内容。#root 必须显式清掉 base 层的 min-height/height（百分比对 fixed 元素
-   以视口为基准，会把底边整条推出窗口外，内容被窗口底边硬切）；画布底色同步
-   下沉到 shell-root（#root 不铺底色，透明窗下才不会把边框涂实）。
-   flat = 最大化 / 全屏时撤掉圆角；border = 常规窗口贴齐窗口矩形画圆角与描边，
-   不留阴影带——Windows 的不可见 resize 边框贴着窗口矩形，内缩会让拉伸热区落
-   在可见边框之外。dataset 由 window-chrome 按窗口状态维护。 */
+/* Linux 自绘外框：body 裁剪 portal，#root 画框；flat 模式保持直角。 */
 html[data-dsh-frame] body {
   position: fixed;
   inset: 0;
   margin: 0;
   transform: translateZ(0);
+}
+
+html[data-dsh-frame="border"] body {
   clip-path: inset(0 round var(--frame-radius));
 }
 
