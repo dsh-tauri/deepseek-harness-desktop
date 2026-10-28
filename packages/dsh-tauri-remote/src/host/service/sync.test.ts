@@ -19,7 +19,7 @@ const fail = (stderr: string): RemoteExecResult => ({ code: 1, stdout: '', stder
 
 function fakeSession(respond: (command: string, options?: { stdinData?: Buffer }) => RemoteExecResult): RemoteSession & { execSpy: ReturnType<typeof vi.fn>, closed: () => boolean } {
   let open = true
-  const execSpy = vi.fn(async (command: string, options?: { stdinData?: Buffer }) => command.includes('REMOTE_DSH_PACKAGE') ? ok('{"version":"0.2.1-rc.1"}') : respond(command, options))
+  const execSpy = vi.fn(async (command: string, options?: { stdinData?: Buffer }) => command.includes('REMOTE_DSH_PACKAGE') ? ok('{"version":"0.2.1-rc.4"}') : respond(command, options))
   return {
     execSpy,
     exec: execSpy as unknown as RemoteSession['exec'],

@@ -38,7 +38,7 @@ const config = {
   healthCheckTimeoutMs: 1000,
   healthPollIntervalMs: 5,
   healthPollAttempts: 3,
-  installRef: 'dsh-0.2.1-rc.1-39009013600',
+  installRef: 'dsh-0.2.1-rc.4-40372188763',
   installTimeoutMs: 60000,
   keepaliveIntervalMs: 10000,
   keepaliveCountMax: 3,
@@ -62,7 +62,7 @@ function stubGithub(): void {
 }
 
 /** A boot page whose manifest the bundle probe confirms. */
-const BOOT_HTML = '<html><body><script>globalThis["__DSH_BOOT__"] = {"release":{"version":"0.2.1-rc.1"},"entries":[{"url":"/plugins/@deepseek-ai/dsh-client-ui-layout/client.js"}]};</script></body></html>'
+const BOOT_HTML = '<html><body><script>globalThis["__DSH_BOOT__"] = {"release":{"version":"0.2.1-rc.4"},"entries":[{"url":"/plugins/@deepseek-ai/dsh-client-ui-layout/client.js"}]};</script></body></html>'
 
 /** The layout entry the pinned dsh release resolves: the remote shell expands $HOME (root user in the fake). */
 const ENTRY = '/root/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'
@@ -95,7 +95,7 @@ class FakeSession implements RemoteSession {
   unameResult = 'Linux 6.8.0-45-generic x86_64\n'
   /** The check-script answer: one missing component per line (default: none). */
   missingResult = ''
-  dshVersion = '0.2.1-rc.1'
+  dshVersion = '0.2.1-rc.4'
   /** When set, the plugin-sync apply command answers a non-zero code with this stderr. */
   pluginSyncError: Error | undefined
   /** The local port the fake tunnel reports. */
@@ -1117,8 +1117,8 @@ describe('sshManager install', () => {
     const result = await manager.install(MachineId('m1'))
     expect(result).toEqual({
       installed: ['node', 'dsh', 'pnpm'],
-      dshRef: 'dsh-0.2.1-rc.1-39009013600',
-      dshVersion: '0.2.1-rc.1',
+      dshRef: 'dsh-0.2.1-rc.4-40372188763',
+      dshVersion: '0.2.1-rc.4',
       dshPath: ENTRY,
       credentialsCopied: true,
     })
@@ -1190,7 +1190,7 @@ describe('sshManager install', () => {
       if (command.includes('grep -q \'^DEEPSEEK_API_KEY=\''))
         return Promise.resolve({ code: 1, stdout: '', stderr: 'disk full' })
       if (command.includes('REMOTE_DSH_PACKAGE'))
-        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.1"}', stderr: '' })
+        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.4"}', stderr: '' })
       if (command === 'uname -srm')
         return Promise.resolve({ code: 0, stdout: session.unameResult, stderr: '' })
       return Promise.resolve({ code: 0, stdout: command.includes('test -f ') ? `${ENTRY}\n` : 'installed', stderr: '' })
@@ -1421,7 +1421,7 @@ describe('sshManager install', () => {
         // eslint-disable-next-line prefer-promise-reject-errors -- deliberately non-Error: covers describeExecFailure's message tail
         return Promise.reject('disk full')
       if (command.includes('REMOTE_DSH_PACKAGE'))
-        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.1"}', stderr: '' })
+        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.4"}', stderr: '' })
       if (command === 'uname -srm')
         return Promise.resolve({ code: 0, stdout: session.unameResult, stderr: '' })
       return Promise.resolve({ code: 0, stdout: command.includes('test -f ') ? `${ENTRY}\n` : 'installed', stderr: '' })
@@ -1470,7 +1470,7 @@ describe('sshManager install', () => {
     const session = new FakeSession(() => false)
     session.exec = (command, _options) => {
       if (command.includes('REMOTE_DSH_PACKAGE'))
-        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.1"}', stderr: '' })
+        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.4"}', stderr: '' })
       if (command === 'uname -srm')
         return Promise.resolve({ code: 0, stdout: session.unameResult, stderr: '' })
       if (command.includes('echo node'))
@@ -1632,7 +1632,7 @@ describe('sshManager install', () => {
     session.missingResult = 'node\n'
     session.exec = (command, _options) => {
       if (command.includes('REMOTE_DSH_PACKAGE'))
-        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.1"}', stderr: '' })
+        return Promise.resolve({ code: 0, stdout: '{"version":"0.2.1-rc.4"}', stderr: '' })
       if (command === 'uname -srm')
         return Promise.resolve({ code: 0, stdout: session.unameResult, stderr: '' })
       if (command.includes('echo node'))

@@ -22,7 +22,7 @@ vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 const localFixture: HarnessCore = {
   id: 'local',
   source: 'local',
-  version: '0.1.7-rc.1',
+  version: '0.2.1-rc.4',
   tag: '',
   path: '/fixture/local/bin.js',
   dir: '/fixture/local',
@@ -33,13 +33,13 @@ const localFixture: HarnessCore = {
   aboveRecommended: false,
   orphaned: false,
   bundled: false,
-  recommendedVersion: '0.2.1-rc.1',
+  recommendedVersion: '0.2.1-rc.4',
 }
 const managedFixture: HarnessCore = {
-  id: 'app-dsh-0.2.1-rc.1-39009013600',
+  id: 'app-dsh-0.2.1-rc.5-40372188763',
   source: 'app',
-  version: '0.2.1-rc.1',
-  tag: 'dsh-0.2.1-rc.1-39009013600',
+  version: '0.2.1-rc.5',
+  tag: 'dsh-0.2.1-rc.5-40372188763',
   path: '/fixture/managed',
   dir: '/fixture/managed',
   present: true,
@@ -49,7 +49,7 @@ const managedFixture: HarnessCore = {
   aboveRecommended: false,
   orphaned: false,
   bundled: false,
-  recommendedVersion: '0.2.1-rc.1',
+  recommendedVersion: '0.2.1-rc.4',
 }
 const clients = new Set<QueryClient>()
 let cores: HarnessCore[]
@@ -145,7 +145,7 @@ describe('本地核心更新档案安全', () => {
       timeout: 10_000,
     }))
     expect(mocks.invoke).toHaveBeenCalledWith('update_local_core')
-    expect((screen.getByRole('checkbox', { name: '0.2.1-rc.1' }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('checkbox', { name: '0.2.1-rc.5' }) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByRole('checkbox', { name: '0.2.2-rc.1' }) as HTMLInputElement).checked).toBe(false)
     expectNoCoreOrProfileSwitch()
   })
@@ -203,7 +203,7 @@ describe('本地核心更新档案安全', () => {
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to update the local core', {}))
     expect(errorLog).toHaveBeenCalledWith('[ConfigCore] update local core failed:', error)
     expectNoCoreOrProfileSwitch()
-    expect((screen.getByRole('checkbox', { name: '0.1.7-rc.1' }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('checkbox', { name: '0.2.1-rc.4' }) as HTMLInputElement).checked).toBe(false)
     expect((screen.getByRole('button', { name: 'Update Local Core' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
