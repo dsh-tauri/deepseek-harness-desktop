@@ -1022,6 +1022,7 @@ fn windows_relay_arguments(
     windows_harness_arguments(&command[matched.end()..], dsh_bin)
 }
 
+#[cfg(windows)]
 fn orphan_root(
     pid: u32,
     created: u64,
