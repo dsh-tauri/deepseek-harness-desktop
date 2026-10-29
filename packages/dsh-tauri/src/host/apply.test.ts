@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from './apply'
 import { MEDIA_RECORDER_SHIM_SCRIPT } from './media-recorder-shim'
 import { TEXT_AUTOSPACE_SHIM_SCRIPT } from './text-autospace-shim'
+import { WEBRTC_FALLBACK_SCRIPT } from './webrtc-fallback-shim'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -239,5 +240,85 @@ describe('text autospace override', () => {
 
   it('leaves macOS WebKit alone', () => {
     expect(runAutospace('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15')).toHaveLength(0)
+  })
+})
+
+interface FallbackNode {
+  children: FallbackNode[]
+  attrs: Record<string, string>
+  textContent: string
+  isConnected: boolean
+  listeners: Record<string, () => void>
+}
+
+function runFallback(userAgent: string, withRtc = false, language = 'en-US') {
+  const posted: unknown[] = []
+  const mounted: FallbackNode[] = []
+  const makeNode = (): FallbackNode => ({
+    children: [],
+    attrs: {},
+    textContent: '',
+    isConnected: false,
+    listeners: {},
+    ...{
+      setAttribute(this: FallbackNode, key: string, value: string) { this.attrs[key] = value },
+      addEventListener(this: FallbackNode, type: string, fn: () => void) { this.listeners[type] = fn },
+      append(this: FallbackNode, ...nodes: FallbackNode[]) { this.children.push(...nodes) },
+      remove(this: FallbackNode) { this.isConnected = false },
+      appendChild(this: FallbackNode, node: FallbackNode) {
+        node.isConnected = true
+        mounted.push(node)
+      },
+      style: {},
+    },
+  })
+  const body = makeNode()
+  const sandbox: Record<string, unknown> = {
+    navigator: { userAgent, language },
+    location: { href: 'http://127.0.0.1:3080/chat?x=1&dshDesktop=1' },
+    URL,
+    DOMException,
+    parent: { postMessage: (message: unknown) => posted.push(message) },
+    document: { body, documentElement: body, createElement: makeNode },
+  }
+  if (withRtc)
+    sandbox.RTCPeerConnection = function Native() {}
+  sandbox.globalThis = sandbox
+  runInContext(WEBRTC_FALLBACK_SCRIPT, createContext(sandbox))
+  return { sandbox, posted, mounted }
+}
+
+describe('webrtc fallback', () => {
+  it('keeps RTCPeerConnection undefined and offers the browser when WebKitGTK lacks WebRTC', () => {
+    const { sandbox, posted, mounted } = runFallback(WEBKITGTK_UA)
+
+    expect(sandbox.RTCPeerConnection).toBeUndefined()
+    expect(mounted).toHaveLength(1)
+    const [message, open] = mounted[0]!.children
+    expect(message!.textContent).toContain('WebRTC')
+    open!.listeners.click!()
+    expect(posted).toEqual([expect.objectContaining({
+      type: 'dsh://tauri:invoke',
+      cmd: 'open_external_url',
+      args: { url: 'http://127.0.0.1:3080/chat?x=1' },
+    })])
+  })
+
+  it('localizes the prompt', () => {
+    const { sandbox, mounted } = runFallback(WEBKITGTK_UA, false, 'zh-CN')
+    expect(sandbox.RTCPeerConnection).toBeUndefined()
+    expect(mounted[0]!.children[0]!.textContent).toContain('实时语音')
+  })
+
+  it('keeps native WebRTC and non-WebKitGTK pages untouched', () => {
+    const native = runFallback(WEBKITGTK_UA, true)
+    expect((native.sandbox.RTCPeerConnection as { name: string }).name).toBe('Native')
+    expect(runFallback(CHROME_UA).sandbox.RTCPeerConnection).toBeUndefined()
+  })
+
+  it('is injected into the embedded head', () => {
+    vi.stubEnv('DSH_TAURI_EMBEDDED', '1')
+    const row = activate().collect().find(item => item.kind === 'script' && item.text === WEBRTC_FALLBACK_SCRIPT)
+    expect(row?.kind === 'script' ? row.placement : undefined).toBe('head')
   })
 })
