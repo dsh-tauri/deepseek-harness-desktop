@@ -11,12 +11,19 @@ inputs:
     required: false
     default: pnpm-lock.yaml
 
+  standalone:
+    description: Install pnpm as a standalone executable (pnpm.exe on Windows)
+    required: false
+    default: 'false'
+
 runs:
   using: composite
   steps:
     # package.json 的 packageManager 字段提供精确 pnpm 版本。
     - name: Install pnpm
       uses: pnpm/action-setup@v6
+      with:
+        standalone: ${{ inputs.standalone }}
 
     - name: Setup Node.js
       uses: actions/setup-node@v7

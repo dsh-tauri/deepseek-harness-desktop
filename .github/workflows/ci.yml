@@ -272,6 +272,8 @@ jobs:
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
+        with:
+          standalone: 'true'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
