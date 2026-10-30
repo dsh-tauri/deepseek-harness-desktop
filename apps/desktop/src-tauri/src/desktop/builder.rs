@@ -779,6 +779,7 @@ where
 #[cfg(all(test, target_os = "macos"))]
 mod macos_titlebar_tests {
     use super::{MACOS_TITLEBAR_SYNC_PENDING, on_macos_titlebar_event, sync_macos_titlebars};
+    use crate::WebviewWindow;
     use std::cell::Cell;
     use std::sync::atomic::Ordering;
     use tauri::{PhysicalPosition, PhysicalSize, Theme, WindowEvent};

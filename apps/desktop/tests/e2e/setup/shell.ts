@@ -21,7 +21,7 @@ const BINARIES = [
   'target/debug/deepseek-harness-desktop',
 ]
 
-const SHELL_PAGE = /^(?:tauri:\/\/localhost|http:\/\/localhost:1420)/
+const SHELL_PAGE = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost|http:\/\/localhost:1420)/
 
 export const MAIN_LABEL = 'main'
 export const APP_TITLE = 'DeepSeek Harness'
@@ -77,12 +77,14 @@ async function targetsOf(port: number): Promise<CdpTarget[]> {
   return await response.json() as CdpTarget[]
 }
 
-async function waitForShellTarget(port: number, child: ChildProcess): Promise<void> {
+async function waitForShellTarget(port: number, child: ChildProcess, tail: () => string): Promise<void> {
   const deadline = Date.now() + 120_000
   let lastError = '还没有 CDP target'
   while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode)
-      throw new Error(`主进程已退出（code=${child.exitCode}）：${lastError}`)
+    if (child.exitCode !== null || child.signalCode) {
+      throw new Error(`主进程已退出（code=${child.exitCode}）：${lastError}
+${tail()}`)
+    }
 
     try {
       const targets = await targetsOf(port)
@@ -139,7 +141,14 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     },
   })
 
-  await waitForShellTarget(port, child)
+  let output = ''
+  const collect = (chunk: string | Uint8Array): void => {
+    output = (output + chunk.toString()).slice(-4000)
+  }
+  child.stdout?.on('data', collect)
+  child.stderr?.on('data', collect)
+
+  await waitForShellTarget(port, child, () => output)
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
 
   const context = browser.contexts()[0]
