@@ -157,6 +157,7 @@ fn append_windows_pnpm_dirs(dirs: &mut Vec<PathBuf>) {
     }
     for variable in ["PNPM_HOME", "NPM_CONFIG_PREFIX", "npm_config_prefix"] {
         if let Some(value) = std::env::var_os(variable) {
+            append(PathBuf::from(&value).join("bin"));
             append(PathBuf::from(value));
         }
     }
