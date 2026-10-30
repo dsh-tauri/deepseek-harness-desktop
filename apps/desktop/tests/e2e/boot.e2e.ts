@@ -63,7 +63,7 @@ async function healthy(page: Page): Promise<string> {
       if (Date.now() >= deadline) {
         const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info').catch(() => undefined)
         if (runtime)
-          console.error('core logs', runtime.log_path, dumpCoreLogs(dirname(dirname(runtime.log_path))))
+          console.error('core logs', runtime.log_path, runtime.data_dir, dumpCoreLogs(dirname(dirname(runtime.log_path))), dumpCoreLogs(join(runtime.data_dir, 'logs')))
         throw error
       }
     }
