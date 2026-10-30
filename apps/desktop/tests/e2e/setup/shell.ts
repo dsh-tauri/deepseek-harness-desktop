@@ -3,14 +3,14 @@ import type { AddressInfo } from 'node:net'
 import type { Browser, Page } from 'playwright'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, expect } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect } from 'vitest'
 
 export const ROOT = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '../../../../..')
 
@@ -32,7 +32,7 @@ export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
 /** 冷装配（真实下载 Node + dsh）的等待上限。 */
-export const ASSEMBLY_TIMEOUT_MS = 900_000
+export const ASSEMBLY_TIMEOUT_MS = process.platform === 'darwin' ? 300_000 : 900_000
 export const WINDOW_TIMEOUT_MS = 30_000
 export const SETTLE_MS = 3_000
 
@@ -114,6 +114,55 @@ async function windowsOf(browser: Browser): Promise<ShellWindow[]> {
     }
   }
   return windows
+}
+
+async function listTree(root: string, depth: number, lines: string[], prefix = ''): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries.slice(0, 40)) {
+    lines.push(`${prefix}${entry.name}${entry.isDirectory() ? '/' : ''}`)
+    if (entry.isDirectory() && depth > 0 && entry.name !== 'node_modules')
+      await listTree(path.join(root, entry.name), depth - 1, lines, `${prefix}  `)
+  }
+}
+
+async function logTails(root: string, depth: number, found: string[]): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    const full = path.join(root, entry.name)
+    if (entry.isDirectory()) {
+      if (depth > 0 && entry.name !== 'node_modules')
+        await logTails(full, depth - 1, found)
+    }
+    else if (entry.name.endsWith('.log')) {
+      found.push(`--- ${full}
+${(await readFile(full, 'utf8').catch(() => '')).slice(-6000)}`)
+    }
+  }
+}
+
+export async function diagnose(app: ShellApp): Promise<string> {
+  const tree: string[] = []
+  await listTree(app.home, 4, tree)
+  const logs: string[] = []
+  await logTails(app.home, 6, logs)
+  await logTails(app.downloadCacheDir, 6, logs)
+  const ps = await new Promise<string>((resolve) => {
+    const child = spawn('ps', ['-axo', 'pid,ppid,stat,command'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let text = ''
+    child.stdout.on('data', chunk => text += chunk.toString())
+    child.on('error', () => resolve(''))
+    child.on('close', () => resolve(text.split('\n').filter(line => /dsh|node|pnpm|Electron|deepseek/i.test(line)).slice(0, 40).join('\n')))
+  })
+  return [
+    `主进程 exit=${app.process.exitCode} signal=${app.process.signalCode}`,
+    '--- 目录',
+    tree.join('\n'),
+    logs.join('\n'),
+    '--- 进程',
+    ps,
+    '--- 主进程输出',
+    app.output().slice(-20000),
+  ].join('\n')
 }
 
 export async function startShellApp(options: { downloadCacheDir?: string } = {}): Promise<ShellApp> {
@@ -282,6 +331,13 @@ export function shellAppScope(options: { downloadCacheDir?: string } = {}): { ge
   beforeAll(async () => {
     current = await startShellApp(options)
   }, ASSEMBLY_TIMEOUT_MS * 2)
+
+  afterEach(async (context) => {
+    if (current && (context.task.result?.errors?.length ?? 0) > 0) {
+      console.error(`[e2e-diagnose] ${context.task.name}
+${await diagnose(current)}`)
+    }
+  })
 
   afterAll(async () => {
     await current?.stop()

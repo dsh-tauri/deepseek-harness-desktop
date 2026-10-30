@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, completePreinstall, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, completePreinstall, diagnose, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
 
 interface RuntimeInfo {
   service_url: string
@@ -113,7 +113,11 @@ describe('桌面端启动冒烟', () => {
   beforeAll(async () => {
     const page = mainPage()
     await installErrorCollector(page)
-    await completePreinstall(page, ASSEMBLY_TIMEOUT_MS)
+    await completePreinstall(page, ASSEMBLY_TIMEOUT_MS - 20_000).catch(async (error) => {
+      console.error(`[e2e-diagnose] beforeAll
+${await diagnose(app())}`)
+      throw error
+    })
   }, ASSEMBLY_TIMEOUT_MS)
 
   it('TC-DSK-L3-01-001 进入下载装配后 dsh 内核启动、页面渲染且无报错', async () => {
