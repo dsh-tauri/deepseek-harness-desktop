@@ -287,6 +287,10 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Setup Xcode
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+
       - name: Cache Electron distribution
         uses: actions/cache@v4
         with:

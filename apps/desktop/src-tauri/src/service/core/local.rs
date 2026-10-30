@@ -1,6 +1,8 @@
 use crate::AppHandle;
 use crate::service::cli;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use tauri::Manager;
 use tauri::Runtime;
 
 pub(super) struct LocalCore {
