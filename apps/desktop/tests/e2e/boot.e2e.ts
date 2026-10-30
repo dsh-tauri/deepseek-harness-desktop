@@ -1,6 +1,6 @@
 import type { Page } from 'playwright'
 import type { ShellApp, ShellWindow } from './setup/shell'
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -57,7 +57,7 @@ async function healthy(page: Page): Promise<string> {
     catch (error) {
       if (Date.now() >= deadline) {
         console.error('healthy failure', app().output().split(String.fromCharCode(10)).filter(line => !/CORE_PLUGIN_LINKED|patch target not found|frontend: \[(Guest)?Webview|\[Webview\]/.test(line)).slice(-400).join(String.fromCharCode(10)))
-        console.error('probe', warm, execSync('powershell -NoProfile -Command "Get-Process node,electron,main -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,CPU,WS,Responding | Format-Table | Out-String"').toString())
+        console.error('probe', warm, spawnSync('powershell -NoProfile -Command "Get-Process node,electron,main -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,CPU,WS,Responding | Format-Table | Out-String"', { shell: true, encoding: 'utf8' }).stdout)
         throw error
       }
     }
