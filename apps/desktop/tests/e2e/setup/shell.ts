@@ -98,7 +98,8 @@ ${tail()}`)
     }
     await new Promise(resolve => setTimeout(resolve, 500))
   }
-  throw new Error(`等待 Electron CDP 就绪超时：${lastError}`)
+  throw new Error(`等待 Electron CDP 就绪超时：${lastError}
+${tail()}`)
 }
 
 async function windowsOf(browser: Browser): Promise<ShellWindow[]> {
@@ -124,6 +125,8 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
   const downloadCacheDir = options.downloadCacheDir ?? path.join(home, 'download-cache')
   await mkdir(appData, { recursive: true })
   await mkdir(downloadCacheDir, { recursive: true })
+  await mkdir(path.join(home, 'home'), { recursive: true })
+  await mkdir(path.join(home, 'appdata'), { recursive: true })
 
   const port = await freePort()
   const child = spawn(binary!, [], {
