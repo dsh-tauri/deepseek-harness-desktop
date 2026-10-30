@@ -73,6 +73,14 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "^1.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "dsh-h3": "catalog:",
     "dsh-tauri": "workspace:*",

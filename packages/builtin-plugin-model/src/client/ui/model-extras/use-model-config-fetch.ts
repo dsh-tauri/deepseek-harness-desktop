@@ -4,7 +4,8 @@ import type { Translate } from './types'
 import { useCallback, useState } from 'react'
 import { loadModelCapacities } from '../../service/model-config'
 import { mergeModelCards, modelConfigNotice, withDetail } from '../../service/model-config.utils'
-import { ensurePresets } from '../../service/presets'
+import { loadPresets } from '../../service/presets'
+import { modelPresets } from '../../store/modules/model-presets'
 
 export interface UseModelConfigFetchResult {
   busy: boolean
@@ -40,7 +41,7 @@ export function useModelConfigFetch(options: UseModelConfigFetchOptions): UseMod
           ...options.probe.apiKey === undefined ? {} : { apiKey: options.probe.apiKey },
           ...options.probe.headers === undefined ? {} : { headers: options.probe.headers },
         }, options.operations),
-        ensurePresets(),
+        loadPresets(),
       ])
       setBusy(false)
       if (!found.ok) {
@@ -51,6 +52,7 @@ export function useModelConfigFetch(options: UseModelConfigFetchOptions): UseMod
       const merged = mergeModelCards(options.models, found.models, {
         ...targets === undefined ? {} : { targets },
         overwrite: targets === undefined,
+        presets: modelPresets.table,
       })
       if (merged.applied > 0)
         options.onApply?.(merged.models, merged.applied, merged.undisclosed)

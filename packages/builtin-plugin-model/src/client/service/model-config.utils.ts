@@ -1,3 +1,4 @@
+import type { PresetTable } from '../../shared/model-presets'
 import type { LlmDiscoveredModel } from '../types/remotes.ts'
 import { presetFor } from './model-presets.ts'
 
@@ -18,6 +19,7 @@ export interface ModelConfigMerge {
 export interface ModelConfigMergeOptions {
   targets?: readonly string[]
   overwrite?: boolean
+  presets?: PresetTable
 }
 
 export function mergeModelCards(
@@ -28,6 +30,7 @@ export function mergeModelCards(
   const byId = new Map(discovered.map(model => [model.id, model]))
   const selected = options.targets === undefined ? undefined : new Set(options.targets)
   const overwrite = options.overwrite === true
+  const presets = options.presets ?? {}
   let applied = 0
   const undisclosed: string[] = []
   const next = models.map((model) => {
@@ -35,22 +38,24 @@ export function mergeModelCards(
     if (selected !== undefined && !selected.has(id))
       return model
     const found = byId.get(id)
-    const preset = presetFor(id)
+    const preset = presetFor(presets, id)
     const patch: Record<string, unknown> = {}
     if (found !== undefined) {
       if (found.contextWindow !== undefined && (overwrite || model.contextWindow === undefined))
         patch.contextWindow = found.contextWindow
       if (found.maxTokens !== undefined && (overwrite || model.maxTokens === undefined))
         patch.maxTokens = found.maxTokens
+      if (found.inputModalities !== undefined && (overwrite || model.input === undefined))
+        patch.input = [...found.inputModalities]
     }
     if (patch.contextWindow === undefined && model.contextWindow === undefined && preset?.contextWindow !== undefined)
       patch.contextWindow = preset.contextWindow
     if (patch.maxTokens === undefined && model.maxTokens === undefined && preset?.maxTokens !== undefined)
       patch.maxTokens = preset.maxTokens
-    if (preset?.input !== undefined && (overwrite || model.input === undefined))
+    if (patch.input === undefined && preset?.input !== undefined && (overwrite || model.input === undefined))
       patch.input = [...preset.input]
-    if (preset?.efforts !== undefined && (overwrite || model.reasoningEfforts === undefined))
-      patch.reasoningEfforts = { ...preset.efforts }
+    if (preset?.reasoningEfforts !== undefined && (overwrite || model.reasoningEfforts === undefined))
+      patch.reasoningEfforts = preset.reasoningEfforts === false ? false : { ...preset.reasoningEfforts }
     if (Object.keys(patch).length === 0) {
       if (found === undefined && id.length > 0)
         undisclosed.push(id)
