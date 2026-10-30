@@ -127,6 +127,8 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
   await mkdir(downloadCacheDir, { recursive: true })
   await mkdir(path.join(home, 'home'), { recursive: true })
   await mkdir(path.join(home, 'appdata'), { recursive: true })
+  await mkdir(path.join(home, 'home', 'AppData', 'Roaming'), { recursive: true })
+  await mkdir(path.join(home, 'home', 'AppData', 'Local'), { recursive: true })
 
   const port = await freePort()
   const child = spawn(binary!, [], {
