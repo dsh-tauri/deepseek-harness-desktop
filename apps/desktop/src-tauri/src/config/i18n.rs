@@ -81,12 +81,7 @@ fn pick(key: &str, lang: Lang) -> String {
         "menu.new_chat" => ("新聊天", "New Chat", "새 채팅", "Новый чат"),
         "menu.open_folder" => ("打开文件夹", "Open Folder", "폴더 열기", "Открыть папку"),
         "menu.open_panel" => ("打开面板", "Open Panel", "패널 열기", "Открыть панель"),
-        "pet.show_main_window" => (
-            "显示主界面",
-            "Show Main Window",
-            "기본 창 표시",
-            "Показать главное окно",
-        ),
+        "pet.show_main_window" => ("显示主界面", "Show Main Window", "기본 창 표시", "Показать главное окно"),
         "pet.close" => ("关闭宠物", "Close Pet", "펫 닫기", "Закрыть питомца"),
         "menu.close" => ("关闭", "Close", "닫기", "Закрыть"),
         "menu.quit" => ("退出", "Quit", "종료", "Выход"),

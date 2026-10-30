@@ -53,6 +53,7 @@ fn patch_source(source: &str) -> PatchOutcome {
         if helper == OAUTH_SOURCE {
             return PatchOutcome::AlreadyPatched;
         }
+        // #1101 已覆盖原始锚点，只替换完整已知尾部，拒绝未知追加源码。
         return if format!("{:x}", Sha256::digest(helper.as_bytes()))
             == "d2f9d978bb36c9324556af502fa92a45fe83e72818427b4d9969b8a23b376974"
         {
@@ -119,6 +120,8 @@ pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    const OAUTH_1101: &str = include_str!("../../../../tests/unit/fixtures/mcp-oauth-1101.mjs");
+
     fn oauth_prefix(call: &str) -> String {
         r#"import * as desktopMcpSdk from "@modelcontextprotocol/client";
 function createTransport(config, credentials) {
@@ -140,6 +143,37 @@ export { activate, inject };
     }
 
     #[test]
+    fn oauth_upgrade_fixture_matches_the_1101_release() {
+        assert_eq!(
+            format!("{:x}", Sha256::digest(OAUTH_1101.as_bytes())),
+            "d2f9d978bb36c9324556af502fa92a45fe83e72818427b4d9969b8a23b376974"
+        );
+    }
+
+    #[test]
+    fn upgrades_1101_oauth_helper_without_changing_core_wiring() {
+        assert!(
+            OAUTH_1101 != OAUTH_SOURCE,
+            "upgrade requires a newer OAuth helper"
+        );
+        for call in [
+            "transport = createTransport(config, ctx.credentials);",
+            "generation.connect(createTransport(config, ctx.credentials));",
+        ] {
+            let prefix = oauth_prefix(call);
+            let source = format!("{prefix}{OAUTH_1101}");
+            let outcome = patch_source(&source);
+            let PatchOutcome::Patched(patched) = outcome else {
+                panic!("expected #1101 helper upgrade for {call}, got {outcome:?}");
+            };
+            assert_eq!(patched, format!("{prefix}{OAUTH_SOURCE}"));
+            assert_eq!(patched.matches(OAUTH_SOURCE).count(), 1);
+            assert!(!patched.contains(OAUTH_1101));
+            assert_eq!(patch_source(&patched), PatchOutcome::AlreadyPatched);
+        }
+    }
+
+    #[test]
     fn current_oauth_helper_is_idempotent_with_complete_wiring() {
         let source = format!(
             "{}{OAUTH_SOURCE}",
@@ -150,7 +184,7 @@ export { activate, inject };
 
     #[test]
     fn oauth_patches_reject_missing_or_duplicate_wiring() {
-        for helper in [OAUTH_SOURCE] {
+        for helper in [OAUTH_1101, OAUTH_SOURCE] {
             let source = format!(
                 "{}{helper}",
                 oauth_prefix("transport = createTransport(config, ctx.credentials);")
@@ -192,7 +226,7 @@ export { activate, inject };
 
     #[test]
     fn oauth_patches_reject_unknown_or_unbounded_helpers() {
-        for helper in [OAUTH_SOURCE] {
+        for helper in [OAUTH_1101, OAUTH_SOURCE] {
             let prefix = oauth_prefix("transport = createTransport(config, ctx.credentials);");
             for (case, tail) in [
                 (
@@ -233,9 +267,7 @@ export { activate, inject };
 
     #[test]
     fn legacy_sdk_keeps_existing_transport_without_unavailable_imports() {
-        let source = format!(
-            "import {{ Client }} from \"@modelcontextprotocol/sdk/client/index.js\";\nfunction createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}"
-        );
+        let source = format!("import {{ Client }} from \"@modelcontextprotocol/sdk/client/index.js\";\nfunction createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}");
         let PatchOutcome::Patched(patched) = patch_source(&source) else {
             panic!("expected legacy readiness patch")
         };
@@ -248,9 +280,7 @@ export { activate, inject };
 
     #[test]
     fn legacy_transport_receives_credentials_and_remains_idempotent() {
-        let source = format!(
-            "function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}"
-        );
+        let source = format!("function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}");
         let PatchOutcome::Patched(patched) = patch_source(&source) else {
             panic!("expected legacy transport patch")
         };
@@ -262,9 +292,7 @@ export { activate, inject };
 
     #[test]
     fn readiness_patch_is_idempotent_and_preserves_surrounding_lifecycle() {
-        let source = format!(
-            "function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ntransport = createTransport(config);\nconst inject = [\"tools\"];\nctx.effect(() => dispose, \"mcp-client.connection\");\n{READY_ANCHOR}\nif (outcome.error !== void 0 && config.failOnStartupError) throw outcome.error;"
-        );
+        let source = format!("function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ntransport = createTransport(config);\nconst inject = [\"tools\"];\nctx.effect(() => dispose, \"mcp-client.connection\");\n{READY_ANCHOR}\nif (outcome.error !== void 0 && config.failOnStartupError) throw outcome.error;");
         let PatchOutcome::Patched(patched) = patch_source(&source) else {
             panic!("expected patch")
         };
