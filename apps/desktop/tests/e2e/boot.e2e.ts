@@ -1,5 +1,6 @@
 import type { Page } from 'playwright'
 import type { ShellApp, ShellWindow } from './setup/shell'
+import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -44,7 +45,8 @@ async function activeProfile(page: Page): Promise<string> {
 
 async function healthy(page: Page): Promise<string> {
   const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info')
-  await fetch(runtime.service_url, { signal: AbortSignal.timeout(90_000) }).then(response => response.text()).catch(() => undefined)
+  const warmStart = Date.now()
+  const warm = await fetch(runtime.service_url, { signal: AbortSignal.timeout(90_000) }).then(async response => `${response.status} ${(await response.text()).length}`).catch(error => String(error)).then(text => `${text} ${Date.now() - warmStart}ms`)
   const deadline = Date.now() + 120_000
   for (;;) {
     try {
@@ -55,7 +57,7 @@ async function healthy(page: Page): Promise<string> {
     catch (error) {
       if (Date.now() >= deadline) {
         console.error('healthy failure', app().output().split(String.fromCharCode(10)).filter(line => !/CORE_PLUGIN_LINKED|patch target not found|frontend: \[(Guest)?Webview|\[Webview\]/.test(line)).slice(-400).join(String.fromCharCode(10)))
-        console.error('core log tail', readFileSync(runtime.log_path, 'utf8').slice(-6000))
+        console.error('probe', warm, execSync('powershell -NoProfile -Command "Get-Process node,electron,main -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,CPU,WS,Responding | Format-Table | Out-String"').toString())
         throw error
       }
     }
