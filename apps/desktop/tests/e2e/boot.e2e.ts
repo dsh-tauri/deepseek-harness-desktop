@@ -42,18 +42,9 @@ async function activeProfile(page: Page): Promise<string> {
   return active!.id
 }
 
-async function probeCore(url: string): Promise<string> {
-  const started = Date.now()
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(60_000) })
-    return `status=${response.status} ms=${Date.now() - started} body=${(await response.text()).slice(0, 300)}`
-  }
-  catch (error) {
-    return `error=${String(error)} ms=${Date.now() - started}`
-  }
-}
-
 async function healthy(page: Page): Promise<string> {
+  const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info')
+  await fetch(runtime.service_url, { signal: AbortSignal.timeout(90_000) }).then(response => response.text()).catch(() => undefined)
   const deadline = Date.now() + 120_000
   for (;;) {
     try {
@@ -62,12 +53,8 @@ async function healthy(page: Page): Promise<string> {
         return result.status
     }
     catch (error) {
-      if (Date.now() >= deadline) {
-        const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info').catch(() => undefined)
-        if (runtime)
-          console.error('core probe', await probeCore(runtime.service_url))
+      if (Date.now() >= deadline)
         throw error
-      }
     }
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
