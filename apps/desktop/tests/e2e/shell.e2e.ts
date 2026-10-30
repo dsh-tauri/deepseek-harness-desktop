@@ -28,5 +28,5 @@ describe('electron 主窗口', () => {
 
     await new Promise(resolve => setTimeout(resolve, SETTLE_MS))
     expect(await pageErrors(page), '壳层出现页面级报错').toEqual([])
-  })
+  }, ASSEMBLY_TIMEOUT_MS)
 })

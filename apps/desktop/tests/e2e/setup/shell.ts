@@ -143,7 +143,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
 
   let output = ''
   const collect = (chunk: string | Uint8Array): void => {
-    output = (output + chunk.toString()).slice(-4000)
+    output = (output + chunk.toString()).slice(-60000)
   }
   child.stdout?.on('data', collect)
   child.stderr?.on('data', collect)
@@ -245,6 +245,10 @@ export async function pageErrors(page: Page): Promise<string[]> {
   return await page.evaluate(readPageErrors) as string[]
 }
 
+async function pageText(page: Page): Promise<string> {
+  return await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => '')
+}
+
 /** 若出现预装引导则跳过，直到壳层内嵌页面被拉起。 */
 export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs
@@ -256,9 +260,11 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
       await skip.click()
       return
     }
+    if (await page.locator(SETUP_ERROR).count() > 0)
+      throw new Error(`首次装配失败：${await pageText(page)}`)
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
-  throw new Error('首次装配未完成：既没有出现预装引导，也没有拉起内嵌页面')
+  throw new Error(`首次装配未完成：既没有出现预装引导，也没有拉起内嵌页面；当前页面：${await pageText(page)}`)
 }
 
 /** Registers the shared app for `beforeAll`/`afterAll`; not a React hook. */
