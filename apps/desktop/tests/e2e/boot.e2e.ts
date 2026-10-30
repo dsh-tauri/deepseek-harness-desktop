@@ -1,7 +1,7 @@
 import type { Page } from 'playwright'
 import type { ShellApp, ShellWindow } from './setup/shell'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, completePreinstall, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
 
@@ -63,7 +63,7 @@ async function healthy(page: Page): Promise<string> {
       if (Date.now() >= deadline) {
         const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info').catch(() => undefined)
         if (runtime)
-          console.error('core logs', dumpCoreLogs(runtime.data_dir))
+          console.error('core logs', dumpCoreLogs(dirname(dirname(runtime.log_path))))
         throw error
       }
     }
