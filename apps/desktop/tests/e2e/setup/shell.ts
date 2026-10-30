@@ -51,6 +51,7 @@ export interface ShellApp {
   windows: () => Promise<ShellWindow[]>
   openWindow: (command?: string, source?: ShellWindow) => Promise<ShellWindow>
   closeWindow: (label: string) => Promise<void>
+  output: () => string
   stop: () => Promise<void>
 }
 
@@ -203,6 +204,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
       }
       throw new Error(`原生窗口 ${label} 未在 ${WINDOW_TIMEOUT_MS}ms 内关闭`)
     },
+    output: () => output,
     stop,
   }
 }
