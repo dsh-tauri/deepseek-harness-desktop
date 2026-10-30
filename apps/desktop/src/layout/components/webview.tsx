@@ -3,6 +3,7 @@ import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
 import type { DshWebviewElement } from '@/types/webview'
 import { useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
+import { emit } from '@tauri-apps/api/event'
 import { Effect, EffectState, getCurrentWindow } from '@tauri-apps/api/window'
 import { type } from '@tauri-apps/plugin-os'
 import { useEffect, useRef, useState } from 'react'
@@ -20,7 +21,7 @@ import { REMOTE_SECTION, REMOTE_TAB_ACCESS, REMOTE_TAB_MACHINES } from './nav-br
 import { Navbar } from './navbar'
 import { Setup } from './setup'
 import { PreinstallSetup } from './setup-preinstall'
-import { postToGuest, useGuestMessage } from './webview-bridge'
+import { useGuestMessage } from './webview-bridge'
 import { isFullSidebarWindow } from './window-presentation'
 
 const FULL_SIDEBAR_REVEAL_MS = 15_000
@@ -105,10 +106,6 @@ export function Webview() {
       .catch(error => console.warn('[Webview] native backdrop effect failed:', error))
   }, { immediate: true })
 
-  function post(message: { type?: string, [key: string]: unknown }) {
-    postToGuest(guestRef.current, message)
-  }
-
   function syncViewMenu() {
     if (type() !== 'macos')
       return
@@ -135,7 +132,7 @@ export function Webview() {
   }
 
   function openSettingsTab(tab: string) {
-    post({ type: 'dsh://settings:open', section: REMOTE_SECTION, tab })
+    void emit('dsh://settings:open', { section: REMOTE_SECTION, tab })
   }
 
   function openLocalSettingsTab(tab: string) {
@@ -147,25 +144,23 @@ export function Webview() {
     openSettingsTab(tab)
   }
 
+  useListen<{ collapsed?: unknown }>('dsh://sidebar:collapsed', ({ payload }) => {
+    setSidebarCollapsed(Boolean(payload?.collapsed))
+  })
+  useListen<{ rows?: unknown }>('dsh://shortcuts', ({ payload }) => {
+    setDshShortcuts({ rows: parseShortcutRows(payload?.rows) })
+  })
+  useListen('dsh://full-sidebar:ready', () => setFullSidebarRevealed(true))
+  useListen('dsh://window:close', () => {
+    void getCurrentWindow().close()
+  })
   useGuestMessage((data) => {
-    if (data.type === 'dsh://sidebar:collapsed') {
-      setSidebarCollapsed(Boolean(data.collapsed))
-    }
-    else if (data.type === 'dsh://shortcuts') {
-      setDshShortcuts({ rows: parseShortcutRows(data.rows) })
-    }
-    else if (data.type === 'dsh://full-sidebar:ready') {
-      setFullSidebarRevealed(true)
-    }
-    else if (data.type === 'dsh://window:close') {
-      void getCurrentWindow().close()
-    }
-    else if (data.type === 'dsh://plugin-boot:ready') {
-      const pending = pendingSettingsTabRef.current
-      if (pending !== null) {
-        pendingSettingsTabRef.current = null
-        openSettingsTab(pending)
-      }
+    if (data.type !== 'dsh://plugin-boot:ready')
+      return
+    const pending = pendingSettingsTabRef.current
+    if (pending !== null) {
+      pendingSettingsTabRef.current = null
+      openSettingsTab(pending)
     }
   })
 
@@ -204,11 +199,11 @@ export function Webview() {
 
   const bridge = live
     ? {
-        onToggleSidebar: () => post({ type: 'dsh://sidebar:toggle' }),
-        onNewChat: () => post({ type: 'dsh://session:new' }),
-        onOpenFolder: () => post({ type: 'dsh://workspace:add' }),
-        onOpenShortcuts: () => post({ type: 'dsh://shortcuts:open' }),
-        onViewCommand: (command: DshViewCommand) => post({ type: 'dsh://view:command', command }),
+        onToggleSidebar: () => void emit('dsh://sidebar:toggle'),
+        onNewChat: () => void emit('dsh://session:new'),
+        onOpenFolder: () => void emit('dsh://workspace:add'),
+        onOpenShortcuts: () => void emit('dsh://shortcuts:open'),
+        onViewCommand: (command: DshViewCommand) => void emit('dsh://view:command', { command }),
         onOpenMachineManager: () => openLocalSettingsTab(REMOTE_TAB_MACHINES),
         onOpenRemoteAccess: () => openLocalSettingsTab(REMOTE_TAB_ACCESS),
       }

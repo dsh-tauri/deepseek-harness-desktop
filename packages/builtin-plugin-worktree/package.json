@@ -29,12 +29,14 @@
   "types": "./dist/index.d.ts",
   "files": [
     "cordis.patch.yml",
-    "dist"
+    "dist",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
   },
   "dsh": {
+    "taiwind": "src/main.css",
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-ui-layout",

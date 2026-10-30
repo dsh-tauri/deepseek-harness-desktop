@@ -5,10 +5,10 @@ const source = (path: string) => fileURLToPath(new URL(path, import.meta.url))
 
 const alias = {
   '@': source('./apps/desktop/src'),
-  'dsh-tauri': source('./packages/builtin-plugin-tauri/src/index.ts'),
   'dsh-tauri/client': source('./packages/builtin-plugin-tauri/src/client/index.ts'),
-  'dsh-tauri-ui': source('./packages/builtin-plugin-ui/src/index.ts'),
   'dsh-tauri-ui/client': source('./packages/builtin-plugin-ui/src/client/index.ts'),
+  'dsh-tauri': source('./packages/builtin-plugin-tauri/src/index.ts'),
+  'dsh-tauri-ui': source('./packages/builtin-plugin-ui/src/index.ts'),
 }
 
 const optionalPrimitiveDependency = source('./apps/desktop/tests/unit/primitives-optional-deps.ts')
@@ -24,7 +24,7 @@ export default defineProject({
     name: 'unit',
     environment: 'node',
     server: { deps: { inline: ['@deepseek-ai/dsh-client-ui-primitives', 'dsh-pet-component'] } },
-    include: ['apps/desktop/src/**/*.test.{ts,tsx}', 'apps/desktop/tests/unit/**/*.test.{ts,tsx}', 'tests/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
+    include: ['apps/desktop/src/**/*.test.{ts,tsx}', 'packages/builtin-plugin-*/src/**/*.test.{ts,tsx}', 'apps/desktop/tests/unit/**/*.test.{ts,tsx}', 'tests/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/target/**'],
     setupFiles: ['./apps/desktop/tests/unit/tauri-runtime.ts'],
     testTimeout: 30000,

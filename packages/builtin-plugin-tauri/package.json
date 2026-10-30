@@ -59,6 +59,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@tauri-apps/api": "catalog:tauri",
     "dsh-h3": "catalog:",
     "h3": "catalog:",
     "hookable": "catalog:utils",

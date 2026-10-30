@@ -20,7 +20,8 @@
   "types": "./dist/index.d.ts",
   "files": [
     "cordis.patch.yml",
-    "dist"
+    "dist",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
@@ -46,7 +47,8 @@
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
-    }
+    },
+    "taiwind": "src/main.css"
   },
   "scripts": {
     "build": "tsdown",
@@ -59,6 +61,7 @@
   "devDependencies": {
     "dsh-tauri-config": "workspace:*",
     "react": "catalog:runtime",
+    "react-dom": "catalog:runtime",
     "tsdown": "catalog:cli"
   }
 }

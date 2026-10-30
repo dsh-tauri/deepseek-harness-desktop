@@ -1,0 +1,101 @@
+# Third-party notices
+
+## deepseek-ai/deepseek-harness
+
+- Repository: <https://github.com/deepseek-ai/deepseek-harness>
+- Reference version: `dsh-v0.2.1-rc.2`
+- Reference revision: `687f282e8625c6b8d11ff58211a90524be2e4317`
+- Previous documented reference: `dsh-v0.2.1-rc.1` (`1600d8a1e140dcde43a1a0941940a0480712c011`); alpha.1 (`5badb15009ae1756c3afe0ae0cef1faafc290ccc`) remains historical attribution. This release does not recopy or revalidate every derived file.
+- Source: `source/deepseek-harness`
+- Support policy: recommended core `0.2.1-rc.2`, minimum core `0.1.7-rc.1`; earlier cores are unsupported. Verification scope: [current compatibility record](<../dsh-tauri/docs/compatibility-0.2.1-rc.2.md>). Earlier version comparisons below are historical, not a current support promise.
+- Catalog pin: `dsh:` → `0.2.1-rc.2` (`pnpm-workspace.yaml`)
+- License: MIT — Copyright (c) 2026 DeepSeek
+- Not copied: a Tauri-flavoured refork of the official client UI — official components are re-exported where the supported kernels expose the required contract, with local reforks for additional geometry and variants; no official source file is vendored.
+
+Derived (upstream → this package):
+
+- `packages/client/ui-primitives/src/` (historical derivation reference: `0.1.7-alpha.1`, then documented for ≥ `0.1.5-rc.1`; not the current support floor) → `src/client/components/official.tsx`: pass-through re-export of `Button`, `Switch`, `Tag`, `Pill`, `Menu`, `Input`, `Tooltip`, `Toast`, `Modal`, `HoverCard`, `DisclosureRow`, `StateDot`, `ConnectionIndicator`, `BrandWordmark`, `FishLogo`; `Button` / `Tag` are taken over per-variant by `button.tsx` / `tag.tsx` (official variant → official implementation, local variant → refork style).
+- `packages/client/ui-primitives/src/` icons barrel → deliberately not re-exported (export names differ between kernel generations).
+- `packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css` → `src/client/ui/panel-page.cssr.ts`, `src/client/ui/panel-page.tsx`: the plugin panel is laid out line-by-line on the official plugin page geometry.
+- `packages/client/ui-sidebar`, `ui-workspace`, `ui-chat`, `ui-settings-models`, `ui-agent-preset`, `ui-permission-presets`, `ui-goal` CSS Modules → `src/client/components/registry.ts` (`UI_COMPONENT_REGISTRY`, `kind: 'reexport' | 'refork'`, `mappedClass`) plus `src/client/components/*.cssr.ts`: reforked geometry and official class mapping on this repo's `css-render` stack; official `.module.css` files are not copied.
+- Official sidebar branding row and its collapse toggle → `src/client/styles/global.cssr.ts`: hiding rule for the duplicated official entry, keyed off the official class shape (`clsx(brand, wide)`) and `aria-label` dictionaries instead of hashed class names.
+- Official slot `conversation.hero.workspace` (single/root, declared by `ui-workspace`, official `WorkspacePicker` at default priority) → `src/client/register/hero-workspace.ts`, `src/client/ui/hero-workspace.*`: takeover at a lower priority so the official registration stays in place; the official `WorkspacePickFlow` "add workspace" item id is reused verbatim.
+- Official settings launcher seat (`ui-settings-general` `SettingsRoot` rendering the account menu) → `src/client/constants/index.ts` (`SETTINGS_TRIGGER_PRIORITY`), `src/client/ui/settings-trigger.tsx`: seat takeover keeping a host for the official account UI, plus the official dictionary strings for the sidebar "new session" button and the ungrouped workspace-group `+` (`new-session.utils.ts`, official `UNGROUPED_KEY`).
+- Official primitives variants `PermissionRow.selector`, `PermissionSelect`, `AgentPresetSeat` → `src/client/components/chip.tsx`: per-variant wrapping and the official `@container` query that `css-render` can only emit as a top-level raw rule.
+
+## Historical schedule-detail refork (`0.2.1-alpha.1`)
+
+- Historical source revision: `ec48669f48ac81bac353fc646e7cf9c57241242f` from <https://github.com/deepseek-ai/deepseek-harness>.
+- `packages/client/ui-schedule/src/client/DatePicker.tsx`, `ClockPicker.tsx` and `TaskManagerPage.module.css` → `src/client/components/date-picker.tsx`, `time-picker.tsx`, `picker-popover.tsx`, and the `SegmentedControl` underline variant: calendar/clock geometry, native anchored popovers, keyboard interaction and rule/history strip.
+- Date/calendar trigger uses the existing shared `Calendar` glyph because the installed official primitives do not export its calendar glyph; clock and chevrons use the public official exports. Recurring local tasks add minute-only clock precision to preserve the existing `HH:mm` host contract.
+- Existing `Checkbox` default geometry remains unchanged; `size="xs"` is a local compact extension for weekday options.
+
+## hongweifei/dsh-chat-content-visibility-auto
+
+- Repository: <https://github.com/hongweifei/dsh-chat-content-visibility-auto>
+- Version: `1.0.0`
+- License: MIT — Copyright (c) 2026 dsh-chat-content-visibility-auto contributors
+- Not vendored, not installed: the external client plugin stays out of this repo's manifests. Its converged windowing rule — `content-visibility: auto` + `contain-intrinsic-size: auto 320px` on `[data-chat-flow] > [data-chat-anchor-key]` — is reimplemented on this repo's own `css-render` stack in `src/client/styles/global.cssr.ts`, keyed off the official chat DOM contract (`ChatView` column `[data-chat-flow]` → node rows `[data-chat-anchor-key]`).
+
+## lobehub/lobe-icons
+
+- Repository: <https://github.com/lobehub/lobe-icons>
+- Revision: `c385b2b8d1f9e19aa86e628d4e23c91ee1111a47`
+- Sources: `src/OpenAI/components/Mono.tsx`, `src/Claude/components/Mono.tsx`
+- Derived: monochrome SVG paths adapted into `src/client/components/brand-icons.tsx`; no icon runtime is installed or bundled.
+- License: MIT — Copyright (c) 2023 LobeHub
+
+```text
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Historical compatibility `0.2.0-rc.2` → `0.2.1-alpha.1`
+
+- The official primitives re-exports receive the StateDot restart fix without a local fork. InlineEditor is additive; no existing primitive export used here is removed.
+- The target adds the optional `shell.bottom` seat without changing the settings launcher, hero workspace, or panel seats used here. The composer `stats` split has no local replacement registration.
+
+## License
+
+```text
+MIT License
+
+Copyright (c) 2026 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -33,12 +33,14 @@
   "files": [
     "THIRD_PARTY_NOTICES.md",
     "cordis.patch.yml",
-    "dist"
+    "dist",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
   },
   "dsh": {
+    "taiwind": "src/main.css",
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-ui-layout",
@@ -70,8 +72,10 @@
   "devDependencies": {
     "@css-render/plugin-bem": "catalog:ui",
     "@gravity-ui/icons": "catalog:runtime",
+    "@reause/core": "catalog:runtime",
     "css-render": "catalog:ui",
     "dsh-tauri-config": "workspace:*",
+    "tailwind-variants": "catalog:runtime",
     "tsdown": "catalog:cli"
   }
 }

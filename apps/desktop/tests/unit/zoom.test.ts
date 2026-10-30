@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeZoomFactor } from '../../src/store/modules/setting/utils'
 import {
-  zoomActionFromBridgeMessage,
+  zoomActionFromPayload,
   zoomActionFromShortcut,
 } from '../../src/utils/zoom'
 
@@ -33,24 +33,11 @@ describe('desktop zoom shortcuts', () => {
     expect(zoomActionFromShortcut(shortcut('1', { ctrlKey: true }))).toBeNull()
   })
 
-  it('accepts only the strict iframe bridge protocol', () => {
-    expect(zoomActionFromBridgeMessage({
-      source: 'dsh-zoom-shortcut-bridge',
-      type: 'dsh://zoom-shortcut',
-      action: 'increase',
-    })).toBe('increase')
-    // 来源不再参与判定（宿主侧由 useIframeMessage 校验 origin），但 type 必须完全匹配
-    expect(zoomActionFromBridgeMessage({
-      source: 'dsh-zoom-shortcut-bridge',
-      type: 'dsh://other-message',
-      action: 'increase',
-    })).toBeNull()
-    expect(zoomActionFromBridgeMessage({
-      source: 'dsh-zoom-shortcut-bridge',
-      type: 'dsh://zoom-shortcut',
-      action: 'unsupported',
-    })).toBeNull()
-    expect(zoomActionFromBridgeMessage(null)).toBeNull()
+  it('reads the zoom action from the event payload', () => {
+    expect(zoomActionFromPayload({ action: 'increase' })).toBe('increase')
+    expect(zoomActionFromPayload({ action: 'reset' })).toBe('reset')
+    expect(zoomActionFromPayload({ action: 'unsupported' })).toBeNull()
+    expect(zoomActionFromPayload(null)).toBeNull()
   })
 })
 describe('zoom factor stepping (mirrors Rust normalize_zoom_factor)', () => {

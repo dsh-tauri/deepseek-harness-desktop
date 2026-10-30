@@ -30,9 +30,11 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
+    "THIRD_PARTY_NOTICES.md",
     "cordis.patch.yml",
     "dist",
-    "skills"
+    "skills",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
@@ -52,7 +54,8 @@
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
-    }
+    },
+    "taiwind": "src/main.css"
   },
   "scripts": {
     "build": "tsdown",
@@ -78,6 +81,8 @@
     "dsh-tauri-config": "workspace:*",
     "dsh-tauri-ui": "workspace:*",
     "marked": "catalog:ui",
+    "react": "catalog:runtime",
+    "react-dom": "catalog:runtime",
     "smol-toml": "catalog:utils",
     "tsdown": "catalog:cli"
   }

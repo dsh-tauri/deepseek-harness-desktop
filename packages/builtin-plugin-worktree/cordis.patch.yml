@@ -1,3 +1,5 @@
 - insert:
     - id: dsh-tauri-worktree
       name: dsh-tauri-worktree
+    - id: dsh-taiwind
+      name: dsh-taiwind

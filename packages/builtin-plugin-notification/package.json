@@ -29,8 +29,10 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
+    "assets",
     "cordis.patch.yml",
-    "dist"
+    "dist",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
@@ -52,7 +54,8 @@
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
-    }
+    },
+    "taiwind": "src/main.css"
   },
   "scripts": {
     "build": "tsdown",

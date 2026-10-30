@@ -32,7 +32,8 @@
   "files": [
     "cordis.patch.yml",
     "dist",
-    "skills"
+    "skills",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
@@ -52,7 +53,8 @@
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
-    }
+    },
+    "taiwind": "src/main.css"
   },
   "scripts": {
     "build": "tsdown",

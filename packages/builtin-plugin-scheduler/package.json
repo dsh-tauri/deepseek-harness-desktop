@@ -31,12 +31,14 @@
   "types": "./dist/index.d.ts",
   "files": [
     "cordis.patch.yml",
-    "dist"
+    "dist",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
   },
   "dsh": {
+    "taiwind": "src/main.css",
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-connection",
@@ -71,7 +73,8 @@
     "dsh-tauri-ui": "workspace:*",
     "h3": "catalog:",
     "lodash-es": "catalog:utils",
-    "pathe": "catalog:utils"
+    "pathe": "catalog:utils",
+    "unstorage": "catalog:utils"
   },
   "devDependencies": {
     "@types/lodash-es": "catalog:types",

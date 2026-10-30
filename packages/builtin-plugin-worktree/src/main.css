@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+[data-dsh-worktree-icon] {
+  width: 16px;
+  height: 20px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+[role="treeitem"] {
+  position: relative;
+}
+
+[role="treeitem"]:hover [data-dsh-worktree-icon] {
+  visibility: hidden;
+}

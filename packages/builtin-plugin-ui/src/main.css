@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-primary: var(--dsw-alias-label-primary);
+  --color-secondary: var(--dsw-alias-label-secondary);
+  --color-tertiary: var(--dsw-alias-label-tertiary);
+  --color-dimmed: var(--dsw-alias-label-dimmed);
+  --color-border-l2: var(--dsw-alias-border-l2);
+  --color-border-l3: var(--dsw-alias-border-l3);
+  --color-border-l4: var(--dsw-alias-border-l4);
+  --color-border-weak: var(--dsw-alias-border-weak, rgba(127, 127, 127, 0.2));
+  --color-brand: var(--dsw-alias-brand-primary);
+  --color-business: var(--dsw-alias-state-business-primary);
+  --color-layer-1: var(--dsw-alias-bg-layer-1);
+  --color-layer-3: var(--dsw-alias-bg-layer-3);
+  --color-module-platform: var(--dsw-alias-bg-module-platform);
+  --color-hover: var(--dsw-alias-interactive-bg-hover);
+  --color-active: var(--dsw-alias-interactive-bg-active);
+  --color-hover-solid: var(--dsw-alias-interactive-bg-hover-solid);
+  --color-hover-danger: var(--dsw-alias-interactive-bg-hover-danger);
+  --color-error: var(--dsw-alias-state-error-primary);
+  --color-success: var(--dsw-alias-state-success-primary);
+  --color-warn: var(--dsw-alias-state-warn-primary);
+  --color-idle: var(--dsw-alias-state-idle-primary);
+  --color-primary-fill: var(--dsw-alias-button-primary-fill);
+  --color-primary-hover: var(--dsw-alias-button-primary-hover);
+  --color-primary-fg: var(--dsw-alias-label-primary-foreground);
+  --font-sans: var(--dsw-font-family);
+  --font-mono: var(--ds-font-family-code);
+  --radius-xs: var(--dsw-radius-xs);
+  --radius-sm: var(--dsw-radius-sm);
+  --radius-md: var(--dsw-radius-md);
+  --radius-lg: var(--dsw-radius-lg);
+  --radius-xl: var(--dsw-radius-xl);
+  --shadow-focus-ring: 0 0 0 2px var(--dsw-alias-border-l3);
+}

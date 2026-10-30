@@ -28,8 +28,10 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
+    "THIRD_PARTY_NOTICES.md",
     "cordis.patch.yml",
-    "dist"
+    "dist",
+    "src/main.css"
   ],
   "engines": {
     "dsh": ">=0.1.7-rc.1"
@@ -49,7 +51,8 @@
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
-    }
+    },
+    "taiwind": "src/main.css"
   },
   "scripts": {
     "build": "tsdown",
@@ -66,8 +69,11 @@
     "pathe": "catalog:utils"
   },
   "devDependencies": {
+    "@reause/core": "catalog:runtime",
     "dsh-tauri-config": "workspace:*",
     "dsh-tauri-ui": "workspace:*",
-    "tsdown": "catalog:cli"
+    "tailwind-variants": "catalog:runtime",
+    "tsdown": "catalog:cli",
+    "valtio-define": "catalog:runtime"
   }
 }

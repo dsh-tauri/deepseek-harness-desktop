@@ -1,3 +1,5 @@
 - insert:
     - id: dsh-tauri-mobile-ui
       name: dsh-tauri-mobile-ui
+    - id: dsh-taiwind
+      name: dsh-taiwind

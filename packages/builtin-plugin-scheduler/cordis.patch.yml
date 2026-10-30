@@ -5,3 +5,5 @@
 - insert:
     - id: dsh-tauri-scheduler
       name: dsh-tauri-scheduler
+    - id: dsh-taiwind
+      name: dsh-taiwind

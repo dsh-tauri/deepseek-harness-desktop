@@ -1,3 +1,5 @@
 - insert:
     - id: dsh-tauri-notification
       name: dsh-tauri-notification
+    - id: dsh-taiwind
+      name: dsh-taiwind

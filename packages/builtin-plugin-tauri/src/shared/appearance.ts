@@ -29,12 +29,10 @@ export function appearanceSidebarFill(canvas: string, panel: string, translucent
   return translucent ? `color-mix(in srgb,${canvas} ${percent}%,transparent)` : panel
 }
 
-/** 「背景真的半透明」只有一个定义：窗口开了透明且 alpha 未满。 */
 export function appearanceTranslucent(appearance: Appearance): boolean {
   return appearance.transparency && appearance.opacity < 100
 }
 
-/** 启动页填充色：与 navbar / 侧边栏同源同 alpha，100% 或不透明时回到实心 canvas。 */
 export function appearanceStartupFill(appearance: Appearance, canvas: string): string {
   return appearanceSidebarFill(canvas, canvas, appearanceTranslucent(appearance), appearance.opacity)
 }

@@ -663,6 +663,9 @@ importers:
       diff:
         specifier: catalog:testing
         version: 9.0.0
+      dsh-taiwind:
+        specifier: ^0.3.0
+        version: 0.3.0
       eslint:
         specifier: catalog:lint
         version: 10.8.1(jiti@2.7.0)
@@ -693,6 +696,12 @@ importers:
       publint:
         specifier: catalog:cli
         version: 0.3.24
+      react:
+        specifier: catalog:runtime
+        version: 19.2.8
+      react-dom:
+        specifier: catalog:runtime
+        version: 19.2.8(react@19.2.8)
       react-test-renderer:
         specifier: catalog:native
         version: 19.2.8(react@19.2.8)
@@ -978,15 +987,24 @@ importers:
         specifier: catalog:utils
         version: 2.0.3
     devDependencies:
+      '@reause/core':
+        specifier: catalog:runtime
+        version: 0.1.7(react@19.2.8)
       dsh-tauri-config:
         specifier: workspace:*
         version: link:../builtin-plugin-config
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../builtin-plugin-ui
+      tailwind-variants:
+        specifier: catalog:runtime
+        version: 3.3.1(tailwind-merge@3.7.0)(tailwindcss@4.3.3)
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
+      valtio-define:
+        specifier: catalog:runtime
+        version: 1.4.1(@types/react@19.2.18)(react@19.2.8)
 
   packages/builtin-plugin-bundle:
     dependencies:
@@ -1093,6 +1111,12 @@ importers:
       marked:
         specifier: catalog:ui
         version: 18.0.11
+      react:
+        specifier: catalog:runtime
+        version: 19.2.8
+      react-dom:
+        specifier: catalog:runtime
+        version: 19.2.8(react@19.2.8)
       smol-toml:
         specifier: catalog:utils
         version: 1.8.0
@@ -1115,6 +1139,9 @@ importers:
       react:
         specifier: catalog:runtime
         version: 19.2.8
+      react-dom:
+        specifier: catalog:runtime
+        version: 19.2.8(react@19.2.8)
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
@@ -1134,15 +1161,24 @@ importers:
         specifier: 'catalog:'
         version: 2.0.1
     devDependencies:
+      '@reause/core':
+        specifier: catalog:runtime
+        version: 0.1.7(react@19.2.8)
       '@types/node':
         specifier: catalog:types
         version: 22.20.1
       dsh-tauri-config:
         specifier: workspace:*
         version: link:../builtin-plugin-config
+      tailwind-variants:
+        specifier: catalog:runtime
+        version: 3.3.1(tailwind-merge@3.7.0)(tailwindcss@4.3.3)
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
+      valtio-define:
+        specifier: catalog:runtime
+        version: 1.4.1(@types/react@19.2.18)(react@19.2.8)
       vitest:
         specifier: catalog:testing
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
@@ -1226,6 +1262,9 @@ importers:
       ssh2:
         specifier: catalog:utils
         version: 1.17.0
+      unstorage:
+        specifier: catalog:utils
+        version: 1.17.5(idb-keyval@6.3.0)
       yaml:
         specifier: catalog:testing
         version: 2.9.0
@@ -1330,6 +1369,9 @@ importers:
       pathe:
         specifier: catalog:utils
         version: 2.0.3
+      unstorage:
+        specifier: catalog:utils
+        version: 1.17.5(idb-keyval@6.3.0)
     devDependencies:
       '@types/lodash-es':
         specifier: catalog:types
@@ -1346,6 +1388,9 @@ importers:
 
   packages/builtin-plugin-tauri:
     dependencies:
+      '@tauri-apps/api':
+        specifier: catalog:tauri
+        version: 2.12.3
       dsh-h3:
         specifier: 'catalog:'
         version: 0.2.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-host-webserver@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5))(@genapi/shared@4.1.4)(typescript@5.8.3)
@@ -1414,12 +1459,18 @@ importers:
       '@gravity-ui/icons':
         specifier: catalog:runtime
         version: 2.21.0(react@19.2.8)
+      '@reause/core':
+        specifier: catalog:runtime
+        version: 0.1.7(react@19.2.8)
       css-render:
         specifier: catalog:ui
         version: 0.15.14
       dsh-tauri-config:
         specifier: workspace:*
         version: link:../builtin-plugin-config
+      tailwind-variants:
+        specifier: catalog:runtime
+        version: 3.3.1(tailwind-merge@3.7.0)(tailwindcss@4.3.3)
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
@@ -5530,6 +5581,10 @@ packages:
     peerDependencies:
       react: ^19.0.0
 
+  dsh-taiwind@0.3.0:
+    resolution: {integrity: sha512-wQidHwN3Gdy1JtJPPL/62P5bytsh4ZvJ+2LB2eFSofyHFaNEpskAMnhYZd5YtSZtRFDjeNuyug2gVmCwku9lNA==}
+    engines: {dsh: '>=0.2.1-alpha.1', node: '>=22.18.0'}
+
   dts-resolver@2.1.3:
     resolution: {integrity: sha512-bihc7jPC90VrosXNzK0LTE2cuLP6jr0Ro8jk+kMugHReJVLIpHz/xadeq3MhuwyO4TD4OA3L1Q8pBBFRc08Tsw==}
     engines: {node: '>=20.19.0'}
@@ -7612,6 +7667,10 @@ packages:
   postcss-selector-parser@7.1.5:
     resolution: {integrity: sha512-KvvtD7SrlBP7dlgkBghEE3r84CABm5SmV2aNcG4oCA+qDnJ/tvKonFVvwWAyyWUEwxuNawdfEAZKP9zM3oZ2Uw==}
     engines: {node: '>=4'}
+
+  postcss@8.5.20:
+    resolution: {integrity: sha512-lW616l85ucIQL+FocMmL7pQFPqBmwejrCMg+iPxyImlrANNJG9NHq/RkyCZopDhd8C3LA03PHRJDjkbGu8vvug==}
+    engines: {node: ^10 || ^12 || >=14}
 
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
@@ -13333,6 +13392,12 @@ snapshots:
       - sortablejs
       - universal-cookie
 
+  dsh-taiwind@0.3.0:
+    dependencies:
+      '@tailwindcss/oxide': 4.3.3
+      postcss: 8.5.20
+      tailwindcss: 4.3.3
+
   dts-resolver@2.1.3(oxc-resolver@11.24.2):
     optionalDependencies:
       oxc-resolver: 11.24.2
@@ -15902,6 +15967,12 @@ snapshots:
     dependencies:
       cssesc: 3.0.0
       util-deprecate: 1.0.2
+
+  postcss@8.5.20:
+    dependencies:
+      nanoid: 3.3.18
+      picocolors: 1.1.1
+      source-map-js: 1.2.1
 
   postcss@8.5.26:
     dependencies:

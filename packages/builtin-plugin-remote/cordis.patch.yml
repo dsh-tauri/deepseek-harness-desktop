@@ -1,3 +1,5 @@
 - insert:
     - id: dsh-tauri-remote
       name: dsh-tauri-remote
+    - id: dsh-taiwind
+      name: dsh-taiwind

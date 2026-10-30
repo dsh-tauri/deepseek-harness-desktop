@@ -1,8 +1,8 @@
-# 官方「模型」设置页：本插件是它的完整 fork，注册同一个 `settings.section/models` 声明。
-# 两者在加载期互斥（同开会报槽位重复声明），因此必须关掉官方入口。
 - id: ui-settings-models
   disabled: true
 
 - insert:
     - id: dsh-tauri-model
       name: dsh-tauri-model
+    - id: dsh-taiwind
+      name: dsh-taiwind

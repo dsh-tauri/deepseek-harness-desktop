@@ -1,3 +1,5 @@
 - insert:
     - id: dsh-tauri-rightclick
       name: dsh-tauri-rightclick
+    - id: dsh-taiwind
+      name: dsh-taiwind

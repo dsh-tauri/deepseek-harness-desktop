@@ -8,3 +8,5 @@
           - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-tauri-pet/package.json')), 'skills')
     - id: dsh-tauri-pet
       name: dsh-tauri-pet
+    - id: dsh-taiwind
+      name: dsh-taiwind

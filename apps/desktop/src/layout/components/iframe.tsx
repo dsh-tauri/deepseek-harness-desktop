@@ -1,4 +1,5 @@
-import type { CSSProperties, RefObject } from 'react'
+import type { Event as TauriEvent } from '@tauri-apps/api/event'
+import type { RefObject } from 'react'
 import type { WebviewOutboundMessage } from './webview-bridge'
 import type { NotificationActionEvent } from '@/hooks/use-notification-action'
 import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
@@ -14,21 +15,21 @@ import { toast } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
 import { useEventListener, useTimeoutFn, useUnmountedRef, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
+import { emit } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
-import { queryClient } from '@/config/client'
-import { queryKeys } from '@/config/query-keys'
 import { useDshStyle } from '@/hooks/use-dsh-style'
+import { useListen } from '@/hooks/use-listen'
 import { useNotificationAction } from '@/hooks/use-notification-action'
 import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
 import { ConfigDialog } from '@/ui/dialog/config'
-import { zoomActionFromBridgeMessage, zoomActionFromShortcut } from '@/utils/zoom'
+import { zoomActionFromPayload, zoomActionFromShortcut } from '@/utils/zoom'
 import { appearanceBootCss, appearanceTranslucent, normalizeAppearance } from '../../../../../packages/builtin-plugin-tauri/src/shared/appearance'
 import { Loadable } from './loadable'
 import { emitGuestMessage, postToGuest, useGuestElementEvents } from './webview-bridge'
@@ -63,10 +64,6 @@ interface GuestBridgeMessage {
   detail?: string
   level?: string
   message?: string
-
-  sidebar?: CSSProperties
-  marked?: CSSProperties
-  frame?: CSSProperties
 }
 
 export interface GuestWebviewProps {
@@ -129,40 +126,6 @@ function notificationIdFor(tag: string | undefined): number {
   for (const char of tag ?? '')
     hash = (hash * 31 + char.charCodeAt(0)) | 0
   return (Math.abs(hash) % 0x7FFFFFFF) || 1
-}
-
-const NOTIFICATION_SOUND_FILES: ReadonlyArray<readonly [string, string]> = [
-  ['default', '/notification.wav'],
-  ['classic', '/classic.wav'],
-]
-
-let notificationSoundAssets: Record<string, string> | undefined
-
-function readBlobAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string')
-        resolve(reader.result)
-      else
-        reject(new Error('FileReader returned a non-string result'))
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
-    reader.readAsDataURL(blob)
-  })
-}
-
-async function loadNotificationSounds(): Promise<Record<string, string>> {
-  if (notificationSoundAssets)
-    return notificationSoundAssets
-  const entries = await Promise.all(NOTIFICATION_SOUND_FILES.map(async ([name, url]) => {
-    const response = await fetch(url)
-    if (!response.ok)
-      throw new Error(`${url}: HTTP ${response.status}`)
-    return [name, await readBlobAsDataUrl(await response.blob())] as const
-  }))
-  notificationSoundAssets = Object.fromEntries(entries)
-  return notificationSoundAssets
 }
 
 export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }: GuestWebviewProps) {
@@ -293,6 +256,27 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
   useNotificationAction(handleNotificationAction)
   useNotificationClicked(handleNotificationClick)
 
+  useListen('dsh://appearance:ready', () => {
+    store.harness.markIframeAlive()
+    postAppearance()
+  })
+  useListen('dsh://appearance:applied', () => {
+    store.harness.markIframeAlive()
+    setBootFrame(frameKey)
+  })
+  useListen<unknown>('dsh://style', (event: TauriEvent<unknown>) => {
+    store.harness.markIframeAlive()
+    setDshStyle(event.payload as Parameters<typeof setDshStyle>[0])
+  })
+  useListen<unknown>('dsh://zoom-shortcut', (event: TauriEvent<unknown>) => {
+    store.harness.markIframeAlive()
+    handleZoomShortcut(event.payload)
+  })
+  useListen('dsh://desktop-settings:open', () => {
+    store.harness.markIframeAlive()
+    openDesktopSettings()
+  })
+
   const renderKey = `${remoteMode ? `remote-${srcOverride}` : activePreload?.id ?? 'http'}#${harness.iframeKey}`
 
   useGuestElementEvents(guestRef, renderKey, mounted, {
@@ -307,7 +291,7 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
   }
 
   function postAppearance() {
-    post({ type: 'dsh://appearance', appearance: appearancePayload, bootCss })
+    void emit('dsh://appearance', { appearance: appearancePayload })
   }
 
   function handleGuestDomReady() {
@@ -340,7 +324,7 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
       }
       return
     }
-    if (data.type === 'dsh://appearance:ready' || data.type === 'dsh://appearance:request' || data.type === 'dsh://plugin-boot:frame') {
+    if (data.type === 'dsh://appearance:request' || data.type === 'dsh://plugin-boot:frame') {
       postAppearance()
       return
     }
@@ -351,27 +335,11 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
       store.harness.markIframeLeaving()
       return
     }
-    if (data.type === 'dsh://appearance:applied') {
-      setBootFrame(frameKey)
-      return
-    }
     // issue #705：任何协议消息都证明帧内跑着 dsh 页面，不是浏览器错误页
     store.harness.markIframeAlive()
     switch (data.type) {
-      case 'dsh://desktop-settings:open':
-        void openConfigDialog({ tab: 'application' }).catch((error: unknown) => {
-          // issue #1234：overlastic 的取消值不是 Error，只有真异常才算打开失败
-          if (!(error instanceof Error))
-            return
-          console.error('[GuestWebview] failed to open desktop settings:', error)
-          toast(t('messages.open_settings_failed'), { variant: 'danger' })
-        })
-        break
       case 'dsh://native-notification':
         handleNativeNotification(data)
-        break
-      case 'dsh://plugin-error':
-        handlePluginBoot(data)
         break
       case 'dsh://clipboard-image:read':
         handleClipboardImageRead(data)
@@ -393,15 +361,6 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
       case 'dsh://plugin-boot:failed':
         void store.harness.handleIframeBootFailure(data.detail)
         break
-      case 'dsh://zoom-shortcut':
-        handleZoomShortcut(data)
-        break
-      case 'dsh://style':
-        setDshStyle(data)
-        break
-      case 'dsh://notification-sounds:request':
-        pushNotificationSounds()
-        break
       case 'dsh://frame-log':
         handleFrameLog(data)
         break
@@ -416,10 +375,13 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
     void setting.zoom(action).catch(error => console.error('[Zoom] failed to save zoom:', error))
   }
 
-  function pushNotificationSounds() {
-    void loadNotificationSounds()
-      .then(sounds => post({ type: 'dsh://notification-sounds', sounds }))
-      .catch(error => console.error('[notification] failed to load notification sounds:', error))
+  function openDesktopSettings() {
+    void openConfigDialog({ tab: 'application' }).catch((error: unknown) => {
+      if (!(error instanceof Error))
+        return
+      console.error('[GuestWebview] failed to open desktop settings:', error)
+      toast(t('messages.open_settings_failed'), { variant: 'danger' })
+    })
   }
 
   function handleNativeNotification(data: GuestBridgeMessage) {
@@ -472,20 +434,6 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
     })()
   }
 
-  function handlePluginBoot(data: GuestBridgeMessage) {
-    if (!data.id || !data.error)
-      return
-    void invoke('report_plugin_error', {
-      id: data.id,
-      error: data.error,
-      action: data.action ?? 'runtime',
-    })
-      .then(() => {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.plugins })
-      })
-      .catch(error => console.error('[plugin-error] report_plugin_error failed:', error))
-  }
-
   function handleClipboardImageRead(data: GuestBridgeMessage) {
     if (!data.id)
       return
@@ -527,8 +475,8 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
       })
   }
 
-  function handleZoomShortcut(data: GuestBridgeMessage) {
-    const action = zoomActionFromBridgeMessage(data)
+  function handleZoomShortcut(payload: unknown) {
+    const action = zoomActionFromPayload(payload)
     if (action)
       void setting.zoom(action).catch(error => console.error('[Zoom] failed to save zoom:', error))
   }
@@ -561,8 +509,7 @@ export function GuestWebview({ guestRef, srcOverride = null, borderTint = null }
   }
 
   function deliverNotificationResult(payload: NotificationClickedPayload) {
-    post({
-      type: 'dsh://notification-clicked',
+    void emit('dsh://notification-clicked', {
       tag: payload.tag || undefined,
       action: payload.action || undefined,
       inputValue: payload.inputValue || undefined,
