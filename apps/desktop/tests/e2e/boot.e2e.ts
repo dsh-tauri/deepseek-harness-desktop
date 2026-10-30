@@ -43,7 +43,7 @@ async function activeProfile(page: Page): Promise<string> {
 }
 
 async function healthy(page: Page): Promise<string> {
-  const deadline = Date.now() + WINDOW_TIMEOUT_MS
+  const deadline = Date.now() + 120_000
   for (;;) {
     try {
       const result = await invoke<{ status: string }>(page, 'proxy_health_check')
