@@ -195,7 +195,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
       const target = (await windowsOf(browser)).find(entry => entry.label === label)
       if (!target)
         return
-      await target.page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close'))
+      await target.page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close')).catch(() => undefined)
       const deadline = Date.now() + WINDOW_TIMEOUT_MS
       while (Date.now() < deadline) {
         if (!(await windowsOf(browser)).some(entry => entry.label === label))
