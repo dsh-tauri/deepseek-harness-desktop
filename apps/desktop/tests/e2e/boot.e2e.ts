@@ -54,7 +54,7 @@ async function healthy(page: Page): Promise<string> {
     }
     catch (error) {
       if (Date.now() >= deadline) {
-        console.error('healthy failure', app().output().split(String.fromCharCode(10)).filter(line => !/CORE_PLUGIN_LINKED|frontend: \[(Guest)?Webview|\[Webview\]/.test(line)).slice(-120).join(String.fromCharCode(10)))
+        console.error('healthy failure', app().output().split(String.fromCharCode(10)).filter(line => !/CORE_PLUGIN_LINKED|patch target not found|frontend: \[(Guest)?Webview|\[Webview\]/.test(line)).slice(-400).join(String.fromCharCode(10)))
         throw error
       }
     }
