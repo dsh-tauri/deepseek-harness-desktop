@@ -1,7 +1,7 @@
 import type { Page } from 'playwright'
 import type { ShellApp, ShellWindow } from './setup/shell'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, completePreinstall, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
 
@@ -42,13 +42,15 @@ async function activeProfile(page: Page): Promise<string> {
   return active!.id
 }
 
-function dumpCoreLogs(root: string): string {
-  if (!existsSync(root))
-    return 'missing'
-  return (readdirSync(root, { recursive: true }) as string[])
-    .filter(name => /dsh-web.*\.log$/.test(name) && !name.includes('node_modules'))
-    .map(name => [name, readFileSync(join(root, name), 'utf8').slice(-3000)].join(': '))
-    .join(' || ')
+async function probeCore(url: string): Promise<string> {
+  const started = Date.now()
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(60_000) })
+    return `status=${response.status} ms=${Date.now() - started} body=${(await response.text()).slice(0, 300)}`
+  }
+  catch (error) {
+    return `error=${String(error)} ms=${Date.now() - started}`
+  }
 }
 
 async function healthy(page: Page): Promise<string> {
@@ -63,7 +65,7 @@ async function healthy(page: Page): Promise<string> {
       if (Date.now() >= deadline) {
         const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info').catch(() => undefined)
         if (runtime)
-          console.error('core logs', dumpCoreLogs(dirname(dirname(runtime.data_dir))))
+          console.error('core probe', await probeCore(runtime.service_url))
         throw error
       }
     }
