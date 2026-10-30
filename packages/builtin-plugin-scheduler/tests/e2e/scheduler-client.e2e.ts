@@ -1,6 +1,6 @@
 import type { Locator } from 'playwright'
-import type { GetApiTauriSchedulerHistoryResponse, GetApiTauriSchedulerTasksResponse, PostApiTauriSchedulerTasksBody, PostApiTauriSchedulerTasksResponse, PutApiTauriSchedulerTasksBody } from '../../src/client/apis/index.type'
 import type { DshPage } from '../../../../apps/desktop/tests/e2e/support/browser'
+import type { GetApiTauriSchedulerHistoryResponse, GetApiTauriSchedulerTasksResponse, PostApiTauriSchedulerTasksBody, PostApiTauriSchedulerTasksResponse, PutApiTauriSchedulerTasksBody } from '../../src/client/apis/index.type'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'

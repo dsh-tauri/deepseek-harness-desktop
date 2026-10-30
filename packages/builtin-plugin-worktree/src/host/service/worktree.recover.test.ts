@@ -2,8 +2,8 @@ import type { Binding } from '../types'
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'pathe'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { TRASH_DIR, WORKTREES_DIR } from '../config/constants'
 import { resetTestDshHome, testDshHome } from '../../../../.test/test-utils'
+import { TRASH_DIR, WORKTREES_DIR } from '../config/constants'
 
 const dshHome = vi.hoisted(() => ({ value: '' }))
 

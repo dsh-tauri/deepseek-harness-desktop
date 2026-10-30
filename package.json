@@ -92,7 +92,7 @@
     "bumpp": "catalog:release",
     "changelogithub": "catalog:release",
     "diff": "catalog:testing",
-    "dsh-taiwind": "^0.3.0",
+    "dsh-taiwind": "catalog:",
     "eslint": "catalog:lint",
     "eslint-plugin-react-refresh": "catalog:lint",
     "fake-indexeddb": "catalog:",

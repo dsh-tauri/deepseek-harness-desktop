@@ -3,9 +3,9 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetTestDshHome, testDshHome } from '../../../../.test/test-utils'
 import { resetRuntime } from '../config/runtime'
 import { server } from '../server'
-import { resetTestDshHome, testDshHome } from '../../../../.test/test-utils'
 import { linkWorktreeDependencies, shellCommandFrom } from '../utils/dependencies'
 import { worktree } from './worktree'
 

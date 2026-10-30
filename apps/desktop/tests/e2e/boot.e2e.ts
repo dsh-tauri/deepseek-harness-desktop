@@ -2,6 +2,7 @@ import type { Page } from 'playwright'
 import type { ShellApp, ShellWindow } from './setup/shell'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, completePreinstall, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
 

@@ -254,7 +254,7 @@ export async function pageErrors(page: Page): Promise<string[]> {
 }
 
 async function pageText(page: Page): Promise<string> {
-  return await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => '')
+  return await page.evaluate(() => (document.body.textContent ?? '').slice(0, 1500)).catch(() => '')
 }
 
 /** 若出现预装引导则跳过，直到壳层内嵌页面被拉起。 */
