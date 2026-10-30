@@ -97,7 +97,8 @@ it('issue #1268: recovers a loaded frame that never confirms client boot', async
   })
   const recover = vi.spyOn(store.harness, 'recoverIframeBoot').mockResolvedValue(undefined)
 
-  render(<Iframe iframeRef={createRef()} />)
+  const iframeRef = createRef<HTMLIFrameElement>()
+  const view = render(<Iframe iframeRef={iframeRef} />)
   const frame = screen.getByTestId<HTMLIFrameElement>('dsh-shell-iframe')
   await act(async () => {
     window.dispatchEvent(new MessageEvent('message', {
@@ -106,9 +107,7 @@ it('issue #1268: recovers a loaded frame that never confirms client boot', async
       data: { type: 'dsh://appearance:applied' },
     }))
   })
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(0)
-  })
+  view.rerender(<Iframe iframeRef={iframeRef} />)
 
   expect(store.harness.iframeAlive).toBe(true)
   expect(store.harness.iframeBootReady).toBe(false)
