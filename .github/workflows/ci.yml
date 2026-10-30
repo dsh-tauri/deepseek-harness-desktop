@@ -175,9 +175,12 @@ jobs:
 
       - name: Unit test (changed)
         if: ${{ needs.changes.outputs.full != '1' && needs.changes.outputs.unit == '1' }}
+        run: node node_modules/vitest/vitest.mjs run --project unit --changed "${{ needs.changes.outputs.base }}"
+
       - name: Unit test (not selected)
         if: ${{ needs.changes.outputs.full != '1' && needs.changes.outputs.unit != '1' }}
-        run: echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
+        run: |
+          echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
 
   rust-test:
     name: Rust tests
