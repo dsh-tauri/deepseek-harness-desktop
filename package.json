@@ -1,7 +1,7 @@
 {
   "name": "monorepo",
   "type": "module",
-  "version": "0.25.0",
+  "version": "1.0.0-pre-alpha",
   "private": true,
   "packageManager": "pnpm@11.7.0",
   "description": "Electron Runtime infrastructure for DeepSeek Harness",
