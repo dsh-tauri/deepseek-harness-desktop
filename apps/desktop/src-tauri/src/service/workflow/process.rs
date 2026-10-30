@@ -826,13 +826,14 @@ pub(super) fn terminate_windows_process(
     }
     // issue #1074：taskkill 失败后只升级已确认的句柄，不重新按裸 PID 打开进程。
     log::warn!("Harness process {pid} survived taskkill; terminating the retained handle");
-    if unsafe { TerminateProcess(handle, 1) } == 0
-        && unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0
-    {
-        return Err(format!(
-            "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {}",
-            std::io::Error::last_os_error()
-        ));
+    if unsafe { TerminateProcess(handle, 1) } == 0 {
+        let error = std::io::Error::last_os_error();
+        if unsafe { WaitForSingleObject(handle, 5000) } != WAIT_OBJECT_0 {
+            return Err(format!(
+                "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {error}"
+            ));
+        }
+        return Ok(());
     }
     if unsafe { WaitForSingleObject(handle, 5000) } != WAIT_OBJECT_0 {
         return Err(format!(
