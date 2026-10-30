@@ -106,7 +106,7 @@ async function windowsOf(browser: Browser): Promise<ShellWindow[]> {
     for (const page of context.pages()) {
       if (!SHELL_PAGE.test(page.url()))
         continue
-      const label = await page.evaluate(() => (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? '')
+      const label = await page.evaluate(() => (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? '').catch(() => '')
       if (label)
         windows.push({ label, page })
     }
