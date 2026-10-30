@@ -134,6 +134,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
       DSH_DOWNLOAD_CACHE_DIR: downloadCacheDir,
       APPDATA: path.join(home, 'appdata'),
       HOME: path.join(home, 'home'),
+      USERPROFILE: path.join(home, 'home'),
       XDG_CONFIG_HOME: path.join(home, 'appdata'),
       XDG_DATA_HOME: path.join(home, 'appdata'),
       TAURI_WEBDRIVER_PORT: '4445',
