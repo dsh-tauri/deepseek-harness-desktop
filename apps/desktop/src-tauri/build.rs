@@ -28,5 +28,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         attributes
     };
     tauri_build::try_build(attributes)?;
+    #[cfg(unix)]
+    mirror_directory_links()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn mirror_directory_links() -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::{Path, PathBuf};
+
+    fn walk(from: &Path, to: &Path) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let source = entry.path();
+            let target = to.join(entry.file_name());
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                if std::fs::symlink_metadata(&target).is_err() && source.is_dir() {
+                    std::os::unix::fs::symlink(std::fs::read_link(&source)?, &target)?;
+                }
+            } else if kind.is_dir() && target.is_dir() {
+                walk(&source, &target)?;
+            }
+        }
+        Ok(())
+    }
+
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest dir")?);
+    let source = manifest.join("target/electron");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
+    let Some(profile) = out.ancestors().nth(3) else {
+        return Ok(());
+    };
+    let target = profile.join("runtime");
+    if source.is_dir() && target.is_dir() {
+        walk(&source, &target)?;
+    }
     Ok(())
 }
