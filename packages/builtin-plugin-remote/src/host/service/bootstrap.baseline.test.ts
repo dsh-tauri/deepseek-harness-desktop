@@ -54,18 +54,18 @@ describe('remote DSH baseline', () => {
     expect(plan.dsh).toMatchObject({ tag: 'dsh-0.2.1-rc.4-40372188763' })
   })
 
-  it.each(['0.1.2-rc.1', '0.1.7-rc.1', '0.2.1-rc.3', 'dsh-0.1.6-rc.9-42', 'dsh-0.2.1-rc.3-42', 'dsh-invalid-42'])(
+  it.each(['0.1.2-rc.1', '0.1.7-rc.0', 'dsh-0.1.6-rc.9-42', 'dsh-0.1.7-rc.0-42', 'dsh-invalid-42'])(
     'rejects unsupported pin %s before metadata requests',
     async (installRef) => {
       const mocks = fetchers()
-      await expect(planRemoteInstall('Linux x86_64', { installRef }, mocks)).rejects.toThrow(/REMOTE_DSH_VERSION_UNSUPPORTED.*0\.2\.1-rc\.4/)
+      await expect(planRemoteInstall('Linux x86_64', { installRef }, mocks)).rejects.toThrow(/REMOTE_DSH_VERSION_UNSUPPORTED.*0.1.7-rc.1/)
       expect(mocks.listReleases).not.toHaveBeenCalled()
       expect(mocks.listAssets).not.toHaveBeenCalled()
       expect(mocks.npmDist).not.toHaveBeenCalled()
     },
   )
 
-  it.each(['0.2.1-rc.4', '0.2.1-rc.5', '0.2.1', '0.2.2-alpha.2'])(
+  it.each(['0.1.7-rc.1', '0.2.1-rc.4', '0.2.1', '0.2.2-alpha.2'])(
     'admits supported prerelease boundary %s',
     async (version) => {
       const mocks = fetchers()
@@ -116,7 +116,7 @@ describe('remote DSH baseline', () => {
     expect(events).toHaveBeenCalledWith('failed', 'bootstrap 失败', expect.objectContaining({ terminal: 'failed' }))
   })
 
-  it.each(['0.2.1-rc.4', '0.2.1-rc.5', '0.2.1', '0.2.2-alpha.2'])('accepts installed package metadata at or above floor: %s', async (version) => {
+  it.each(['0.1.7-rc.1', '0.2.1-rc.4', '0.2.1', '0.2.2-alpha.2'])('accepts installed package metadata at or above floor: %s', async (version) => {
     const session = fakeSession(() => ({ code: 0, stdout: JSON.stringify({ version }), stderr: '' }))
     await expect(assertRemoteDshVersion(session)).resolves.toBeUndefined()
     expect(session.commands[0]).toContain('node_modules/@deepseek-ai/dsh/package.json')

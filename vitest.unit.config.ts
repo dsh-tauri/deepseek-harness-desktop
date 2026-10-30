@@ -19,6 +19,7 @@ const optionalPrimitiveAliases = Object.fromEntries([
 ].map(name => [name, optionalPrimitiveDependency]))
 
 export default defineProject({
+  define: { __REMOTE_DSH_RECOMMEND__: JSON.stringify('0.2.1-rc.4'), __REMOTE_DSH_MINIMUM__: JSON.stringify('0.1.7-rc.1') },
   resolve: { alias: { ...alias, ...optionalPrimitiveAliases } },
   test: {
     name: 'unit',
