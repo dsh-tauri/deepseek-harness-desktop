@@ -195,7 +195,7 @@ describe('桌面端启动冒烟', () => {
       expect(await healthy(page), '关闭其他档案最后窗口后原核心必须仍健康').toMatch(/^healthy - /)
     }
     catch (error) {
-      console.error('TC-993 primary failure', error, app().output().split(/\r?\n/).filter(line => /harness|stop|release|profile|WARN|ERROR|pid/i.test(line)).slice(-80).join(String.fromCharCode(10)))
+      console.error('TC-993 primary failure', error, app().output().split(/\r?\n/).filter(line => /window|harness|stop|release|profile|WARN|ERROR|pid/i.test(line)).slice(-80).join(String.fromCharCode(10)))
       throw error
     }
     finally {
