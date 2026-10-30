@@ -194,6 +194,10 @@ describe('桌面端启动冒烟', () => {
       expect(readFileSync(originalMarkerPath, 'utf8'), '关闭其他档案窗口不得重启原核心').toBe(originalMarker)
       expect(await healthy(page), '关闭其他档案最后窗口后原核心必须仍健康').toMatch(/^healthy - /)
     }
+    catch (error) {
+      console.error('TC-993 primary failure', error)
+      throw error
+    }
     finally {
       for (const window of opened.reverse()) {
         if ((await app().windows()).some(entry => entry.label === window.label))
