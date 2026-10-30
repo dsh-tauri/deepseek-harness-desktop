@@ -275,6 +275,18 @@ jobs:
         with:
           standalone: 'true'
 
+      - name: Expose pnpm.exe (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "$env:USERPROFILE\setup-pnpm" -Recurse -Filter pnpm.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            npm install --no-save --prefix "$env:RUNNER_TEMP\pnpm-exe" '@pnpm/exe'
+            $exe = Get-ChildItem "$env:RUNNER_TEMP\pnpm-exe" -Recurse -Filter pnpm.exe | Select-Object -First 1
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+          Write-Host "pnpm.exe: $($exe.FullName)"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
