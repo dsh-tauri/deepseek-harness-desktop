@@ -36,6 +36,7 @@
     "core:window:allow-cursor-position",
     "core:window:allow-set-ignore-cursor-events",
     "core:webview:allow-set-webview-zoom",
+    "notification:default",
     "notifications:default",
     "opener:default",
     "opener:allow-open-url",
