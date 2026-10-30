@@ -106,6 +106,9 @@ it('issue #1268: recovers a loaded frame that never confirms client boot', async
       data: { type: 'dsh://appearance:applied' },
     }))
   })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
 
   expect(store.harness.iframeAlive).toBe(true)
   expect(store.harness.iframeBootReady).toBe(false)
