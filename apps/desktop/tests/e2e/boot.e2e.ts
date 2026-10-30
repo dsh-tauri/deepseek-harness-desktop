@@ -43,8 +43,19 @@ async function activeProfile(page: Page): Promise<string> {
 }
 
 async function healthy(page: Page): Promise<string> {
-  const result = await invoke<{ status: string }>(page, 'proxy_health_check')
-  return result.status
+  const deadline = Date.now() + WINDOW_TIMEOUT_MS
+  for (;;) {
+    try {
+      const result = await invoke<{ status: string }>(page, 'proxy_health_check')
+      if (/^healthy - \d+\/\d+ client modules ready$/.test(result.status) || Date.now() >= deadline)
+        return result.status
+    }
+    catch (error) {
+      if (Date.now() >= deadline)
+        throw error
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
 }
 
 async function openWindow(source?: ShellWindow): Promise<ShellWindow> {
