@@ -53,8 +53,11 @@ async function healthy(page: Page): Promise<string> {
         return result.status
     }
     catch (error) {
-      if (Date.now() >= deadline)
+      if (Date.now() >= deadline) {
+        console.error('healthy failure', app().output().split(/?
+/).filter(line => !/CORE_PLUGIN_LINKED|frontend: \[(Guest)?Webview|\[Webview\]/.test(line)).slice(-120).join(String.fromCharCode(10)))
         throw error
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
