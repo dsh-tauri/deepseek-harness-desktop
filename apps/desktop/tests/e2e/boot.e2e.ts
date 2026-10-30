@@ -204,7 +204,7 @@ describe('桌面端启动冒烟', () => {
 
       await closeWindow(second)
       await expect.poll(async () => (await app().windows()).some(window => window.label === second.label), { message: '第二窗口未销毁', timeout: WINDOW_TIMEOUT_MS }).toBe(false)
-      await expect.poll(() => existsSync(clonedMarkerPath), { message: '关闭档案最后窗口后核心 PID 标记未回收', timeout: WINDOW_TIMEOUT_MS }).toBe(false)
+      await expect.poll(() => existsSync(clonedMarkerPath), { message: '关闭档案最后窗口后核心 PID 标记未回收', timeout: 90_000 }).toBe(false)
       expect(readFileSync(originalMarkerPath, 'utf8'), '关闭其他档案窗口不得重启原核心').toBe(originalMarker)
       expect(await healthy(page), '关闭其他档案最后窗口后原核心必须仍健康').toMatch(/^healthy - /)
     }

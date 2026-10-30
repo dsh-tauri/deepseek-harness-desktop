@@ -828,7 +828,7 @@ pub(super) fn terminate_windows_process(
     log::warn!("Harness process {pid} survived taskkill; terminating the retained handle");
     if unsafe { TerminateProcess(handle, 1) } == 0 {
         let error = std::io::Error::last_os_error();
-        if unsafe { WaitForSingleObject(handle, 5000) } != WAIT_OBJECT_0 {
+        if unsafe { WaitForSingleObject(handle, 45000) } != WAIT_OBJECT_0 {
             return Err(format!(
                 "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {error}"
             ));
