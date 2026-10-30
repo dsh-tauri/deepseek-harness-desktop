@@ -4,6 +4,7 @@ import { act, cleanup, render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { store } from '@/store'
+import { CLIENT_BOOT_WATCHDOG_TIMEOUT } from '@/store/modules/harness/constants'
 import { Iframe } from './iframe'
 
 vi.mock('@choochmeque/tauri-plugin-notifications-api', () => ({}))
@@ -83,6 +84,41 @@ it('logs local mount and document states once per transition without adding wait
   expect(frame.style.visibility).toBe('hidden')
   expect(console.warn).toHaveBeenCalledWith('[Iframe] view', expect.objectContaining({ branch: 'iframe-error', iframeError: true }))
   expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('secret')
+})
+
+it('issue #1268: recovers a loaded frame that never confirms client boot', async () => {
+  Object.assign(store.harness, {
+    busyAction: null,
+    iframeAliveKey: null,
+    iframeBootReadyKey: null,
+    iframeLoaded: true,
+    serviceHealthy: true,
+    status: 'ready',
+  })
+  const recover = vi.spyOn(store.harness, 'recoverIframeBoot').mockResolvedValue(undefined)
+
+  const iframeRef = createRef<HTMLIFrameElement>()
+  const view = render(<Iframe iframeRef={iframeRef} />)
+  const frame = screen.getByTestId<HTMLIFrameElement>('dsh-shell-iframe')
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'http://127.0.0.1:3081',
+      data: { type: 'dsh://appearance:applied' },
+    }))
+  })
+  view.rerender(<Iframe iframeRef={iframeRef} />)
+
+  expect(store.harness.iframeAlive).toBe(true)
+  expect(store.harness.iframeBootReady).toBe(false)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(CLIENT_BOOT_WATCHDOG_TIMEOUT - 1)
+  })
+  expect(recover).not.toHaveBeenCalled()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1)
+  })
+  expect(recover).toHaveBeenCalledTimes(1)
 })
 
 it('preloads before health, hands live boot to the same frame, and falls back only once on failure', async () => {
