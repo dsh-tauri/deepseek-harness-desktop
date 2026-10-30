@@ -1,6 +1,6 @@
 import type { Page } from 'playwright'
 import type { ShellApp, ShellWindow } from './setup/shell'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, completePreinstall, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
@@ -53,10 +53,7 @@ async function healthy(page: Page): Promise<string> {
     catch (error) {
       if (Date.now() >= deadline) {
         const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info').catch(() => undefined)
-        const logsRoot = runtime ? join(runtime.data_dir, 'logs') : ''
-        const logs = logsRoot && existsSync(logsRoot) ? (readdirSync(logsRoot, { recursive: true }) as string[]).filter(name => /dsh-web.*\.log$/.test(name)) : []
-        for (const name of logs)
-          console.error('core log', name, readFileSync(join(logsRoot, name), 'utf8').slice(-6000))
+        console.error('core log', runtime?.log_path, runtime && existsSync(runtime.log_path) ? readFileSync(runtime.log_path, 'utf8').slice(-8000) : 'missing')
         throw error
       }
     }
