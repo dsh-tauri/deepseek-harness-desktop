@@ -311,7 +311,7 @@ jobs:
         run: pnpm --filter dsh-desktop build
 
       - name: Build debug binary
-        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
 
       - name: Desktop E2E (Linux, headless)
         if: runner.os == 'Linux'
