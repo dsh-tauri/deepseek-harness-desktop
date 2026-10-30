@@ -130,7 +130,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     env: {
       ...process.env,
       DSH_E2E_HOME: home,
-      DSH_E2E_DOWNLOAD_CACHE_DIR: downloadCacheDir,
+      DSH_DOWNLOAD_CACHE_DIR: downloadCacheDir,
       APPDATA: path.join(home, 'appdata'),
       HOME: path.join(home, 'home'),
       XDG_CONFIG_HOME: path.join(home, 'appdata'),
