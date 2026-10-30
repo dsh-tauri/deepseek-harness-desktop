@@ -46,7 +46,7 @@ function dumpCoreLogs(root: string): string {
   if (!existsSync(root))
     return 'missing'
   return (readdirSync(root, { recursive: true }) as string[])
-    .filter(name => /\.log$/.test(name))
+    .filter(name => /dsh-web.*\.log$/.test(name) && !name.includes('node_modules'))
     .map(name => [name, readFileSync(join(root, name), 'utf8').slice(-3000)].join(': '))
     .join(' || ')
 }
@@ -63,7 +63,7 @@ async function healthy(page: Page): Promise<string> {
       if (Date.now() >= deadline) {
         const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info').catch(() => undefined)
         if (runtime)
-          console.error('core logs', runtime.log_path, runtime.data_dir, dumpCoreLogs(dirname(dirname(runtime.log_path))), dumpCoreLogs(join(runtime.data_dir, 'logs')))
+          console.error('core logs', dumpCoreLogs(dirname(dirname(runtime.data_dir))))
         throw error
       }
     }
