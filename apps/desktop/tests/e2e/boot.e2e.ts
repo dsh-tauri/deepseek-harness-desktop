@@ -47,8 +47,8 @@ async function healthy(page: Page): Promise<string> {
   return result.status
 }
 
-async function openWindow(): Promise<ShellWindow> {
-  return app().openWindow()
+async function openWindow(source?: ShellWindow): Promise<ShellWindow> {
+  return app().openWindow('create_app_window', source)
 }
 
 async function closeWindow(window: ShellWindow): Promise<void> {
@@ -172,7 +172,7 @@ describe('桌面端启动冒烟', () => {
       const clonedMarker = readFileSync(clonedMarkerPath, 'utf8')
       expect(clonedMarker.split('\n')[0], '不同档案必须持有不同核心进程').not.toBe(originalMarker.split('\n')[0])
 
-      const third = await openWindow()
+      const third = await openWindow(second)
       opened.push(third)
       await invoke(third.page, 'launch_harness')
       expect(await activeProfile(third.page), '第三窗口必须继承第二窗口档案').toBe(clone.id)

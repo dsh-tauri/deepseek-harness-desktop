@@ -49,7 +49,7 @@ export interface ShellApp {
   browser: Browser
   window: ShellWindow
   windows: () => Promise<ShellWindow[]>
-  openWindow: (command?: string) => Promise<ShellWindow>
+  openWindow: (command?: string, source?: ShellWindow) => Promise<ShellWindow>
   closeWindow: (label: string) => Promise<void>
   stop: () => Promise<void>
 }
@@ -178,9 +178,9 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     browser,
     window: shellWindow,
     windows: () => windowsOf(browser),
-    openWindow: async (command = 'create_app_window') => {
+    openWindow: async (command = 'create_app_window', source = shellWindow) => {
       const before = new Set((await windowsOf(browser)).map(entry => entry.label))
-      await shellWindow.page.evaluate(cmd => window.__TAURI_INTERNALS__.invoke(cmd), command)
+      await source.page.evaluate(cmd => window.__TAURI_INTERNALS__.invoke(cmd), command)
       const deadline = Date.now() + WINDOW_TIMEOUT_MS
       while (Date.now() < deadline) {
         const opened = (await windowsOf(browser)).find(entry => !before.has(entry.label))
