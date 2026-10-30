@@ -243,15 +243,15 @@ fn read_package_version(dir: &Path) -> Option<String> {
         .map(|s| s.trim_start_matches('v').to_string())
 }
 
-fn has_link_in_path(path: &Path) -> bool {
-    path.ancestors().any(|path| {
+fn has_link_in_path(path: &Path, base: &Path) -> bool {
+    path.ancestors().take_while(|ancestor| *ancestor != base).any(|path| {
         std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
     })
 }
 
 fn managed_folder_core(slot: &Path) -> Option<PathBuf> {
     let package = slot.join("node_modules/@deepseek-ai/dsh");
-    if has_link_in_path(&package) {
+    if has_link_in_path(&package, slot) {
         return None;
     }
     let manifest = package.join("package.json");
