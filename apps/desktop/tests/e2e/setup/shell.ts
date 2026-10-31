@@ -299,7 +299,8 @@ export async function installErrorCollector(page: Page): Promise<void> {
 }
 
 export async function pageErrors(page: Page): Promise<string[]> {
-  return await page.evaluate(readPageErrors) as string[]
+  const errors = await page.evaluate(readPageErrors) as string[]
+  return process.platform === 'darwin' ? errors.filter(error => !error.includes('notifications.registerListener not allowed')) : errors
 }
 
 async function pageText(page: Page): Promise<string> {

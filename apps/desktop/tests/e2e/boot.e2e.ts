@@ -239,8 +239,14 @@ ${await diagnose(app())}`)
     const config = async (): Promise<AppConfig> => invoke<AppConfig>(page, 'get_app_config')
     const appearance = async (): Promise<Appearance> => (await config()).appearance
 
-    await click(page, 'dsh-navbar-menu-config')
-    await click(page, 'dsh-navbar-item-appearance')
+    if (process.platform === 'darwin') {
+      await invoke(page, 'plugin:event|emit', { event: 'macos-menu-action', payload: 'desktop-config' })
+      await click(page, 'dsh-config-nav-appearance')
+    }
+    else {
+      await click(page, 'dsh-navbar-menu-config')
+      await click(page, 'dsh-navbar-item-appearance')
+    }
     await click(page, 'dsh-appearance-palette')
     await click(page, 'dsh-appearance-palette-nord')
     await expect.poll(async () => (await appearance()).palette, { message: '原生设置未保存 Nord 配色' }).toBe('nord')
