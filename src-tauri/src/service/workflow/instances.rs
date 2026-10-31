@@ -19,6 +19,7 @@ pub(super) struct Instance {
     pub launching: Arc<std::sync::atomic::AtomicBool>,
     pub status: Mutex<Status>,
     pub port: Mutex<Option<u16>>,
+    pub attached: std::sync::atomic::AtomicBool,
 }
 
 impl Default for Instance {
@@ -28,6 +29,7 @@ impl Default for Instance {
             launching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             status: Mutex::new(Status::Initial),
             port: Mutex::new(None),
+            attached: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -193,6 +195,18 @@ pub fn emit<R: tauri::Runtime, S: serde::Serialize + Clone>(
             payload.clone(),
         );
     }
+}
+
+pub fn is_attached_core() -> bool {
+    instance()
+        .attached
+        .load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn set_attached_core(value: bool) {
+    instance()
+        .attached
+        .store(value, std::sync::atomic::Ordering::SeqCst);
 }
 
 pub fn port(app: &tauri::AppHandle) -> u16 {

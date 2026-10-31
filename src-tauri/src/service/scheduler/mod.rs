@@ -24,14 +24,19 @@ async fn scheduler_permanent_loop(app_handle: AppHandle) {
             crate::service::workflow::instances::scope(profile, async {
                 let current_status = status::get_status();
                 let port = crate::service::workflow::instances::port(&app_handle);
-                let is_dsh_running = crate::service::workflow::has_owned_process()
+                let attached = crate::service::workflow::instances::is_attached_core();
+                let is_dsh_running = (crate::service::workflow::has_owned_process() || attached)
                     && utils::is_dsh_running(port).await;
+                if attached && !is_dsh_running {
+                    crate::service::workflow::instances::set_attached_core(false);
+                }
                 log::trace!("DSH status check: dsh_running={}", is_dsh_running);
                 if is_dsh_running && current_status != Status::Running {
                     status::set_status(Status::Running);
                     status::emit_status(&app_handle);
                 }
                 if !crate::service::workflow::has_owned_process()
+                    && !crate::service::workflow::instances::is_attached_core()
                     && current_status == Status::Running
                 {
                     log::warn!(

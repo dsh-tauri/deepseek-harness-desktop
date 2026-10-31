@@ -63,7 +63,21 @@ static STARTUP_SWEEP_DONE: AtomicBool = AtomicBool::new(false);
 ///
 /// 先取后清，并发调用里只有一个真正执行。
 pub(super) fn take_startup_sweep() -> bool {
+    if attach_pending() {
+        return false;
+    }
     !STARTUP_SWEEP_DONE.swap(true, Ordering::SeqCst)
+}
+
+static ATTACH_DECLINED: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn decline_attach() {
+    ATTACH_DECLINED.store(true, Ordering::SeqCst);
+}
+
+fn attach_pending() -> bool {
+    !ATTACH_DECLINED.load(Ordering::SeqCst)
+        && super::launch::attach_requested(std::env::var("DSH_DESKTOP_ATTACH").ok().as_deref())
 }
 
 pub(super) fn retry_startup_sweep() {
@@ -1270,6 +1284,8 @@ pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
         // 进程终止涉及 WaitForSingleObject（至多 5s）与 taskkill/kill 等同步阻塞
         // 调用，移出 Tokio 执行线程避免卡住其他并发任务（WARN-7/P2-#20）。
         launch_guard().store(false, Ordering::SeqCst);
+        let was_attached = super::instances::is_attached_core();
+        super::instances::set_attached_core(false);
         tauri::async_runtime::spawn_blocking(move || {
             super::instances::scope_sync(profile, terminate_owned_process)
         })
@@ -1279,23 +1295,25 @@ pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
         // 清理孤儿清扫标记：正常停止的实例不应被下次启动当作残留
         let _ = fs::remove_file(harness_pid_path(&app_handle));
 
-        let port = super::instances::port(&app_handle);
-        #[cfg(windows)]
-        let entry = crate::service::core::active_dsh_binary(&app_handle);
-        let profile = super::instances::current_profile().unwrap();
-        tauri::async_runtime::spawn_blocking(move || {
-            super::instances::scope_sync(profile, || -> Result<(), String> {
-                if !wait_for_port_release(port, PORT_RELEASE_WAIT) {
-                    #[cfg(windows)]
-                    {
-                        reclaim_orphan_port(&entry, port)?;
+        if !was_attached {
+            let port = super::instances::port(&app_handle);
+            #[cfg(windows)]
+            let entry = crate::service::core::active_dsh_binary(&app_handle);
+            let profile = super::instances::current_profile().unwrap();
+            tauri::async_runtime::spawn_blocking(move || {
+                super::instances::scope_sync(profile, || -> Result<(), String> {
+                    if !wait_for_port_release(port, PORT_RELEASE_WAIT) {
+                        #[cfg(windows)]
+                        {
+                            reclaim_orphan_port(&entry, port)?;
+                        }
                     }
-                }
-                Ok(())
+                    Ok(())
+                })
             })
-        })
-        .await
-        .map_err(|error| format!("STOP_FAILED: {error}"))??;
+            .await
+            .map_err(|error| format!("STOP_FAILED: {error}"))??;
+        }
 
         status::set_status(status::Status::Stopped);
         status::emit_status(&app_handle);
@@ -1480,6 +1498,25 @@ mod tests {
         assert!(
             reclaim
                 .contains("super::instances::scope_sync(profile, owned_process_pid) == Some(pid)")
+        );
+    }
+
+    #[test]
+    fn stop_skips_port_reclaim_for_attached_core() {
+        let source = include_str!("process.rs");
+        let stop = source
+            .split("pub async fn stop(")
+            .nth(1)
+            .unwrap()
+            .split("pub async fn ")
+            .next()
+            .unwrap();
+        let captured = stop
+            .find("let was_attached = super::instances::is_attached_core();")
+            .unwrap();
+        assert!(captured < stop.find("set_attached_core(false)").unwrap());
+        assert!(
+            stop.find("if !was_attached {").unwrap() < stop.find("reclaim_orphan_port(").unwrap()
         );
     }
 

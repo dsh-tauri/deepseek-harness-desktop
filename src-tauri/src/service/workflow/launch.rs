@@ -199,6 +199,14 @@ fn resolve_heal_port(configured: u16, heal_target: u16, heal_target_free: bool) 
     }
 }
 
+pub(super) fn attach_requested(value: Option<&str>) -> bool {
+    matches!(value, Some("1") | Some("true"))
+}
+
+async fn attachable_core(port: u16) -> bool {
+    super::utils::is_port_in_use(port) && super::utils::is_dsh_running(port).await
+}
+
 /// 检测并启动 Harness 服务
 pub async fn start(app_handle: tauri::AppHandle) -> Result<(), String> {
     super::early::wait_preparation().await?;
@@ -234,6 +242,19 @@ pub async fn start(app_handle: tauri::AppHandle) -> Result<(), String> {
         status::emit_status(&app_handle);
         return Ok(());
     }
+
+    let port = super::instances::port(&app_handle);
+    if attach_requested(std::env::var("DSH_DESKTOP_ATTACH").ok().as_deref())
+        && attachable_core(port).await
+    {
+        log::info!("Attaching to the running Harness on port {port} (issue #1235)");
+        super::instances::set_attached_core(true);
+        status::set_status(status::Status::Running);
+        status::emit_status(&app_handle);
+        return Ok(());
+    }
+
+    super::process::decline_attach();
 
     // 清理 RedirectionGuard(448) 逃逸重拉标记：本进程正常走到启动说明处于干净上下文，
     // 移除标记保证下次自更新后仍能触发逃逸重拉。
@@ -1262,6 +1283,61 @@ pub(super) async fn launch_prepared(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attach_requires_explicit_opt_in() {
+        assert!(attach_requested(Some("1")));
+        assert!(attach_requested(Some("true")));
+        assert!(!attach_requested(Some("0")));
+        assert!(!attach_requested(Some("")));
+        assert!(!attach_requested(None));
+    }
+
+    #[test]
+    fn startup_sweep_waits_for_attach_decision() {
+        let process = include_str!("process.rs");
+        let take = process
+            .split("pub(super) fn take_startup_sweep(")
+            .nth(1)
+            .unwrap()
+            .split("static ATTACH_DECLINED")
+            .next()
+            .unwrap();
+        assert!(take.find("attach_pending()").unwrap() < take.find("STARTUP_SWEEP_DONE").unwrap());
+        let launch = include_str!("launch.rs");
+        let start = launch.split("pub async fn start(").nth(1).unwrap();
+        assert!(
+            start.find("attachable_core(port)").unwrap() < start.find("decline_attach()").unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn attachable_core_requires_listening_dsh_http_200() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let free_port = free.local_addr().unwrap().port();
+        drop(free);
+        assert!(!attachable_core(free_port).await);
+
+        for (status, expected) in [("200 OK", true), ("503 Service Unavailable", false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0u8; 1024];
+                let _ = socket.read(&mut buffer).await;
+                let response =
+                    format!("HTTP/1.1 {status}
+content-length: 0
+connection: close
+
+");
+                socket.write_all(response.as_bytes()).await.unwrap();
+            });
+            assert_eq!(attachable_core(port).await, expected, "{status}");
+            server.await.unwrap();
+        }
+    }
 
     #[cfg(target_os = "linux")]
     mod appimage_library_path {
