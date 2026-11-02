@@ -1,7 +1,7 @@
 {
   "name": "dsh-native",
   "type": "module",
-  "version": "0.30.0-alpha.3",
+  "version": "0.30.0-alpha.4",
   "private": true,
   "main": "./src/entry.ts",
   "scripts": {
