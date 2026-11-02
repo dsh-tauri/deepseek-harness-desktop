@@ -22,12 +22,18 @@ readonly GDK_OVERRIDE_PATTERN='^[[:space:]]*export[[:space:]]+GDK_BACKEND=x11([[
 readonly GSTREAMER_SOURCE_PATTERN='^[[:space:]]*source[[:space:]].*apprun-hooks/linuxdeploy-plugin-gstreamer[.]sh[[:space:]]*$'
 readonly GSTREAMER_NATIVE_PATTERN='GST_PLUGIN_SYSTEM_PATH(_1_0)?='
 # #1269：宿主 GStreamer(>=1.24) 链接新版 GLib，镜像里 22.04 的 GLib 2.72 被 LD_LIBRARY_PATH 置顶后缺 g_once_init_leave_pointer，加载器在 main() 前中止。
+# #1299：同时交还宿主依赖，避免新版 GIO 继续加载缺少 MOUNT_2_40 等符号的旧库。
 readonly EXCLUDED_GLIB=(
   'libglib-2.0.so*'
   'libgobject-2.0.so*'
   'libgio-2.0.so*'
   'libgmodule-2.0.so*'
   'libgthread-2.0.so*'
+  'libmount.so*'
+  'libpcre2-8.so*'
+  'libselinux.so*'
+  'libsystemd.so*'
+  'libdbus-1.so*'
 )
 readonly EXCLUDED_MEDIA=(
   'libgst*.so*'

@@ -79,23 +79,38 @@ class AppImageTest(unittest.TestCase):
                 root = work / arch
                 dist = self.fixture(root, arch)
                 original = {p.relative_to(dist): p.read_bytes() for p in dist.iterdir()}
+                host_libraries = []
+                for name in ('libmount.so.1', 'libpcre2-8.so.0', 'libselinux.so.1', 'libsystemd.so.0', 'libdbus-1.so.3'):
+                    library = root / 'usr/lib' / f'{name}.0.0'
+                    library.write_bytes(b'old-host-library')
+                    soname = library.with_name(name)
+                    soname.symlink_to(library.name)
+                    host_libraries.extend((library, soname))
                 image = work / f'{arch}.AppImage'
                 fs = work / f'{arch}.squashfs'
+                runtime = b'#!/bin/sh\nexit 1\n'
 
                 def pack():
                     fs.unlink(missing_ok=True)
                     subprocess.run(['mksquashfs', str(root), str(fs), '-noappend', '-no-progress', '-quiet', '-processors', '1'], check=True)
-                    image.write_bytes(b'non-executable-runtime-prefix\n' + fs.read_bytes())
+                    image.write_bytes(runtime + fs.read_bytes())
 
                 pack()
                 result = subprocess.run(['bash', str(SCRIPT), '--require-removal', str(image)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 extracted = work / f'extracted-{arch}'
-                subprocess.run(['unsquashfs', '-o', str(len(b'non-executable-runtime-prefix\n')), '-d', str(extracted), str(image)], check=True, stdout=subprocess.DEVNULL)
+                subprocess.run(['unsquashfs', '-o', str(len(runtime)), '-d', str(extracted), str(image)], check=True, stdout=subprocess.DEVNULL)
                 self.assertFalse((extracted / 'usr/lib/libwayland-client.so.0').exists())
+                for library in host_libraries:
+                    removed = extracted / library.relative_to(root)
+                    self.assertFalse(removed.exists() or removed.is_symlink(), library.name)
                 kept = extracted / dist.relative_to(root)
                 self.assertEqual({p.relative_to(kept): p.read_bytes() for p in kept.iterdir()}, original)
                 self.assertEqual(self.validate(extracted).returncode, 0)
+                before = image.read_bytes()
+                result = subprocess.run(['bash', str(SCRIPT), str(image)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(image.read_bytes(), before)
                 for missing in ('usr/lib/DeepSeek Harness/runtime', *(f'usr/lib/DeepSeek Harness/runtime/linux-{arch}/{name}' for name in ('libffmpeg.so', 'libvulkan.so.1', 'libvk_swiftshader.so', 'vk_swiftshader_icd.json')), 'AppRun.wrapped'):
                     path = root / missing
                     backup = root / 'saved'
@@ -107,6 +122,8 @@ class AppImageTest(unittest.TestCase):
                     self.assertEqual(image.read_bytes(), before)
                     backup.rename(path)
                 (root / 'usr/lib/libwayland-client.so.0').unlink()
+                for library in host_libraries:
+                    library.unlink()
                 pack()
                 before = image.read_bytes()
                 result = subprocess.run(['bash', str(SCRIPT), '--require-removal', str(image)], capture_output=True, text=True)
