@@ -80,21 +80,43 @@ ${StrLoc}
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
-; 同一次关闭确认也登记 Electron 的私有 DLL，兼容尚未支持进程组回收的旧版。
-!macroundef RestartManager_RegisterFile
-!macro RestartManager_RegisterFile handle path
-  System::Call 'RSTRTMGR::RmRegisterResources(i${handle},i1,*ws,i0,p0,i0,p0)i.r0' "${path}"
-  ${If} $0 = 0
-    !if "${ARCH}" == "x86"
-      !define ELECTRONARCH "ia32"
-    !else
-      !define ELECTRONARCH "${ARCH}"
-    !endif
-    ${If} ${FileExists} "$INSTDIR\runtime\win32-${ELECTRONARCH}\chrome_elf.dll"
-      System::Call 'RSTRTMGR::RmRegisterResources(i${handle},i1,*ws,i0,p0,i0,p0)i.r0' "$INSTDIR\runtime\win32-${ELECTRONARCH}\chrome_elf.dll"
+!macroundef CheckIfAppIsRunning
+!macro CheckIfAppIsRunning executablePath productName
+  !define DSH_PROCESS_COMMAND `& { $$ErrorActionPreference='Stop'; $$hostPath=$$env:DSH_INSTALL_HOST; $$runtimePath=$$env:DSH_INSTALL_RUNTIME; $$targets=@(Get-CimInstance Win32_Process | Where-Object { $$file=$$_.ExecutablePath; $$file -and ($$file -ieq $$hostPath -or ([IO.Path]::GetDirectoryName($$file) -ieq $$runtimePath -and [IO.Path]::GetExtension($$file) -ieq '.exe')) }); if ($$env:DSH_INSTALL_STOP -ne '1') { if ($$targets.Count) { exit 10 }; exit 0 }; foreach ($$target in $$targets) { $$process=Get-Process -Id $$target.ProcessId -ErrorAction SilentlyContinue; if ($$process -and !$$process.HasExited -and [Math]::Abs(($$process.StartTime.ToUniversalTime()-$$target.CreationDate.ToUniversalTime()).TotalMilliseconds) -lt 1) { & $$env:SystemRoot\System32\taskkill.exe /PID $$process.Id /F >$$null 2>&1; if (!$$process.WaitForExit(5000)) { exit 1 } } }; exit 0 }`
+  !if "${ARCH}" == "x86"
+    !define ELECTRONARCH "ia32"
+  !else
+    !define ELECTRONARCH "${ARCH}"
+  !endif
+  System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_HOST", w "${executablePath}")'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_RUNTIME", w "$INSTDIR\runtime\win32-${ELECTRONARCH}")'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_STOP", w "0")'
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "${DSH_PROCESS_COMMAND}"`
+  Pop $R0
+  Pop $R1
+  ${If} $R0 == 10
+    ${IfNot} ${Silent}
+    ${AndIf} $PassiveMode != 1
+      nsis_tauri_utils::StrReplace "$(appRunningOkKill)" "{{product_name}}" "${productName}"
+      Pop $R2
+      MessageBox MB_OKCANCEL $R2 IDOK +2
+      Abort
     ${EndIf}
-    !undef ELECTRONARCH
+    System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_STOP", w "1")'
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "${DSH_PROCESS_COMMAND}"`
+    Pop $R0
+    Pop $R1
   ${EndIf}
+  System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_HOST", p 0)'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_RUNTIME", p 0)'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_STOP", p 0)'
+  ${If} $R0 != 0
+    nsis_tauri_utils::StrReplace "$(failedToKillApp)" "{{product_name}}" "${productName}"
+    Pop $R3
+    Abort $R3
+  ${EndIf}
+  !undef ELECTRONARCH
+  !undef DSH_PROCESS_COMMAND
 !macroend
 
 Var PassiveMode
