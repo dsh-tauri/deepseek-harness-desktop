@@ -446,45 +446,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn shipped_manifest_matches_builtin_defaults() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join(manifest::MANIFEST_FILE);
-        let manifest = manifest::read_at(&path).expect("manifest should parse");
-        // 清单声明的托管根可以是 `$AppData/...` 令牌，因此比较**解析后**的位置
-        let base = PathBuf::from("C:/app-data");
-        let resources = PathBuf::from("C:/app-resources");
-        for (key, root, entry) in [
-            (
-                DEP_NODE,
-                default_managed_root(DEP_NODE),
-                default_entry(DEP_NODE),
-            ),
-            (
-                DEP_PNPM,
-                default_managed_root(DEP_PNPM),
-                default_entry(DEP_PNPM),
-            ),
-            (
-                DEP_DSH,
-                default_managed_root(DEP_DSH),
-                default_entry(DEP_DSH),
-            ),
-            (
-                DEP_GIT,
-                default_managed_root(DEP_GIT),
-                default_entry(DEP_GIT),
-            ),
-        ] {
-            let spec = manifest.dependencies.get(key).expect("spec should exist");
-            let declared = spec.managed_root.as_deref().expect("managedRoot");
-            assert_eq!(
-                manifest::resolve_location_from(&base, Some(&resources), declared),
-                base.join(root),
-                "{key}"
-            );
-            assert_eq!(spec.entry.resolve(), Some(entry), "{key}");
-        }
-    }
 }

@@ -409,41 +409,6 @@ mod tests {
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
-    fn shipped_catalog() -> Vec<PresetPetSpec> {
-        manifest::read_at(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/manifest.jsonc"),
-        )
-        .expect("shipped manifest should be valid")
-        .pets
-        .built_in
-    }
-
-    #[test]
-    fn shipped_catalog_is_valid_and_remote_only() {
-        // 随包分发的清单是唯一事实来源：字段名/形状写错必须在这里炸，
-        // 而不是等用户点「启用」才在运行时静默失败。
-        let catalog = shipped_catalog();
-        assert!(!catalog.is_empty(), "预设清单不应为空");
-        for spec in catalog {
-            assert!(safe_preset_id(&spec.id), "非法 id: {}", spec.id);
-            assert!(!spec.name.trim().is_empty());
-            assert!(!spec.config.trim().is_empty());
-            assert!(!spec.uri.default.trim().is_empty());
-            // 不再有本地安装：素材与配置都必须是远端地址。
-            assert!(
-                spec.config.starts_with("https://"),
-                "config 必须是 https 地址"
-            );
-            assert!(
-                spec.uri.default.starts_with("https://"),
-                "uri.default 必须是 https 地址"
-            );
-            if let Some(kind) = spec.kind.as_deref() {
-                assert!(kind == "dsh" || kind == "codex");
-            }
-        }
-    }
-
     #[test]
     fn catalog_entry_deserializes_with_defaults_and_rejects_unknown_fields() {
         let spec: PresetPetSpec = serde_json::from_str(

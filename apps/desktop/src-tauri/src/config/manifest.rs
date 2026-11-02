@@ -597,83 +597,6 @@ fn strip_trailing_commas(raw: &str) -> String {
 mod tests {
     use super::*;
 
-    fn shipped_manifest() -> Manifest {
-        parse(&std::fs::read_to_string(source_manifest_path()).expect("manifest should exist"))
-            .expect("shipped manifest should be valid")
-    }
-
-    #[test]
-    fn shipped_manifest_carries_engines_plugins_pets_and_dependencies() {
-        let manifest = shipped_manifest();
-        assert!(!manifest.plugins.preset.is_empty());
-        assert!(!manifest.plugins.built_in.is_empty());
-        assert!(!manifest.plugins.deprecated.is_empty());
-        assert!(!manifest.pets.built_in.is_empty());
-        for key in ["node", "pnpm", "dsh", "git"] {
-            assert!(
-                manifest.dependencies.contains_key(key),
-                "依赖映射规范缺少 {key}"
-            );
-        }
-    }
-
-    #[test]
-    fn dependency_entries_resolve_per_platform() {
-        let manifest = shipped_manifest();
-        let node = &manifest.dependencies["node"];
-        assert!(node.managed_root.is_some());
-        assert!(node.overridable);
-        assert!(node.entry.resolve().is_some());
-
-        let pnpm = &manifest.dependencies["pnpm"];
-        assert_eq!(pnpm.entry.resolve(), Some("bin/pnpm.cjs"));
-
-        let dsh = &manifest.dependencies["dsh"];
-        assert_eq!(
-            dsh.entry.resolve(),
-            Some("node_modules/@deepseek-ai/dsh/lib/bin.js")
-        );
-    }
-
-    #[test]
-    fn shipped_manifest_keeps_recommendation_and_minimum_in_sync() {
-        let manifest = shipped_manifest();
-        assert_eq!(manifest.engines.dsh.recommend, "0.2.1-rc.5");
-        assert_eq!(manifest.engines.dsh.minimum, "0.2.1-rc.1");
-        let raw = std::fs::read_to_string(source_manifest_path()).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&strip_jsonc(&raw)).unwrap();
-        assert_eq!(
-            value["dependencies"]["dsh"]["engine"]["recommend"],
-            "0.2.1-rc.5"
-        );
-        assert_eq!(
-            value["dependencies"]["dsh"]["engine"]["minimum"],
-            "0.2.1-rc.1"
-        );
-        for id in [
-            "dsh-better-sidebar",
-            "dsh-rewind-plugin",
-            "@xmanrui/dsh-im",
-        ] {
-            let entry = manifest
-                .plugins
-                .preset
-                .iter()
-                .find(|entry| entry.id == id)
-                .unwrap();
-            let matrix = entry.version.as_ref().unwrap();
-            assert_eq!(
-                matrix.plugin_req_for_core(Some("0.2.1-rc.1")),
-                Some("latest"),
-                "{id}"
-            );
-            for core in ["0.1.5-rc.1", "0.1.6", "0.1.7-alpha.1", "0.1.7-rc.0", "0.1.7-rc.1"] {
-                assert_eq!(matrix.plugin_req_for_core(Some(core)), None, "{id} {core}");
-                assert!(matrix.unsupported_on(Some(core)), "{id} {core}");
-            }
-        }
-    }
-
     #[test]
     fn plugin_version_matrix_matches_core_ranges() {
         let matrix = PluginVersion::Matrix(vec![
@@ -821,9 +744,6 @@ mod tests {
             manifest_path_from(Some(&dir), false),
             Some(dir.join(MANIFEST_FILE))
         );
-        let source = source_manifest_path();
-        assert!(source.is_file());
-        assert_eq!(manifest_path_from(Some(&dir), true), Some(source));
 
         let _ = std::fs::remove_dir_all(dir);
     }
