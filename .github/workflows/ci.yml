@@ -186,14 +186,26 @@ jobs:
           echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
 
   rust-test:
-    name: Rust tests
+    name: Rust tests (${{ matrix.runner }})
     needs: [pre_job, changes]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1') }}
+    # 与发布矩阵逐项对齐、架构与 runner 同构：pnpm install 只落宿主平台的原生
+    # 可选依赖，交叉架构跑会漏装另一侧，测试绿但产物在目标机器上崩（issue #1326）。
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-26-intel
+            arch: x64
+          - runner: windows-latest
+            arch: x64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Scope
         run: |
@@ -204,6 +216,22 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: true
+
+      # 标签写错（例如把 x64 指到 Apple Silicon）不会报错，只会在错误架构上跑出一份
+      # 看似通过的绿灯，这里把 runner.arch 与矩阵声明对齐。
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          case "${{ matrix.arch }}" in
+            x64) expected=X64 ;;
+            arm64) expected=ARM64 ;;
+            *) echo "::error::unknown matrix arch '${{ matrix.arch }}'"; exit 1 ;;
+          esac
+          if [ "${{ runner.arch }}" != "$expected" ]; then
+            echo "::error::${{ matrix.runner }} is ${{ runner.arch }}, matrix declares ${{ matrix.arch }}"
+            exit 1
+          fi
+          echo "runner arch OK: ${{ runner.arch }}"
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -253,15 +281,25 @@ jobs:
         working-directory: apps/desktop/src-tauri
 
   desktop-e2e:
-    name: Desktop E2E (Electron CDP)
+    name: Desktop E2E (Electron CDP) (${{ matrix.runner }})
     needs: [pre_job, changes]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.desktop == '1') }}
+    # Electron 运行时不再受 WebView2 限制，按发布矩阵的每个架构各跑一次（issue #1326）。
     strategy:
       fail-fast: false
-      # Electron 运行时不再受 WebView2 限制，按发布平台各跑一次。
       matrix:
-        os: [windows-latest, macos-15, ubuntu-22.04]
-    runs-on: ${{ matrix.os }}
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-26-intel
+            arch: x64
+          - runner: windows-latest
+            arch: x64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
       - name: Scope
@@ -274,10 +312,28 @@ jobs:
         with:
           submodules: true
 
+      # 标签写错（例如把 x64 指到 Apple Silicon）不会报错，只会在错误架构上跑出一份
+      # 看似通过的绿灯，这里把 runner.arch 与矩阵声明对齐。
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          case "${{ matrix.arch }}" in
+            x64) expected=X64 ;;
+            arm64) expected=ARM64 ;;
+            *) echo "::error::unknown matrix arch '${{ matrix.arch }}'"; exit 1 ;;
+          esac
+          if [ "${{ runner.arch }}" != "$expected" ]; then
+            echo "::error::${{ matrix.runner }} is ${{ runner.arch }}, matrix declares ${{ matrix.arch }}"
+            exit 1
+          fi
+          echo "runner arch OK: ${{ runner.arch }}"
+
+      # standalone 只解决 Windows 上找不到 pnpm.exe 的问题；@pnpm/exe 没有
+      # darwin-x64 的可用二进制（pnpm#11423），在 Intel macOS runner 上会直接装不上。
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
-          standalone: 'true'
+          standalone: ${{ runner.os == 'Windows' }}
 
       - name: Expose pnpm.exe (Windows)
         if: runner.os == 'Windows'
