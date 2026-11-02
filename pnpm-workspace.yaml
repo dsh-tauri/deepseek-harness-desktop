@@ -106,9 +106,12 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-user-questions@0.2.1-rc.5'
   - '@deepseek-ai/dsh-working-directory@0.2.1-rc.5'
   - dsh-taiwind@0.3.3
+  - dsh-taiwind@0.3.4
 shellEmulator: true
 
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  - '@expo/require-utils@57.0.6'
 packages:
   - packages/*
   - apps/*
@@ -134,7 +137,7 @@ catalog:
   '@tauri-apps/plugin-os': ^2.3.2
   '@tauri-apps/plugin-store': ^2.4.4
   dsh-h3: 0.2.1
-  dsh-taiwind: ^0.3.3
+  dsh-taiwind: ^0.3.4
   fake-indexeddb: ^6.2.6
   h3: 2.0.1
   react-native-lucide: npm:lucide-react-native@1.50.0

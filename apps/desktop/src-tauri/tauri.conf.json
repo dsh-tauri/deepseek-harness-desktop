@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DeepSeek Harness",
+  "productName": "DSH Tauri",
   "version": "0.30.0-alpha.2",
   "identifier": "dsh-tauri",
   "build": {
