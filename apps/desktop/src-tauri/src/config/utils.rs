@@ -34,17 +34,28 @@ pub fn linux_inotify_max_user_watches() -> Option<u64> {
     content.trim().parse::<u64>().ok()
 }
 
-pub fn unique_download_path(destination: &Path) -> PathBuf {
+pub fn unique_download_path(
+    destination: &Path,
+    downloads: Option<&Path>,
+) -> Result<PathBuf, String> {
     use std::env;
 
+    let downloads = downloads.filter(|dir| !dir.as_os_str().is_empty());
     let dir = match destination.parent() {
+        // 无保存对话框时上游给的是临时目录，改落到系统下载目录（issue #1338）
+        Some(parent) if parent == env::temp_dir().as_path() => {
+            downloads.unwrap_or(parent).to_path_buf()
+        }
         Some(parent) if parent.is_dir() => parent.to_path_buf(),
-        // 下载目录不存在（如被用户删除）时兜底到 USERPROFILE\Downloads
-        _ => env::var("USERPROFILE")
-            .map(PathBuf::from)
-            .map(|home| home.join("Downloads"))
-            .unwrap_or_else(|_| PathBuf::from(".")),
+        _ => downloads.map(Path::to_path_buf).unwrap_or_else(|| {
+            env::var("USERPROFILE")
+                .map(PathBuf::from)
+                .map(|home| home.join("Downloads"))
+                .unwrap_or_else(|_| PathBuf::from("."))
+        }),
     };
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("DOWNLOAD_DIR_UNAVAILABLE: {}: {error}", dir.display()))?;
     let name = destination
         .file_name()
         .and_then(|n| n.to_str())
@@ -62,7 +73,7 @@ pub fn unique_download_path(destination: &Path) -> PathBuf {
             dir.join(format!("{stem} ({counter}){ext}"))
         };
         if !candidate.exists() {
-            return candidate;
+            return Ok(candidate);
         }
         counter += 1;
     }
@@ -96,6 +107,90 @@ pub fn search_node_binary(dir: &PathBuf, target: &str) -> Option<PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod download_path_tests {
+    use super::unique_download_path;
+    use std::path::PathBuf;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "dsh-{name}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn temp_destination(name: &str) -> PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
+    #[test]
+    fn temp_destination_is_relocated_to_the_downloads_directory() {
+        let scratch = Scratch::new("downloads");
+        let downloads = scratch.0.join("Downloads");
+        assert_eq!(
+            unique_download_path(&temp_destination("report.csv"), Some(&downloads)),
+            Ok(downloads.join("report.csv"))
+        );
+        assert!(downloads.is_dir());
+    }
+
+    #[test]
+    fn non_temp_destination_is_left_untouched() {
+        let scratch = Scratch::new("untouched");
+        let parent = scratch.0.join("elsewhere");
+        std::fs::create_dir_all(&parent).unwrap();
+        let destination = parent.join("report.csv");
+        assert_eq!(
+            unique_download_path(&destination, Some(&scratch.0.join("Downloads"))),
+            Ok(destination)
+        );
+    }
+
+    #[test]
+    fn temp_destination_without_a_downloads_directory_stays_put_and_still_deduplicates() {
+        let scratch = Scratch::new("dedupe");
+        let name = scratch
+            .0
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let taken = temp_destination(&format!("{name}.csv"));
+        std::fs::write(&taken, b"taken").unwrap();
+        assert_eq!(
+            unique_download_path(&taken, None),
+            Ok(temp_destination(&format!("{name} (1).csv")))
+        );
+        let _ = std::fs::remove_file(&taken);
+    }
+
+    #[test]
+    fn unwritable_downloads_directory_is_reported_instead_of_accepted() {
+        let scratch = Scratch::new("unwritable");
+        std::fs::create_dir_all(&scratch.0).unwrap();
+        let blocker = scratch.0.join("blocker");
+        std::fs::write(&blocker, b"file, not a directory").unwrap();
+        let downloads = blocker.join("Downloads");
+        let error = unique_download_path(&temp_destination("report.csv"), Some(&downloads))
+            .expect_err("unwritable directory must be reported");
+        assert!(error.starts_with("DOWNLOAD_DIR_UNAVAILABLE:"), "{error}");
+        assert!(!downloads.exists());
+    }
 }
 
 #[cfg(all(test, unix))]
