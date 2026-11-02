@@ -1151,6 +1151,10 @@ mod macos_bundle_tests {
         let info_plist = include_str!("../../Info.plist");
         assert!(info_plist.contains("<key>NSMicrophoneUsageDescription</key>"));
         assert!(info_plist.contains("<key>NSCameraUsageDescription</key>"));
+        assert!(
+            info_plist.contains("<key>LSUIElement</key>") && info_plist.contains("<true/>"),
+            "supervisor bundle 只做宿主，Dock 身份必须留给嵌套的 Electron runtime"
+        );
 
         let entitlements = include_str!("../../Entitlements.plist");
         assert!(entitlements.contains("<key>com.apple.security.device.audio-input</key>"));

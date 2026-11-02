@@ -9,6 +9,8 @@
     <string>en</string>
     <string>zh-Hans</string>
   </array>
+  <key>LSUIElement</key>
+  <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Voice input in DeepSeek Harness requires access to the microphone.</string>
   <key>NSCameraUsageDescription</key>
