@@ -280,6 +280,11 @@ jobs:
         run: cargo test --all-features --locked
         working-directory: apps/desktop/src-tauri
 
+      - name: Verify macOS application menu and tray event loop
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        run: cargo test --locked --manifest-path crates/tauri-runtime-electron/Cargo.toml --lib --test macos_native_loop --target-dir apps/desktop/src-tauri/target
+
   desktop-e2e:
     name: Desktop E2E (Electron CDP) (${{ matrix.runner }})
     needs: [pre_job, changes]
