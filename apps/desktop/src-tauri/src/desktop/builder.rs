@@ -14,7 +14,7 @@ use windows_sys::Win32::UI::{
 };
 
 use tauri::menu::{Menu, MenuEvent, MenuItem};
-use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 #[cfg(target_os = "macos")]
 use tauri::menu::{PredefinedMenuItem, Submenu};
@@ -140,6 +140,7 @@ fn build_tray<R: Runtime>(app: &crate::AppHandle<R>) -> tauri::Result<()> {
     fn handle_tray_icon_event<R: Runtime>(tray: &tauri::tray::TrayIcon<R>, event: &TrayIconEvent) {
         if let TrayIconEvent::Click {
             button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
             ..
         } = event
         {
