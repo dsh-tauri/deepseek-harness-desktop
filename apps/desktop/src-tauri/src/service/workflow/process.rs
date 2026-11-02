@@ -1120,17 +1120,10 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
     targets
 }
 
-pub fn core_dir_holders(app_handle: &crate::AppHandle) -> Vec<String> {
+pub fn core_dir_holders(core_dir: &Path) -> Vec<String> {
     #[cfg(windows)]
     {
-        let dsh_bin = config::get_dsh_binary_path(app_handle);
-        let Some(core_dir) = dsh_bin
-            .ancestors()
-            .find(|dir| {
-                dir.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("dependencies"))
-            })
-            .and_then(Path::to_str)
-        else {
+        let Some(core_dir) = core_dir.to_str() else {
             return Vec::new();
         };
         let Ok(output) = windows_process_snapshot(None, Some(core_dir)) else {
@@ -1142,14 +1135,13 @@ pub fn core_dir_holders(app_handle: &crate::AppHandle) -> Vec<String> {
             .filter(|entry| entry.holds_core)
             .map(|entry| {
                 let parent = entry.ancestors.first().map_or(0, |ancestor| ancestor.pid);
-                let command: String = entry.command_line.chars().take(200).collect();
-                format!("pid={} ppid={parent} cmd={command}", entry.pid)
+                format!("pid={} ppid={parent}", entry.pid)
             })
             .collect()
     }
     #[cfg(not(windows))]
     {
-        let _ = app_handle;
+        let _ = core_dir;
         Vec::new()
     }
 }

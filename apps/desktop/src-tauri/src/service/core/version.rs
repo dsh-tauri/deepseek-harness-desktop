@@ -537,25 +537,22 @@ async fn rename_active_with_resweep(
     active_dir: &Path,
     backup_dir: &Path,
 ) -> Result<(), std::io::Error> {
-    const ROUNDS: u32 = 3;
-    let mut round = 1;
-    loop {
-        match download::rename_with_retry(active_dir, backup_dir).await {
-            Err(e) if round < ROUNDS => {
-                log::warn!("core dir still locked (round {round}/{ROUNDS}), sweeping again: {e}");
-                let handle = app_handle.clone();
-                let profile = crate::service::profile::active_profile(app_handle);
-                let _ = tauri::async_runtime::spawn_blocking(move || {
-                    workflow::instances::scope_sync(profile, || {
-                        workflow::terminate_stale_harness_processes(&handle)
-                    })
-                })
-                .await;
-                round += 1;
-            }
-            result => return result,
-        }
+    const SWEEP_ROUNDS: u32 = 2;
+    for round in 1..=SWEEP_ROUNDS {
+        let Err(e) = std::fs::rename(active_dir, backup_dir) else {
+            return Ok(());
+        };
+        log::warn!("core dir locked (round {round}/{SWEEP_ROUNDS}), sweeping again: {e}");
+        let handle = app_handle.clone();
+        let profile = crate::service::profile::active_profile(app_handle);
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            workflow::instances::scope_sync(profile, || {
+                workflow::terminate_stale_harness_processes(&handle)
+            })
+        })
+        .await;
     }
+    download::rename_with_retry(active_dir, backup_dir).await
 }
 
 async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), String> {
@@ -671,7 +668,7 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
             if holding.exists() {
                 let _ = download::rename_with_retry(&holding, &backup_dir).await;
             }
-            let holders = workflow::core_dir_holders(app_handle);
+            let holders = workflow::core_dir_holders(&active_dir);
             log::error!("CORE_SWITCH_HOLDERS: {holders:?}");
             let holders = if holders.is_empty() {
                 "none found".to_string()
