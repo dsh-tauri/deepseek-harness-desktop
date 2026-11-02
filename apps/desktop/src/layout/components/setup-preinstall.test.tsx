@@ -90,7 +90,7 @@ afterEach(() => {
 
 describe('preinstall 推荐卡片的中转标记', () => {
   it('未安装的 dsh-neartoken 并排显示橙色「中转」与绿色「推荐」', () => {
-    preinstall.plugins = [plugin({ id: 'dsh-neartoken', name: 'DSH NearToken', defaultUnchecked: true })]
+    preinstall.plugins = [plugin({ id: 'dsh-neartoken', name: 'DSH NearToken' })]
     render(<PreinstallSetup />)
     const transfer = chipOf('preinstall.transfer')
     const recommend = chipOf('preinstall.recommend')
@@ -106,13 +106,13 @@ describe('preinstall 推荐卡片的中转标记', () => {
     expect(screen.queryByText('preinstall.transfer')).toBeNull()
   })
 
-  it('「中转」项默认不勾选，同屏其他推荐项默认勾选', () => {
+  it('「中转」项默认勾选，与同屏其他推荐项一致', () => {
     preinstall.plugins = [
-      plugin({ id: 'dsh-neartoken', name: 'DSH NearToken', defaultUnchecked: true }),
+      plugin({ id: 'dsh-neartoken', name: 'DSH NearToken' }),
       plugin(),
     ]
     render(<PreinstallSetup />)
-    expect(screen.getByRole('switch', { name: 'DSH NearToken' }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByRole('switch', { name: 'DSH NearToken' }).getAttribute('aria-checked')).toBe('true')
     expect(screen.getByRole('switch', { name: 'DSH Better Sidebar' }).getAttribute('aria-checked')).toBe('true')
   })
 })

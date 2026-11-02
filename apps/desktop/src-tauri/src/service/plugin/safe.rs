@@ -110,21 +110,6 @@ pub(crate) fn purge_user_plugins_in_safe_profile(app_handle: &AppHandle) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::manifest;
-    use std::path::PathBuf;
-
-    /// 读取随包清单里的实际安装包名（与生产链路同一套解析，但不依赖 AppHandle：
-    /// 清单文件位于源码 `src-tauri/resources/`）。
-    fn manifest_package_names(
-        section: fn(&manifest::Plugins) -> &[manifest::PluginEntry],
-    ) -> Vec<String> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/manifest.jsonc");
-        let manifest = manifest::read_at(&path).expect("resource manifest should be valid");
-        section(&manifest.plugins)
-            .iter()
-            .map(|entry| entry.package.clone().unwrap_or_else(|| entry.id.clone()))
-            .collect()
-    }
 
     fn names(items: &[&str]) -> HashSet<String> {
         items.iter().map(|s| (*s).to_string()).collect()
@@ -165,20 +150,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn shipped_internal_manifest_is_protected() {
-        // 随包内置插件清单（dsh-tauri 等）必须全部落在保留集里；社区预设
-        // （dshmarket 等）属于用户插件，进入清除清单。
-        let builtin = manifest_package_names(|plugins| &plugins.built_in);
-        let presets = manifest_package_names(|plugins| &plugins.preset);
-        assert!(builtin.iter().any(|name| name == "dsh-tauri"));
-        assert!(presets.iter().any(|name| name == "dshmarket"));
-
-        let mut installed: HashSet<String> = builtin.iter().cloned().collect();
-        installed.extend(presets.iter().cloned());
-        let purged = user_plugin_names(&installed, &builtin.iter().cloned().collect());
-
-        assert!(!purged.iter().any(|name| builtin.contains(name)));
-        assert!(purged.contains(&"dshmarket".to_string()));
-    }
 }

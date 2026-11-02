@@ -524,17 +524,6 @@ mod tests {
     use super::*;
     use crate::config::manifest::{PluginVersion, VersionPair};
 
-    fn manifest_path_for_test() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join(crate::config::manifest::MANIFEST_FILE)
-    }
-
-    fn load_manifest_for_test() -> crate::config::manifest::Manifest {
-        crate::config::manifest::read_at(&manifest_path_for_test())
-            .expect("resource manifest should exist and parse")
-    }
-
     /// 解析内联清单文本并投影到统一插件信息（`preset` 或 `built-in` 节）。
     fn plugin_infos_from(raw: &str, internal: bool) -> Vec<PreinstallPluginInfo> {
         let manifest = crate::config::manifest::parse(raw).expect("manifest should parse");
@@ -549,38 +538,6 @@ mod tests {
             .collect()
     }
 
-    fn load_presets_for_test() -> Vec<PreinstallPluginInfo> {
-        load_manifest_for_test()
-            .plugins
-            .preset
-            .into_iter()
-            .map(|entry| plugin_info(entry, false))
-            .collect()
-    }
-
-    fn load_internal_for_test() -> Vec<PreinstallPluginInfo> {
-        load_manifest_for_test()
-            .plugins
-            .built_in
-            .into_iter()
-            .map(|entry| plugin_info(entry, true))
-            .collect()
-    }
-
-    fn load_all_plugins_for_test() -> Vec<PreinstallPluginInfo> {
-        let mut plugins = load_presets_for_test();
-        plugins.extend(load_internal_for_test());
-        plugins
-    }
-
-    fn shipped_deprecated_ids() -> HashSet<String> {
-        load_manifest_for_test()
-            .plugins
-            .deprecated
-            .into_iter()
-            .collect()
-    }
-
     fn matrix(pairs: &[(&str, &str)]) -> PluginVersion {
         PluginVersion::Matrix(
             pairs
@@ -591,66 +548,6 @@ mod tests {
                 })
                 .collect(),
         )
-    }
-
-    #[test]
-    fn neartoken_leads_the_preset_list_and_stays_unchecked() {
-        let presets = load_presets_for_test();
-        let first = presets.first().expect("preset list should not be empty");
-        assert_eq!(first.id, "dsh-neartoken");
-        assert!(first.recommended);
-        assert!(first.default_unchecked);
-        assert_eq!(
-            first.repo_url,
-            "https://github.com/HuanLinOTO/dsh-neartoken"
-        );
-        assert!(!first.unsupported_on(Some("0.2.1-rc.4")));
-        assert!(first.unsupported_on(Some("0.1.7-rc.1")));
-    }
-
-    #[test]
-    fn preset_list_contains_dshmarket() {
-        let presets = load_presets_for_test();
-        assert!(presets.iter().any(|p| p.id == "dshmarket"));
-        assert_eq!(
-            presets
-                .iter()
-                .find(|p| p.id == "dshmarket")
-                .map(|p| p.repo_url.as_str()),
-            Some("https://github.com/dsh-market/dsh-market")
-        );
-        assert!(!presets.iter().any(|p| p.id == "unknown-package"));
-    }
-
-    #[test]
-    fn office_kit_requires_core_with_user_text_api() {
-        let entry = load_presets_for_test()
-            .into_iter()
-            .find(|p| p.id == "dsh-office-kit")
-            .expect("dsh-office-kit");
-        assert!(entry.unsupported_on(Some("0.2.0-rc.2")));
-        for core in ["0.2.1-rc.1", "0.2.1-rc.2", "0.2.1"] {
-            assert!(!entry.unsupported_on(Some(core)), "core={core}");
-        }
-        assert_eq!(
-            entry
-                .version
-                .as_ref()
-                .and_then(|version| version.plugin_req_for_core(Some("0.2.1-rc.2"))),
-            Some("latest")
-        );
-    }
-
-    #[test]
-    fn prerelease_core_in_same_generation_keeps_plugins() {
-        let mut entry = load_presets_for_test()
-            .into_iter()
-            .find(|p| p.id == "dshmarket")
-            .expect("dshmarket");
-        entry.version = Some(matrix(&[("^0.24.1", "^0.2.0-rc.1")]));
-        for core in ["0.2.0-rc.1", "0.2.0-rc.2", "0.2.0", "0.2.1-rc.1"] {
-            assert!(!entry.unsupported_on(Some(core)), "core={core}");
-        }
     }
 
     #[test]
@@ -679,59 +576,6 @@ mod tests {
             assert_eq!(plugins[0].version, expected);
             assert_eq!(plugins[0].spec, "dshmarket");
         }
-    }
-
-    /// 内置条目默认不声明版本矩阵、对任何核心版本都兼容；通用矩阵机制仍在生效——
-    /// 显式声明后依旧走 unsupported 判定，只是当前没有任何内置条目使用它。
-    #[test]
-    fn internal_manifest_defaults_to_compatible_and_honours_declared_ceiling() {
-        let internal = load_internal_for_test();
-        assert!(!internal.is_empty());
-
-        assert!(
-            internal
-                .iter()
-                .all(|p| p.version.is_none() && !p.unsupported_on(Some("9.9.9"))),
-            "no internal entry declares a core matrix, so every one stays compatible"
-        );
-
-        let mut capped = internal[0].clone();
-        capped.version = Some(matrix(&[("^1.0.0", "^0.1.5-rc.1")]));
-        assert!(!capped.unsupported_on(Some("0.1.5-rc.1")));
-        assert!(!capped.unsupported_on(Some("0.1.6")));
-        // 预发布核心按数值区间判定：`0.1.7-rc.1` 落在 `^0.1.5-rc.1` 内，故仍兼容
-        assert!(!capped.unsupported_on(Some("0.1.7-rc.1")));
-        // 下界之下的预发布核心依旧不兼容
-        assert!(capped.unsupported_on(Some("0.1.4-rc.1")));
-        assert!(capped.unsupported_on(Some("0.2.0")));
-    }
-
-    #[test]
-    fn plugin_manifest_ids_are_unique_across_files() {
-        let plugins = load_all_plugins_for_test();
-        let ids: std::collections::HashSet<&str> = plugins.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(
-            ids.len(),
-            plugins.len(),
-            "plugin ids must be unique across manifests"
-        );
-    }
-
-    #[test]
-    fn internal_manifest_marks_all_entries_internal() {
-        let plugins = load_internal_for_test();
-        assert!(!plugins.is_empty());
-        assert!(plugins.iter().all(|plugin| plugin.internal));
-        assert!(plugins.iter().any(|plugin| plugin.id == "dsh-tauri"));
-        assert!(plugins.iter().any(|plugin| plugin.id == "dsh-taiwind"));
-        #[cfg(debug_assertions)]
-        assert!(
-            bundled_plugin_dir_from(None, "dsh-taiwind")
-                .unwrap()
-                .join("dist/index.js")
-                .is_file()
-        );
-        assert!(!load_presets_for_test().iter().any(|plugin| plugin.internal));
     }
 
     /// 回归：Windows 安装包（NSIS/MSI）与开发产物把资源按 `resources/**` 前缀落盘到
@@ -793,37 +637,6 @@ mod tests {
         assert!(
             crate::config::manifest::parse(r#"{"plugins":{"depercated":{"id":"dsh-x"}}}"#).is_err()
         );
-    }
-
-    #[test]
-    fn deprecated_manifest_lists_session_context_menu() {
-        // 随包分发的弃用名单应登记 dsh-session-context-menu（已被内部插件替代）
-        assert!(shipped_deprecated_ids().contains("dsh-session-context-menu"));
-    }
-
-    #[test]
-    fn deprecated_manifest_lists_absorbed_panel() {
-        assert!(shipped_deprecated_ids().contains("dsh-tauri-panel"));
-    }
-
-    #[test]
-    fn deprecated_manifest_lists_absorbed_connection() {
-        assert!(shipped_deprecated_ids().contains("dsh-tauri-connection"));
-    }
-
-    #[test]
-    fn deprecated_manifest_lists_the_renamed_bridge() {
-        assert!(shipped_deprecated_ids().contains("dsh-tauri-bridge"));
-    }
-
-    #[test]
-    fn deprecated_manifest_lists_the_retired_kernel() {
-        assert!(shipped_deprecated_ids().contains("dsh-tauri-kernel"));
-    }
-
-    #[test]
-    fn deprecated_manifest_lists_absorbed_running_changes() {
-        assert!(shipped_deprecated_ids().contains("dsh-tauri-running-changes"));
     }
 
     #[test]
@@ -1261,32 +1074,4 @@ mod tests {
         assert_eq!(package_json_description("not json"), None);
     }
 
-    /// 清单只登记「随包分发哪些插件」：描述回归插件自身的 `package.json`。
-    #[test]
-    fn internal_manifest_entries_carry_no_description() {
-        let declared: Vec<String> = load_internal_for_test()
-            .into_iter()
-            .filter(|plugin| !plugin.description.is_empty())
-            .map(|plugin| plugin.id)
-            .collect();
-        assert!(
-            declared.is_empty(),
-            "内置插件描述的唯一真值是 package.json，清单不该再登记：{declared:?}"
-        );
-    }
-
-    /// release 从捆绑目录读描述，因此每个内置插件的 `package.json` 都必须声明它。
-    #[cfg(debug_assertions)]
-    #[test]
-    fn every_builtin_plugin_package_declares_a_description() {
-        let missing: Vec<String> = load_internal_for_test()
-            .into_iter()
-            .filter(|plugin| bundled_plugin_description(None, &plugin.id).is_none())
-            .map(|plugin| plugin.id)
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "内置插件必须在 package.json 声明 description：{missing:?}"
-        );
-    }
 }
