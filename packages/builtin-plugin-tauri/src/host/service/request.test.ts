@@ -1,4 +1,4 @@
-import type { IncomingMessage, Server } from 'node:http'
+import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { H3 } from 'h3'
@@ -29,6 +29,14 @@ beforeEach(async () => {
     admit(request: IncomingMessage): { rejection: 401 | 403 } | { peer: { signal: AbortSignal } } {
       return { rejection: request.method === 'POST' ? 401 : request.headers.origin === 'https://untrusted.example' ? 403 : 401 }
     },
+    authorizeIndex(request: IncomingMessage, response: ServerResponse): boolean {
+      const token = new URL(request.url ?? '/', 'http://dsh.invalid').searchParams.get('token')
+      if (token !== 'launch-token')
+        return true
+      response.writeHead(303, { 'location': './', 'set-cookie': 'dsh-auth-test=session; Path=/; HttpOnly; SameSite=Strict' })
+      response.end()
+      return false
+    },
     requestRejection(request: IncomingMessage): 401 | 403 | undefined {
       const admission = this.admit(request)
       return 'rejection' in admission ? admission.rejection : undefined
@@ -42,6 +50,13 @@ beforeEach(async () => {
   app.use(guard)
   app.get('/api/known', () => 'authorized route')
   app.post('/api/mutation', () => 'mutation route')
+  app.get('/', (event) => {
+    const req = event.runtime?.node?.req as IncomingMessage
+    const res = event.runtime?.node?.res as ServerResponse
+    if (!connection.authorizeIndex(req, res))
+      return
+    return 'index route'
+  })
   listener = createServer(toNodeHandler(app))
   const listening = once(listener, 'listening')
   listener.listen(0, '127.0.0.1')
@@ -128,5 +143,27 @@ describe('desktop carrier request authorization', () => {
     enableEmbedded()
     const embedded = await fetch(`${origin}/api/missing`)
     expect(embedded.status, '嵌入绕过鉴权后未挂载路径必须返回 404').toBe(404)
+  })
+
+  it('delegates a launch-token index request so the kernel can mint a session cookie', async () => {
+    enableEmbedded()
+    const response = await fetch(`${origin}/?token=launch-token`, { redirect: 'manual' })
+    expect(response.status, '带 token 的 index 请求必须交回内核换取会话 Cookie').toBe(303)
+    expect(response.headers.get('set-cookie'), '内核的 303 必须带上会话 Cookie').toContain('dsh-auth-test=session')
+    expect(response.headers.get('location'), '内核按目录相对路径跳转').toBe('./')
+  })
+
+  it('keeps the embedded bypass for an index request without a launch token', async () => {
+    enableEmbedded()
+    const response = await fetch(`${origin}/`)
+    expect(response.status, '无 token 的 index 请求仍按内嵌载体放行').toBe(200)
+    expect(await response.text(), '放行后直接返回页面').toBe('index route')
+  })
+
+  it('ignores a launch token outside the root path', async () => {
+    enableEmbedded()
+    const response = await fetch(`${origin}/api/known?token=launch-token`)
+    expect(response.status, 'token 只在根路径上触发交换').toBe(200)
+    expect(await response.text(), '非根路径不进入内核交换').toBe('authorized route')
   })
 })

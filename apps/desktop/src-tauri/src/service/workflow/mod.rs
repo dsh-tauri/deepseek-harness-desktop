@@ -19,6 +19,7 @@ pub(crate) mod win_inspector;
 #[cfg(windows)]
 pub(crate) mod win_spawn;
 
+pub(crate) mod auth;
 pub(crate) mod early;
 #[cfg(any(windows, test))]
 mod early_plan;
