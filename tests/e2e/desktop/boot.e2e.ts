@@ -64,6 +64,24 @@ describe('desktop boot and profile lifecycle', () => {
     expect(await pageErrors(shell.window.page), '启动过程不应产生页面异常').toEqual([])
   })
 
+  it('exposes the host path bridge to the Harness page', async () => {
+    const shell = app.get()
+    const health = await waitHealthy(shell.window.page)
+    const origin = new URL(health.service_url).origin
+    let harness: Page | undefined
+    await expect.poll(() => {
+      harness = shell.browser.contexts().flatMap(context => context.pages()).find(page => page.url().startsWith(`${origin}/`))
+      return Boolean(harness)
+    }, { timeout: WINDOW_TIMEOUT_MS, message: '健康服务必须对应真实的 Harness 页面' }).toBe(true)
+    const page = harness!
+    await expect.poll(() => page.evaluate(() => document.readyState), { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 页面必须完成加载' }).toBe('complete')
+    expect(await page.evaluate(() => typeof (globalThis as { __DSH_HOST_PATHS__?: { pathFor: (file: File) => string } }).__DSH_HOST_PATHS__?.pathFor)).toBe('function')
+    expect(await page.evaluate(() => {
+      const bridge = (globalThis as { __DSH_HOST_PATHS__?: { pathFor: (file: File) => string } }).__DSH_HOST_PATHS__
+      return bridge === undefined ? 'missing' : bridge.pathFor(new File([], 'synthetic.txt'))
+    }), '无宿主路径的文件必须回落为空串，而不是抛错').toBe('')
+  })
+
   it.runIf(process.platform !== 'darwin')('preserves the native Harness backdrop for Windows/Linux shell popovers without reloading', async () => {
     const shell = app.get()
     const main = shell.window.page

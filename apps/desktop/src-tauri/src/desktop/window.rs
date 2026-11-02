@@ -276,7 +276,8 @@ pub async fn prepare_harness_webview(
 ) -> Result<String, String> {
     require_shell(&webview)?;
     let url = harness_guest_url(&url)?;
-    if !webview.label().starts_with("remote-") {
+    let remote = webview.label().starts_with("remote-");
+    if !remote {
         let profile =
             crate::service::workflow::instances::window_profile(&app, webview.window().label());
         let port = crate::service::workflow::instances::scope_sync(profile, || {
@@ -314,14 +315,22 @@ pub async fn prepare_harness_webview(
     let capability = harness_capability(&label, &url)?;
     app.add_capability(capability.to_string())
         .map_err(|error| error.to_string())?;
-    let guest = tauri_runtime_electron::with_browser_host(&label, || {
-        webview.window().add_child(
+    // keep:effect 宿主路径只有 preload 隔离世界里的 webUtils 读得到，而远程 Harness
+    // 读不到本机路径，所以桥只注入本地 guest，远程拖入回落成上传（issue #1325）。
+    let setup = tauri_runtime_electron::WebviewSetup::new(&label).browser_host();
+    let _setup = if remote {
+        setup
+    } else {
+        setup.preload_script(include_str!("host-paths.preload.cjs"))
+    };
+    let guest = webview
+        .window()
+        .add_child(
             builder,
             tauri::LogicalPosition::new(-1., -1.),
             tauri::LogicalSize::new(1., 1.),
         )
-    })
-    .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?;
     if let Err(error) = guest.hide() {
         let _ = guest.close();
         return Err(error.to_string());
