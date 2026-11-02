@@ -6,7 +6,7 @@ export type GetApiTauriModelEndpointModelsQueryProfilePath = undefined | string
 export type GetApiTauriModelEndpointModelsQueryBaseURL = undefined | string
 export type GetApiTauriModelEndpointModelsQueryApiKey = undefined | string
 export type GetApiTauriModelEndpointModelsQueryHeaders = undefined | string
-export interface GetApiTauriModelPresetsResponse { ok?: undefined | false | true, source?: undefined | string, fetchedAt?: undefined | string, stale?: undefined | false | true, count?: undefined | number, presets?: undefined | { [key: string]: number[] }, error?: undefined | string }
+export interface GetApiTauriModelPresetsResponse { ok?: undefined | false | true, source?: undefined | string, fetchedAt?: undefined | string, stale?: undefined | false | true, count?: undefined | number, presets?: undefined | Record<string, unknown>, error?: undefined | string }
 export type GetApiTauriModelPresetsQueryForce = undefined | string
 
 export interface PostApiTauriModelConfigOpenQuery {

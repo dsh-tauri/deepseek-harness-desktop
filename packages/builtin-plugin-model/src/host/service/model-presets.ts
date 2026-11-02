@@ -1,9 +1,7 @@
-import type { PresetRow, PresetTable } from '../../shared/model-presets'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import type { PiAiBuiltinModel } from '@earendil-works/pi-ai/providers/all'
+import type { ModelCapabilityPreset, PresetTable } from '../../shared/model-presets'
 import { defineService } from 'dsh-tauri'
-import { buildPresetTable, PRESET_CACHE_TTL_MS, PRESET_SOURCE_URL } from '../../shared/model-presets'
-import { resolvePresetCachePath } from '../utils/paths'
+import { PRESET_CATALOG_VERSION } from '../../shared/model-presets'
 
 export interface PresetTablePayload {
   source: string
@@ -15,96 +13,121 @@ export type PresetResolveResult
   = | (PresetTablePayload & { ok: true, stale: boolean })
     | { ok: false, error: string }
 
-const FETCH_TIMEOUT_MS = 20_000
+const EXTENDED_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
-interface CachedPayload {
-  source: string
-  fetchedAt: string
-  presets: PresetTable
+type PiAiModel = PiAiBuiltinModel
+
+interface PiAiModule {
+  getBuiltinProviders: () => string[]
+  getBuiltinModels: (provider: string) => PiAiModel[]
+  getSupportedThinkingLevels?: (model: PiAiModel) => string[]
 }
 
-let memory: CachedPayload | undefined
-
-function isPresetRow(value: unknown): value is PresetRow {
-  return Array.isArray(value)
-    && value.length === 4
-    && value.every(fact => typeof fact === 'number' && Number.isFinite(fact))
-}
-
-function readPayload(input: unknown): CachedPayload | undefined {
-  if (input === null || typeof input !== 'object')
-    return undefined
-  const candidate = input as Partial<CachedPayload>
-  if (typeof candidate.source !== 'string' || typeof candidate.fetchedAt !== 'string')
-    return undefined
-  if (candidate.presets === null || typeof candidate.presets !== 'object')
-    return undefined
-  const presets: PresetTable = {}
-  for (const [key, row] of Object.entries(candidate.presets)) {
-    if (isPresetRow(row))
-      presets[key] = row
-  }
-  if (Object.keys(presets).length === 0)
-    return undefined
-  return { source: candidate.source, fetchedAt: candidate.fetchedAt, presets }
-}
-
-function readDiskPayload(): CachedPayload | undefined {
+async function resolvePiAiModule(): Promise<PiAiModule | undefined> {
   try {
-    return readPayload(JSON.parse(readFileSync(resolvePresetCachePath(), 'utf8')))
+    const all = await import('@earendil-works/pi-ai/providers/all')
+    let getSupportedThinkingLevels: ((model: PiAiModel) => string[]) | undefined
+    try {
+      const models = await import('@earendil-works/pi-ai/models')
+      getSupportedThinkingLevels = models.getSupportedThinkingLevels
+    }
+    catch {
+    }
+    return {
+      getBuiltinProviders: all.getBuiltinProviders,
+      getBuiltinModels: all.getBuiltinModels,
+      getSupportedThinkingLevels,
+    }
   }
   catch {
     return undefined
   }
 }
 
-function writeDiskPayload(payload: CachedPayload): void {
-  const path = resolvePresetCachePath()
-  try {
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, JSON.stringify(payload))
-  }
-  catch {
-  }
-}
-
-function isFresh(payload: CachedPayload): boolean {
-  const fetchedAt = Date.parse(payload.fetchedAt)
-  return Number.isFinite(fetchedAt) && Date.now() - fetchedAt < PRESET_CACHE_TTL_MS
-}
-
-async function download(): Promise<CachedPayload> {
-  const response = await fetch(PRESET_SOURCE_URL, {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+function getLevels(model: PiAiModel, helper?: (m: PiAiModel) => string[]): string[] {
+  if (helper !== undefined)
+    return helper(model)
+  if (!model.reasoning)
+    return ['off']
+  return EXTENDED_LEVELS.filter((level) => {
+    const mapped = model.thinkingLevelMap?.[level]
+    if (mapped === null)
+      return false
+    if (level === 'xhigh' || level === 'max')
+      return mapped !== undefined
+    return true
   })
-  if (!response.ok)
-    throw new Error(`${PRESET_SOURCE_URL} answered ${response.status}`)
-  const presets = buildPresetTable(await response.json())
-  if (Object.keys(presets).length === 0)
-    throw new Error(`${PRESET_SOURCE_URL} carried no chat models`)
-  return { source: PRESET_SOURCE_URL, fetchedAt: new Date().toISOString(), presets }
 }
+
+function normalizeEfforts(model: PiAiModel, helper?: (m: PiAiModel) => string[]): Record<string, string | null> | false {
+  if (model.reasoning !== true)
+    return false
+  const levels = getLevels(model, helper)
+  const efforts: Record<string, string | null> = {}
+  for (const level of levels) {
+    if (level === 'off')
+      efforts.off = model.thinkingLevelMap?.off ?? null
+    else
+      efforts[level] = model.thinkingLevelMap?.[level] ?? level
+  }
+  return Object.keys(efforts).length === 0 ? false : efforts
+}
+
+function buildTableFromPiAi(piAi: PiAiModule): PresetTable {
+  const table: PresetTable = {}
+  const bareCandidates = new Map<string, { preset: ModelCapabilityPreset, conflict: boolean }>()
+
+  for (const provider of piAi.getBuiltinProviders()) {
+    for (const model of piAi.getBuiltinModels(provider)) {
+      const preset: ModelCapabilityPreset = {
+        provider: model.provider ?? provider,
+        id: model.id,
+        api: model.api,
+        input: model.input !== undefined && model.input.length > 0 ? [...model.input] : ['text'],
+        reasoning: model.reasoning === true,
+        reasoningEfforts: normalizeEfforts(model, piAi.getSupportedThinkingLevels),
+        ...model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {},
+        ...model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {},
+      }
+      const rawId = model.id.toLowerCase()
+      const withProvider = `${provider.toLowerCase()}/${rawId}`
+      table[withProvider] = preset
+
+      const slash = rawId.lastIndexOf('/')
+      const bare = slash >= 0 ? rawId.slice(slash + 1) : rawId
+      const existing = bareCandidates.get(bare)
+      if (existing === undefined) {
+        bareCandidates.set(bare, { preset, conflict: false })
+      }
+      else if (existing.preset.provider !== preset.provider || existing.preset.id !== preset.id) {
+        existing.conflict = true
+      }
+    }
+  }
+
+  for (const [bare, entry] of bareCandidates.entries()) {
+    if (!entry.conflict)
+      table[bare] = entry.preset
+  }
+
+  return table
+}
+
+let cached: PresetTablePayload | undefined
 
 export const modelPresets = defineService({
-  async resolve(force = false): Promise<PresetResolveResult> {
-    const cached = memory ?? readDiskPayload()
+  async resolve(_force = false): Promise<PresetResolveResult> {
     if (cached !== undefined)
-      memory = cached
-    if (!force && cached !== undefined && isFresh(cached))
       return { ok: true, ...cached, stale: false }
-    try {
-      const fresh = await download()
-      memory = fresh
-      writeDiskPayload(fresh)
-      return { ok: true, ...fresh, stale: false }
+    const piAi = await resolvePiAiModule()
+    if (piAi === undefined)
+      return { ok: false, error: 'could not resolve pi-ai builtin models' }
+    const presets = buildTableFromPiAi(piAi)
+    cached = {
+      source: PRESET_CATALOG_VERSION,
+      fetchedAt: new Date().toISOString(),
+      presets,
     }
-    catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (cached !== undefined)
-        return { ok: true, ...cached, stale: true }
-      return { ok: false, error: message }
-    }
+    return { ok: true, ...cached, stale: false }
   },
 })

@@ -96,7 +96,7 @@ function verifyMaterialized(root: string): void {
  * （见 docs/specs/desktop.baisc.md「host 禁止静态引用 @deepseek-ai/*」）。整段排除即可，
  * 不必逐个删——它们只被 @deepseek-ai 自身互相引用。
  */
-const RUNTIME_PROVIDED_SCOPES = ['@deepseek-ai'] as const
+const RUNTIME_PROVIDED_SCOPES = ['@deepseek-ai', '@earendil-works'] as const
 
 /** 确认为死枝的嵌套子树：插件只走 `unstorage` 主入口，`server` 子路径与它依赖的 h3 v1 无人引用。 */
 const DEAD_SUBTREES = [join('unstorage', 'node_modules', 'h3')] as const

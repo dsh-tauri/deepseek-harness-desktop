@@ -1,9 +1,11 @@
 allowBuilds:
+  '@google/genai': false
   '@tailwindcss/oxide': true
   cpu-features: false
   edgedriver: false
   esbuild: true
   geckodriver: false
+  protobufjs: false
   ssh2: false
 
 catalogMode: prefer

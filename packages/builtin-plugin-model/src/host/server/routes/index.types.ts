@@ -1,3 +1,5 @@
+import type { ModelCapabilityPreset } from '../../../shared/model-presets'
+
 export interface EndpointModelCard {
   id: string
   name?: string
@@ -37,6 +39,6 @@ export interface PresetsResponse {
   fetchedAt?: string
   stale?: boolean
   count?: number
-  presets?: Record<string, readonly number[]>
+  presets?: Record<string, ModelCapabilityPreset>
   error?: string
 }
