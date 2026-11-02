@@ -280,13 +280,24 @@ pub async fn prepare_harness_webview(
     if !remote {
         let profile =
             crate::service::workflow::instances::window_profile(&app, webview.window().label());
-        let port = crate::service::workflow::instances::scope_sync(profile, || {
+        let port = crate::service::workflow::instances::scope_sync(profile.clone(), || {
             crate::service::workflow::instances::port(&app)
         });
         let expected =
             Url::parse(&config::get_dsh_service_url(port)).map_err(|error| error.to_string())?;
         if url.origin() != expected.origin() {
             return Err("HARNESS_WEBVIEW_ORIGIN_MISMATCH".into());
+        }
+        // 会话 Cookie 必须在子 WebView 创建前种下：子页面与壳共享同一份 Cookie
+        // 库，先种后加载才能让首帧请求（以及插件自建路由）就带凭证。
+        let log_path = config::service_log_path_from(&config::get_base_dir(&app), Some(&profile));
+        match crate::service::workflow::auth::session_cookie(port, &log_path).await {
+            Ok(cookie) => {
+                if let Err(error) = crate::service::workflow::auth::inject(&webview, cookie) {
+                    log::warn!("[Webview] {error}");
+                }
+            }
+            Err(error) => log::warn!("[Webview] session cookie unavailable: {error}"),
         }
     }
     static NEXT_GUEST: AtomicU64 = AtomicU64::new(1);

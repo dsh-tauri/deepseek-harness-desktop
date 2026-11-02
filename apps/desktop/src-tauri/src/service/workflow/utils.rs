@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::utils::decode_process_line;
 
 const DSH_MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
-const DSH_MAX_BACKUPS: usize = 3;
+pub(super) const DSH_MAX_BACKUPS: usize = 3;
 static DSH_LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 fn dsh_log_lock() -> &'static Mutex<()> {
     DSH_LOG_LOCK.get_or_init(|| Mutex::new(()))
@@ -345,7 +345,7 @@ pub(super) fn append_log(log_path: &PathBuf, line: &str) {
 }
 
 /// 轮转日志文件名：`dsh-web.log`（index 0）、`dsh-web.log.1`、`dsh-web.log.2`……
-fn indexed_log_path(log_path: &Path, index: usize) -> PathBuf {
+pub(super) fn indexed_log_path(log_path: &Path, index: usize) -> PathBuf {
     if index == 0 {
         return log_path.to_path_buf();
     }
