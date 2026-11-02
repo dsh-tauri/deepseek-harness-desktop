@@ -31,8 +31,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # macOS 用 Apple Silicon runner（macos-latest）交叉编译 x64，
-  # 与 release 的可复用构建（build-macos.yml 的矩阵）保持一致。
+  # 与 release 的可复用构建（build-macos.yml）保持一致：架构与 runner 必须同构，
+  # 否则 `pnpm install` 会漏装另一架构的原生可选依赖（issue #1326）。
   macos:
     name: Build (macos-${{ matrix.id }})
     if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
@@ -42,9 +42,11 @@ jobs:
         include:
           - id: aarch64
             target: aarch64-apple-darwin
+            runner: macos-26
           - id: x86_64
             target: x86_64-apple-darwin
-    runs-on: macos-latest
+            runner: macos-26-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - name: Checkout repository

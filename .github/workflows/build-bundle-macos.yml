@@ -35,6 +35,7 @@ permissions:
 jobs:
   build:
     name: Build offline bundle (${{ matrix.id }})
+    # 同 build-macos.yml：架构必须与 runner 一致，否则原生可选依赖会漏装（issue #1326）。
     strategy:
       fail-fast: false
       matrix:
@@ -42,10 +43,12 @@ jobs:
           - id: macos-aarch64
             target: aarch64-apple-darwin
             arch: arm64
+            runner: macos-26
           - id: macos-x86_64
             target: x86_64-apple-darwin
             arch: x64
-    runs-on: macos-latest
+            runner: macos-26-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     steps:
       - name: Filter target architecture
@@ -154,6 +157,16 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
+          # 原生可选依赖按宿主平台落盘，交叉编译会漏掉目标架构那一份（issue #1326）。
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) oxide=oxide-darwin-arm64 ;;
+            *) oxide=oxide-darwin-x64 ;;
+          esac
+          binding="$(find "$app_path/Contents/Resources/resources/node_modules/@tailwindcss/$oxide" -name '*.node' -print -quit)"
+          if [ -z "$binding" ]; then
+            echo "::error::@tailwindcss/$oxide is missing for ${{ matrix.target }}; the app cannot load its native binding"
+            exit 1
+          fi
 
       # 已知限制：.app 若被拖进 /Applications 且不属于当前用户（或来自下载的只读卷），
       # 随包 dsh 内核同样不可写，桌面端启动时的插件入口链接会失败。用户目录自持的
