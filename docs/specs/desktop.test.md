@@ -27,7 +27,7 @@
 | 维度 | 规范与约定 |
 | --- | --- |
 | **车道入口** | `tests/e2e/setup/shell.ts`。用例自行调用 `startShellApp()` / `shellAppScope()` 启动实例，`fileParallelism: false` 保证串行。 |
-| **运行平台** | Windows / macOS / Linux 三平台（CI 矩阵 `windows-latest`、`macos-15`、`ubuntu-22.04`，Linux 下强制 `xvfb-run`）。 |
+| **运行平台** | Windows / macOS / Linux 三平台，按发布矩阵逐架构覆盖（`windows-latest` x64、`macos-26` arm64、`macos-26-intel` x64、`ubuntu-22.04` x64、`ubuntu-22.04-arm` arm64，Linux 下强制 `xvfb-run`）。CI 会校验 `runner.arch` 与矩阵声明一致，标签写错直接失败。 |
 | **构建产物** | 先构建 renderer (`pnpm --filter dsh-desktop build`) 再构建 Cargo。按调试二进制路径顺序探测，测试中不重新构建。 |
 | **前端 fallback** | `dist/` 缺失时回退 `devUrl` (`http://localhost:1420`)。 |
 | **端口策略** | **CDP 端口**：`freePort()` 动态获取，通过 `TAURI_RUNTIME_ELECTRON_ARGS=--remote-debugging-port` 注入（严禁硬编码）；**服务端口**自动递增。 |
@@ -94,7 +94,7 @@ vitest run --project desktop apps/desktop/tests/e2e/<域>/<用例>.e2e.ts
 
 ### CI 流程
 
-* **流水线**：`.github/workflows/ci.yml`（矩阵：`windows-latest` / `macos-15` / `ubuntu-22.04`）。
+* **流水线**：`.github/workflows/ci.yml`（与发布矩阵同构，每个架构各跑一次；见 §2 运行平台）。
 * **排查路径**：dsh 服务日志位于 `<DSH_DOWNLOAD_CACHE_DIR>/logs/dsh-web.dev.log`。
 
 ---
