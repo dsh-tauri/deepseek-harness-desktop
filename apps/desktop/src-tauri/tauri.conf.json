@@ -22,6 +22,12 @@
           "dsh"
         ]
       }
+    },
+    "notifications": {
+      "windows": {
+        "toastActivatorClsid": "4FBB68DF-E119-4FBB-82D5-FA10F85B519B",
+        "iconPath": "icons/32x32.png"
+      }
     }
   },
   "bundle": {
@@ -37,7 +43,8 @@
     ],
     "resources": {
       "target/electron": "runtime",
-      "resources": "resources"
+      "resources": "resources",
+      "icons/32x32.png": "icons/32x32.png"
     },
     "licenseFile": "licenses/INSTALLER-LICENSE.txt",
     "category": "DeveloperTool",
