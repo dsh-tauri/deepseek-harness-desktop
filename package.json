@@ -20,7 +20,7 @@
     "build:ios": "pnpm --filter dsh-native build:ios",
     "prebuild:native": "pnpm --filter dsh-native prebuild",
     "prebuild:ios": "pnpm --filter dsh-native prebuild:ios",
-    "preinstall": "git submodule update --init",
+    "preinstall": "git submodule update --init & pnpx skills experimental_install",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:e2e:desktop": "vitest run --project desktop",

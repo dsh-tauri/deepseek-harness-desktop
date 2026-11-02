@@ -24,6 +24,12 @@
       "skillPath": "skills/reause-functions/SKILL.md",
       "computedHash": "65ee026f00446062fb890b751c90a1dc30fed1482f6ffd98f77708c016a5f2c0"
     },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-best-practices/SKILL.md",
+      "computedHash": "5f050929b5b62c8c847b75955d7d773be9dc649d03778e6e94cd8db1101fb674"
+    },
     "valtio-define": {
       "source": "hairyf/valtio-define",
       "sourceType": "github",

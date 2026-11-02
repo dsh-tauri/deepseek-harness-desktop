@@ -280,8 +280,13 @@ jobs:
         run: cargo test --all-features --locked
         working-directory: apps/desktop/src-tauri
 
+      - name: Verify macOS application menu and tray event loop
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        run: cargo test --locked --manifest-path crates/tauri-runtime-electron/Cargo.toml --lib --test macos_native_loop --target-dir apps/desktop/src-tauri/target
+
   desktop-e2e:
-    name: Desktop E2E (Electron CDP) (${{ matrix.runner }})
+    name: Desktop CDP E2E (${{ matrix.runner }})
     needs: [pre_job, changes]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.desktop == '1') }}
     # Electron 运行时不再受 WebView2 限制，按发布矩阵的每个架构各跑一次（issue #1326）。
