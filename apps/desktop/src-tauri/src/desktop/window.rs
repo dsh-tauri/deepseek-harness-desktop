@@ -32,9 +32,17 @@ pub fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) ->
     match event {
         DownloadEvent::Requested { url, destination } => {
             let downloads = webview.path().download_dir().ok();
-            *destination = config::unique_download_path(destination, downloads.as_deref());
-            log::info!("[download] requested {} -> {}", url, destination.display());
-            true
+            match config::unique_download_path(destination, downloads.as_deref()) {
+                Ok(path) => {
+                    *destination = path;
+                    log::info!("[download] requested {} -> {}", url, destination.display());
+                    true
+                }
+                Err(error) => {
+                    log::warn!("[download] rejected {}: {error}", url);
+                    false
+                }
+            }
         }
         DownloadEvent::Finished { url, path, success } => {
             let path_str = path.as_ref().map(|p| p.to_string_lossy().to_string());
