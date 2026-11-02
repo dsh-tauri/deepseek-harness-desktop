@@ -345,7 +345,7 @@ pub(super) fn append_log(log_path: &PathBuf, line: &str) {
 }
 
 /// 轮转日志文件名：`dsh-web.log`（index 0）、`dsh-web.log.1`、`dsh-web.log.2`……
-fn indexed_log_path(log_path: &Path, index: usize) -> PathBuf {
+pub(super) fn indexed_log_path(log_path: &Path, index: usize) -> PathBuf {
     if index == 0 {
         return log_path.to_path_buf();
     }

@@ -18,17 +18,21 @@ use std::time::Duration;
 use tauri::webview::cookie::{Cookie, Expiration, SameSite};
 
 use crate::config;
+use crate::service::workflow::utils::indexed_log_path;
 
 /// `dsh web` 打印的登录 URL 前缀（`printUrl` 默认开启）。
 const LAUNCH_LINE_PREFIX: &str = "dsh web: ";
 
-/// 日志头部窗口：每次启动都会轮转日志，token 行稳定落在开头几百字节内，
-/// 而日志正文会随会话增长到数 MB，故只从头部取。
+/// 日志头部窗口：启动行稳定落在文件开头几百字节内，正文会涨到数 MB，故只取头部。
 const LOG_HEAD_BYTES: u64 = 64 * 1024;
+
+/// 服务日志在超过 5 MiB 时会自行轮转，启动行随之退到 `.1`、`.2`……这里覆盖到
+/// 轮转链的末尾，保证长时间运行的会话仍能找回本次启动的 token。
+const LOG_BACKUPS: usize = 3;
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// 从服务日志头部取出与本进程端口匹配的 token URL。
+/// 从一段日志里取出与本进程端口匹配的 token URL。
 pub fn launch_url_in(text: &str, port: u16) -> Option<String> {
     text.lines()
         .filter_map(|line| line.trim().strip_prefix(LAUNCH_LINE_PREFIX))
@@ -41,11 +45,21 @@ pub fn launch_url_in(text: &str, port: u16) -> Option<String> {
 ///
 /// 失败只意味着拿不到 Cookie：其余通道仍由 `gate` 放行，调用方记一条告警即可。
 pub async fn session_cookie(port: u16, log_path: &Path) -> Result<Cookie<'static>, String> {
-    let launch_url = launch_url_in(&read_head(log_path)?, port)
-        .ok_or("HARNESS_AUTH_TOKEN_MISSING: no dsh web launch URL for this port")?;
-    let header = exchange(&launch_url).await?;
-    cookie_from_set_cookie(&header)
-        .ok_or_else(|| "HARNESS_AUTH_COOKIE_INVALID: unusable set-cookie".to_string())
+    let candidates = candidate_launch_urls(log_path, port);
+    if candidates.is_empty() {
+        return Err("HARNESS_AUTH_TOKEN_MISSING: no dsh web launch URL for this port".into());
+    }
+    let mut failure = String::new();
+    for launch_url in candidates {
+        match exchange(&launch_url).await {
+            Ok(header) => {
+                return cookie_from_set_cookie(&header)
+                    .ok_or_else(|| "HARNESS_AUTH_COOKIE_INVALID: unusable set-cookie".to_string())
+            }
+            Err(error) => failure = error,
+        }
+    }
+    Err(failure)
 }
 
 /// 把本次启动的会话 Cookie 种进承载 Harness 页面的 WebView。
@@ -56,6 +70,17 @@ pub fn inject(webview: &crate::Webview, cookie: Cookie<'static>) -> Result<(), S
     webview
         .set_cookie(cookie)
         .map_err(|error| format!("HARNESS_AUTH_COOKIE_REJECTED: {error}"))
+}
+
+/// 按「最新在前」收集候选 URL：当前日志没有启动行，说明它已随轮转退到备份文件。
+///
+/// 备份里可能残留上一次启动的 token（进程已退，token 随之失效），因此候选是
+/// 列表而非单值：交换失败就试下一个。
+fn candidate_launch_urls(log_path: &Path, port: u16) -> Vec<String> {
+    (0..=LOG_BACKUPS)
+        .filter_map(|index| read_head(&indexed_log_path(log_path, index)).ok())
+        .filter_map(|text| launch_url_in(&text, port))
+        .collect()
 }
 
 fn read_head(path: &Path) -> Result<String, String> {
@@ -150,22 +175,41 @@ dsh web: http://127.0.0.1:3080/?token=fresh
 
     #[test]
     fn head_window_keeps_the_launch_line_inside_a_long_log() {
-        let dir = std::env::temp_dir().join(format!("dsh-auth-head-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("dsh-web.log");
-        let mut text = format!("dsh web: http://127.0.0.1:3080/?token=fresh\n");
+        let dir = scratch_dir("head");
+        let log = dir.join("dsh-web.log");
+        let mut text = "dsh web: http://127.0.0.1:3080/?token=fresh\n".to_string();
         text.push_str(&"x".repeat(usize::try_from(LOG_HEAD_BYTES).unwrap()));
-        std::fs::write(&path, text).unwrap();
-        let head = read_head(&path).unwrap();
+        std::fs::write(&log, text).unwrap();
         assert_eq!(
-            launch_url_in(&head, 3080).as_deref(),
-            Some("http://127.0.0.1:3080/?token=fresh")
+            candidate_launch_urls(&log, 3080),
+            vec!["http://127.0.0.1:3080/?token=fresh".to_string()]
         );
-        let missing = read_head(&dir.join("absent.log")).unwrap_err();
-        assert!(
-            missing.starts_with("HARNESS_AUTH_LOG_UNREADABLE"),
-            "{missing}"
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn candidates_fall_back_to_rotated_logs_newest_first() {
+        let dir = scratch_dir("candidates");
+        let log = dir.join("dsh-web.log");
+        let fresh = "dsh web: http://127.0.0.1:3080/?token=current\n";
+        let rotated = "dsh web: http://127.0.0.1:3080/?token=older\n";
+        std::fs::write(&log, fresh).unwrap();
+        std::fs::write(indexed_log_path(&log, 1), rotated).unwrap();
+        assert_eq!(
+            candidate_launch_urls(&log, 3080),
+            vec![
+                "http://127.0.0.1:3080/?token=current".to_string(),
+                "http://127.0.0.1:3080/?token=older".to_string(),
+            ]
         );
+
+        // 会话长时间运行后启动行随轮转退走，当前日志只剩正文。
+        std::fs::write(&log, "x".repeat(1024)).unwrap();
+        assert_eq!(
+            candidate_launch_urls(&log, 3080),
+            vec!["http://127.0.0.1:3080/?token=older".to_string()]
+        );
+        assert!(candidate_launch_urls(&dir.join("absent.log"), 3080).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -207,6 +251,55 @@ dsh web: http://127.0.0.1:3080/?token=fresh
         assert!(error.starts_with("HARNESS_AUTH_REJECTED"), "{error}");
     }
 
+    /// 最新候选是失效的旧 token，会话必须继续试下一条而不是直接放弃。
+    #[tokio::test]
+    async fn session_cookie_skips_a_stale_token_and_mints_the_fresh_one() {
+        let dir = scratch_dir("stale");
+        let log = dir.join("dsh-web.log");
+        let port = stale_then_fresh().await;
+        std::fs::write(&log, "x".repeat(1024)).unwrap();
+        std::fs::write(
+            indexed_log_path(&log, 1),
+            format!("dsh web: http://127.0.0.1:{port}/?token=stale\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            indexed_log_path(&log, 2),
+            format!("dsh web: http://127.0.0.1:{port}/?token=fresh\n"),
+        )
+        .unwrap();
+        let cookie = session_cookie(port, &log)
+            .await
+            .expect("fresh token must win");
+        assert_eq!(cookie.value(), "session-value");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 起一个按 token 决定响应的回环服务：`fresh` 回 303 + Set-Cookie，其余回 200。
+    async fn stale_then_fresh() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                let mut request = [0u8; 1024];
+                let read = socket.read(&mut request).unwrap_or(0);
+                let fresh = String::from_utf8_lossy(&request[..read]).contains("token=fresh");
+                let response = if fresh {
+                    "HTTP/1.1 303 X\r\ncontent-length: 0\r\nlocation: ./\r\n\
+                     set-cookie: dsh-auth-test=session-value; Path=/; HttpOnly; SameSite=Strict\r\n\
+                     connection: close\r\n\r\n"
+                } else {
+                    "HTTP/1.1 401 X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                };
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+        port
+    }
+
     /// 起一个只回一行的回环 HTTP 服务，返回它的 token URL。
     async fn serve(status: u16, set_cookie: &str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -222,5 +315,11 @@ dsh web: http://127.0.0.1:3080/?token=fresh
             }
         });
         format!("http://127.0.0.1:{port}/?token=test")
+    }
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("dsh-auth-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }
