@@ -665,10 +665,13 @@ importers:
         version: 12.2.1(patch_hash=ea42dd1273f65a02e22aa9c25e39361c8dac2320ed2fbff9c58d2bd3f46a40a3)
       changelogithub:
         specifier: catalog:release
-        version: 15.0.5
+        version: 15.0.5(magicast@0.5.5)
       diff:
         specifier: catalog:testing
         version: 9.0.0
+      dsh-taiwind:
+        specifier: 'catalog:'
+        version: 0.3.4
       eslint:
         specifier: catalog:lint
         version: 10.14.0(jiti@2.7.0)
@@ -11401,7 +11404,7 @@ snapshots:
     dependencies:
       '@expo/config-plugins': 57.0.9(typescript@5.8.3)
       '@expo/config-types': 57.0.2
-      '@expo/json-file': 11.0.1
+      '@expo/json-file': 11.2.1
       '@expo/require-utils': 57.0.6(typescript@5.8.3)
       deepmerge: 4.3.1
       getenv: 2.0.0
@@ -13644,7 +13647,7 @@ snapshots:
     transitivePeerDependencies:
       - magicast
 
-  changelogithub@15.0.5:
+  changelogithub@15.0.5(magicast@0.5.5):
     dependencies:
       ansis: 4.4.0
       c12: 3.3.4(magicast@0.5.5)
