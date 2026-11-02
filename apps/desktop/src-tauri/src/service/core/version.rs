@@ -532,6 +532,31 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
 /// 改名为激活目录；任一步失败回滚。切换前先停服务并清扫残留进程，避免目录被进程
 /// 句柄锁定（Windows DLL 锁）；切换期间持有与 `launch` 共用的转换锁，阻止并发
 /// `launch` 或另一个切换在互换窗口内插入并锁死目录（CORE_SWITCH_FAILED, os error 32）。
+async fn rename_active_with_resweep(
+    app_handle: &AppHandle,
+    active_dir: &Path,
+    backup_dir: &Path,
+) -> Result<(), std::io::Error> {
+    const SWEEP_ROUNDS: u32 = 2;
+    for round in 1..=SWEEP_ROUNDS {
+        let Err(e) = std::fs::rename(active_dir, backup_dir) else {
+            return Ok(());
+        };
+        log::warn!("core dir locked (round {round}/{SWEEP_ROUNDS}), sweeping again: {e}");
+        let handle = app_handle.clone();
+        let profile = crate::service::profile::active_profile(app_handle);
+        tauri::async_runtime::spawn_blocking(move || {
+            workflow::instances::scope_sync(profile, || {
+                workflow::terminate_stale_harness_processes(&handle)
+            })
+        })
+        .await
+        .map_err(std::io::Error::other)?
+        .map_err(std::io::Error::other)?;
+    }
+    download::rename_with_retry(active_dir, backup_dir).await
+}
+
 async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), String> {
     // 从切换开始到目录互换完成持续持有与 launch 共用的转换锁，避免两个切换
     // 重叠，也避免 launch 在状态检查后插入并从旧的 dependencies/dsh 加载 DLL。
@@ -641,12 +666,19 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
     }
 
     if active_dir.exists() {
-        if let Err(e) = download::rename_with_retry(&active_dir, &backup_dir).await {
+        if let Err(e) = rename_active_with_resweep(app_handle, &active_dir, &backup_dir).await {
             if holding.exists() {
                 let _ = download::rename_with_retry(&holding, &backup_dir).await;
             }
+            let holders = workflow::core_dir_holders(&active_dir);
+            log::error!("CORE_SWITCH_HOLDERS: {holders:?}");
+            let holders = if holders.is_empty() {
+                "no holders detected (diagnostic may be incomplete)".to_string()
+            } else {
+                holders.join("; ")
+            };
             return Err(format!(
-                "CORE_SWITCH_FAILED: {} -> {}: {e}",
+                "CORE_SWITCH_FAILED: {} -> {}: {e} (holders: {holders})",
                 active_dir.display(),
                 backup_dir.display()
             ));
