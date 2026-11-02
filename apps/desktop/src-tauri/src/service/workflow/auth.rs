@@ -143,8 +143,8 @@ dsh web: http://127.0.0.1:3080/?token=fresh
         assert_eq!(launch_url_in("no launch line\n", 3080), None);
         assert_eq!(
             launch_url_in("dsh web: http://127.0.0.1:3080\n", 3080).as_deref(),
-            Some("http://127.0.0.1:3080"),
-            "没有 token 的旧内核行同样是本端口的启动记录"
+            Some("http://127.0.0.1:3080/"),
+            "没有 token 的旧内核行同样是本端口的启动记录，解析后补上根路径"
         );
     }
 
