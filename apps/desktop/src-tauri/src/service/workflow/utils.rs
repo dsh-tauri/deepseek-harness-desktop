@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::utils::decode_process_line;
 
 const DSH_MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
-const DSH_MAX_BACKUPS: usize = 3;
+pub(super) const DSH_MAX_BACKUPS: usize = 3;
 static DSH_LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 fn dsh_log_lock() -> &'static Mutex<()> {
     DSH_LOG_LOCK.get_or_init(|| Mutex::new(()))

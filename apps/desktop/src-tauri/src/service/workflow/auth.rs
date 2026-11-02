@@ -18,17 +18,13 @@ use std::time::Duration;
 use tauri::webview::cookie::{Cookie, Expiration, SameSite};
 
 use crate::config;
-use crate::service::workflow::utils::indexed_log_path;
+use crate::service::workflow::utils::{indexed_log_path, DSH_MAX_BACKUPS};
 
 /// `dsh web` 打印的登录 URL 前缀（`printUrl` 默认开启）。
 const LAUNCH_LINE_PREFIX: &str = "dsh web: ";
 
 /// 日志头部窗口：启动行稳定落在文件开头几百字节内，正文会涨到数 MB，故只取头部。
 const LOG_HEAD_BYTES: u64 = 64 * 1024;
-
-/// 服务日志在超过 5 MiB 时会自行轮转，启动行随之退到 `.1`、`.2`……这里覆盖到
-/// 轮转链的末尾，保证长时间运行的会话仍能找回本次启动的 token。
-const LOG_BACKUPS: usize = 3;
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -73,11 +69,12 @@ pub fn inject(webview: &crate::Webview, cookie: Cookie<'static>) -> Result<(), S
 }
 
 /// 按「最新在前」收集候选 URL：当前日志没有启动行，说明它已随轮转退到备份文件。
+/// 轮转链长度由 `append_log` 的备份上限决定，因此跟随同一个常量，避免两处漂移。
 ///
 /// 备份里可能残留上一次启动的 token（进程已退，token 随之失效），因此候选是
 /// 列表而非单值：交换失败就试下一个。
 fn candidate_launch_urls(log_path: &Path, port: u16) -> Vec<String> {
-    (0..=LOG_BACKUPS)
+    (0..=DSH_MAX_BACKUPS)
         .filter_map(|index| read_head(&indexed_log_path(log_path, index)).ok())
         .filter_map(|text| launch_url_in(&text, port))
         .collect()
