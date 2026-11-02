@@ -292,6 +292,7 @@ pub async fn prepare_harness_webview(
     let label = format!("harness-{}", NEXT_GUEST.fetch_add(1, Ordering::Relaxed));
     let origin = url.origin();
     let mut builder = tauri::WebviewBuilder::new(&label, tauri::WebviewUrl::External(url.clone()))
+        .transparent(true)
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
         .initialization_script(include_str!("browser.js"))
         .on_navigation(move |next| next.origin() == origin)
