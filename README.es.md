@@ -92,9 +92,9 @@ Descargá el instalador de tu plataforma y arquitectura desde [Releases](https:/
 
 | Plataforma | Requisitos | Instalador |
 | --- | --- | --- |
-| Windows | Windows 10+, WebView2 | x64 `.exe` / `.msi` |
-| macOS | macOS 12+; la interfaz web necesita capacidades de Safari 17.4+ | Intel / Apple Silicon `.dmg` |
-| Linux | Bibliotecas de runtime WebKit2GTK 4.1 | x64 `.AppImage` / `.deb` |
+| Windows | Windows 10+ (motor Chromium integrado) | x64 `.exe` / `.msi` |
+| macOS | macOS 12+ (motor Chromium integrado) | Intel / Apple Silicon `.dmg` |
+| Linux | Motor Chromium integrado | x64 `.AppImage` / `.deb` |
 
 En macOS también podés instalar por Homebrew:
 

@@ -92,9 +92,9 @@
 
 | Платформа | Требования | Установщик |
 | --- | --- | --- |
-| Windows | Windows 10+, WebView2 | x64 `.exe` / `.msi` |
-| macOS | macOS 12+; веб-интерфейсу требуются возможности Safari 17.4+ | Intel / Apple Silicon `.dmg` |
-| Linux | библиотеки WebKit2GTK 4.1 (runtime) | x64 `.AppImage` / `.deb` |
+| Windows | Windows 10+ (встроенный движок Chromium) | x64 `.exe` / `.msi` |
+| macOS | macOS 12+ (встроенный движок Chromium) | Intel / Apple Silicon `.dmg` |
+| Linux | Встроенный движок Chromium | x64 `.AppImage` / `.deb` |
 
 macOS также поддерживает установку через Homebrew:
 

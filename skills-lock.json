@@ -4,7 +4,7 @@
     "handle": {
       "source": "./skills",
       "sourceType": "local",
-      "computedHash": "1aed1e212d70ccf22c5cab881cef7cf0ad926dcf50bf82b4aa28173bdc1401fb"
+      "computedHash": "bee9ef411bd045bb8175b6b20e6ad2768a3399653044f9e9f47ebc0a9ec992fd"
     },
     "heroui-native": {
       "source": "heroui-inc/heroui",

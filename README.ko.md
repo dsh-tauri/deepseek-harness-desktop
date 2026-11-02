@@ -92,9 +92,9 @@
 
 | 플랫폼 | 요구 사항 | 설치 프로그램 |
 | --- | --- | --- |
-| Windows | Windows 10+, WebView2 | x64 `.exe` / `.msi` |
-| macOS | macOS 12+; 웹 UI는 Safari 17.4+ 수준의 기능 필요 | Intel / Apple Silicon `.dmg` |
-| Linux | WebKit2GTK 4.1 런타임 라이브러리 | x64 `.AppImage` / `.deb` |
+| Windows | Windows 10+ (내장 Chromium 엔진) | x64 `.exe` / `.msi` |
+| macOS | macOS 12+ (내장 Chromium 엔진) | Intel / Apple Silicon `.dmg` |
+| Linux | 내장 Chromium 엔진 | x64 `.AppImage` / `.deb` |
 
 macOS에서는 Homebrew로도 설치할 수 있습니다:
 
