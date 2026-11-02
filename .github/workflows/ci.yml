@@ -328,10 +328,12 @@ jobs:
           fi
           echo "runner arch OK: ${{ runner.arch }}"
 
+      # standalone 只解决 Windows 上找不到 pnpm.exe 的问题；@pnpm/exe 没有
+      # darwin-x64 的可用二进制（pnpm#11423），在 Intel macOS runner 上会直接装不上。
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
-          standalone: 'true'
+          standalone: ${{ runner.os == 'Windows' }}
 
       - name: Expose pnpm.exe (Windows)
         if: runner.os == 'Windows'
