@@ -281,7 +281,7 @@ jobs:
         working-directory: apps/desktop/src-tauri
 
   desktop-e2e:
-    name: Desktop E2E (Electron CDP) (${{ matrix.runner }})
+    name: Desktop CDP E2E (${{ matrix.runner }})
     needs: [pre_job, changes]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.desktop == '1') }}
     # Electron 运行时不再受 WebView2 限制，按发布矩阵的每个架构各跑一次（issue #1326）。
