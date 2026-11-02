@@ -1,0 +1,80 @@
+# CodeRabbit 配置。目标：把它当成只报正确性问题的第二双眼睛，而不是风格 lint
+# Schema: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+# 仓库自己的规则在 AGENTS.md / docs/specs
+# path_instructions 只是把那些规则里「机器能核对」的部分复述给它
+language: zh-CN
+early_access: false
+
+tone_instructions: |
+  只报会改变运行时行为的缺陷：逻辑错误、边界/空值处理缺失、契约不一致、并发/竞态、资源与状态生命周期泄漏、数据被误写或丢失、跨平台（尤其 Windows）行为错误。
+  不报命名、格式、注释风格、文件放置、组件分区、目录约定等风格与架构偏好；这些交给仓库自己的 lint 与评审。
+  每条意见要能说明「什么输入/路径会出错、期望与实际的差异」，给不出可复现失败场景的不要提。
+
+reviews:
+  profile: quiet
+  high_level_summary: true
+  poem: false
+  in_progress_fortune: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  changed_files_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+  path_filters:
+    - "!**/*.lock"
+    - "!archive/**"
+    - "!**/vendor/**"
+    - "!**/dist/**"
+    - "!**/target/**"
+    - "!**/icons/**"
+    - "!docs/images/**"
+    - "!**/*.svg"
+    - "!**/apis/index.ts"
+    - "!**/apis/index.type.ts"
+  path_instructions:
+    - path: "**/*.{test,spec}.{ts,tsx,js,mjs}"
+      instructions: |
+        测试的正确性红线（源自 docs/specs/testing.md）：
+        - 禁止 Jest API：不得出现 `jest.*`，本仓统一 `vi.*`。
+        - `expect(...).resolves/rejects` 必须 `await` 或 `return`，否则断言不生效（假绿）。
+        - 不得残留 `.only` / `fdescribe` / `it.skip` / `describe.skipIf` 等跳过标记去掩盖唯一门禁用例。
+        - 禁止吞异常（`try { ... } catch {}`）、中途 `return`、`res ?? []` 配合 `toHaveLength(0)` 等把失败静默放过的写法。
+        - 禁止源码反查型测试（读源文件判断是否包含某字符串）、纯常量/配置单测、无断言的空壳用例。
+        - 单独以 `toBeDefined()` / `toBeTruthy()` 收尾且无其它真实断言，视为无断言。
+        - 必须隔离环境：禁止读写真实 `~/.dsh`、`~/.dsh.dev` 等用户目录，须用 `DSH_E2E_HOME` 等重定向。
+        - E2E 层禁止 Mock 后端命令。
+    # Rust 总则：.agents/skills/rust-best-practices（Apollo Rust Best Practices Handbook）。
+    # 只提会出错的点，不碰格式与命名；本仓无 thiserror/anyhow，错误一律 `Result<_, String>`。
+    - path: "**/*.rs"
+      instructions: |
+        Rust 正确性总则（源自 .agents/skills/rust-best-practices，仅纠错不纠风格）：
+        - 生产代码禁裸 `unwrap()`/`expect()`：测试、真的不可能失败、或有 `Some`/`Ok` 守卫时除外；其余用 `?`、`let ... else`、`unwrap_or_else`、`ok_or_else`。
+        - 会失败的操作用 `Result` 传播错误，不要 `panic!`；错误一旦需要被上层区分就保留 `Result`，别用默认值/日志把它吞掉。
+        - `?` 之后错误上下文会丢，需要定位时用 `map_err`/`inspect_err` 补上下文。
+        - 迭代器 `.iter()` 后立即 `.clone()`、或在循环里克隆 `Vec`/`HashMap`/`String`，指出来——多半该借用或挪动所有权。
+        - 不要把 `Copy` 类型拿去 `.clone()`。
+        - 同一类型同时 `derive(Copy)` 和实现 `Iterator` 是错误：复制一个迭代器再推进，另一个会静默落后。
+        - 要压掉 clippy 告警用 `#[expect(clippy::...)]` 并写原因，不要用 `#[allow(...)]` 一按了之。
+    - path: "apps/desktop/src-tauri/src/**/*.rs"
+      instructions: |
+        Rust 正确性（沿用 docs/specs/desktop.baisc.md §5，补充 rust-best-practices）：
+        - `Result<_, String>` 的错误串必须带大写前缀（如 `NODE_NOT_FOUND: ...`），否则上层无法按码分支；别在这里引入 anyhow 把可分类错误抹平。
+        - Windows 子进程启动必须带 `CREATE_NO_WINDOW (0x08000000)`，否则会弹出控制台窗口。
+        - 停止服务必须用 `taskkill /T /F` 杀进程树，避免残留进程锁死 DLL。
+        - 修改 PATH 后必须广播 `WM_SETTINGCHANGE`，否则新进程读不到。
+        - 长驻进程/线程共享的可变状态用 `Mutex`/`RwLock`（必要时套 `Arc`），不要用 `Rc`/`RefCell` 跨线程；`RefCell` 的 `borrow_mut` 冲突会 panic。
+    - path: "packages/*/src/client/**/*.{ts,tsx}"
+      instructions: |
+        插件客户端的正确性红线（源自 docs/specs/plugin.client.md）：
+        - 单向依赖：`apis/` 不得 import `store/**`；`utils/` 不得 import `store/`/`service/`/`register/`。
+        - 第三方库（unstorage / ofetch / valtio-define / @reause/core / lodash-es）只能从 `dsh-tauri/client` 转出，禁止直接 import。
+        - 禁止在 store 之外持有模块级可变状态；`store/modules` 的 actions 只能做同步状态迁移，禁止发请求或 `try/catch`。
+        - 禁止裸写 `setTimeout`/`setInterval`/`addEventListener`/`new MutationObserver`，须由 `defineRegister` 的 controller 托管。
+    - path: "packages/*/src/host/**/*.ts"
+      instructions: |
+        插件宿主端正确性（源自 docs/specs/plugin.host.md）：
+        - `server/routes/` 只做协议解析与 DTO 校验，禁止直接操作 storage、宿主对象或执行系统命令，必须经 `service/`。
+        - 路由注册必须用静态完整路径，禁止动态循环/路径拼接隐藏真实契约。
+        - `storage/index.ts` 只导出驱动实例，不得混入业务读写。
