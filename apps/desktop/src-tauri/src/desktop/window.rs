@@ -31,7 +31,8 @@ pub fn on_new_window(
 pub fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) -> bool {
     match event {
         DownloadEvent::Requested { url, destination } => {
-            *destination = config::unique_download_path(destination);
+            let downloads = webview.path().download_dir().ok();
+            *destination = config::unique_download_path(destination, downloads.as_deref());
             log::info!("[download] requested {} -> {}", url, destination.display());
             true
         }

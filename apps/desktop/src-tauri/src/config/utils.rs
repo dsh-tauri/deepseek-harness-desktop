@@ -34,17 +34,26 @@ pub fn linux_inotify_max_user_watches() -> Option<u64> {
     content.trim().parse::<u64>().ok()
 }
 
-pub fn unique_download_path(destination: &Path) -> PathBuf {
+pub fn unique_download_path(destination: &Path, downloads: Option<&Path>) -> PathBuf {
     use std::env;
 
+    let downloads = downloads.filter(|dir| !dir.as_os_str().is_empty());
     let dir = match destination.parent() {
+        // 无保存对话框时前端给出的目标是系统临时目录，改落到系统下载目录（issue #1338）
+        Some(parent) if parent == env::temp_dir().as_path() => match downloads {
+            Some(downloads) => downloads.to_path_buf(),
+            None => return destination.to_path_buf(),
+        },
         Some(parent) if parent.is_dir() => parent.to_path_buf(),
-        // 下载目录不存在（如被用户删除）时兜底到 USERPROFILE\Downloads
-        _ => env::var("USERPROFILE")
-            .map(PathBuf::from)
-            .map(|home| home.join("Downloads"))
-            .unwrap_or_else(|_| PathBuf::from(".")),
+        // 下载目录不存在（如被用户删除）时兜底到系统下载目录
+        _ => downloads.map(Path::to_path_buf).unwrap_or_else(|| {
+            env::var("USERPROFILE")
+                .map(PathBuf::from)
+                .map(|home| home.join("Downloads"))
+                .unwrap_or_else(|_| PathBuf::from("."))
+        }),
     };
+    let _ = std::fs::create_dir_all(&dir);
     let name = destination
         .file_name()
         .and_then(|n| n.to_str())
@@ -96,6 +105,46 @@ pub fn search_node_binary(dir: &PathBuf, target: &str) -> Option<PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod download_path_tests {
+    use super::unique_download_path;
+    use std::path::PathBuf;
+
+    fn stale_downloads_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("dsh-downloads-{}", std::process::id()))
+    }
+
+    #[test]
+    fn temp_destination_is_relocated_to_the_downloads_directory() {
+        let downloads = stale_downloads_dir();
+        let _ = std::fs::remove_dir_all(&downloads);
+        assert_eq!(
+            unique_download_path(&std::env::temp_dir().join("report.csv"), Some(&downloads)),
+            downloads.join("report.csv")
+        );
+        assert!(downloads.is_dir());
+        let _ = std::fs::remove_dir_all(&downloads);
+    }
+
+    #[test]
+    fn non_temp_destination_is_left_untouched() {
+        let downloads = stale_downloads_dir();
+        let destination = std::env::current_exe()
+            .unwrap()
+            .with_file_name("report.csv");
+        assert_eq!(
+            unique_download_path(&destination, Some(&downloads)),
+            destination
+        );
+    }
+
+    #[test]
+    fn temp_destination_without_downloads_directory_stays_put() {
+        let destination = std::env::temp_dir().join("report.csv");
+        assert_eq!(unique_download_path(&destination, None), destination);
+    }
 }
 
 #[cfg(all(test, unix))]
