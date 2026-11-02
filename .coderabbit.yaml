@@ -23,18 +23,18 @@ reviews:
     drafts: false
     auto_incremental_review: true
   path_filters:
-    - "!**/*.lock"
-    - "!archive/**"
-    - "!**/vendor/**"
-    - "!**/dist/**"
-    - "!**/target/**"
-    - "!**/icons/**"
-    - "!docs/images/**"
-    - "!**/*.svg"
-    - "!**/apis/index.ts"
-    - "!**/apis/index.type.ts"
+    - '!**/*.lock'
+    - '!archive/**'
+    - '!**/vendor/**'
+    - '!**/dist/**'
+    - '!**/target/**'
+    - '!**/icons/**'
+    - '!docs/images/**'
+    - '!**/*.svg'
+    - '!**/apis/index.ts'
+    - '!**/apis/index.type.ts'
   path_instructions:
-    - path: "**/*.{test,spec}.{ts,tsx,js,mjs}"
+    - path: '**/*.{test,spec}.{ts,tsx,js,mjs}'
       instructions: |
         测试的正确性红线（源自 docs/specs/testing.md）：
         - 禁止 Jest API：不得出现 `jest.*`，本仓统一 `vi.*`。
@@ -47,7 +47,7 @@ reviews:
         - E2E 层禁止 Mock 后端命令。
     # Rust 总则：.agents/skills/rust-best-practices（Apollo Rust Best Practices Handbook）。
     # 只提会出错的点，不碰格式与命名；本仓无 thiserror/anyhow，错误一律 `Result<_, String>`。
-    - path: "**/*.rs"
+    - path: '**/*.rs'
       instructions: |
         Rust 正确性总则（源自 .agents/skills/rust-best-practices，仅纠错不纠风格）：
         - 生产代码禁裸 `unwrap()`/`expect()`：测试、真的不可能失败、或有 `Some`/`Ok` 守卫时除外；其余用 `?`、`let ... else`、`unwrap_or_else`、`ok_or_else`。
@@ -57,7 +57,7 @@ reviews:
         - 不要把 `Copy` 类型拿去 `.clone()`。
         - 同一类型同时 `derive(Copy)` 和实现 `Iterator` 是错误：复制一个迭代器再推进，另一个会静默落后。
         - 要压掉 clippy 告警用 `#[expect(clippy::...)]` 并写原因，不要用 `#[allow(...)]` 一按了之。
-    - path: "apps/desktop/src-tauri/src/**/*.rs"
+    - path: 'apps/desktop/src-tauri/src/**/*.rs'
       instructions: |
         Rust 正确性（沿用 docs/specs/desktop.baisc.md §5，补充 rust-best-practices）：
         - `Result<_, String>` 的错误串必须带大写前缀（如 `NODE_NOT_FOUND: ...`），否则上层无法按码分支；别在这里引入 anyhow 把可分类错误抹平。
@@ -65,14 +65,14 @@ reviews:
         - 停止服务必须用 `taskkill /T /F` 杀进程树，避免残留进程锁死 DLL。
         - 修改 PATH 后必须广播 `WM_SETTINGCHANGE`，否则新进程读不到。
         - 长驻进程/线程共享的可变状态用 `Mutex`/`RwLock`（必要时套 `Arc`），不要用 `Rc`/`RefCell` 跨线程；`RefCell` 的 `borrow_mut` 冲突会 panic。
-    - path: "packages/*/src/client/**/*.{ts,tsx}"
+    - path: 'packages/*/src/client/**/*.{ts,tsx}'
       instructions: |
         插件客户端的正确性红线（源自 docs/specs/plugin.client.md）：
         - 单向依赖：`apis/` 不得 import `store/**`；`utils/` 不得 import `store/`/`service/`/`register/`。
         - 第三方库（unstorage / ofetch / valtio-define / @reause/core / lodash-es）只能从 `dsh-tauri/client` 转出，禁止直接 import。
         - 禁止在 store 之外持有模块级可变状态；`store/modules` 的 actions 只能做同步状态迁移，禁止发请求或 `try/catch`。
         - 禁止裸写 `setTimeout`/`setInterval`/`addEventListener`/`new MutationObserver`，须由 `defineRegister` 的 controller 托管。
-    - path: "packages/*/src/host/**/*.ts"
+    - path: 'packages/*/src/host/**/*.ts'
       instructions: |
         插件宿主端正确性（源自 docs/specs/plugin.host.md）：
         - `server/routes/` 只做协议解析与 DTO 校验，禁止直接操作 storage、宿主对象或执行系统命令，必须经 `service/`。
