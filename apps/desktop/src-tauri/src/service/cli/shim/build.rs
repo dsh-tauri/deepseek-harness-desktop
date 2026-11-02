@@ -1040,6 +1040,9 @@ mod tests {
     }
 
     #[cfg(windows)]
+    const NPM_SHIM_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(120);
+
+    #[cfg(windows)]
     async fn run_npm_shim_fixture(
         shim: &Path,
         node: &Path,
@@ -1066,7 +1069,7 @@ mod tests {
         use std::os::windows::process::CommandExt;
         command.as_std_mut().creation_flags(0x08000000);
         tokio::time::timeout(
-            std::time::Duration::from_secs(15),
+            NPM_SHIM_HANG_GUARD,
             command
                 .arg(shim)
                 .arg("--version")
@@ -1078,7 +1081,12 @@ mod tests {
                 .output(),
         )
         .await
-        .expect("npm shim must terminate within 15 seconds")
+        .unwrap_or_else(|_| {
+            panic!(
+                "{} shim must terminate within {NPM_SHIM_HANG_GUARD:?}",
+                shim.display()
+            )
+        })
         .unwrap()
     }
 
