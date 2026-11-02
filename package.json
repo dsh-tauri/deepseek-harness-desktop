@@ -30,7 +30,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:native": "pnpm --filter dsh-native typecheck",
     "genapi": "pnpm --filter dsh-tauri-config run genapi",
-    "release": "bumpp",
+    "release": "bumpp --pr",
     "build:plugins": "tsx scripts/build-plugins.ts"
   },
   "devDependencies": {
