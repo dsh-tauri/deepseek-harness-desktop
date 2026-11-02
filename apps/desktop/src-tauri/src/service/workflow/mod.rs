@@ -35,7 +35,7 @@ pub(crate) use heap::effective_heap_limit_mb;
 pub use install::install;
 pub use launch::{launch, restart, start};
 pub use process::{
-    acquire_core_transition, has_owned_process, owned_process_pid, stop, stop_for_installer,
+    acquire_core_transition, core_dir_holders, has_owned_process, owned_process_pid, stop, stop_for_installer,
     stop_on_exit, terminate_stale_harness_processes,
 };
 pub use sweep::sweep_orphan_harness;

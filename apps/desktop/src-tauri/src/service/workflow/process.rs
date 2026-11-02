@@ -1120,6 +1120,40 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
     targets
 }
 
+pub fn core_dir_holders(app_handle: &crate::AppHandle) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let dsh_bin = config::get_dsh_binary_path(app_handle);
+        let Some(core_dir) = dsh_bin
+            .ancestors()
+            .find(|dir| {
+                dir.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("dependencies"))
+            })
+            .and_then(Path::to_str)
+        else {
+            return Vec::new();
+        };
+        let Ok(output) = windows_process_snapshot(None, Some(core_dir)) else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&output)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<WindowsProcessEntry>(line).ok())
+            .filter(|entry| entry.holds_core)
+            .map(|entry| {
+                let parent = entry.ancestors.first().map_or(0, |ancestor| ancestor.pid);
+                let command: String = entry.command_line.chars().take(200).collect();
+                format!("pid={} ppid={parent} cmd={command}", entry.pid)
+            })
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app_handle;
+        Vec::new()
+    }
+}
+
 /// 判断命令行是否为「从本应用 dsh 安装目录启动的 Harness 服务」。
 ///
 /// 除入口路径外同时核对桌面端服务启动参数，避免清扫时误伤用户并行执行的
