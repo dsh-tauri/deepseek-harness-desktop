@@ -166,7 +166,7 @@
         "description": "把 New API 站点接入 DSH 的模型供应商：设备授权登录、按渠道分组的三级模型/分组/推理强度选择器与模型白名单。 ｜ Sign in to a New API deployment (NearToken) from the settings page: device authorization, a three-level model / group / reasoning-effort picker, and a model whitelist.",
         "repo": "https://github.com/HuanLinOTO/dsh-neartoken",
         "recommended": true,
-        "checked": false,
+        "checked": true,
         "version": [
           {
             "version": "latest",

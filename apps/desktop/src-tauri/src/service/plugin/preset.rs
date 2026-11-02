@@ -594,12 +594,12 @@ mod tests {
     }
 
     #[test]
-    fn neartoken_leads_the_preset_list_and_stays_unchecked() {
+    fn neartoken_leads_the_preset_list_and_is_preselected() {
         let presets = load_presets_for_test();
         let first = presets.first().expect("preset list should not be empty");
         assert_eq!(first.id, "dsh-neartoken");
         assert!(first.recommended);
-        assert!(first.default_unchecked);
+        assert!(!first.default_unchecked);
         assert_eq!(
             first.repo_url,
             "https://github.com/HuanLinOTO/dsh-neartoken"
