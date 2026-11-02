@@ -545,12 +545,14 @@ async fn rename_active_with_resweep(
         log::warn!("core dir locked (round {round}/{SWEEP_ROUNDS}), sweeping again: {e}");
         let handle = app_handle.clone();
         let profile = crate::service::profile::active_profile(app_handle);
-        let _ = tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             workflow::instances::scope_sync(profile, || {
                 workflow::terminate_stale_harness_processes(&handle)
             })
         })
-        .await;
+        .await
+        .map_err(std::io::Error::other)?
+        .map_err(std::io::Error::other)?;
     }
     download::rename_with_retry(active_dir, backup_dir).await
 }
@@ -671,7 +673,7 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
             let holders = workflow::core_dir_holders(&active_dir);
             log::error!("CORE_SWITCH_HOLDERS: {holders:?}");
             let holders = if holders.is_empty() {
-                "none found".to_string()
+                "no holders detected (diagnostic may be incomplete)".to_string()
             } else {
                 holders.join("; ")
             };
