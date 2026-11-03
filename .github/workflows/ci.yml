@@ -388,7 +388,10 @@ jobs:
           config=(--manifest-path crates/tauri-runtime-electron/Cargo.toml --features tauri
             --config "patch.crates-io.tauri-runtime.path=\"$root/apps/desktop/src-tauri/vendor/tauri-runtime\""
             --config "patch.\"https://github.com/hairyf/electron-rs.git\".electron-rs.path=\"$root/crates/electron-rs\"")
-          cp apps/desktop/src-tauri/Cargo.lock crates/tauri-runtime-electron/Cargo.lock
+          sub_lock=crates/tauri-runtime-electron/Cargo.lock
+          cp "$sub_lock" "$sub_lock.orig"
+          trap 'mv -f "$sub_lock.orig" "$sub_lock"' EXIT
+          cp apps/desktop/src-tauri/Cargo.lock "$sub_lock"
           host=$(rustc -vV | sed -n 's/^host: //p')
           cargo metadata "${config[@]}" --offline --filter-platform "$host" --format-version 1 > /dev/null
           args=(cargo test "${config[@]}" --target-dir apps/desktop/src-tauri/target --locked --offline --lib ipc_readiness_)
