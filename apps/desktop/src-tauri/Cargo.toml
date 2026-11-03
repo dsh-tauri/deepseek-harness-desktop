@@ -120,6 +120,7 @@ objc2-core-foundation = "0.3"
 objc2-application-services = { version = "0.3", default-features = false, features = [
   "std",
   "AXUIElement",
+  "HIServices",
 ] }
 
 [target.'cfg(unix)'.dependencies]
