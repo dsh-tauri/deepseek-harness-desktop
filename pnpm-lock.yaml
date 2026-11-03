@@ -670,8 +670,8 @@ importers:
         specifier: catalog:testing
         version: 9.0.0
       dsh-taiwind:
-        specifier: 'catalog:'
-        version: 0.3.4
+        specifier: 0.3.5
+        version: 0.3.5
       eslint:
         specifier: catalog:lint
         version: 10.14.0(jiti@2.7.0)
@@ -5692,6 +5692,10 @@ packages:
 
   dsh-taiwind@0.3.4:
     resolution: {integrity: sha512-kl684V9Uf0zGe4Xiff2RbNsvlQZQCzgjq6drFI03JMQ2bOm1Q2KfcMXVeMhgDMGrX8O+pReaGi4yAUFhXcfUtA==}
+    engines: {dsh: '>=0.2.1-alpha.1', node: '>=22.18.0'}
+
+  dsh-taiwind@0.3.5:
+    resolution: {integrity: sha512-lfhlKssqsEmqrknGIC5ELBxISKA0MhAG7RtVtpiWRd1GvdB9xsyPuxEKyGPR+/ykfRmIp05SNoHWpGK+mwo5Xw==}
     engines: {dsh: '>=0.2.1-alpha.1', node: '>=22.18.0'}
 
   dts-resolver@2.1.3:
@@ -14030,6 +14034,12 @@ snapshots:
       - universal-cookie
 
   dsh-taiwind@0.3.4:
+    dependencies:
+      '@tailwindcss/oxide': 4.3.3
+      postcss: 8.5.20
+      tailwindcss: 4.3.3
+
+  dsh-taiwind@0.3.5:
     dependencies:
       '@tailwindcss/oxide': 4.3.3
       postcss: 8.5.20
