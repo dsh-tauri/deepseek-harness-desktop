@@ -1284,6 +1284,7 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::open_desktop_installer,
         crate::bridge::get_desktop_about,
         crate::bridge::open_external_url,
+        crate::bridge::open_in_app,
         crate::bridge::read_clipboard_text,
         crate::bridge::write_clipboard_text,
         crate::desktop::window::create_app_window,
@@ -1342,6 +1343,7 @@ fn guest_command_allowed(command: &str) -> bool {
             | "acquire_browser_guest"
             | "release_browser_guest"
             | "open_external_url"
+            | "open_in_app"
             | "get_pet_status"
             | "get_pet_overlay_supported"
             | "get_force_xwayland"
@@ -1374,6 +1376,7 @@ fn guest_command_scope_preserves_plugin_actions_and_blocks_shell_control() {
     assert!(guest_command_allowed("create_app_window"));
     assert!(guest_command_allowed("acquire_browser_guest"));
     assert!(guest_command_allowed("release_browser_guest"));
+    assert!(guest_command_allowed("open_in_app"));
     assert!(guest_command_allowed("read_clipboard_text"));
     assert!(guest_command_allowed("write_clipboard_text"));
     assert!(guest_command_allowed("report_plugin_error"));
