@@ -33,7 +33,7 @@ tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runt
   "tauri",
   "devtools"
 ] }
-electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "68419f6fc90a2984049237edc2921ff1b02c5a27" }
+electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "b10ff5c3a856b0e5d185c6c75a04f3e5109a45a8" }
 tauri-plugin-single-instance = { version = "2", features = [ "deep-link" ] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"
@@ -106,6 +106,7 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "NSWindow",
   "NSView",
   "NSButton",
+  "NSWorkspace",
 ] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
   "std",
@@ -115,6 +116,11 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
 ] }
 core-graphics = "0.25"
 core-foundation = "0.10"
+objc2-core-foundation = "0.3"
+objc2-application-services = { version = "0.3", default-features = false, features = [
+  "std",
+  "AXUIElement",
+] }
 
 [target.'cfg(unix)'.dependencies]
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }

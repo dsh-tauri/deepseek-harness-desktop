@@ -1295,6 +1295,8 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::pet_show_main_window,
         crate::bridge::pet_show_context_menu,
         crate::bridge::get_pet_overlay_supported,
+        crate::bridge::get_pet_accessibility,
+        crate::bridge::request_pet_accessibility,
         crate::bridge::get_force_xwayland,
         crate::bridge::set_force_xwayland,
         crate::bridge::set_pet_enabled,
@@ -1575,21 +1577,27 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                     crate::desktop::pet::apply_pet_size(window.app_handle());
                 }
             }
-            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                match window.label() {
-                    label if label == crate::desktop::pet::PET_WINDOW_LABEL => {
-                        crate::desktop::pet::save_pet_window_geometry(window);
-                    }
-                    label if label == MAIN_WINDOW_LABEL => crate::config::save_geometry(window),
-                    _ => {}
+            // 只用事件自带的坐标/尺寸：在 Electron 运行时里，任何
+            // outer_position()/inner_size() 都是一次同步 IPC 往返，而拖动时每秒有
+            // 数百个 move —— 逐事件再问一次会把主线程和 RPC 队列一起拖住
+            // （桌宠跟手发滞、主窗口拖动卡顿都源于此）。
+            tauri::WindowEvent::Moved(position) => match window.label() {
+                label if label == crate::desktop::pet::PET_WINDOW_LABEL => {
+                    crate::desktop::pet::record_pet_window_moved(window, *position);
+                }
+                label if label == MAIN_WINDOW_LABEL => crate::config::record_moved(*position),
+                _ => {}
+            },
+            tauri::WindowEvent::Resized(size) => {
+                // 桌宠尺寸由前端按宠物比例设定，与位置记录无关；只记主窗口。
+                if window.label() == MAIN_WINDOW_LABEL {
+                    crate::config::record_resized(window, *size);
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    if matches!(event, tauri::WindowEvent::Resized(_)) {
-                        sync_macos_fullscreen_menu(window);
-                        if window.label() == MAIN_WINDOW_LABEL {
-                            crate::desktop::activation::on_window_resized(window);
-                        }
+                    sync_macos_fullscreen_menu(window);
+                    if window.label() == MAIN_WINDOW_LABEL {
+                        crate::desktop::activation::on_window_resized(window);
                     }
                 }
             }

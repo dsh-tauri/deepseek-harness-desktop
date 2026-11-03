@@ -10,6 +10,7 @@
 
 use crate::{AppHandle, WebviewWindow, Window};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{ Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size,
@@ -116,31 +117,68 @@ fn save_window_state<R: Runtime>(app_handle: &AppHandle<R>, state: &WindowState)
     store.save().expect("Failed to save window state");
 }
 
-/// 采样当前窗口并保存（主窗口移动/缩放时由 builder 调用）。
-pub fn save_geometry<R: Runtime>(window: &Window<R>) {
+/// 内存中的最新几何暂存。参照 `tauri-plugin-window-state` 的做法：移动/缩放
+/// 事件（高 DPI 屏上每秒数百个）只更新这里，磁盘只在退出时写一次。
+///
+/// 逐事件直接 `store.save()` 是同步整文件写盘，会把 Tauri 主线程（= Electron
+/// 事件循环线程）拖住；拖动这种连续事件流下主线程被写盘压死，表现为「一拖窗口
+/// 就整树退出」。桌宠窗口（`desktop::pet`）早已用节流规避了同一问题，主窗口
+/// 这条路径一直漏了。
+static GEOMETRY_CACHE: Mutex<PendingGeometry> = Mutex::new(PendingGeometry::new());
+
+/// 退出前收到的几何变动。只记真正发生过事件的字段：用 `WindowState::default()`
+/// 补齐其余字段会在回退落盘时把用户保存的宽高/最大化状态覆盖成默认值
+/// （先改尺寸、再只拖动、然后收进托盘退出即可复现）。
+#[derive(Clone, Copy)]
+struct PendingGeometry {
+    position: Option<PhysicalPosition<i32>>,
+    size: Option<PhysicalSize<u32>>,
+    scale_factor: Option<f64>,
+}
+
+impl PendingGeometry {
+    const fn new() -> Self {
+        Self {
+            position: None,
+            size: None,
+            scale_factor: None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.position.is_none() && self.size.is_none()
+    }
+}
+
+/// 取出并清空内存暂存（退出时兜底落盘用）。
+fn take_cached_geometry() -> PendingGeometry {
+    let mut cached = GEOMETRY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let taken = *cached;
+    *cached = PendingGeometry::new();
+    taken
+}
+
+/// 采样当前窗口几何；不该落盘的瞬态（恢复窗口期、全屏、未显示）返回 None。
+fn sample_geometry<R: Runtime>(window: &Window<R>) -> Option<WindowState> {
     // 启动期几何恢复尚未完成：此刻采到的多半是 builder 默认尺寸/居中位置，
     // 落盘会覆盖用户保存值（见 RESTORING_GEOMETRY）。
     if is_restoring_geometry() {
-        return;
+        return None;
     }
-
-    // 原生全屏切换会触发 Resized，但此时的屏幕尺寸不是可恢复的
-    // 普通窗口几何；保留进入全屏前的最后一帧，退出全屏后会再次正常采样。
+    // 原生全屏切换会触发 Resized，但此时的屏幕尺寸不是可恢复的普通窗口几何。
     if window.is_fullscreen().unwrap_or(false) {
-        return;
+        return None;
     }
-
     // 窗口尚未显示（Windows 上 builder 先隐藏创建、恢复几何后再 show）时，
-    // build()/restore 阶段触发的 Moved/Resized 事件拿到的可能是瞬态尺寸
-    // （常被夹到最小尺寸），一旦落盘就会让窗口永久卡在最小尺寸。
-    // 因此未显示前不采样；真正几何在 show 之后的下一次移动/缩放或退出时保存。
+    // 采到的可能是瞬态尺寸（常被夹到最小尺寸），不该记录。
     if !window.is_visible().unwrap_or(false) {
-        return;
+        return None;
     }
-
     let pos = window.outer_position().ok();
     let size = window.inner_size().ok();
-    let state = WindowState {
+    Some(WindowState {
         maximized: window.is_maximized().unwrap_or(false),
         x: pos.map(|p| p.x),
         y: pos.map(|p| p.y),
@@ -150,15 +188,87 @@ pub fn save_geometry<R: Runtime>(window: &Window<R>) {
             .unwrap_or(DEFAULT_WINDOW_HEIGHT as u32),
         size_is_inner: true,
         scale_factor: window.scale_factor().unwrap_or(0.0),
-    };
-    save_window_state(window.app_handle(), &state);
+    })
 }
 
-/// 正常退出前主动采样主窗口，兜底最后一次移动/缩放事件尚未落盘的情况。
-pub fn save_main_window_geometry<R: Runtime>(app_handle: &AppHandle<R>) {
-    if let Some(window) = app_handle.get_window("main") {
-        save_geometry(&window);
+/// 记一帧窗口移动。`Moved` 事件本身已带位置，直接用它，不再回头问
+/// `outer_position()`。
+///
+/// 那个查询在 Electron 运行时里是一次同步 IPC 往返（`window.geometry`），而拖动时
+/// 每秒有数百个 move：逐事件往返会把主线程和 Electron 的 RPC 队列一起拖住，正是
+/// 桌宠跟手发滞、主窗口拖动卡顿的一半来源（issue #1380）。
+///
+/// 只做内存赋值，不碰磁盘；退出时的 `save_main_window_geometry` 会重新采样一次，
+/// 因此这里的瞬态（恢复窗口期、隐藏窗口）不会落进用户配置。
+pub fn record_moved(position: PhysicalPosition<i32>) {
+    if is_restoring_geometry() {
+        return;
     }
+    GEOMETRY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .position = Some(position);
+}
+
+/// 记一帧窗口缩放（`Resized` 带的就是内容区尺寸）。
+///
+/// 全屏切换也会派发 `Resized`，而全屏尺寸不是可恢复的普通窗口几何；此时
+/// `sample_geometry` 会拒绝采样，退出回退若沿用这份缓存就会把全屏尺寸存成普通
+/// 尺寸，下次启动按它恢复。因此全屏期间只丢弃缩放样本。
+pub fn record_resized<R: Runtime>(window: &Window<R>, size: PhysicalSize<u32>) {
+    if is_restoring_geometry() || window.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+    let mut cached = GEOMETRY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    cached.size = Some(size);
+    // 只随尺寸一起记录：位置变化与缩放无关，跨屏移窗时不应改写它。
+    cached.scale_factor = window
+        .scale_factor()
+        .ok()
+        .filter(|scale| scale.is_finite() && *scale > 0.0);
+}
+
+/// 正常退出前把几何落盘：优先采样窗口当前几何（与插件退出时 `update_state`
+/// 的作用一致），窗口已不可采（隐藏/全屏/销毁）时回退到缓存，保证最后位置不丢。
+pub fn save_main_window_geometry<R: Runtime>(app_handle: &AppHandle<R>) {
+    let sampled = app_handle
+        .get_window("main")
+        .and_then(|window| sample_geometry(&window));
+    let pending = take_cached_geometry();
+    let state = match (sampled, pending.is_empty()) {
+        // 采样成功即为窗口此刻的真实几何，无需再合并。
+        (Some(state), _) => Some(state),
+        (None, false) => Some(merge_pending_geometry(
+            get_window_state(app_handle),
+            &pending,
+        )),
+        (None, true) => None,
+    };
+    if let Some(state) = state {
+        save_window_state(app_handle, &state);
+    }
+}
+
+/// 用缓存里实际发生过的变动覆盖已保存几何，其余字段保持原样。
+fn merge_pending_geometry(saved: WindowState, pending: &PendingGeometry) -> WindowState {
+    let mut state = saved;
+    if let Some(position) = pending.position {
+        state.x = Some(position.x);
+        state.y = Some(position.y);
+    }
+    if let Some(size) = pending.size {
+        state.width = size.width;
+        state.height = size.height;
+        state.size_is_inner = true;
+        // 尺寸与采样它的缩放比例必须成对写入：`rescale_to_current` 会按旧比例
+        // 再换算一次，跨屏改尺寸后保留旧比例会把窗口越缩越小（直至回落默认值）。
+        if let Some(scale) = pending.scale_factor {
+            state.scale_factor = scale;
+        }
+    }
+    state
 }
 
 /// 把旧版保存的外框尺寸换算成 set_size 所需的内容区尺寸。
@@ -530,8 +640,84 @@ mod tests {
         assert!(!legacy.size_is_inner, "缺少 size_is_inner 的旧记录按外框尺寸迁移");
     }
 
+    /// 这些用例共用进程级 `GEOMETRY_CACHE`，必须串行，避免互相偷对方的暂存。
+    static GEOMETRY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn moved_and_resized_frames_only_touch_the_memory_cache() {
+        // 参照 tauri-plugin-window-state：Moved/Resized 只更新内存暂存，退出时才
+        // 落盘一次。事件自带坐标/尺寸，因此这里不需要任何窗口对象。
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        take_cached_geometry();
+        record_moved(PhysicalPosition::new(11, 22));
+        GEOMETRY_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .size = Some(PhysicalSize::new(1000, 700));
+        record_moved(PhysicalPosition::new(33, 44));
+        let flushed = take_cached_geometry();
+        assert_eq!(
+            (flushed.position, flushed.size),
+            (Some(PhysicalPosition::new(33, 44)), Some(PhysicalSize::new(1000, 700))),
+            "移动与缩放分别覆盖各自的字段，最后一次 Moved 胜出"
+        );
+        assert!(take_cached_geometry().is_empty(), "flush drains the cache");
+    }
+
+    #[test]
+    fn fallback_flush_keeps_saved_fields_that_never_changed() {
+        // 先改尺寸、再只拖动、然后收进托盘退出：窗口已隐藏，采样拿不到，回退
+        // 只能靠缓存。缓存里没有尺寸样本，宽高与最大化状态必须保留原保存值，
+        // 不能退回 DEFAULT 的 1280×840。
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        take_cached_geometry();
+        record_moved(PhysicalPosition::new(7, 8));
+        let saved = WindowState {
+            maximized: true,
+            x: Some(1),
+            y: Some(2),
+            width: 1600,
+            height: 900,
+            size_is_inner: true,
+            scale_factor: 2.0,
+        };
+        let merged = merge_pending_geometry(saved, &take_cached_geometry());
+        assert_eq!(
+            (merged.x, merged.y, merged.width, merged.height, merged.maximized),
+            (Some(7), Some(8), 1600, 900, true),
+            "只合并真正发生过变动的字段"
+        );
+    }
+
+    #[test]
+    fn fallback_flush_pairs_new_size_with_its_own_scale_factor() {
+        // 从 2.0 屏移到 1.0 屏后改尺寸再隐藏退出：尺寸已按新屏采样，缩放比例
+        // 必须跟着换，否则下次启动会按旧的 2.0 再缩一次，窗口越缩越小。
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        take_cached_geometry();
+        GEOMETRY_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .size = Some(PhysicalSize::new(1200, 800));
+        GEOMETRY_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .scale_factor = Some(1.0);
+        let saved = WindowState {
+            width: 2400,
+            height: 1600,
+            size_is_inner: true,
+            scale_factor: 2.0,
+            ..WindowState::default()
+        };
+        let merged = merge_pending_geometry(saved, &take_cached_geometry());
+        assert_eq!((merged.width, merged.height), (1200, 800));
+        assert_eq!(merged.scale_factor, 1.0, "尺寸与采样它的缩放比例成对写入");
+    }
+
     #[test]
     fn exit_geometry_does_not_sample_extra_or_remote_windows_without_main() {
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
