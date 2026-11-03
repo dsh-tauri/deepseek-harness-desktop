@@ -11,25 +11,30 @@ const root = mkdtempSync(path.join(tmpdir(), 'hdiutil-retry-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 // 假 hdiutil：按次序吐出给定的失败，跑完这些失败之后成功。
+// create 失败时像真 hdiutil 一样留下半成品，且半成品还在时再 create 报 File exists；
+// 包装器里的残骸清理一旦被删掉，下面的 create 用例必须变红。
 function fakeHdiutil(failures) {
   const dir = mkdtempSync(path.join(root, 'case-'))
   const state = path.join(dir, 'attempts')
+  const output = path.join(dir, 'image.dmg')
   const binary = path.join(dir, 'hdiutil')
   writeFileSync(path.join(dir, 'failures'), failures.join('\n'))
   writeFileSync(binary, [
     '#!/usr/bin/env bash',
     `state=${JSON.stringify(state)}`,
     `failures=${JSON.stringify(path.join(dir, 'failures'))}`,
+    `output=${JSON.stringify(output)}`,
     'attempts=$(cat "$state" 2>/dev/null || echo 0)',
     'attempts=$((attempts + 1))',
     'echo "$attempts" > "$state"',
     'echo "argv: $*" >> "$state.argv"',
+    'if [ "$1" = create ] && [ -e "$output" ]; then echo "hdiutil: create failed - File exists" >&2; exit 1; fi',
     'failure=$(sed -n "$attempts"p "$failures")',
-    'if [ -n "$failure" ]; then echo "$failure" >&2; exit 1; fi',
+    'if [ -n "$failure" ]; then [ "$1" = create ] && : > "$output"; echo "$failure" >&2; exit 1; fi',
     'echo "created $*"',
   ].join('\n'))
   chmodSync(binary, 0o755)
-  return { binary, state }
+  return { binary, state, output }
 }
 
 function run(binary, args) {
@@ -41,11 +46,11 @@ function run(binary, args) {
 }
 
 it('retries the hdiutil flakes GitHub macOS runners report, then succeeds', () => {
-  const { binary, state } = fakeHdiutil([
+  const { binary, state, output } = fakeHdiutil([
     'hdiutil: create failed - Resource busy',
     'hdiutil: detach: timeout for DiskArbitration expired',
   ])
-  expect(run(binary, ['create', '-srcfolder', 'src', 'image.dmg'])).toContain('created')
+  expect(run(binary, ['create', '-srcfolder', 'src', output])).toContain('created')
   expect(readFileSync(state, 'utf8')).toBe('3\n')
 })
 
