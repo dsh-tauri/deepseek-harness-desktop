@@ -33,7 +33,7 @@ tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runt
   "tauri",
   "devtools"
 ] }
-electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "d261c44de4b8dc42d04b5b0ceba77d16a90b3fc6" }
+electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "41fad79c0d84f20980d1bb76ffbe772d7424beba" }
 tauri-plugin-single-instance = { version = "2", features = [ "deep-link" ] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"

@@ -976,17 +976,27 @@ async fn ensure_inner(
     if let Err(e) = install_result {
         // 即使 pnpm 失败也清掉旧 fallback，下一次重试必须从干净入口开始。
         remove_legacy_profile_module_fallback_best_effort(&profile);
-        // pnpm 的 `link:` 安装路径在「建好目录链接后立刻回读 package.json」这一步
-        // 失败时（libuv UV_UNKNOWN / 退出码 -4094）可能是**环境性的恒定失败**
-        // （实时防护 / 云盘 / 重解析点过滤驱动），重试与重装都无法越过；此时改由
-        // 桌面端自建链接并补齐清单，让内置插件落盘、启动继续，而不是把应用永久
-        // 卡在 Plugin installation 阶段（见 [`materialize`]）。
-        if is_link_materialization_failure(&e, &need) {
+        // 两类**与内置插件本身无关**的 pnpm 失败都不该让启动自愈永久卡住：前者是
+        // pnpm 的 `link:` 入口回读失败（libuv UV_UNKNOWN / 退出码 -4094，实时防护、
+        // 云盘、重解析点过滤驱动等环境因素，重试与重装都越不过），后者是 pnpm 11 的
+        // lockfile 供应链校验（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`）把档案里
+        // **已声明**的条目按发布时间判成违规，于是每一次插件操作都在这里硬失败
+        // （issue #1348：内置插件每轮被打回，dsh-taiwind 永不落盘、界面错位）。
+        // 内置插件的产物就随包分发，本不需要 registry 复核，因此统一改由桌面端自建
+        // 链接并补齐清单（见 [`materialize`]）。
+        let offline_reason = if is_supply_chain_policy_failure(&e) {
+            Some("[harness] pnpm 的供应链校验拒绝了档案锁文件，内置插件改由应用直接建立链接…")
+        } else if is_link_materialization_failure(&e, &need) {
+            Some("[harness] pnpm 未把插件链接落盘，改由应用直接建立链接…")
+        } else {
+            None
+        };
+        if let Some(line) = offline_reason {
             crate::service::workflow::instances::emit(
                 app_handle,
                 PREINSTALL_LOG_EVENT,
                 PreinstallLogPayload {
-                    line: "[harness] pnpm 未把插件链接落盘，改由应用直接建立链接…".to_string(),
+                    line: line.to_string(),
                 },
             );
             match materialize_internal_links(app_handle, &profile, &need) {
@@ -1098,6 +1108,20 @@ fn looks_like_link_readback_failure(error: &str) -> bool {
     lower.contains("preinstall_failed")
         && lower.contains("node_modules")
         && (lower.contains("code -4094") || lower.contains("unknown error, open"))
+}
+
+/// pnpm 的 lockfile 供应链校验（`minimumReleaseAge`）把档案里**已声明**的条目按发布
+/// 时间判成违规——每一次插件操作都会在这里硬失败，与内置插件的产物本身无关（包目录
+/// 随安装包分发）。因此这类失败同样改走离线自建链接，而不是把启动自愈卡死（#1348）。
+///
+/// 两种可观测形态都认：`install` 解析出精确条目时返回 `PLUGIN_POLICY_BLOCKED: [...]`；
+/// 解析不出条目（pnpm 文案改版、违规条目来自用户自己的依赖）时只剩 pnpm 的原始输出
+/// `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` / `Lockfile failed supply-chain policy check`。
+fn is_supply_chain_policy_failure(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("plugin_policy_blocked:")
+        || lower.contains("err_pnpm_minimum_release_age_violation")
+        || lower.contains("lockfile failed supply-chain policy check")
 }
 
 /// 同类签名但诊断里读不到失败路径：无从确认失败的就是内置插件入口。
@@ -1891,6 +1915,34 @@ mod tests {
         )
         .unwrap();
         assert!(unlinked_internal_entries(&need).is_empty());
+    }
+
+    /// pnpm 11 的 lockfile 供应链校验会让内置插件每一轮都被打回（#1348）：两种可观测
+    /// 形态都必须命中，否则 dsh-taiwind 永不落盘、设置界面持续错位。
+    #[test]
+    fn supply_chain_policy_failure_covers_parsed_and_raw_forms() {
+        assert!(is_supply_chain_policy_failure(
+            "PLUGIN_POLICY_BLOCKED: [{\"name\":\"dsh-taiwind\",\"version\":\"0.1.2\"}]"
+        ));
+        assert!(is_supply_chain_policy_failure(
+            "PREINSTALL_FAILED: dsh plugin exited with code 1: \u{2717} Lockfile failed supply-chain policy check (334 entries in 2.1s) Error: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION"
+        ));
+        assert!(is_supply_chain_policy_failure(
+            "INTERNAL_PLUGIN_INSTALL_FAILED: PREINSTALL_FAILED: dsh plugin exited with code 1: Error: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION"
+        ));
+    }
+
+    /// 其它失败一律不能命中：兜底会把用户自己的真实失败吞成「安装成功」。
+    #[test]
+    fn supply_chain_policy_failure_rejects_unrelated_failures() {
+        for error in [
+            "PREINSTALL_FAILED: dsh plugin exited with code 1: ERR_PNPM_SPEC_NOT_SUPPORTED",
+            "NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry.",
+            "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN: unknown error, open 'C:\\x\\node_modules\\dsh-tauri\\package.json'",
+            "PLUGIN_VERSION_INCOMPATIBLE: []",
+        ] {
+            assert!(!is_supply_chain_policy_failure(error), "{error}");
+        }
     }
 
     /// 同一签名也可能来自用户自己的 `link:` 依赖（`pnpm add` 会一并解析项目依赖）：
