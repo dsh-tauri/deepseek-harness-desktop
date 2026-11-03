@@ -10,6 +10,7 @@
 
 use crate::{AppHandle, WebviewWindow, Window};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{ Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size,
@@ -116,31 +117,49 @@ fn save_window_state<R: Runtime>(app_handle: &AppHandle<R>, state: &WindowState)
     store.save().expect("Failed to save window state");
 }
 
-/// 采样当前窗口并保存（主窗口移动/缩放时由 builder 调用）。
-pub fn save_geometry<R: Runtime>(window: &Window<R>) {
+/// 内存中的最新几何暂存。参照 `tauri-plugin-window-state` 的做法：移动/缩放
+/// 事件（高 DPI 屏上每秒数百个）只更新这里，磁盘只在退出时写一次。
+///
+/// 逐事件直接 `store.save()` 是同步整文件写盘，会把 Tauri 主线程（= Electron
+/// 事件循环线程）拖住；拖动这种连续事件流下主线程被写盘压死，表现为「一拖窗口
+/// 就整树退出」。桌宠窗口（`desktop::pet`）早已用节流规避了同一问题，主窗口
+/// 这条路径一直漏了。
+static GEOMETRY_CACHE: Mutex<Option<WindowState>> = Mutex::new(None);
+
+/// 记录一帧几何到内存暂存（不落盘）。多次 Moved/Resized 只覆盖同一个槽位。
+fn record_geometry(state: WindowState) {
+    *GEOMETRY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(state);
+}
+
+/// 取出并清空内存暂存（退出时兜底落盘用）。
+fn take_cached_geometry() -> Option<WindowState> {
+    GEOMETRY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take()
+}
+
+/// 采样当前窗口几何；不该落盘的瞬态（恢复窗口期、全屏、未显示）返回 None。
+fn sample_geometry<R: Runtime>(window: &Window<R>) -> Option<WindowState> {
     // 启动期几何恢复尚未完成：此刻采到的多半是 builder 默认尺寸/居中位置，
     // 落盘会覆盖用户保存值（见 RESTORING_GEOMETRY）。
     if is_restoring_geometry() {
-        return;
+        return None;
     }
-
-    // 原生全屏切换会触发 Resized，但此时的屏幕尺寸不是可恢复的
-    // 普通窗口几何；保留进入全屏前的最后一帧，退出全屏后会再次正常采样。
+    // 原生全屏切换会触发 Resized，但此时的屏幕尺寸不是可恢复的普通窗口几何。
     if window.is_fullscreen().unwrap_or(false) {
-        return;
+        return None;
     }
-
     // 窗口尚未显示（Windows 上 builder 先隐藏创建、恢复几何后再 show）时，
-    // build()/restore 阶段触发的 Moved/Resized 事件拿到的可能是瞬态尺寸
-    // （常被夹到最小尺寸），一旦落盘就会让窗口永久卡在最小尺寸。
-    // 因此未显示前不采样；真正几何在 show 之后的下一次移动/缩放或退出时保存。
+    // 采到的可能是瞬态尺寸（常被夹到最小尺寸），不该记录。
     if !window.is_visible().unwrap_or(false) {
-        return;
+        return None;
     }
-
     let pos = window.outer_position().ok();
     let size = window.inner_size().ok();
-    let state = WindowState {
+    Some(WindowState {
         maximized: window.is_maximized().unwrap_or(false),
         x: pos.map(|p| p.x),
         y: pos.map(|p| p.y),
@@ -150,14 +169,27 @@ pub fn save_geometry<R: Runtime>(window: &Window<R>) {
             .unwrap_or(DEFAULT_WINDOW_HEIGHT as u32),
         size_is_inner: true,
         scale_factor: window.scale_factor().unwrap_or(0.0),
-    };
-    save_window_state(window.app_handle(), &state);
+    })
 }
 
-/// 正常退出前主动采样主窗口，兜底最后一次移动/缩放事件尚未落盘的情况。
+/// 采样当前窗口并记入内存暂存（主窗口移动/缩放时由 builder 调用）。
+///
+/// 与 `tauri-plugin-window-state` 一致：事件里只更新缓存，退出时才落盘一次。
+pub fn save_geometry<R: Runtime>(window: &Window<R>) {
+    if let Some(state) = sample_geometry(window) {
+        record_geometry(state);
+    }
+}
+
+/// 正常退出前把几何落盘：优先采样窗口当前几何（与插件退出时 `update_state`
+/// 的作用一致），窗口已不可采（隐藏/全屏/销毁）时回退到缓存，保证最后位置不丢。
 pub fn save_main_window_geometry<R: Runtime>(app_handle: &AppHandle<R>) {
-    if let Some(window) = app_handle.get_window("main") {
-        save_geometry(&window);
+    let state = app_handle
+        .get_window("main")
+        .and_then(|window| sample_geometry(&window))
+        .or_else(take_cached_geometry);
+    if let Some(state) = state {
+        save_window_state(app_handle, &state);
     }
 }
 
@@ -530,8 +562,39 @@ mod tests {
         assert!(!legacy.size_is_inner, "缺少 size_is_inner 的旧记录按外框尺寸迁移");
     }
 
+    /// 这些用例共用进程级 `GEOMETRY_CACHE`，必须串行，避免互相偷对方的暂存。
+    static GEOMETRY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn moving_records_geometry_in_memory_and_exit_flushes_it_once() {
+        // 参照 tauri-plugin-window-state：Moved/Resized 只更新内存暂存，退出时才
+        // 落盘一次。锁住「记录 → 取出即清空」的语义，防止把逐事件写盘加回来。
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        record_geometry(WindowState {
+            x: Some(11),
+            y: Some(22),
+            width: 1000,
+            height: 700,
+            ..WindowState::default()
+        });
+        record_geometry(WindowState {
+            x: Some(33),
+            y: Some(44),
+            width: 1200,
+            height: 800,
+            ..WindowState::default()
+        });
+        let flushed = take_cached_geometry().expect("last recorded geometry wins");
+        assert_eq!(
+            (flushed.x, flushed.y, flushed.width, flushed.height),
+            (Some(33), Some(44), 1200, 800)
+        );
+        assert!(take_cached_geometry().is_none(), "flush drains the cache");
+    }
+
     #[test]
     fn exit_geometry_does_not_sample_extra_or_remote_windows_without_main() {
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
