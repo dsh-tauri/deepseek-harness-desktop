@@ -119,9 +119,8 @@ core-foundation = "0.10"
 objc2-core-foundation = "0.3"
 objc2-application-services = { version = "0.3", default-features = false, features = [
   "std",
-  "Accessibility",
+  "AXUIElement",
 ] }
-
 
 [target.'cfg(unix)'.dependencies]
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }

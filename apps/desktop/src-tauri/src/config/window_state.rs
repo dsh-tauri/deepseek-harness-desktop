@@ -124,14 +124,38 @@ fn save_window_state<R: Runtime>(app_handle: &AppHandle<R>, state: &WindowState)
 /// 事件循环线程）拖住；拖动这种连续事件流下主线程被写盘压死，表现为「一拖窗口
 /// 就整树退出」。桌宠窗口（`desktop::pet`）早已用节流规避了同一问题，主窗口
 /// 这条路径一直漏了。
-static GEOMETRY_CACHE: Mutex<Option<WindowState>> = Mutex::new(None);
+static GEOMETRY_CACHE: Mutex<PendingGeometry> = Mutex::new(PendingGeometry::new());
+
+/// 退出前收到的几何变动。只记真正发生过事件的字段：用 `WindowState::default()`
+/// 补齐其余字段会在回退落盘时把用户保存的宽高/最大化状态覆盖成默认值
+/// （先改尺寸、再只拖动、然后收进托盘退出即可复现）。
+#[derive(Clone, Copy)]
+struct PendingGeometry {
+    position: Option<PhysicalPosition<i32>>,
+    size: Option<PhysicalSize<u32>>,
+}
+
+impl PendingGeometry {
+    const fn new() -> Self {
+        Self {
+            position: None,
+            size: None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.position.is_none() && self.size.is_none()
+    }
+}
 
 /// 取出并清空内存暂存（退出时兜底落盘用）。
-fn take_cached_geometry() -> Option<WindowState> {
-    GEOMETRY_CACHE
+fn take_cached_geometry() -> PendingGeometry {
+    let mut cached = GEOMETRY_CACHE
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .take()
+        .unwrap_or_else(|error| error.into_inner());
+    let taken = *cached;
+    *cached = PendingGeometry::new();
+    taken
 }
 
 /// 采样当前窗口几何；不该落盘的瞬态（恢复窗口期、全屏、未显示）返回 None。
@@ -178,38 +202,61 @@ pub fn record_moved(position: PhysicalPosition<i32>) {
     if is_restoring_geometry() {
         return;
     }
-    let mut cached = GEOMETRY_CACHE
+    GEOMETRY_CACHE
         .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let state = cached.get_or_insert_with(WindowState::default);
-    state.x = Some(position.x);
-    state.y = Some(position.y);
+        .unwrap_or_else(|error| error.into_inner())
+        .position = Some(position);
 }
 
 /// 记一帧窗口缩放（`Resized` 带的就是内容区尺寸）。
-pub fn record_resized(size: PhysicalSize<u32>) {
-    if is_restoring_geometry() {
+///
+/// 全屏切换也会派发 `Resized`，而全屏尺寸不是可恢复的普通窗口几何；此时
+/// `sample_geometry` 会拒绝采样，退出回退若沿用这份缓存就会把全屏尺寸存成普通
+/// 尺寸，下次启动按它恢复。因此全屏期间只丢弃缩放样本。
+pub fn record_resized<R: Runtime>(window: &Window<R>, size: PhysicalSize<u32>) {
+    if is_restoring_geometry() || window.is_fullscreen().unwrap_or(false) {
         return;
     }
-    let mut cached = GEOMETRY_CACHE
+    GEOMETRY_CACHE
         .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let state = cached.get_or_insert_with(WindowState::default);
-    state.width = size.width;
-    state.height = size.height;
-    state.size_is_inner = true;
+        .unwrap_or_else(|error| error.into_inner())
+        .size = Some(size);
 }
 
 /// 正常退出前把几何落盘：优先采样窗口当前几何（与插件退出时 `update_state`
 /// 的作用一致），窗口已不可采（隐藏/全屏/销毁）时回退到缓存，保证最后位置不丢。
 pub fn save_main_window_geometry<R: Runtime>(app_handle: &AppHandle<R>) {
-    let state = app_handle
+    let sampled = app_handle
         .get_window("main")
-        .and_then(|window| sample_geometry(&window))
-        .or_else(take_cached_geometry);
+        .and_then(|window| sample_geometry(&window));
+    let pending = take_cached_geometry();
+    let state = match (sampled, pending.is_empty()) {
+        // 采样成功即为窗口此刻的真实几何，无需再合并。
+        (Some(state), _) => Some(state),
+        (None, false) => Some(merge_pending_geometry(
+            get_window_state(app_handle),
+            &pending,
+        )),
+        (None, true) => None,
+    };
     if let Some(state) = state {
         save_window_state(app_handle, &state);
     }
+}
+
+/// 用缓存里实际发生过的变动覆盖已保存几何，其余字段保持原样。
+fn merge_pending_geometry(saved: WindowState, pending: &PendingGeometry) -> WindowState {
+    let mut state = saved;
+    if let Some(position) = pending.position {
+        state.x = Some(position.x);
+        state.y = Some(position.y);
+    }
+    if let Some(size) = pending.size {
+        state.width = size.width;
+        state.height = size.height;
+        state.size_is_inner = true;
+    }
+    state
 }
 
 /// 把旧版保存的外框尺寸换算成 set_size 所需的内容区尺寸。
@@ -591,15 +638,43 @@ mod tests {
         let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         take_cached_geometry();
         record_moved(PhysicalPosition::new(11, 22));
-        record_resized(PhysicalSize::new(1000, 700));
+        GEOMETRY_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .size = Some(PhysicalSize::new(1000, 700));
         record_moved(PhysicalPosition::new(33, 44));
-        let flushed = take_cached_geometry().expect("frames accumulate in the cache");
+        let flushed = take_cached_geometry();
         assert_eq!(
-            (flushed.x, flushed.y, flushed.width, flushed.height),
-            (Some(33), Some(44), 1000, 700),
+            (flushed.position, flushed.size),
+            (Some(PhysicalPosition::new(33, 44)), Some(PhysicalSize::new(1000, 700))),
             "移动与缩放分别覆盖各自的字段，最后一次 Moved 胜出"
         );
-        assert!(take_cached_geometry().is_none(), "flush drains the cache");
+        assert!(take_cached_geometry().is_empty(), "flush drains the cache");
+    }
+
+    #[test]
+    fn fallback_flush_keeps_saved_fields_that_never_changed() {
+        // 先改尺寸、再只拖动、然后收进托盘退出：窗口已隐藏，采样拿不到，回退
+        // 只能靠缓存。缓存里没有尺寸样本，宽高与最大化状态必须保留原保存值，
+        // 不能退回 DEFAULT 的 1280×840。
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        take_cached_geometry();
+        record_moved(PhysicalPosition::new(7, 8));
+        let saved = WindowState {
+            maximized: true,
+            x: Some(1),
+            y: Some(2),
+            width: 1600,
+            height: 900,
+            size_is_inner: true,
+            scale_factor: 2.0,
+        };
+        let merged = merge_pending_geometry(saved, &take_cached_geometry());
+        assert_eq!(
+            (merged.x, merged.y, merged.width, merged.height, merged.maximized),
+            (Some(7), Some(8), 1600, 900, true),
+            "只合并真正发生过变动的字段"
+        );
     }
 
     #[test]

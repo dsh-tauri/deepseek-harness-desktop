@@ -1591,7 +1591,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             tauri::WindowEvent::Resized(size) => {
                 // 桌宠尺寸由前端按宠物比例设定，与位置记录无关；只记主窗口。
                 if window.label() == MAIN_WINDOW_LABEL {
-                    crate::config::record_resized(*size);
+                    crate::config::record_resized(window, *size);
                 }
                 #[cfg(target_os = "macos")]
                 {

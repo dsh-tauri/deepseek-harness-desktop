@@ -72,12 +72,15 @@ function useDraggable(options: Partial<UseWindowDraggableOptions> = {}): UseWind
   return useWindowDraggable({ clampPosition: noClamp, ...options })
 }
 
-/** 造一个命中箱指针事件：hook 只用按钮/指针 id/主指针标记。 */
-function pointerEvent(options: { button?: number, isPrimary?: boolean, pointerId?: number } = {}): ReactPointerEvent<HTMLDivElement> {
+/** 造一个命中箱指针事件：hook 只用按钮/指针 id/主指针标记/屏幕坐标。 */
+function pointerEvent(options: { button?: number, isPrimary?: boolean, pointerId?: number, screenX?: number, screenY?: number } = {}): ReactPointerEvent<HTMLDivElement> {
   return {
     button: options.button ?? 0,
     pointerId: options.pointerId ?? 1,
     isPrimary: options.isPrimary ?? true,
+    // 设备流断流时手势原点取自按下事件自带的屏幕坐标。
+    screenX: options.screenX ?? CURSOR.x,
+    screenY: options.screenY ?? CURSOR.y,
   } as unknown as ReactPointerEvent<HTMLDivElement>
 }
 

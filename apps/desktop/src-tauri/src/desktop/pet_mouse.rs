@@ -314,14 +314,13 @@ pub fn request_macos_accessibility() -> bool {
         return true;
     }
     // SAFETY: the prompt key and a constant CFBoolean are the exact pair Apple
-    // documents for this options dictionary; nothing else is retained.
+    // documents for this options dictionary; the dictionary outlives the call.
     unsafe {
         let key: &CFString = kAXTrustedCheckOptionPrompt;
         let key: &CFType = key.as_ref();
-        let value: &CFBoolean = CFBoolean::true_value();
-        let value: &CFType = value.as_ref();
+        let value: &CFType = CFBoolean::new(true).as_ref();
         let options = CFDictionary::from_slices(&[key], &[value]);
-        AXIsProcessTrustedWithOptions(Some(&options))
+        AXIsProcessTrustedWithOptions(Some(options.as_ref()))
     }
 }
 

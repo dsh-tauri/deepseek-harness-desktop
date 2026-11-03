@@ -302,12 +302,23 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       onReleaseRef.current?.()
   }
 
+  /** 设备流是否已断流（从未上报，或静默超过 `DEVICE_STREAM_STALE_MS`）。 */
+  function isDeviceStreamStale(): boolean {
+    const last = lastDeviceSampleAtRef.current
+    return last === undefined || Date.now() - last >= DEVICE_STREAM_STALE_MS
+  }
+
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     if (event.button !== 0 || event.isPrimary === false || gestureRef.current !== null)
       return
     // 先通知宿主「抓住宠物」：这一步早于手势门槛与异步读窗口位置。
     onGrabRef.current?.()
+    // 设备流已断流时改用按下事件自带的屏幕坐标作手势原点：否则首次 DOM
+    // pointermove 只会补上原点、不产生位移，按住后一次跨过门槛的移动仍拖不动。
     const latest = cursorRef.current
+      ?? (isDeviceStreamStale()
+        ? { x: event.screenX * screenCoordinateScale(), y: event.screenY * screenCoordinateScale() }
+        : undefined)
     const gesture: Gesture = {
       pointerId: event.pointerId,
       anchor: latest === undefined ? undefined : { x: latest.x, y: latest.y },
@@ -351,10 +362,7 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
    */
   useEffect(() => {
     function handlePointerMove(event: PointerEvent): void {
-      if (gestureRef.current === null)
-        return
-      const last = lastDeviceSampleAtRef.current
-      if (last !== undefined && Date.now() - last < DEVICE_STREAM_STALE_MS)
+      if (gestureRef.current === null || !isDeviceStreamStale())
         return
       // screenX/screenY 是 CSS 像素；乘 scale 得到与设备流同一套屏幕坐标。
       applyCursor({ x: event.screenX * screenCoordinateScale(), y: event.screenY * screenCoordinateScale() })
@@ -363,7 +371,7 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       if (gestureRef.current === null)
         return
       // 设备流断流时 `device-mouse-button` 同样收不到，松手只能由 DOM 兜底。
-      if (lastDeviceSampleAtRef.current !== undefined && Date.now() - lastDeviceSampleAtRef.current < DEVICE_STREAM_STALE_MS)
+      if (!isDeviceStreamStale())
         return
       endDrag()
     }
