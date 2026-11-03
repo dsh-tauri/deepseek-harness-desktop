@@ -84,7 +84,7 @@ use artifact::{ensure_plugin_entry_built, verify_installed_products};
 use diagnose::{
     diagnostic_suffix, git_transport_hint, incompatible_versions, network_error_hint,
     pick_error_message, policy_blocked_versions, policy_verification_network_failure,
-    store_mismatch_hint,
+    release_age_policy_rejected, store_mismatch_hint,
 };
 use pnpm::ensure_pnpm;
 use single::single_plugin_args;
@@ -491,6 +491,18 @@ async fn install_with_cancel(
             let payload = serde_json::to_string(&policy_blocked)
                 .map_err(|e| format!("PREINSTALL_SERIALIZE: {e}"))?;
             return Err(format!("PLUGIN_POLICY_BLOCKED: {payload}"));
+        }
+        // 解析不出精确条目（pnpm 文案改版、违规条目来自用户自己的依赖）时，策略标记可能被
+        // `pick_error_message` 的 8 行截断丢掉，内置插件就再也进不了离线兜底（#1348）。
+        // 按**原始输出**先做一次稳定分类，把标题显式写进错误里；信任降级不算，见
+        // [`release_age_policy_rejected`]。
+        if release_age_policy_rejected(&last_attempt) {
+            log::warn!(
+                "pnpm release-age policy rejected the profile lockfile without parseable entries"
+            );
+            return Err(format!(
+                "PREINSTALL_FAILED: dsh plugin exited with code {exit_code} (lockfile failed supply-chain policy check; minimumReleaseAge)"
+            ));
         }
         // 区分 git 传输层失败与 allowBuilds 构建门禁：前者是 pnpm 走了 git+ssh
         // （用户环境无 SSH 配置），后者才是补充白名单可自愈的。传输层错误给出

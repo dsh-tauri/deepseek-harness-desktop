@@ -1119,6 +1119,10 @@ fn looks_like_link_readback_failure(error: &str) -> bool {
 /// `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` / `Lockfile failed supply-chain policy check`。
 fn is_supply_chain_policy_failure(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
+    // 同一句标题也用于信任降级（用户自己的依赖被降级），那不是发布时间门禁，不能绕过
+    if lower.contains("err_pnpm_trust_downgrade") {
+        return false;
+    }
     lower.contains("plugin_policy_blocked:")
         || lower.contains("err_pnpm_minimum_release_age_violation")
         || lower.contains("lockfile failed supply-chain policy check")
@@ -1940,6 +1944,7 @@ mod tests {
             "NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry.",
             "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN: unknown error, open 'C:\\x\\node_modules\\dsh-tauri\\package.json'",
             "PLUGIN_VERSION_INCOMPATIBLE: []",
+            "PREINSTALL_FAILED: dsh plugin exited with code 1: ✗ Lockfile failed supply-chain policy check (201 entries) Error: ERR_PNPM_TRUST_DOWNGRADE lodash@4.17.21 is a downgrade",
         ] {
             assert!(!is_supply_chain_policy_failure(error), "{error}");
         }

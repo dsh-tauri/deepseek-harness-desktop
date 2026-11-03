@@ -155,6 +155,24 @@ pub(super) fn policy_blocked_versions(output: &str) -> Vec<PolicyBlockedVersion>
     found
 }
 
+/// pnpm 11 的 lockfile 供应链校验（`minimumReleaseAge`）是否拒绝了档案，**按原始输出**判定。
+///
+/// 解析出精确条目时 `install` 会返回 `PLUGIN_POLICY_BLOCKED`，用户拿到的是可授权的清单；
+/// 文案改版或违规条目来自用户自己的依赖时只剩原始输出，而 `pick_error_message` 只保留前
+/// 8 条命中错误标记的行，策略标记可能被截掉——内置插件的离线兜底因此读不到它（#1348）。
+/// 因此这里在挑选展示文案之前先做一次稳定分类。
+///
+/// `ERR_PNPM_TRUST_DOWNGRADE` 共用同一句标题但说的是信任降级（用户自己的依赖被降级），
+/// 不是发布时间门禁，绝不能把它也当成可绕过项。
+pub(super) fn release_age_policy_rejected(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    if lower.contains("err_pnpm_trust_downgrade") {
+        return false;
+    }
+    lower.contains("err_pnpm_minimum_release_age_violation")
+        || lower.contains("lockfile failed supply-chain policy check")
+}
+
 /// dsh 版本兼容性拒绝里的一条记录（[[`incompatible_versions`]] 的解析结果）。
 ///
 /// 授权（`dsh plugin allow-version`）只认**精确**的包名 + 版本 + 运行时版本三元组，
@@ -623,6 +641,24 @@ mod tests {
         // 有时间但没有门禁判据（文案改版）时宁可退回普通失败
         let no_cutoff = "undici@7.29.1 was published at 2026-09-28T10:00:00.000Z";
         assert!(policy_blocked_versions(no_cutoff).is_empty());
+    }
+
+    #[test]
+    fn release_age_policy_rejection_survives_message_truncation() {
+        // 关键回归（#1348）：前面塞满命中错误标记的行，策略标记被 8 行截断丢掉后，
+        // 内置插件的离线兜底仍然要能按原始输出认出这次失败。
+        let noisy = format!("{}{REAL_POLICY_VIOLATION}", "error 0\n".repeat(9));
+        assert!(release_age_policy_rejected(&noisy));
+        assert!(!pick_error_message(&noisy, None).contains("supply-chain"));
+        assert!(release_age_policy_rejected("✗ Lockfile failed supply-chain policy check"));
+        assert!(!release_age_policy_rejected("Progress: resolved 48, reused 0"));
+    }
+
+    #[test]
+    fn trust_downgrade_is_not_treated_as_release_age_policy() {
+        // 信任降级与发布时间门禁共用同一句标题，但它是用户依赖被降级，绕过它等于关掉校验
+        let output = "✗ Lockfile failed supply-chain policy check (201 entries in 1.5s)\n[ERR_PNPM_TRUST_DOWNGRADE] lodash@4.17.21 is a downgrade";
+        assert!(!release_age_policy_rejected(output));
     }
 
     #[test]
