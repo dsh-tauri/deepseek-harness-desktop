@@ -71,7 +71,8 @@ describe('desktop update dialog', () => {
     desktopUpdater.downloading = true
     desktopUpdater.downloadProgress = 42
     openDialog()
-    await screen.findByText('update.desktop_downloading')
+    const progress = await screen.findByRole('progressbar', { name: 'update.desktop_downloading' })
+    expect(progress.getAttribute('aria-valuenow')).toBe('42')
     expect(screen.queryByRole('button', { name: 'update.later' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'update.now' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'update.open_installer' })).toBeNull()
