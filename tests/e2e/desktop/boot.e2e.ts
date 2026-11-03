@@ -21,6 +21,7 @@ interface AppConfig {
 interface HealthCheck {
   status: string
   service_url: string
+  boot_html?: string
 }
 
 const app = shellAppScope()
@@ -30,13 +31,12 @@ beforeAll(async () => {
 }, ASSEMBLY_TIMEOUT_MS)
 
 /**
- * 等 Harness 真正就绪：跟随壳记录的服务地址，再看那个地址上是否已经有启动完成的
- * 原生页面（`__DSH_BOOT__` 由壳注入，客户端模块清单就在里面）。
+ * 等 Harness 真正就绪：先确认本窗口仍持有核心，再走产品自身的那条门禁
+ * （`proxy_health_check` 同时验证服务在监听与客户端模块都可取）。
  *
- * 此前这里直接轮询 `proxy_health_check`：那是一条会并发探测 90+ 个 bundle 的完整门禁，
- * 在 30 秒窗口里跑完属于「环境够快才过」，Windows 上偶发超时（issue #1384）。就绪信号
- * 本身没变——服务在监听、boot 清单在盘、页面已启动——只是按真实信号等待，而不是拿
- * 一个固定窗口去赌探测轮次。核心进程退出仍立刻失败，不会把崩溃耗成超时。
+ * 就绪判据只能有一条：E2E 自造的判据（页面加载完、能取到 bundle）与产品实际
+ * 认可的时机不同，切换档案、复用核心时会把「还没就绪」认成「已就绪」（issue #1384）。
+ * 这里只做一件事——核心进程已退出时立刻失败，不把崩溃耗成超时。
  */
 async function waitHealthy(page: Page): Promise<HealthCheck> {
   let serviceUrl = ''
@@ -50,30 +50,10 @@ async function waitHealthy(page: Page): Promise<HealthCheck> {
       if (String(error).includes('HARNESS_NOT_OWNED'))
         throw new Error(`Harness 核心已退出：${String(error)}`)
     }
-    const prefix = `${new URL(serviceUrl).origin}/`
-    const pages = app.get().browser.contexts().flatMap(context => context.pages())
-    // 就绪判据取产品自身那条门禁：客户端模块全部可取即已就绪。它比「页面已加载」
-    // 更严格，也才是壳与 Core 共同认可的信号；跑在 CDP 侧并发探测，不占固定窗口。
-    const guests = pages.filter(candidate => candidate.url().startsWith(prefix) && !candidate.isClosed())
-    if (guests.length === 0)
-      return false
-    for (const guest of guests) {
-      const ready = await guest.evaluate(async () => {
-        const boot = (globalThis as { __DSH_BOOT__?: { entries?: Array<{ url?: string }> } }).__DSH_BOOT__
-        if (document.readyState !== 'complete' || !Array.isArray(boot?.entries))
-          return false
-        const urls = boot.entries.map(entry => entry.url).filter((url): url is string => typeof url === 'string' && url.length > 0)
-        if (urls.length === 0)
-          return true
-        const results = await Promise.all(urls.map(url => fetch(url, { method: 'GET' })
-          .then(response => response.ok)
-          .catch(() => false)))
-        return results.every(Boolean)
-      }).catch(() => false)
-      if (ready)
-        return true
-    }
-    return false
+    // 就绪判据沿用产品自身那条门禁：它同时验证「服务在监听」与「客户端模块都可取」，
+    // 是壳与 Core 共同认可的信号。核心进程退出已在上面快速失败，不会耗成超时。
+    const health = await invoke<HealthCheck>(page, 'proxy_health_check')
+    return health.status.startsWith('healthy')
   }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
   return { service_url: serviceUrl, status: `healthy - ${new URL(serviceUrl).origin}` }
 }
