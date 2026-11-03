@@ -185,12 +185,13 @@ jobs:
         run: |
           echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
 
-  rust-test:
-    name: Rust tests (${{ matrix.runner }})
+  # Rust 单测与桌面 CDP E2E 同一环境共用一次编译：pnpm install 只落宿主平台的
+  # 原生可选依赖，交叉架构跑会漏装另一侧（issue #1326），因此两个矩阵必须逐项同构。
+  # 合并前是两条独立 job，各自 checkout / install / 编译一遍，5 个平台白跑两轮。
+  rust-e2e:
+    name: Rust tests & Desktop CDP E2E (${{ matrix.runner }})
     needs: [pre_job, changes]
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1') }}
-    # 与发布矩阵逐项对齐、架构与 runner 同构：pnpm install 只落宿主平台的原生
-    # 可选依赖，交叉架构跑会漏装另一侧，测试绿但产物在目标机器上崩（issue #1326）。
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1' || needs.changes.outputs.desktop == '1') }}
     strategy:
       fail-fast: false
       matrix:
@@ -206,110 +207,16 @@ jobs:
           - runner: windows-latest
             arch: x64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      DSH_RUST_SCOPE: ${{ needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1' }}
+      DSH_DESKTOP_SCOPE: ${{ needs.changes.outputs.full == '1' || needs.changes.outputs.desktop == '1' }}
     steps:
       - name: Scope
         run: |
           echo "full=${{ needs.changes.outputs.full }}"
-          echo "reason=${{ needs.changes.outputs.reason }}"
-
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          submodules: true
-
-      # 标签写错（例如把 x64 指到 Apple Silicon）不会报错，只会在错误架构上跑出一份
-      # 看似通过的绿灯，这里把 runner.arch 与矩阵声明对齐。
-      - name: Verify runner architecture
-        shell: bash
-        run: |
-          case "${{ matrix.arch }}" in
-            x64) expected=X64 ;;
-            arm64) expected=ARM64 ;;
-            *) echo "::error::unknown matrix arch '${{ matrix.arch }}'"; exit 1 ;;
-          esac
-          if [ "${{ runner.arch }}" != "$expected" ]; then
-            echo "::error::${{ matrix.runner }} is ${{ runner.arch }}, matrix declares ${{ matrix.arch }}"
-            exit 1
-          fi
-          echo "runner arch OK: ${{ runner.arch }}"
-
-      - name: Setup Node.js and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y dbus libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Cache Electron distribution
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/electron
-            ~/Library/Caches/electron
-            ~/AppData/Local/electron/Cache
-          key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Setup Xcode
-        if: runner.os == 'macOS'
-        uses: ./.github/actions/setup-xcode
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # 稳定性和 macOS 登录项变体验证需要多轮，按需在本地/手动触发执行，
-      # 不再随每次 PR 固定跑（issue #1059）。准入前仍需本地连跑 5 次无 Flake。
-      - name: Run Windows native notification tests
-        if: runner.os == 'Windows'
-        run: cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features
-        working-directory: .
-
-      - name: Run tests
-        run: cargo test --all-features --locked
-        working-directory: apps/desktop/src-tauri
-
-      - name: Verify macOS application menu and tray event loop
-        if: runner.os == 'macOS'
-        timeout-minutes: 10
-        run: cargo test --locked --manifest-path crates/tauri-runtime-electron/Cargo.toml --lib --test macos_native_loop --target-dir apps/desktop/src-tauri/target
-
-  desktop-e2e:
-    name: Desktop CDP E2E (${{ matrix.runner }})
-    needs: [pre_job, changes]
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.desktop == '1') }}
-    # Electron 运行时不再受 WebView2 限制，按发布矩阵的每个架构各跑一次（issue #1326）。
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            arch: x64
-          - runner: ubuntu-22.04-arm
-            arch: arm64
-          - runner: macos-26
-            arch: arm64
-          - runner: macos-26-intel
-            arch: x64
-          - runner: windows-latest
-            arch: x64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
-    steps:
-      - name: Scope
-        run: |
-          echo "full=${{ needs.changes.outputs.full }}"
+          echo "rust=${{ needs.changes.outputs.rust }}"
+          echo "desktop=${{ needs.changes.outputs.desktop }}"
           echo "reason=${{ needs.changes.outputs.reason }}"
 
       - name: Checkout repository
@@ -352,23 +259,17 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
           Write-Host "pnpm.exe: $($exe.FullName)"
 
+      # 不能加 --ignore-scripts：桌面端 E2E 依赖 electron 的 postinstall 落
+      # node_modules/electron/dist，缺了 dist 二进制就只能等运行时再下载。
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Rust 侧 dbus / appindicator / patchelf，桌面端侧 GTK 与 headless 的 xvfb。
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Setup Xcode
-        if: runner.os == 'macOS'
-        uses: ./.github/actions/setup-xcode
+          sudo apt-get install -y dbus libappindicator3-dev librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb
 
       - name: Cache Electron distribution
         uses: actions/cache@v4
@@ -379,23 +280,48 @@ jobs:
             ~/AppData/Local/electron/Cache
           key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
 
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Xcode
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+
+      # Rust 测试与桌面端都落在 apps/desktop/src-tauri/target；E2E 显式指定
+      # --target-dir 复用同一份 cache，避免两份 target 缓存互相覆盖。
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # dist 必须存在：缺失时 debug 构建回落到 devUrl，页面为空、选择器全部落空。
+      # dist 与 debug 产物必须就绪：Run 阶段的两条车道都要用到它们。
+      # 先编译一次二进制，Rust 测试与 E2E 随后并发跑，不再各自编译一遍。
       - name: Build bundled plugins
+        if: env.DSH_DESKTOP_SCOPE == 'true'
         run: pnpm run build:plugins
 
       - name: Build renderer
+        if: env.DSH_DESKTOP_SCOPE == 'true'
         run: pnpm --filter dsh-desktop build
 
       - name: Build debug binary
+        if: env.DSH_DESKTOP_SCOPE == 'true'
         run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
 
+      # E2E 用的二进制先复制到 RUNNER_TEMP：并发跑的 rust_lane 里 cargo test 会重建
+      # target/debug 下的同名产物，Windows 上被占用的 exe 还会让链接直接失败。
+      - name: Stage E2E binary
+        if: env.DSH_DESKTOP_SCOPE == 'true'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/dsh-e2e"
+          cp apps/desktop/src-tauri/target/debug/deepseek-harness-desktop* "$RUNNER_TEMP/dsh-e2e/"
+
       - name: Runtime IPC readiness regression
+        if: env.DSH_DESKTOP_SCOPE == 'true'
         shell: bash
         run: |
           root=$(node -p 'process.cwd().split(String.fromCharCode(92)).join(String.fromCharCode(47))')
@@ -417,12 +343,53 @@ jobs:
             "${args[@]}"
           fi
 
-      - name: Desktop E2E (Linux, headless)
-        if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum node node_modules/vitest/vitest.mjs run --project desktop
-        env:
-          DSH_E2E_HEADLESS: '1'
+      # 二进制已编译完成，两条车道互不依赖：并发跑，总耗时取较慢的一方而不是相加。
+      # E2E 只起 Electron 进程、不再调用 cargo，不会和 cargo test 抢 target 目录锁；
+      # 每条车道加 [rust] / [e2e] 前缀流式打印，卡在哪一侧一眼能看出来。
+      # 稳定性和 macOS 登录项变体验证需要多轮，按需在本地/手动触发执行，
+      # 仍随 PR 跑的是 Rust 侧既有用例，准入前需本地连跑 5 次无 Flake（issue #1059）。
+      - name: Run Rust tests and Desktop CDP E2E in parallel
+        shell: bash
+        run: |
+          set -uo pipefail
+          pids=()
 
-      - name: Desktop E2E
-        if: runner.os != 'Linux'
-        run: node node_modules/vitest/vitest.mjs run --project desktop
+          rust_lane() {
+            ( cd apps/desktop/src-tauri && cargo test --all-features --locked ) || return 1
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features || return 1
+            fi
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              cargo test --locked --manifest-path crates/tauri-runtime-electron/Cargo.toml --lib --test macos_native_loop --target-dir apps/desktop/src-tauri/target || return 1
+            fi
+          }
+
+          e2e_lane() {
+            export DSH_E2E_BINARY="$RUNNER_TEMP/dsh-e2e/deepseek-harness-desktop"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then DSH_E2E_BINARY="$DSH_E2E_BINARY.exe"; export DSH_E2E_BINARY; fi
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              DSH_E2E_HEADLESS=1 xvfb-run --auto-servernum node node_modules/vitest/vitest.mjs run --project desktop
+            else
+              node node_modules/vitest/vitest.mjs run --project desktop
+            fi
+          }
+
+          start_lane() {
+            local tag="$1"
+            shift
+            ( set -o pipefail; "$@" 2>&1 | sed "s/^/[$tag] /" ) &
+            pids+=("$!")
+          }
+
+          if [[ "$DSH_RUST_SCOPE" == 'true' ]]; then start_lane rust rust_lane; fi
+          if [[ "$DSH_DESKTOP_SCOPE" == 'true' ]]; then start_lane e2e e2e_lane; fi
+          if [[ ${#pids[@]} -eq 0 ]]; then
+            echo "no lane selected"
+            exit 0
+          fi
+
+          status=0
+          for pid in "${pids[@]}"; do
+            if ! wait "$pid"; then status=1; fi
+          done
+          exit "$status"
