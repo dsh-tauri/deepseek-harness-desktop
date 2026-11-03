@@ -250,13 +250,6 @@ impl ScreenRect {
         x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
     }
 
-    /// 与另一矩形是否有面积交集。
-    fn intersects(&self, other: &ScreenRect) -> bool {
-        self.x < other.right()
-            && self.right() > other.x
-            && self.y < other.bottom()
-            && self.bottom() > other.y
-    }
 }
 
 /// 多个屏幕矩形的并集；无可用屏幕时 `None`。
