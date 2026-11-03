@@ -155,6 +155,38 @@ pub(super) fn policy_blocked_versions(output: &str) -> Vec<PolicyBlockedVersion>
     found
 }
 
+/// pnpm 11 的 lockfile 供应链校验（`minimumReleaseAge`）是否拒绝了档案，**按原始输出**判定。
+///
+/// 解析出精确条目时 `install` 会返回 `PLUGIN_POLICY_BLOCKED`，用户拿到的是可授权的清单；
+/// 文案改版或违规条目来自用户自己的依赖时只剩原始输出，而 `pick_error_message` 只保留前
+/// 8 条命中错误标记的行，策略标记可能被截掉——内置插件的离线兜底因此读不到它（#1348）。
+/// 因此这里在挑选展示文案之前先做一次稳定分类。
+///
+/// 信任降级（用户自己的依赖被降级）共用同一句标题，见 `trust_policy_rejection`。
+pub(super) fn release_age_policy_rejected(output: &str) -> bool {
+    if trust_policy_rejection(output) {
+        return false;
+    }
+    let lower = output.to_ascii_lowercase();
+    lower.contains("err_pnpm_minimum_release_age_violation")
+        || lower.contains("lockfile failed supply-chain policy check")
+}
+
+/// pnpm 的信任策略（`trustPolicy`）是否拒绝了档案：依赖被降级到更旧/更低信任的版本。
+///
+/// 它与 `release_age_policy_rejected` 共用 `Lockfile failed supply-chain policy check`
+/// 这句标题，语义却相反——发布时间门禁放不放行由 dsh 自己决定，而信任降级说明档案里
+/// 用户自己的依赖被动过，绕过它等于把供应链校验整个关掉。因此任何兜底路径都必须先排除。
+pub(crate) fn trust_policy_rejection(output: &str) -> bool {
+    const MARKERS: [&str; 3] = [
+        "err_pnpm_trust_downgrade",
+        "err_pnpm_lockfile_resolution_verification",
+        "[trust_downgrade]",
+    ];
+    let lower = output.to_ascii_lowercase();
+    MARKERS.iter().any(|marker| lower.contains(marker))
+}
+
 /// dsh 版本兼容性拒绝里的一条记录（[[`incompatible_versions`]] 的解析结果）。
 ///
 /// 授权（`dsh plugin allow-version`）只认**精确**的包名 + 版本 + 运行时版本三元组，
@@ -623,6 +655,44 @@ mod tests {
         // 有时间但没有门禁判据（文案改版）时宁可退回普通失败
         let no_cutoff = "undici@7.29.1 was published at 2026-09-28T10:00:00.000Z";
         assert!(policy_blocked_versions(no_cutoff).is_empty());
+    }
+
+    #[test]
+    fn release_age_policy_rejection_survives_message_truncation() {
+        // 关键回归（#1348）：前面塞满命中错误标记的行，策略标记被 8 行截断丢掉后，
+        // 内置插件的离线兜底仍然要能按原始输出认出这次失败。
+        let noisy = format!("{}{REAL_POLICY_VIOLATION}", "error 0\n".repeat(9));
+        assert!(release_age_policy_rejected(&noisy));
+        assert!(!pick_error_message(&noisy, None).contains("supply-chain"));
+        assert!(release_age_policy_rejected("✗ Lockfile failed supply-chain policy check"));
+        assert!(!release_age_policy_rejected("Progress: resolved 48, reused 0"));
+    }
+
+    #[test]
+    fn trust_policy_rejection_covers_every_reported_marker() {
+        // 信任降级与发布时间门禁共用同一句标题，但它是用户依赖被降级，绕过它等于关掉校验。
+        // pnpm 11 三个标记都可能出现，任一个命中都不能进兜底。
+        for marker in [
+            "[ERR_PNPM_TRUST_DOWNGRADE] lodash@4.17.21 is a downgrade",
+            "[ERR_PNPM_LOCKFILE_RESOLUTION_VERIFICATION] lodash@4.17.21",
+            "[TRUST_DOWNGRADE] lodash@4.17.21",
+        ] {
+            let output = format!(
+                "✗ Lockfile failed supply-chain policy check (201 entries in 1.5s)\n{marker}"
+            );
+            assert!(trust_policy_rejection(&output), "{marker}");
+            assert!(!release_age_policy_rejected(&output), "{marker}");
+        }
+        assert!(!trust_policy_rejection(REAL_POLICY_VIOLATION));
+    }
+
+    #[test]
+    fn fetched_metadata_failure_does_not_become_a_release_age_classification() {
+        // 元数据拉不到时 pnpm 会把条目直接判成违规：那是网络问题，交给网络分类重试，
+        // 不能被 release_age_policy_rejected 抢先定性成策略拒绝
+        let output = "✗ Lockfile failed supply-chain policy check\n[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:\n[WARN] GET https://registry.npmjs.org/undici error (unknown). Will retry in 10 seconds.";
+        assert!(release_age_policy_rejected(output));
+        assert!(policy_verification_network_failure(output));
     }
 
     #[test]

@@ -790,15 +790,130 @@ pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), 
     // 无需结束当前实例。
     #[cfg(target_os = "linux")]
     if is_appimage(std::path::Path::new(&path)) {
-        tauri_plugin_single_instance::destroy(app_handle);
+        release_appimage_instance(app_handle).await?;
         app_handle.exit(0);
     }
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+async fn release_appimage_instance<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<(), String> {
+    let app_handle = app_handle.clone();
+    // issue #1347：Linux 单实例锁的 D-Bus 释放会阻塞，不能嵌套在 async 命令的 Tokio 运行时中。
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri_plugin_single_instance::destroy(&app_handle);
+    })
+    .await
+    .map_err(|error| format!("UPDATE_OPEN: failed to release single-instance lock: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn appimage_instance_release_from_async_command_allows_a_new_instance() {
+        use std::os::unix::process::CommandExt;
+
+        const CHILD: &str = "DSH_TEST_APPIMAGE_INSTANCE_RELEASE";
+        const VERIFIED: &str = "APPIMAGE_INSTANCE_RELEASE_VERIFIED";
+        if std::env::var(CHILD).as_deref() == Ok("1") {
+            use tauri::test::{mock_builder, mock_context, noop_assets};
+
+            fn has_owner(identifier: &str) -> bool {
+                let output = std::process::Command::new("dbus-send")
+                    .args([
+                        "--session",
+                        "--print-reply",
+                        "--dest=org.freedesktop.DBus",
+                        "/org/freedesktop/DBus",
+                        "org.freedesktop.DBus.NameHasOwner",
+                    ])
+                    .arg(format!("string:{identifier}.SingleInstance"))
+                    .output()
+                    .expect("Linux single-instance regression requires dbus-send");
+                assert!(output.status.success(), "{output:?}");
+                let reply = String::from_utf8(output.stdout).unwrap();
+                match reply
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| line.starts_with("boolean "))
+                {
+                    Some("boolean true") => true,
+                    Some("boolean false") => false,
+                    _ => panic!("D-Bus returned an invalid ownership reply: {reply}"),
+                }
+            }
+
+            let identifier = format!("org.dsh.UpdateHandoff.p{}", std::process::id());
+            let mut context = mock_context(noop_assets());
+            context.config_mut().identifier = identifier.clone();
+            let app = mock_builder()
+                .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+                .build(context)
+                .unwrap();
+            assert!(
+                has_owner(&identifier),
+                "the original instance must own the D-Bus name"
+            );
+            tauri::async_runtime::block_on(release_appimage_instance(app.handle())).unwrap();
+            assert!(
+                !has_owner(&identifier),
+                "the async release must free the D-Bus name"
+            );
+            let mut context = mock_context(noop_assets());
+            context.config_mut().identifier = identifier.clone();
+            let replacement = mock_builder()
+                .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+                .build(context)
+                .unwrap();
+            assert!(
+                has_owner(&identifier),
+                "the replacement must own the D-Bus name"
+            );
+            tauri_plugin_single_instance::destroy(&replacement);
+            println!("{VERIFIED}");
+            return;
+        }
+
+        let mut child = std::process::Command::new("dbus-run-session")
+            .args(["--"])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "service::update::install::tests::appimage_instance_release_from_async_command_allows_a_new_instance",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Linux single-instance regression requires dbus-run-session");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+                let _ = child.wait();
+                panic!("AppImage single-instance release did not return within 30 seconds");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "single-instance release failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(VERIFIED),
+            "the replacement must acquire the D-Bus name instead of forwarding and exiting"
+        );
+    }
 
     #[test]
     fn immediate_installer_stops_every_profile_before_handoff_and_propagates_failure() {

@@ -887,6 +887,14 @@ pub(super) async fn launch_prepared(
         dsh_home.to_string_lossy().into_owned(),
     );
     envs.insert("DSH_TELEMETRY_DISABLED".to_string(), "1".to_string());
+    // 上游桌面组合读取 `DSH_CLIENT_VERSION` 作为产品埋点的 resource.service.version
+    // 与客户端版本元数据（Electron 壳在打包时注入）。Tauri 壳必须显式下发，否则
+    // `desktop-product-telemetry` 行会因缺少 serviceVersion 校验失败，依赖它的
+    // `product-analytics` 一直停在 pending。
+    envs.insert(
+        "DSH_CLIENT_VERSION".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    );
     envs.insert("NO_COLOR".to_string(), "1".to_string());
     envs.insert("DSH_WEB_PORT".to_string(), setting.port.to_string());
     // 把服务实际使用的 node 路径显式交给子进程（pnpm/dsh shim 的 DSH_NODE
