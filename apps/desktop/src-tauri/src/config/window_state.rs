@@ -133,6 +133,7 @@ static GEOMETRY_CACHE: Mutex<PendingGeometry> = Mutex::new(PendingGeometry::new(
 struct PendingGeometry {
     position: Option<PhysicalPosition<i32>>,
     size: Option<PhysicalSize<u32>>,
+    scale_factor: Option<f64>,
 }
 
 impl PendingGeometry {
@@ -140,6 +141,7 @@ impl PendingGeometry {
         Self {
             position: None,
             size: None,
+            scale_factor: None,
         }
     }
 
@@ -217,10 +219,15 @@ pub fn record_resized<R: Runtime>(window: &Window<R>, size: PhysicalSize<u32>) {
     if is_restoring_geometry() || window.is_fullscreen().unwrap_or(false) {
         return;
     }
-    GEOMETRY_CACHE
+    let mut cached = GEOMETRY_CACHE
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .size = Some(size);
+        .unwrap_or_else(|error| error.into_inner());
+    cached.size = Some(size);
+    // 只随尺寸一起记录：位置变化与缩放无关，跨屏移窗时不应改写它。
+    cached.scale_factor = window
+        .scale_factor()
+        .ok()
+        .filter(|scale| scale.is_finite() && *scale > 0.0);
 }
 
 /// 正常退出前把几何落盘：优先采样窗口当前几何（与插件退出时 `update_state`
@@ -255,6 +262,11 @@ fn merge_pending_geometry(saved: WindowState, pending: &PendingGeometry) -> Wind
         state.width = size.width;
         state.height = size.height;
         state.size_is_inner = true;
+        // 尺寸与采样它的缩放比例必须成对写入：`rescale_to_current` 会按旧比例
+        // 再换算一次，跨屏改尺寸后保留旧比例会把窗口越缩越小（直至回落默认值）。
+        if let Some(scale) = pending.scale_factor {
+            state.scale_factor = scale;
+        }
     }
     state
 }
@@ -675,6 +687,32 @@ mod tests {
             (Some(7), Some(8), 1600, 900, true),
             "只合并真正发生过变动的字段"
         );
+    }
+
+    #[test]
+    fn fallback_flush_pairs_new_size_with_its_own_scale_factor() {
+        // 从 2.0 屏移到 1.0 屏后改尺寸再隐藏退出：尺寸已按新屏采样，缩放比例
+        // 必须跟着换，否则下次启动会按旧的 2.0 再缩一次，窗口越缩越小。
+        let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        take_cached_geometry();
+        GEOMETRY_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .size = Some(PhysicalSize::new(1200, 800));
+        GEOMETRY_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .scale_factor = Some(1.0);
+        let saved = WindowState {
+            width: 2400,
+            height: 1600,
+            size_is_inner: true,
+            scale_factor: 2.0,
+            ..WindowState::default()
+        };
+        let merged = merge_pending_geometry(saved, &take_cached_geometry());
+        assert_eq!((merged.width, merged.height), (1200, 800));
+        assert_eq!(merged.scale_factor, 1.0, "尺寸与采样它的缩放比例成对写入");
     }
 
     #[test]

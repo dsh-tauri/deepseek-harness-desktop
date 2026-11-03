@@ -313,12 +313,12 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       return
     // 先通知宿主「抓住宠物」：这一步早于手势门槛与异步读窗口位置。
     onGrabRef.current?.()
-    // 设备流已断流时改用按下事件自带的屏幕坐标作手势原点：否则首次 DOM
-    // pointermove 只会补上原点、不产生位移，按住后一次跨过门槛的移动仍拖不动。
-    const latest = cursorRef.current
-      ?? (isDeviceStreamStale()
-        ? { x: event.screenX * screenCoordinateScale(), y: event.screenY * screenCoordinateScale() }
-        : undefined)
+    // 设备流已断流时，按下事件自带的屏幕坐标优先于 `cursorRef`：后者停留在
+    // 上一次会话的旧位置，拿它当原点会让窗口跳一下、轻微移动就误触门槛。
+    // 设备流正常时才用它的样本（DOM 坐标与设备流的分辨率/时机并不等价）。
+    const latest = isDeviceStreamStale()
+      ? { x: event.screenX * screenCoordinateScale(), y: event.screenY * screenCoordinateScale() }
+      : cursorRef.current
     const gesture: Gesture = {
       pointerId: event.pointerId,
       anchor: latest === undefined ? undefined : { x: latest.x, y: latest.y },
@@ -368,10 +368,10 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       applyCursor({ x: event.screenX * screenCoordinateScale(), y: event.screenY * screenCoordinateScale() })
     }
     function handlePointerUp(): void {
+      // 命中箱收到了本次手势的 pointerup 就是确定的松手事实，不该再用设备流的
+      // 时间戳去否决它：否决后事件不会重放，`pressedRef` 仍为 true 时兜底计时
+      // 会一直自我续命，拖拽再也结束不了。
       if (gestureRef.current === null)
-        return
-      // 设备流断流时 `device-mouse-button` 同样收不到，松手只能由 DOM 兜底。
-      if (!isDeviceStreamStale())
         return
       endDrag()
     }

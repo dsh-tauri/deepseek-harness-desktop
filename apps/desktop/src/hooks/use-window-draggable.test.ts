@@ -258,6 +258,39 @@ describe('useWindowDraggable', () => {
     expect(lastPosition()).toEqual({ x: BASE.x + 12, y: BASE.y })
   })
 
+  it('断流时第二次按下用新的按下坐标作原点，而不是上一次的旧光标', async () => {
+    // 回退拖拽结束后 cursorRef 停在旧位置；再次在宠物另一处按下时若沿用它，
+    // 窗口会瞬移、轻微移动就误触门槛。
+    const { result } = renderHook(() => useDraggable())
+    await press(result.current, { screenX: CURSOR.x, screenY: CURSOR.y })
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
+    act(() => {
+      emitDomPointerMove(CURSOR.x, CURSOR.y)
+    })
+    act(() => {
+      emitDomPointerMove(CURSOR.x + 12, CURSOR.y)
+    })
+    frames(60)
+    expect(lastPosition()).toEqual({ x: BASE.x + 12, y: BASE.y })
+    act(() => {
+      result.current.onPointerUp(pointerEvent())
+    })
+
+    const shifted = { x: CURSOR.x + 500, y: CURSOR.y + 200 }
+    await press(result.current, { screenX: shifted.x, screenY: shifted.y })
+    act(() => {
+      emitDomPointerMove(shifted.x, shifted.y)
+    })
+    act(() => {
+      emitDomPointerMove(shifted.x + 12, shifted.y)
+    })
+    frames(60)
+    expect(lastPosition()).toEqual({ x: BASE.x + 12, y: BASE.y })
+    expect(result.current.dragging).toBe(true)
+  })
+
   it('设备流活跃时 DOM 指针事件不得抢走跟手', async () => {
     const { result } = renderHook(() => useDraggable())
     emitCursor(CURSOR.x, CURSOR.y)
