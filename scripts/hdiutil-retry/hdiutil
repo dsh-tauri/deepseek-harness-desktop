@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# GitHub 的 macOS runner 默认开着 Spotlight，新建/挂载的卷马上被 mds 打开，"hdiutil create"
+# 和 "hdiutil detach" 因此随机报 Resource busy / DiskArbitration 超时
+# (actions/runner-images#7522)。tauri 内置的 create-dmg 只重试 detach，也不认
+# DiskArbitration，一旦抖动整次打包就废了。这里把同一条 hdiutil 命令重跑几次，
+# 不必重编、重签、重公证。把本目录放到 PATH 前面即可生效。
+set -uo pipefail
+
+binary="${HDIUTIL_BIN:-/usr/bin/hdiutil}"
+delay="${HDIUTIL_RETRY_DELAY:-2}"
+attempts="${HDIUTIL_RETRY_ATTEMPTS:-5}"
+subcommand="${1:-}"
+
+# create 失败会留下半个镜像，重跑撞 "File exists"，先把上一次的残骸删掉。输出名是最后一个参数。
+created=''
+if [ "$subcommand" = "create" ]; then
+  for arg in "$@"; do created="$arg"; done
+fi
+
+out="$(mktemp -t hdiutil-out.XXXXXXXX)"
+err="$(mktemp -t hdiutil-err.XXXXXXXX)"
+trap 'rm -f "$out" "$err"' EXIT
+
+for (( attempt = 1; ; attempt++ )); do
+  args=("$@")
+  if [ "$subcommand" = "detach" ] && [ "$attempt" -gt 1 ]; then
+    args+=(-force)
+  fi
+  "$binary" "${args[@]}" >"$out" 2>"$err"
+  status=$?
+  cat "$out"
+  cat "$err" >&2
+  [ "$status" -eq 0 ] && exit 0
+  # 只重试 runner 上那种抖动，其它错误立刻原样失败。
+  grep -Eq 'Resource busy|DiskArbitration|drive not detached' "$out" "$err" || exit "$status"
+  if [ "$attempt" -ge "$attempts" ]; then
+    echo "hdiutil failed $attempt times, giving up" >&2
+    exit "$status"
+  fi
+  echo "hdiutil retry $((attempt + 1))/$attempts: $(tail -n 1 "$out" "$err" | tail -n 1)" >&2
+  [ -n "$created" ] && [ -f "$created" ] && rm -f "$created"
+  sleep $(( delay * attempt ))
+done
