@@ -41,6 +41,9 @@ pub struct WindowState {
     /// 尺寸是否为内容区尺寸；旧记录缺少此字段时按外框尺寸迁移
     #[serde(default)]
     pub size_is_inner: bool,
+    /// 采样时的显示器缩放；旧记录缺少此字段时为 0，表示未知、不换算
+    #[serde(default)]
+    pub scale_factor: f64,
 }
 
 impl Default for WindowState {
@@ -52,6 +55,7 @@ impl Default for WindowState {
             width: DEFAULT_WINDOW_WIDTH as u32,
             height: DEFAULT_WINDOW_HEIGHT as u32,
             size_is_inner: true,
+            scale_factor: 0.0,
         }
     }
 }
@@ -145,6 +149,7 @@ pub fn save_geometry<R: Runtime>(window: &Window<R>) {
             .map(|s| s.height)
             .unwrap_or(DEFAULT_WINDOW_HEIGHT as u32),
         size_is_inner: true,
+        scale_factor: window.scale_factor().unwrap_or(0.0),
     };
     save_window_state(window.app_handle(), &state);
 }
@@ -184,6 +189,26 @@ fn migrate_legacy_outer_size(
 /// （唯一一处「连尺寸都不恢复」是刻意的）。
 fn is_degenerate_size(saved: &WindowState) -> bool {
     (saved.width as f64) <= MIN_WINDOW_WIDTH && (saved.height as f64) <= MIN_WINDOW_HEIGHT
+}
+
+/// 把保存的物理尺寸换算到当前显示器缩放，保持用户看到的逻辑尺寸不变。
+///
+/// 物理像素在不同缩放下不等价：1.5 缩放屏上保存的 3072px 宽，搬到 1.25 缩放屏后
+/// 必须还原成 2560 逻辑宽 × 1.25 = 3200px，否则窗口会比用户设定的大 20%。
+/// 旧记录没有缩放字段（0）时无从换算，按原样使用。
+fn rescale_to_current(saved: &WindowState, current_scale: f64) -> WindowState {
+    if saved.scale_factor <= 0.0 || current_scale <= 0.0 || saved.scale_factor == current_scale {
+        return saved.clone();
+    }
+    let factor = current_scale / saved.scale_factor;
+    let width = (saved.width as f64 * factor).round();
+    let height = (saved.height as f64 * factor).round();
+    WindowState {
+        width: width.clamp(0.0, u32::MAX as f64) as u32,
+        height: height.clamp(0.0, u32::MAX as f64) as u32,
+        scale_factor: current_scale,
+        ..saved.clone()
+    }
 }
 
 /// 屏幕矩形（物理像素，左上角为原点）。
@@ -373,6 +398,7 @@ pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindo
             saved = migrate_legacy_outer_size(&saved, outer, inner);
         }
     }
+    saved = rescale_to_current(&saved, window.scale_factor().unwrap_or(0.0));
     if let Some(geometry) = resolve_geometry(app, &saved) {
         let _ = window.set_size(Size::Physical(geometry.size));
         if let Some(position) = geometry.position {
@@ -387,6 +413,55 @@ pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_scale_rescales_physical_size_to_the_new_display() {
+        // issue #1360：1.5 缩放屏保存的 3072×1862，搬到 1.25 缩放屏后必须回到
+        // 用户原本看到的逻辑尺寸（2048×1241），而不是放大 20%
+        let saved = WindowState {
+            width: 3072,
+            height: 1862,
+            scale_factor: 1.5,
+            ..WindowState::default()
+        };
+        let rescaled = rescale_to_current(&saved, 1.25);
+        assert_eq!(rescaled.width, 2560);
+        assert_eq!(rescaled.height, 1552);
+        assert_eq!(rescaled.scale_factor, 1.25);
+    }
+
+    #[test]
+    fn saved_scale_is_ignored_when_either_side_is_unknown() {
+        // 旧记录没有 scale_factor（serde 默认 0），或当前缩放不可得：按原样使用，
+        // 不能凭空换算成别的尺寸
+        let legacy = WindowState {
+            width: 1500,
+            height: 1000,
+            scale_factor: 0.0,
+            ..WindowState::default()
+        };
+        assert_eq!(rescale_to_current(&legacy, 2.0), legacy);
+        assert_eq!(rescale_to_current(&legacy, 0.0), legacy);
+
+        let known = WindowState {
+            width: 1500,
+            height: 1000,
+            scale_factor: 2.0,
+            ..WindowState::default()
+        };
+        assert_eq!(rescale_to_current(&known, 2.0), known);
+        assert_eq!(rescale_to_current(&known, 0.0), known);
+    }
+
+    #[test]
+    fn legacy_records_without_scale_deserialize_with_unknown_scale() {
+        let legacy: WindowState = serde_json::from_str(
+            r#"{"maximized":false,"x":100,"y":100,"width":1500,"height":1000}"#,
+        )
+        .expect("legacy record");
+        assert_eq!(legacy.scale_factor, 0.0);
+        assert!(!legacy.size_is_inner, "缺少 size_is_inner 的旧记录按外框尺寸迁移");
+    }
 
     #[test]
     fn exit_geometry_does_not_sample_extra_or_remote_windows_without_main() {
@@ -422,6 +497,7 @@ mod tests {
             width: 1920,
             height: 1080,
             size_is_inner: true,
+            scale_factor: 1.5,
         };
         let json = serde_json::to_string(&state).expect("serialize");
         let parsed: WindowState = serde_json::from_str(&json).expect("deserialize");

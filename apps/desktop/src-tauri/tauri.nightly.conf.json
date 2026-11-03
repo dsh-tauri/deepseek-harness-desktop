@@ -33,7 +33,9 @@
     "linux": {
       "deb": {
         "conflicts": [],
-        "replaces": []
+        "replaces": [],
+        "postInstallScript": "templates/linux/postinst.sh",
+        "postRemoveScript": "templates/linux/postrm.sh"
       }
     },
     "windows": {

@@ -73,7 +73,9 @@
         ],
         "replaces": [
           "deepseek-harness-desktop"
-        ]
+        ],
+        "postInstallScript": "templates/linux/postinst.sh",
+        "postRemoveScript": "templates/linux/postrm.sh"
       }
     }
   }
