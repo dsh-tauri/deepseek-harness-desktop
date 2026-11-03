@@ -10,10 +10,17 @@ parser_bin() {
     fi
 }
 
+profile_exe() {
+    sed -n 's/^profile "\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
+}
+
 parser=$(parser_bin) || parser=
 
 for profile_file in /etc/apparmor.d/dsh-tauri-*; do
     [ -f "$profile_file" ] || continue
+    exe=$(profile_exe "$profile_file")
+    [ -n "$exe" ] || continue
+    [ -e "$exe" ] && continue
     if [ -n "$parser" ]; then
         "$parser" -R "$profile_file" >/dev/null 2>&1 || true
     fi

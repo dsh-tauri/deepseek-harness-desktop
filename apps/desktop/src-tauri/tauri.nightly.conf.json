@@ -32,6 +32,9 @@
     },
     "linux": {
       "deb": {
+        "depends": [
+          "zenity"
+        ],
         "conflicts": [],
         "replaces": [],
         "postInstallScript": "templates/linux/postinst.sh",

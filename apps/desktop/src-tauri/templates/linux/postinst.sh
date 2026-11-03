@@ -68,7 +68,7 @@ for sandbox in /usr/lib/*/runtime/*/chrome-sandbox; do
         case "$exe" in
             */chrome-sandbox|*/chrome_crashpad_handler|*.so|*.so.*|*.pak|*.dat|*.bin|*.node) continue ;;
         esac
-        install_profile "$exe" "$prefix"
+        install_profile "$exe" "$prefix-$(slug "$(basename "$exe")")"
     done
 done
 

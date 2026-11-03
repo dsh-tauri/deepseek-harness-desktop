@@ -68,6 +68,9 @@
     },
     "linux": {
       "deb": {
+        "depends": [
+          "zenity"
+        ],
         "conflicts": [
           "deepseek-harness-desktop"
         ],
