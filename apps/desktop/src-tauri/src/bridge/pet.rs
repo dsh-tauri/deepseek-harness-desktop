@@ -218,6 +218,13 @@ pub fn pet_show_main_window(window: Window) -> Result<(), String> {
     Ok(())
 }
 
+/// 桌宠右键菜单（显示主界面 / 关闭宠物）。
+///
+/// 不能走 `Window::popup_menu`：它经由 `ns_view()`/`hwnd()` 取原生窗口句柄，而
+/// Electron 的 AppKit 视图指针属于另一个进程，runtime 在 macOS 上只能返回
+/// `Unavailable`，整个 popup 分支被静默跳过 —— 用户右键看不到任何菜单（issue #1370，
+/// Windows 因为能拿到菜单代理 HWND 所以不复现）。这里改走 Electron 自己的
+/// `Menu.popup`，三平台一致。
 #[tauri::command]
 pub fn pet_show_context_menu(window: Window) -> Result<(), String> {
     use tauri::menu::{Menu, MenuItem};
@@ -246,9 +253,17 @@ pub fn pet_show_context_menu(window: Window) -> Result<(), String> {
     .map_err(|error| format!("PET_MENU_CREATE_FAILED: {error}"))?;
     let menu = Menu::with_items(app, &[&show, &close])
         .map_err(|error| format!("PET_MENU_CREATE_FAILED: {error}"))?;
-    window
-        .popup_menu(&menu)
-        .map_err(|error| format!("PET_MENU_POPUP_FAILED: {error}"))
+    let handle = app.clone();
+    tauri_runtime_electron::window::popup_context_menu(&window, &menu, move |id| match id.as_ref() {
+        "pet-show-main-window" => crate::utils::show_main_window(&handle),
+        "pet-close" => {
+            if let Err(error) = set_pet_enabled(handle.clone(), false) {
+                log::error!("PET_CLOSE_FAILED: {error}");
+            }
+        }
+        other => log::warn!("PET_MENU_UNKNOWN_COMMAND: {other}"),
+    })
+    .map_err(|error| format!("PET_MENU_POPUP_FAILED: {error}"))
 }
 
 /// 查询桌宠当前完整状态。
