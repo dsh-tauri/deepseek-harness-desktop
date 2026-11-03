@@ -110,6 +110,8 @@ commands.allow = [
   "pet_show_main_window",
   "pet_show_context_menu",
   "get_pet_overlay_supported",
+  "get_pet_accessibility",
+  "request_pet_accessibility",
   "set_pet_enabled",
   "set_active_pet",
   "set_pet_size",

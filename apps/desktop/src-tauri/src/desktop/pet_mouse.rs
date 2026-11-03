@@ -291,6 +291,40 @@ fn tap_disabled_notice(event_type: core_graphics::event::CGEventType) -> bool {
     )
 }
 
+/// 当前进程是否已获得「辅助功能」权限（CGEventTap 前提）。
+#[cfg(target_os = "macos")]
+pub fn macos_accessibility_trusted() -> bool {
+    unsafe { objc2_application_services::AXIsProcessTrustedWithOptions(None) }
+}
+
+/// 申请「辅助功能」权限；未授权时弹出系统授权对话框（异步，用户需手动去设置里勾选）。
+///
+/// 不加 `kAXTrustedCheckOptionPrompt` 的话，系统**不会**主动提示用户，tap 创建失败也
+/// 只是一行日志：用户界面上表现为「桌宠右键没反应 / 拖不动」，却没有任何指引
+/// （issue #1370）。这里显式带上 prompt，让系统把用户直接领到开关处。
+///
+/// 返回值是调用**当下**的授权状态：提示是异步的，用户勾选后需要下一次检查才变成
+/// `true`。
+#[cfg(target_os = "macos")]
+pub fn request_macos_accessibility() -> bool {
+    use objc2_application_services::{AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt};
+    use objc2_core_foundation::{CFBoolean, CFDictionary, CFString, CFType};
+
+    if macos_accessibility_trusted() {
+        return true;
+    }
+    // SAFETY: the prompt key and a constant CFBoolean are the exact pair Apple
+    // documents for this options dictionary; nothing else is retained.
+    unsafe {
+        let key: &CFString = kAXTrustedCheckOptionPrompt;
+        let key: &CFType = key.as_ref();
+        let value: &CFBoolean = CFBoolean::true_value();
+        let value: &CFType = value.as_ref();
+        let options = CFDictionary::from_slices(&[key], &[value]);
+        AXIsProcessTrustedWithOptions(Some(&options))
+    }
+}
+
 /// macOS CGEventTap 监听 mouse 事件（绕过 rdev 的 keyboard/TSM 路径，issue #397）。
 ///
 /// CGEvent 全局逻辑点不随窗口所在屏幕的缩放变化，跨屏拖拽不会发生坐标跳变。
@@ -369,6 +403,10 @@ fn listen_mouse_macos(store: Arc<MouseStateStore>) -> Result<(), String> {
         )
     }
     .map_err(|()| {
+        // 权限缺失是这条路径唯一可行动的原因：主动弹一次系统授权提示，
+        // 用户勾选后随着重试（`start_pet_mouse_stream` 复位了 started）恢复
+        // 鼠标流。不提示的话用户只会看到「桌宠拖不动」而无从下手（issue #1370）。
+        request_macos_accessibility();
         "CGEventTap creation failed (accessibility permission denied or HID unavailable)"
             .to_string()
     })?;

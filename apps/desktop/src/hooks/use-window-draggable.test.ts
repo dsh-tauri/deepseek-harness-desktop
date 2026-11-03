@@ -224,6 +224,51 @@ describe('useWindowDraggable', () => {
     expect(lastPosition()).toEqual({ x: BASE.x + 8, y: BASE.y })
   })
 
+  /** jsdom 没有 PointerEvent：造一个带屏幕坐标的等价事件。 */
+  function emitDomPointerMove(screenX: number, screenY: number): void {
+    const event = new Event('pointermove') as Event & { screenX: number, screenY: number }
+    event.screenX = screenX
+    event.screenY = screenY
+    window.dispatchEvent(event)
+  }
+
+  it('设备流断流时按 DOM 指针事件跟手（macOS 缺辅助功能权限）', async () => {
+    // CGEventTap 创建失败时 `device-mouse-move` 永不触发：手势拿不到原点，
+    // 按下去毫无反应就是 issue #1370。这里只按 DOM 指针事件推进，验证回退生效。
+    const { result } = renderHook(() => useDraggable())
+    act(() => {
+      result.current.onPointerDown(pointerEvent())
+    })
+    await settlePromises()
+    // 超过 DEVICE_STREAM_STALE_MS 后 DOM 事件才接管。
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
+    act(() => {
+      emitDomPointerMove(CURSOR.x, CURSOR.y)
+    })
+    act(() => {
+      emitDomPointerMove(CURSOR.x + 12, CURSOR.y)
+    })
+    expect(result.current.dragging).toBe(true)
+    frames(60)
+    expect(lastPosition()).toEqual({ x: BASE.x + 12, y: BASE.y })
+  })
+
+  it('设备流活跃时 DOM 指针事件不得抢走跟手', async () => {
+    const { result } = renderHook(() => useDraggable())
+    emitCursor(CURSOR.x, CURSOR.y)
+    await press(result.current)
+    emitCursor(CURSOR.x + 12, CURSOR.y)
+    expect(result.current.dragging).toBe(true)
+    // 设备流刚上报过，DOM 事件在这一帧内必须被忽略。
+    act(() => {
+      emitDomPointerMove(CURSOR.x + 200, CURSOR.y + 200)
+    })
+    frames(60)
+    expect(lastPosition()).toEqual({ x: BASE.x + 12, y: BASE.y })
+  })
+
   it('手势门槛按 devicePixelRatio 换算成物理像素', async () => {
     vi.stubGlobal('devicePixelRatio', 2)
     const { result } = renderHook(() => useDraggable())

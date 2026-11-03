@@ -91,6 +91,8 @@ pub fn run() -> Result<(), String> {
             // 避免 Windows 最后一个移动/缩放事件尚未写入就退出而丢失尺寸。
             tauri::RunEvent::ExitRequested { .. } => {
                 config::save_main_window_geometry(app_handle);
+                // 桌宠位置同一策略：事件里只暂存，退出时写一次（见 desktop::pet）。
+                desktop::pet::flush_pet_window_position(app_handle);
             }
             // 退出时回收 Harness 进程：不回收的话，node 进程会在应用退出后
             // 残留并把原生模块 DLL（如 sharp 的 libvips-42.dll）锁在内存，

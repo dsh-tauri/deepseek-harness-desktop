@@ -126,13 +126,6 @@ fn save_window_state<R: Runtime>(app_handle: &AppHandle<R>, state: &WindowState)
 /// 这条路径一直漏了。
 static GEOMETRY_CACHE: Mutex<Option<WindowState>> = Mutex::new(None);
 
-/// 记录一帧几何到内存暂存（不落盘）。多次 Moved/Resized 只覆盖同一个槽位。
-fn record_geometry(state: WindowState) {
-    *GEOMETRY_CACHE
-        .lock()
-        .unwrap_or_else(|error| error.into_inner()) = Some(state);
-}
-
 /// 取出并清空内存暂存（退出时兜底落盘用）。
 fn take_cached_geometry() -> Option<WindowState> {
     GEOMETRY_CACHE
@@ -172,13 +165,39 @@ fn sample_geometry<R: Runtime>(window: &Window<R>) -> Option<WindowState> {
     })
 }
 
-/// 采样当前窗口并记入内存暂存（主窗口移动/缩放时由 builder 调用）。
+/// 记一帧窗口移动。`Moved` 事件本身已带位置，直接用它，不再回头问
+/// `outer_position()`。
 ///
-/// 与 `tauri-plugin-window-state` 一致：事件里只更新缓存，退出时才落盘一次。
-pub fn save_geometry<R: Runtime>(window: &Window<R>) {
-    if let Some(state) = sample_geometry(window) {
-        record_geometry(state);
+/// 那个查询在 Electron 运行时里是一次同步 IPC 往返（`window.geometry`），而拖动时
+/// 每秒有数百个 move：逐事件往返会把主线程和 Electron 的 RPC 队列一起拖住，正是
+/// 桌宠跟手发滞、主窗口拖动卡顿的一半来源（issue #1380）。
+///
+/// 只做内存赋值，不碰磁盘；退出时的 `save_main_window_geometry` 会重新采样一次，
+/// 因此这里的瞬态（恢复窗口期、隐藏窗口）不会落进用户配置。
+pub fn record_moved(position: PhysicalPosition<i32>) {
+    if is_restoring_geometry() {
+        return;
     }
+    let mut cached = GEOMETRY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let state = cached.get_or_insert_with(WindowState::default);
+    state.x = Some(position.x);
+    state.y = Some(position.y);
+}
+
+/// 记一帧窗口缩放（`Resized` 带的就是内容区尺寸）。
+pub fn record_resized(size: PhysicalSize<u32>) {
+    if is_restoring_geometry() {
+        return;
+    }
+    let mut cached = GEOMETRY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let state = cached.get_or_insert_with(WindowState::default);
+    state.width = size.width;
+    state.height = size.height;
+    state.size_is_inner = true;
 }
 
 /// 正常退出前把几何落盘：优先采样窗口当前几何（与插件退出时 `update_state`
@@ -566,28 +585,19 @@ mod tests {
     static GEOMETRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn moving_records_geometry_in_memory_and_exit_flushes_it_once() {
+    fn moved_and_resized_frames_only_touch_the_memory_cache() {
         // 参照 tauri-plugin-window-state：Moved/Resized 只更新内存暂存，退出时才
-        // 落盘一次。锁住「记录 → 取出即清空」的语义，防止把逐事件写盘加回来。
+        // 落盘一次。事件自带坐标/尺寸，因此这里不需要任何窗口对象。
         let _guard = GEOMETRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        record_geometry(WindowState {
-            x: Some(11),
-            y: Some(22),
-            width: 1000,
-            height: 700,
-            ..WindowState::default()
-        });
-        record_geometry(WindowState {
-            x: Some(33),
-            y: Some(44),
-            width: 1200,
-            height: 800,
-            ..WindowState::default()
-        });
-        let flushed = take_cached_geometry().expect("last recorded geometry wins");
+        take_cached_geometry();
+        record_moved(PhysicalPosition::new(11, 22));
+        record_resized(PhysicalSize::new(1000, 700));
+        record_moved(PhysicalPosition::new(33, 44));
+        let flushed = take_cached_geometry().expect("frames accumulate in the cache");
         assert_eq!(
             (flushed.x, flushed.y, flushed.width, flushed.height),
-            (Some(33), Some(44), 1200, 800)
+            (Some(33), Some(44), 1000, 700),
+            "移动与缩放分别覆盖各自的字段，最后一次 Moved 胜出"
         );
         assert!(take_cached_geometry().is_none(), "flush drains the cache");
     }

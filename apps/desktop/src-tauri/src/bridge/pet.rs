@@ -284,6 +284,38 @@ pub fn get_pet_overlay_supported() -> bool {
     crate::pet_overlay_supported_env()
 }
 
+/// 查询「辅助功能」权限状态（macOS 的 CGEventTap 前提）。
+///
+/// 没有这项权限时 `device-mouse-move` 整条流不会启动，桌宠既拖不动、命中判定也
+/// 停在最后一次结果（issue #1370）。前端据此在设置页给出可行动提示。
+/// 其它平台恒为 `true`：不存在同类系统级开关。
+#[tauri::command]
+pub fn get_pet_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::desktop::pet_mouse::macos_accessibility_trusted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// 请求「辅助功能」权限：未授权时弹出系统提示并跳到设置页。
+///
+/// 返回调用当下的授权状态——系统提示是异步的，用户勾选后需重新查询。
+#[tauri::command]
+pub fn request_pet_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::desktop::pet_mouse::request_macos_accessibility()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 #[tauri::command]
 pub fn get_force_xwayland(app: AppHandle) -> bool {
     cfg!(target_os = "linux") && config::get_store_dat_setting(&app).force_xwayland
