@@ -14,7 +14,6 @@ pub(crate) mod llm_session;
 pub(crate) mod mcp_startup;
 pub(crate) mod mobile_composer;
 pub(crate) mod mobile_sidebar;
-pub(crate) mod open_in_app;
 pub(crate) mod permission_settings;
 pub(crate) mod pi_ai_thinking;
 pub(crate) mod plugin_visibility;
@@ -36,7 +35,7 @@ use std::path::Path;
 /// 让编排层能看见哪一条出了问题。
 pub(crate) fn apply_all_at(core_dir: &Path) -> Result<(), String> {
     #[allow(clippy::type_complexity)]
-    let patches: [(&str, fn(&Path) -> Result<(), String>); 14] = [
+    let patches: [(&str, fn(&Path) -> Result<(), String>); 13] = [
         ("renderer", renderer::apply_at),
         ("mcp_startup", mcp_startup::apply_at),
         ("composer", composer::apply_at),
@@ -50,7 +49,6 @@ pub(crate) fn apply_all_at(core_dir: &Path) -> Result<(), String> {
         ("workspace", workspace::apply_at),
         ("workspace_view", workspace_view::apply_at),
         ("plugin_visibility", plugin_visibility::apply_at),
-        ("open_in_app", open_in_app::apply_at),
     ];
     let mut failures = Vec::new();
     for (name, apply) in patches {

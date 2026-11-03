@@ -8,7 +8,6 @@ use crate::config;
 use crate::logger;
 use crate::service::{core, plugin, profile};
 use crate::AppHandle;
-use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 /// 健康检查（通过 Rust 代理，避免 WebView CORS 问题）
@@ -93,30 +92,6 @@ pub async fn copy_service_url(
     .await
 }
 
-/// 启动被受理后让出桌面端前台（「打开方式」成功后的收尾，issue #1346）。
-///
-/// 只在**本地** guest 上生效：`window.rs` 不给远程窗口挂 `host-paths.preload.cjs`，也就
-/// 没有 `__TAURI_INTERNALS__` 可调用，前端补丁在远端直接跳过；命令侧再以 shell 来源校验
-/// 与窗口前缀兜底，避免远端或普通浏览器请求把无关窗口隐藏掉。
-///
-/// 最小化而不是隐藏：窗口回到前台只需任务栏点击，丢失的成本远低于「整个应用不知去哪了」。
-#[tauri::command]
-pub fn yield_foreground(webview: crate::Webview, app_handle: AppHandle) -> Result<(), String> {
-    // 只接受壳里内嵌的本地 Harness guest（label 形如 `harness-N`）：远程窗口的 webview
-    // label 与所属窗口同名（`remote-*`），壳窗口自身也不在这个前缀里。
-    let label = webview.label().to_string();
-    if !label.starts_with("harness-") {
-        return Err(format!("YIELD_FOREGROUND_REJECTED: {label}"));
-    }
-    let shell = app_handle
-        .get_window(&webview.window().label().to_string())
-        .ok_or("YIELD_FOREGROUND_REJECTED: shell window missing")?;
-    shell
-        .minimize()
-        .map_err(|e| format!("YIELD_FOREGROUND_FAILED: {e}"))?;
-    log::info!("[open-in-app] yielded the desktop foreground after a successful launch");
-    Ok(())
-}
 
 /// 在系统文件管理器中定位指定文件（Session 日志下载完成后的"在文件夹中显示"）
 #[tauri::command]

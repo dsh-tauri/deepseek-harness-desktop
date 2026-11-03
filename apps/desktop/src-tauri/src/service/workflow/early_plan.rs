@@ -278,7 +278,6 @@ pub(super) fn prepare(
             "plugin visibility patch",
             patch::plugin_visibility::apply_at,
         ),
-        ("open-in-app foreground yield patch", patch::open_in_app::apply_at),
     ] {
         if let Err(error) = apply(&core_dir) {
             log::warn!("{label} failed: {error}");

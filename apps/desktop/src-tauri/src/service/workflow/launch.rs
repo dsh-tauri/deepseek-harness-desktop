@@ -767,20 +767,7 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     }
     // 内置插件（dsh-tauri-*）只在壳的插件弹窗里可见：官方侧边栏 Plugins 页与插件市场
     // 都按各自的硬编码内置/inbox 名单判断 bundle 归属，上游没有可配置开关，因此对这两个
-    // 前端做幂等补丁。最佳努力且幂等：锚点缺失（上游改写布局）时安全跳过。
-    if let Err(e) = crate::service::patch::plugin_visibility::apply(&app_handle) {
-        log::warn!("plugin visibility patch failed: {e}");
-    }
-    // 「打开方式」成功后 DSH 仍在前台挡着目标窗口（issue #1346）：上游只把 busy 复位，
-    // 从未把「进程受理」和「目标窗口激活」分开。这里在受理成功后让壳最小化自身，
-    // 失败时保持前台并照常提示。最佳努力且幂等：锚点缺失时安全跳过。
-    if let Err(e) = crate::service::patch::open_in_app::apply(&app_handle) {
-        log::warn!("open-in-app foreground yield patch failed: {e}");
-    }
     crate::service::patch::mcp_startup::apply(&app_handle)?;
-    mark_phase("core_patches", &mut phase_started);
-    // 预防性处理：pnpm 在无 TTY 环境（dsh-market 等子进程）下重装/更新插件时，
-    // 清理/重建 node_modules 会触发交互确认并因无 TTY 直接中止
     // （ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY），表现为插件更新失败。
     // 启动时确保 profile 的 .npmrc 写入 confirmModulesPurge=false（幂等、保留
     // 已有配置）。最佳努力：失败只告警，不阻断启动。
