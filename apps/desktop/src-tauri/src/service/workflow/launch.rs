@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 
+use super::instances::safe_mode;
 #[cfg(unix)]
 use super::process::warn_if_inotify_watch_limit_low;
 use super::process::{
@@ -528,11 +529,19 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         let tag = (config::dependencies::bundled_core_dir(&app_handle).as_ref() != Some(&core_dir))
             .then(|| config::get_dsh_pkg_tag(&app_handle))
             .flatten();
-        crate::service::core::ensure_app_core_supported(
-            &core_dir,
-            tag.as_deref(),
-            config::manifest::minimum_dsh_version(&app_handle).as_deref(),
-        )?;
+        let baseline = config::manifest::minimum_dsh_version(&app_handle);
+        if let Err(error) =
+            crate::service::core::ensure_app_core_supported(&core_dir, tag.as_deref(), baseline.as_deref())
+        {
+            // 安全模式的语义是「隔离启动失败，先让应用可用」：核心版本过低属于环境问题，
+            // 隔离插件改变不了它，但用户至少要能进设置换核心，否则唯一的出口也堵死了
+            // （issue #1374）。
+            if safe_mode() {
+                log::warn!("{error} (safe mode continues without the baseline check)");
+            } else {
+                return Err(error);
+            }
+        }
     }
     mark_phase("resolve", &mut phase_started);
 
@@ -761,6 +770,12 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     // 前端做幂等补丁。最佳努力且幂等：锚点缺失（上游改写布局）时安全跳过。
     if let Err(e) = crate::service::patch::plugin_visibility::apply(&app_handle) {
         log::warn!("plugin visibility patch failed: {e}");
+    }
+    // 「打开方式」成功后 DSH 仍在前台挡着目标窗口（issue #1346）：上游只把 busy 复位，
+    // 从未把「进程受理」和「目标窗口激活」分开。这里在受理成功后让壳最小化自身，
+    // 失败时保持前台并照常提示。最佳努力且幂等：锚点缺失时安全跳过。
+    if let Err(e) = crate::service::patch::open_in_app::apply(&app_handle) {
+        log::warn!("open-in-app foreground yield patch failed: {e}");
     }
     crate::service::patch::mcp_startup::apply(&app_handle)?;
     mark_phase("core_patches", &mut phase_started);
@@ -1694,15 +1709,52 @@ mod tests {
                 .expect("fixture must spawn and register");
         }
 
-        fn wait_until(&self, check: impl Fn() -> bool) {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
-            while !check() {
+        /// 等待日志里出现全部片段：deadline 是「多久没有新进展」，不是绝对上限。
+        ///
+        /// fixture 一口气写满两根管道（约 1 MiB），CI 上读端调度快慢能差一个数量级；
+        /// 固定 6 秒绝对等待会把「慢」判成「挂」（issue #1384）。这里每看到日志增长就
+        /// 重新计时，真卡死（不再增长）才失败，并把已读字节数带进失败信息。
+        fn wait_for_log(&self, needles: &[&str]) {
+            const IDLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+            let log = self.root.path().join("dsh-web.log");
+            let mut seen = 0usize;
+            let mut deadline = std::time::Instant::now() + IDLE_LIMIT;
+            loop {
+                let text = fs::read_to_string(&log).unwrap_or_default();
+                if needles.iter().all(|needle| text.contains(needle)) {
+                    return;
+                }
+                if text.len() > seen {
+                    seen = text.len();
+                    deadline = std::time::Instant::now() + IDLE_LIMIT;
+                }
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "supervisor fixture condition timed out"
+                    "supervisor fixture log stalled at {seen} bytes without {:?}",
+                    needles
                 );
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
+        }
+
+        /// 等待 supervisor 释放核心转换锁：直接等这把锁（带上界），不再轮询布尔状态。
+        ///
+        /// 守卫的释放顺序是「启动守卫 → 转换锁」，因此拿到锁即等于 `launching` 已复位，
+        /// 既是有明确上界的事件等待，也不再依赖轮询间隔的运气。
+        fn wait_transition_released(&self) {
+            let guard = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(20),
+                        self.transition.lock(),
+                    )
+                    .await
+                })
+                .expect("supervisor must release the core transition");
+            drop(guard);
         }
 
         fn cancel(&self) -> Result<(), String> {
@@ -1831,18 +1883,12 @@ mod tests {
         );
         assert!(fixture.instance.launching.load(Ordering::SeqCst));
         assert!(fixture.transition.try_lock().is_err());
-        let log = fixture.root.path().join("dsh-web.log");
-        fixture.wait_until(|| {
-            fs::read_to_string(&log)
-                .is_ok_and(|text| text.contains("STDOUT_DONE") && text.contains("STDERR_DONE"))
-        });
-        let output = fs::read_to_string(log).unwrap();
+        fixture.wait_for_log(&["STDOUT_DONE", "STDERR_DONE"]);
+        let output = fs::read_to_string(fixture.root.path().join("dsh-web.log")).unwrap();
         assert_eq!(output.matches("OUT:").count(), 512);
         assert_eq!(output.matches("ERR:").count(), 512);
-        fixture.wait_until(|| {
-            !fixture.instance.launching.load(Ordering::SeqCst)
-                && fixture.transition.try_lock().is_ok()
-        });
+        fixture.wait_transition_released();
+        assert!(!fixture.instance.launching.load(Ordering::SeqCst));
         assert!(fixture.instance.process.lock().unwrap().is_some());
         fixture.cancel().unwrap();
         fixture.finish().unwrap();
@@ -1885,10 +1931,8 @@ mod tests {
             *fixture.instance.status.lock().unwrap(),
             status::Status::Stopped
         );
-        fixture.wait_until(|| {
-            !fixture.instance.launching.load(Ordering::SeqCst)
-                && fixture.transition.try_lock().is_ok()
-        });
+        fixture.wait_transition_released();
+        assert!(!fixture.instance.launching.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -1897,10 +1941,7 @@ mod tests {
             "require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');setTimeout(()=>{},10000)",
         );
         fixture.acknowledge();
-        let log = fixture.root.path().join("dsh-web.log");
-        fixture.wait_until(|| {
-            fs::read_to_string(&log).is_ok_and(|text| text.contains("duplicate loader entry"))
-        });
+        fixture.wait_for_log(&["duplicate loader entry"]);
         assert!(fixture.instance.launching.load(Ordering::SeqCst));
         fixture.cancel().unwrap();
         if let Err(error) = fixture.finish() {

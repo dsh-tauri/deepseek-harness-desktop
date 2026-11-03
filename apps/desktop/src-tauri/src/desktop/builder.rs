@@ -1284,6 +1284,7 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::open_desktop_installer,
         crate::bridge::get_desktop_about,
         crate::bridge::open_external_url,
+        crate::bridge::yield_foreground,
         crate::bridge::read_clipboard_text,
         crate::bridge::write_clipboard_text,
         crate::desktop::window::create_app_window,
@@ -1365,6 +1366,7 @@ fn guest_command_allowed(command: &str) -> bool {
             | "read_clipboard_text"
             | "write_clipboard_text"
             | "report_plugin_error"
+            | "yield_foreground"
     )
 }
 
@@ -1377,6 +1379,7 @@ fn guest_command_scope_preserves_plugin_actions_and_blocks_shell_control() {
     assert!(guest_command_allowed("read_clipboard_text"));
     assert!(guest_command_allowed("write_clipboard_text"));
     assert!(guest_command_allowed("report_plugin_error"));
+    assert!(guest_command_allowed("yield_foreground"));
     for command in [
         "prepare_harness_webview",
         "release_harness_webview",

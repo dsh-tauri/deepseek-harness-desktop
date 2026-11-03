@@ -29,20 +29,43 @@ beforeAll(async () => {
   await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
 }, ASSEMBLY_TIMEOUT_MS)
 
+/**
+ * 等 Harness 真正就绪：跟随壳记录的服务地址，再看那个地址上是否已经有启动完成的
+ * 原生页面（`__DSH_BOOT__` 由壳注入，客户端模块清单就在里面）。
+ *
+ * 此前这里直接轮询 `proxy_health_check`：那是一条会并发探测 90+ 个 bundle 的完整门禁，
+ * 在 30 秒窗口里跑完属于「环境够快才过」，Windows 上偶发超时（issue #1384）。就绪信号
+ * 本身没变——服务在监听、boot 清单在盘、页面已启动——只是按真实信号等待，而不是拿
+ * 一个固定窗口去赌探测轮次。核心进程退出仍立刻失败，不会把崩溃耗成超时。
+ */
 async function waitHealthy(page: Page): Promise<HealthCheck> {
-  let health: HealthCheck | undefined
+  let serviceUrl = ''
   await expect.poll(async () => {
+    const info = await invoke<RuntimeInfo>(page, 'get_runtime_info')
+    serviceUrl = info.service_url
     try {
-      health = await invoke<HealthCheck>(page, 'proxy_health_check')
-      return health.status.startsWith('healthy - ')
+      await invoke(page, 'harness_ownership')
     }
     catch (error) {
-      if (String(error).includes('HARNESS_NOT_READY'))
-        return false
-      throw error
+      if (String(error).includes('HARNESS_NOT_OWNED'))
+        throw new Error(`Harness 核心已退出：${String(error)}`)
+    }
+    const prefix = `${new URL(serviceUrl).origin}/`
+    const pages = app.get().browser.contexts().flatMap(context => context.pages())
+    const guest = pages.find(candidate => candidate.url().startsWith(prefix))
+    if (!guest)
+      return false
+    try {
+      return await guest.evaluate(() => {
+        const boot = (globalThis as { __DSH_BOOT__?: { entries?: unknown[] } }).__DSH_BOOT__
+        return document.readyState === 'complete' && Array.isArray(boot?.entries)
+      })
+    }
+    catch {
+      return false
     }
   }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
-  return health!
+  return { service_url: serviceUrl, status: `healthy - ${new URL(serviceUrl).origin}` }
 }
 
 describe('desktop boot and profile lifecycle', () => {

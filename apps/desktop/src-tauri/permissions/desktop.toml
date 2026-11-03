@@ -166,4 +166,5 @@ commands.allow = [
   "report_plugin_error",
   "get_force_xwayland",
   "set_force_xwayland",
+  "yield_foreground",
 ]

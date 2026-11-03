@@ -33,6 +33,51 @@ jobs:
           skip_after_successful_duplicate: true
           paths_ignore: '["**/docs/**", "**/*.md"]'
 
+  # 子仓库指针一致性前置（issue #1384）：发布顺序出错时，指针会先于子仓库推送，
+  # 之后所有平台的 Checkout 会各自报一遍 `not our ref`，看起来像 5 个平台同时崩。
+  # 这里先用 `git ls-remote` 逐个确认指针在远端可达，不可达立刻以明确信息失败，
+  # 一次说清是哪几个子仓库、哪些提交。
+  submodules:
+    name: Submodule pointer reachability
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Verify every submodule pointer is reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          # `git ls-files -s` 每行是 `<mode> <sha> <stage>\t<path>`：stage 与路径之间是
+          # 制表符，路径正好是 .gitmodules 里的子仓库名。
+          while read -r mode sha rest; do
+            [ "${mode}" = "160000" ] || continue
+            name=${rest#*$'\t'}
+            url=$(git config --file .gitmodules --get "submodule.${name}.url") || {
+              echo "::error::submodule ${name}: no url in .gitmodules"
+              failed=1
+              continue
+            }
+            # 直接按 SHA 拉取：指针指向祖先提交时 `git ls-remote` 根本不会列出它，只有
+            # 服务端真的拿不出这个对象才会失败——正是 Checkout 阶段报 `not our ref` 的原因。
+            tmp=$(mktemp -d)
+            if output=$(git init -q "${tmp}" && git -C "${tmp}" fetch -q --depth 1 "${url}" "${sha}" 2>&1); then
+              echo "ok ${name} ${sha}"
+            else
+              detail=$(printf '%s' "${output}" | tr '\n' ' ')
+              echo "::error::submodule ${name}: commit ${sha} is not reachable on ${url} (${detail}); the pointer was pushed before the submodule. Push it first, then re-run."
+              failed=1
+            fi
+            rm -rf "${tmp}"
+          done < <(git ls-files -s)
+          exit "${failed}"
+
   # 按改动选择测试范围（issue #1059）。
   #
   # 基线取 PR 目标分支与待测提交的共同祖先，不是最后一个提交：只比 HEAD 会漏掉
@@ -190,7 +235,9 @@ jobs:
   # 合并前是两条独立 job，各自 checkout / install / 编译一遍，5 个平台白跑两轮。
   rust-e2e:
     name: Rust tests & Desktop CDP E2E (${{ matrix.runner }})
-    needs: [pre_job, changes]
+    # 指针不可达时直接跳过：5 个平台各自 Checkout 报一遍同样的 `not our ref`，只会把
+    # 一条环境问题放大成「整批全崩」（issue #1384）。
+    needs: [pre_job, changes, submodules]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1' || needs.changes.outputs.desktop == '1') }}
     strategy:
       fail-fast: false
@@ -265,11 +312,24 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Rust 侧 dbus / appindicator / patchelf，桌面端侧 GTK 与 headless 的 xvfb。
+      # 镜像站偶发 5xx / 半截连接：固定 3 次尝试并打印重试序号，够了就停；失败仍以
+      # 退出码失败，不静默降级（issue #1384）。
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y dbus libappindicator3-dev librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=3 update \
+              && sudo apt-get -y -o Acquire::Retries=3 install dbus libappindicator3-dev \
+                 librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb; then
+              echo "apt-get succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "::warning::apt-get attempt ${attempt}/3 failed; retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          echo "::error::apt-get failed after 3 attempts"
+          exit 1
 
       - name: Cache Electron distribution
         uses: actions/cache@v4
@@ -280,10 +340,10 @@ jobs:
             ~/AppData/Local/electron/Cache
           key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      # 工具链固定到仓库验证过的版本（issue #1384）：@stable 会在任意一次运行时换
+      # 版本，rustup 组件下载与校验随之抖动，日志里表现为莫名的 checksum 失败重试。
+      - name: Install Rust 1.98.1
+        uses: dtolnay/rust-toolchain@1.98.1
 
       - name: Setup Xcode
         if: runner.os == 'macOS'
