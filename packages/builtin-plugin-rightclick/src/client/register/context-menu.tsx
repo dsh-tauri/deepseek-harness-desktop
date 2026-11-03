@@ -209,6 +209,7 @@ export const contextMenuFeature = defineRegister<ClientContext>((controller, _ct
 
     cursor = { x: event.clientX, y: event.clientY }
     host = document.createElement('div')
+    host.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;overflow:visible'
     document.body.appendChild(host)
     const current = createRoot(host)
     root = current
