@@ -76,12 +76,12 @@
 启动引导提供以下社区插件，可按需安装；
 
 - [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — 按会话隔离的右编辑器侧栏
-- [Billion Context](https://github.com/ranxianglei/billion-context) — 上下文压缩与历史恢复
 - [DSH Office Kit](https://github.com/hairyf/dsh-office-kit) — Office 文档、PDF、演示文稿与表格
 - [DSH Market](https://github.com/dsh-market/dsh-market) — 社区插件市场
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — 对话回退与工作区备份
 - [DSH IM](https://github.com/xmanrui/dsh-im) — IM 渠道与机器人管理
 - [DSH OPS](https://github.com/T-Auto/dsh-ops) — 底层操作工具，减少 Token 消耗与任务耗时
+- [Billion Context](https://github.com/ranxianglei/billion-context) — 上下文压缩与历史恢复
 
 新增或更新预设请提交 [Issue](https://github.com/dsh-tauri/deepseek-harness-desktop/issues)；可用版本由清单中的内核兼容规则决定。
 
