@@ -20,7 +20,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use super::cancel::terminate_owned_install;
-use super::install::install_internal;
+use super::install::{install_internal, trust_policy_rejection};
 use super::installed::{installed_name, profile_dir, ProfilePackageJson};
 use super::preset::{
     bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo,
@@ -1120,7 +1120,7 @@ fn looks_like_link_readback_failure(error: &str) -> bool {
 fn is_supply_chain_policy_failure(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     // 同一句标题也用于信任降级（用户自己的依赖被降级），那不是发布时间门禁，不能绕过
-    if lower.contains("err_pnpm_trust_downgrade") {
+    if trust_policy_rejection(error) {
         return false;
     }
     lower.contains("plugin_policy_blocked:")
