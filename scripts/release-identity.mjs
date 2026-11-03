@@ -145,6 +145,10 @@ function deriveReleaseMetadata({ eventName, pushTag = '', sourceRef, identity })
     tag = expectedTag
     shouldRelease = true
   }
+  else if (eventName === 'pull_request') {
+    tag = expectedTag
+    shouldRelease = true
+  }
   else if (eventName !== 'workflow_dispatch') {
     throw releaseIdentityError(`unsupported release event: ${JSON.stringify(eventName)}`)
   }

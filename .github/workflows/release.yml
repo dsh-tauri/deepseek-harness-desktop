@@ -1,10 +1,19 @@
 name: Build & Release
 
 on:
-  # 只由 tag 发布：合并 release/* PR 不触发，避免任何 PR 关闭事件拉起发布流程。
+  # 正式发布：推送 v* tag，或合并 release/* PR（bumpp --pr 闭环）。
   push:
     tags:
       - 'v*'
+  # bumpp --pr 的合并闭环：release/* PR 合并后在此建 tag 并发布。
+  # paths 只减少无关 PR 关闭产生的空 run，prepare 再校验 merged / 同仓 / 分支前缀。
+  pull_request:
+    types: [closed]
+    paths:
+      - package.json
+      - apps/desktop/src-tauri/Cargo.toml
+      - apps/desktop/src-tauri/Cargo.lock
+      - apps/desktop/src-tauri/tauri.conf.json
   # 手动触发：创建预发布测试构建。
   workflow_dispatch:
     inputs:
@@ -33,7 +42,10 @@ jobs:
     name: Prepare Release
     if: >-
       github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
@@ -44,7 +56,7 @@ jobs:
       - name: Checkout release commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
 
       - name: Setup Node.js and pnpm
@@ -56,6 +68,25 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PUSH_TAG: ${{ github.ref_name }}
         run: node scripts/release-identity.mjs
+
+      # PR 合并建 tag：bumpp --pr 不在本地打 tag，由这里在 merge commit 上建。
+      - name: Create release tag
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_SHA: ${{ steps.meta.outputs.source_ref }}
+        with:
+          script: |
+            const ref = `tags/${process.env.RELEASE_TAG}`;
+            const sha = process.env.RELEASE_SHA;
+            try {
+              await github.rest.git.getRef({ ...context.repo, ref });
+              await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+            }
 
       # 使用 lockfile 固定的 changelogithub，避免带写权限 token 时动态执行 registry 包。
       - name: Install changelog dependencies
