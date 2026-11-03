@@ -45,19 +45,26 @@ install_profile() {
     return 0
 }
 
-for sandbox in /usr/lib/*/runtime/*/chrome-sandbox; do
+package_sandboxes() {
+    [ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ] || return 1
+    command -v dpkg >/dev/null 2>&1 || return 1
+    dpkg -L "$DPKG_MAINTSCRIPT_PACKAGE" 2>/dev/null | grep -E '/runtime/[^/]+/chrome-sandbox$'
+}
+
+sandboxes=$(package_sandboxes) || sandboxes=
+[ -n "$sandboxes" ] || exit 0
+
+parser=$(parser_bin) || parser=
+profiles=false
+if [ -n "$parser" ] && apparmor_enabled && [ -d /etc/apparmor.d ]; then
+    profiles=true
+fi
+
+printf '%s\n' "$sandboxes" | while IFS= read -r sandbox; do
     [ -f "$sandbox" ] || continue
     chown root:root "$sandbox" 2>/dev/null || true
     chmod 0755 "$sandbox" 2>/dev/null || true
-done
-
-parser=$(parser_bin) || parser=
-[ -n "$parser" ] || exit 0
-apparmor_enabled || exit 0
-[ -d /etc/apparmor.d ] || exit 0
-
-for sandbox in /usr/lib/*/runtime/*/chrome-sandbox; do
-    [ -f "$sandbox" ] || continue
+    [ "$profiles" = true ] || continue
     runtime_dir=$(dirname "$sandbox")
     app_dir=$(basename "$(dirname "$(dirname "$runtime_dir")")")
     arch_dir=$(basename "$runtime_dir")
