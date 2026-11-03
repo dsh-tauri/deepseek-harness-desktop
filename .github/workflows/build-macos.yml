@@ -117,6 +117,15 @@ jobs:
             exit 1
           fi
 
+      - name: Route hdiutil through the flake buffer
+        if: steps.check.outputs.should_run == 'true'
+        shell: bash
+        # runner 上 hdiutil 会随机报 Resource busy / DiskArbitration 超时
+        # (actions/runner-images#7522)，把带重试的同名包装排到 PATH 前面。
+        run: |
+          chmod +x scripts/hdiutil-retry/hdiutil
+          echo "$PWD/scripts/hdiutil-retry" >> "$GITHUB_PATH"
+
       - name: Build package
         if: steps.check.outputs.should_run == 'true'
         env:
