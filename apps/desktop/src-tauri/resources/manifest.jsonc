@@ -231,7 +231,7 @@
       },
       {
         "id": "dsh-third-kernel",
-        "spec": "github:hairyf/dsh-third-kernel#237152b791d83e5f485bb4946e91fcede7183cf4",
+        "spec": "dsh-third-kernel@0.1.0",
         "name": "DSH Third Kernel",
         "description": "接入本机已登录的 Codex 与 Claude Code，切换第三方内核会话、模型与推理强度，沿用 DSH 会话权限。 ｜ Use local Codex and Claude Code kernels with native model selection, reasoning controls, and DSH session permissions.",
         "repo": "https://github.com/hairyf/dsh-third-kernel",
