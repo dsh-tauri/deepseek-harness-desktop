@@ -145,6 +145,7 @@ commands.allow = [
   "release_browser_guest",
   "is_dev_build",
   "open_external_url",
+  "open_in_app",
   "get_pet_status",
   "get_pet_overlay_supported",
   "set_pet_enabled",

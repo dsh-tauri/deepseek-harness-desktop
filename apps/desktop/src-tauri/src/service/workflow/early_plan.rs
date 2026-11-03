@@ -155,12 +155,19 @@ fn exact_core_version(inputs: &Inputs, core_root: &Path) -> Option<String> {
     {
         return None;
     }
-    core::ensure_app_core_supported(
-        core_root,
-        None,
-        Some(inputs.manifest.engines.dsh.minimum.trim()),
-    )
-    .ok()?;
+    // 低于基线时 early 装配不接手，改由主链路走安装自愈（重新下载托管核心）；
+    // 随包内核没有可下载的去处，保持原有的「快速通道直接启动」（issue #1374）。
+    let bundled = inputs.mapping.get(deps::DEP_DSH).is_some_and(|recorded| {
+        recorded.as_deref().is_some_and(|path| path.starts_with(&inputs.resource_root))
+    });
+    if !bundled {
+        core::ensure_app_core_supported(
+            core_root,
+            None,
+            Some(inputs.manifest.engines.dsh.minimum.trim()),
+        )
+        .ok()?;
+    }
     Some(version.to_string())
 }
 
