@@ -58,7 +58,7 @@ export function DesktopUpdateDialog(props: DesktopUpdateDialogProps) {
                       %
                     </span>
                   </div>
-                  <ProgressBar value={downloadProgress} className="w-full">
+                  <ProgressBar aria-label={t('update.desktop_downloading')} value={downloadProgress} className="w-full">
                     <ProgressBar.Track>
                       <ProgressBar.Fill className="bg-info" />
                     </ProgressBar.Track>
