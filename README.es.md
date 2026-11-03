@@ -77,12 +77,12 @@ Plugins propios distribuidos con los recursos del escritorio:
 El asistente ofrece los siguientes plugins comunitarios para instalar a demanda.
 
 - [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — Barra lateral del editor por sesión
-- [Billion Context](https://github.com/ranxianglei/billion-context) — Compresión de contexto y restauración del historial
 - [DSH Office Kit](https://github.com/hairyf/dsh-office-kit) — Documentos de Office, PDF, presentaciones y hojas de cálculo
 - [DSH Market](https://github.com/dsh-market/dsh-market) — Mercado de plugins comunitarios
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — Retroceso de conversación y backups del workspace
 - [DSH IM](https://github.com/xmanrui/dsh-im) — Canales IM y gestión de bots
 - [DSH OPS](https://github.com/T-Auto/dsh-ops) — Herramientas de operaciones de bajo nivel para reducir el consumo de tokens y el tiempo de ejecución
+- [Billion Context](https://github.com/ranxianglei/billion-context) — Compresión de contexto y restauración del historial
 
 Pedí preajustes nuevos o actualizados mediante [Issues](https://github.com/dsh-tauri/deepseek-harness-desktop/issues). Las versiones disponibles siguen las reglas de compatibilidad del manifiesto.
 

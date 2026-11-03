@@ -239,16 +239,6 @@
         "checked": false
       },
       {
-        "id": "billion-context",
-        "spec": "billion-context",
-        "name": "Billion Context",
-        "description": "基本稳定可用。上下文压缩插件，兼顾小窗口（100K 上下文足矣）、节省 Token（用量减少至约五分之一）和超长会话（数月级别、几十亿 Token 单会话）。 ｜ A context-compression plugin for small context windows (a 100K context is enough), token savings (5x fewer tokens), and month-long single sessions (billions of tokens). billion-context is all you need",
-        "repo": "https://github.com/ranxianglei/billion-context",
-        "recommended": false,
-        "checked": false,
-        "version": "latest"
-      },
-      {
         "id": "dshmarket",
         "spec": "dshmarket",
         "name": "DSH Market",
@@ -289,6 +279,16 @@
         "name": "DSH Context",
         "description": "一站式 DeepSeek Harness 上下文可视化插件，Context 面板及浏览器和侧边栏与 Context 命令，透视上下文组成、演进、压缩、剪枝等事件与动作。 ｜ The best DeepSeek Harness plugin for context insight and management, with context dashboard / browser / sidebar and context command, for context statistics, composition, breakdown, evolution details, understanding how the context is made of, and how it evolves.",
         "repo": "https://github.com/bowenliang123/dsh-context",
+        "recommended": false,
+        "checked": false,
+        "version": "latest"
+      },
+      {
+        "id": "billion-context",
+        "spec": "billion-context",
+        "name": "Billion Context",
+        "description": "基本稳定可用。上下文压缩插件，兼顾小窗口（100K 上下文足矣）、节省 Token（用量减少至约五分之一）和超长会话（数月级别、几十亿 Token 单会话）。 ｜ A context-compression plugin for small context windows (a 100K context is enough), token savings (5x fewer tokens), and month-long single sessions (billions of tokens). billion-context is all you need",
+        "repo": "https://github.com/ranxianglei/billion-context",
         "recommended": false,
         "checked": false,
         "version": "latest"

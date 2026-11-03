@@ -77,12 +77,12 @@
 초기 설정 과정에서 다음 커뮤니티 플러그인을 필요에 따라 설치할 수 있습니다.
 
 - [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — 세션별 편집기 사이드바
-- [Billion Context](https://github.com/ranxianglei/billion-context) — 컨텍스트 압축과 기록 복원
 - [DSH Office Kit](https://github.com/hairyf/dsh-office-kit) — Office 문서, PDF, 프레젠테이션, 스프레드시트
 - [DSH Market](https://github.com/dsh-market/dsh-market) — 커뮤니티 플러그인 마켓
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — 대화 되감기와 작업 공간 백업
 - [DSH IM](https://github.com/xmanrui/dsh-im) — IM 채널과 봇 관리
 - [DSH OPS](https://github.com/T-Auto/dsh-ops) — 토큰 사용량과 작업 실행 시간을 줄이는 저수준 작업 도구
+- [Billion Context](https://github.com/ranxianglei/billion-context) — 컨텍스트 압축과 기록 복원
 
 프리셋 추가나 업데이트는 [Issues](https://github.com/dsh-tauri/deepseek-harness-desktop/issues)를 통해 요청하세요. 사용 가능한 버전은 매니페스트의 코어 호환성 규칙을 따릅니다.
 
