@@ -255,7 +255,9 @@ pub fn active_version(app_handle: &AppHandle) -> Option<String> {
 /// 视为「未安装」，让安装流程按记录 tag 重新下载，而不是让启动永远卡在校验失败
 /// （issue #1374）。随包内核不参与：它随安装包分发，没有可下载的去处。
 pub fn app_core_meets_baseline(app_handle: &AppHandle) -> bool {
-    if active_is_bundled(app_handle) {
+    // 只判定真正会被启动的那份：本地核心由用户自己的包管理器维护，随包内核随安装包
+    // 分发，两者都不归托管目录管，不该因为托管目录里躺着旧文件就触发重新下载。
+    if active_source(app_handle) != CoreSource::App || active_is_bundled(app_handle) {
         return true;
     }
     let baseline = config::manifest::minimum_dsh_version(app_handle);
