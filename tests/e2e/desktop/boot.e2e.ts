@@ -38,26 +38,6 @@ beforeAll(async () => {
  * 本身没变——服务在监听、boot 清单在盘、页面已启动——只是按真实信号等待，而不是拿
  * 一个固定窗口去赌探测轮次。核心进程退出仍立刻失败，不会把崩溃耗成超时。
  */
-/**
- * 判断某个原生 guest 页面是否由**这个**壳窗口承载。
- *
- * 壳把 dsh 放进独立的原生 WebContentsView，窗口与 guest 的对应关系只有壳自己
- * 知道；把窗口几何与 guest 视口对上，是 CDP 侧唯一可靠的归属证据。
- */
-async function belongsToWindow(page: Page, guest: Page): Promise<boolean> {
-  const viewport = await page.evaluate(() => {
-    const host = document.querySelector<HTMLElement>('[data-testid="dsh-harness-webview"]')
-    if (!host)
-      return null
-    const rect = host.getBoundingClientRect()
-    return rect.width > 0 && rect.height > 0 ? { width: Math.round(rect.width), height: Math.round(rect.height) } : null
-  })
-  if (!viewport)
-    return false
-  const actual = await guest.evaluate(() => ({ width: innerWidth, height: innerHeight })).catch(() => null)
-  return actual !== null && Math.abs(actual.width - viewport.width) <= 2 && Math.abs(actual.height - viewport.height) <= 2
-}
-
 async function waitHealthy(page: Page): Promise<HealthCheck> {
   let serviceUrl = ''
   await expect.poll(async () => {
@@ -72,20 +52,28 @@ async function waitHealthy(page: Page): Promise<HealthCheck> {
     }
     const prefix = `${new URL(serviceUrl).origin}/`
     const pages = app.get().browser.contexts().flatMap(context => context.pages())
-    // 同一档案的多个窗口共用一条核心，也就共用同一个 origin：按 origin 取第一个
-    // 页面会把克隆档案窗口认成原档案的就绪态。这里只认当前窗口正在承载的 guest。
-    const guest = pages.find(candidate => candidate.url().startsWith(prefix))
-    if (!guest || !await belongsToWindow(page, guest))
+    // 就绪判据取产品自身那条门禁：客户端模块全部可取即已就绪。它比「页面已加载」
+    // 更严格，也才是壳与 Core 共同认可的信号；跑在 CDP 侧并发探测，不占固定窗口。
+    const guests = pages.filter(candidate => candidate.url().startsWith(prefix) && !candidate.isClosed())
+    if (guests.length === 0)
       return false
-    try {
-      return await guest.evaluate(() => {
-        const boot = (globalThis as { __DSH_BOOT__?: { entries?: unknown[] } }).__DSH_BOOT__
-        return document.readyState === 'complete' && Array.isArray(boot?.entries)
-      })
+    for (const guest of guests) {
+      const ready = await guest.evaluate(async () => {
+        const boot = (globalThis as { __DSH_BOOT__?: { entries?: Array<{ url?: string }> } }).__DSH_BOOT__
+        if (document.readyState !== 'complete' || !Array.isArray(boot?.entries))
+          return false
+        const urls = boot.entries.map(entry => entry.url).filter((url): url is string => typeof url === 'string' && url.length > 0)
+        if (urls.length === 0)
+          return true
+        const results = await Promise.all(urls.map(url => fetch(url, { method: 'GET' })
+          .then(response => response.ok)
+          .catch(() => false)))
+        return results.every(Boolean)
+      }).catch(() => false)
+      if (ready)
+        return true
     }
-    catch {
-      return false
-    }
+    return false
   }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
   return { service_url: serviceUrl, status: `healthy - ${new URL(serviceUrl).origin}` }
 }
