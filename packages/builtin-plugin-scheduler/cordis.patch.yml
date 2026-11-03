@@ -1,7 +1,13 @@
 - id: schedule
-  disabled: true
+  disabled: &desktop-scheduler-enabled !!js |
+    (() => {
+      const entry = ctx[Symbol.for('cordis.entry')]
+      const scheduler = entry.parent.tree.root.data.find(item => item.id === 'dsh-tauri-scheduler')
+      const disabled = scheduler?.disabled
+      return !!scheduler && !(disabled && typeof disabled === 'object' && '__jsExpr' in disabled ? entry.evaluate(disabled.__jsExpr) : disabled)
+    })()
 - id: ui-schedule
-  disabled: true
+  disabled: *desktop-scheduler-enabled
 - insert:
     - id: dsh-tauri-scheduler
       name: dsh-tauri-scheduler
