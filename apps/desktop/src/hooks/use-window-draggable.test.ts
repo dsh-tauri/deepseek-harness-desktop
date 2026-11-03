@@ -92,7 +92,7 @@ async function settlePromises(): Promise<void> {
   })
 }
 
-async function press(draggable: UseWindowDraggableResult, options?: { button?: number, pointerId?: number }): Promise<void> {
+async function press(draggable: UseWindowDraggableResult, options?: { button?: number, pointerId?: number, screenX?: number, screenY?: number }): Promise<void> {
   act(() => {
     draggable.onPointerDown(pointerEvent(options))
   })
