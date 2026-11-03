@@ -14,13 +14,16 @@ it.each([
   { state: 'default', patch: '[]', expected: [0, 0, 1] },
   { state: 'enabled', patch: '- id: dsh-tauri-scheduler\n  disabled: false', expected: [0, 0, 1] },
   { state: 'disabled', patch: '- id: dsh-tauri-scheduler\n  disabled: true', expected: [1, 1, 0] },
-  { state: 'conditionally enabled', patch: '- id: dsh-tauri-scheduler\n  disabled: !!js false', expected: [0, 0, 1] },
-  { state: 'conditionally disabled', patch: '- id: dsh-tauri-scheduler\n  disabled: !!js true', expected: [1, 1, 0] },
+  { state: 'conditionally enabled', patch: '- id: dsh-tauri-scheduler\n  disabled: !!js "ctx.get(\'profileContext\').name !== \'web\'"', expected: [0, 0, 1] },
+  { state: 'conditionally disabled', patch: '- id: dsh-tauri-scheduler\n  disabled: !!js "ctx.get(\'profileContext\').name === \'web\'"', expected: [1, 1, 0] },
+  { state: 'official scheduler explicitly enabled', patch: '- id: schedule\n  disabled: false', expected: [1, 0, 1] },
+  { state: 'official UI explicitly enabled', patch: '- id: ui-schedule\n  disabled: false', expected: [0, 1, 1] },
   { state: 'all explicitly disabled', patch: '- id: dsh-tauri-scheduler\n  disabled: true\n- id: schedule\n  disabled: true\n- id: ui-schedule\n  disabled: true', expected: [0, 0, 0] },
 ])('scheduler bundle selects the expected stack when $state and restores the default after override removal', async ({ patch, expected }) => {
   const source = readFileSync(new URL('../packages/builtin-plugin-scheduler/cordis.patch.yml', import.meta.url), 'utf8')
   const ctx = new Context()
   onTestFinished(() => ctx.fiber.dispose())
+  ctx.provide('profileContext', { name: 'web' })
   await ctx.plugin(Loader, { baseUrl: import.meta.url }).await()
   const ids = ['schedule', 'ui-schedule', 'dsh-tauri-scheduler']
   const active = [0, 0, 0]
