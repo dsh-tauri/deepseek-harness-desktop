@@ -68,12 +68,17 @@
     },
     "linux": {
       "deb": {
+        "depends": [
+          "zenity"
+        ],
         "conflicts": [
           "deepseek-harness-desktop"
         ],
         "replaces": [
           "deepseek-harness-desktop"
-        ]
+        ],
+        "postInstallScript": "templates/linux/postinst.sh",
+        "postRemoveScript": "templates/linux/postrm.sh"
       }
     }
   }

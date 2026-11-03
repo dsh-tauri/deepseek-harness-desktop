@@ -56,7 +56,7 @@ pub(crate) fn verify() -> Result<(), String> {
 pub fn report(message: &str) {
     eprintln!("{message}");
     log::error!("{message}");
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     rfd::MessageDialog::new()
         .set_title(format!(
             "{} — 启动失败 / Startup failed",
@@ -65,6 +65,38 @@ pub fn report(message: &str) {
         .set_description(message)
         .set_level(rfd::MessageLevel::Error)
         .show();
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_sandbox_hint() -> String {
+    let product = env!("DSH_PRODUCT_NAME");
+    format!(
+        "LINUX_SANDBOX_HINT: 窗口未能创建，多半是 Chromium 沙箱被 AppArmor 拦住了。逐条排查：\n\
+         1) ls -l \"/usr/lib/{product}\"*/runtime/*/chrome-sandbox（应为 -rwxr-xr-x root:root）\n\
+         2) sudo aa-status | grep -F \"{product}\"（应能看到 unconfined profile）\n\
+         两条都不对时重装 deb 包，postinst 会重建 profile；不要手工 chmod 4755，\
+         SUID 路径按空白切分安装路径，\"/usr/lib/{product}\" 含空格会直接 execvp 失败。"
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn window_failure_hint(message: &str) -> Option<String> {
+    let sandbox_blocked = message.contains("failed to create window")
+        || message.contains("No usable sandbox")
+        || message.contains("SUID sandbox helper");
+    sandbox_blocked.then(linux_sandbox_hint)
+}
+
+pub fn failure_message(error: &str) -> String {
+    #[cfg(target_os = "linux")]
+    if let Some(hint) = window_failure_hint(error) {
+        return format!("{error}\n\n{hint}");
+    }
+    error.to_string()
+}
+
+pub fn report_failure(error: &str) {
+    report(&failure_message(error));
 }
 
 #[cfg(any(windows, test))]
@@ -138,6 +170,35 @@ fn process_integrity_level() -> std::io::Result<u32> {
 mod tests {
     use super::*;
     use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn sandbox_hint_only_trails_window_creation_failures() {
+        for error in [
+            "STARTUP_FAILED: runtime error: failed to create window",
+            "STARTUP_FAILED: No usable sandbox!",
+            "STARTUP_FAILED: The SUID sandbox helper binary was found, but is not configured correctly",
+        ] {
+            let hint = window_failure_hint(error).unwrap();
+            assert_eq!(hint.matches("LINUX_SANDBOX_HINT").count(), 1);
+            assert!(hint.contains(env!("DSH_PRODUCT_NAME")));
+            assert!(hint.contains("aa-status"));
+        }
+        assert_eq!(
+            window_failure_hint(
+                "STARTUP_E2E_HOME_INVALID: DSH_E2E_HOME must be a non-empty absolute path"
+            ),
+            None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_hint_is_appended_to_the_reported_failure() {
+        let error = "STARTUP_FAILED: runtime error: failed to create window";
+        let message = failure_message(error);
+        assert!(message.starts_with(error));
+        assert_eq!(message.matches("LINUX_SANDBOX_HINT").count(), 1);
+    }
 
     #[test]
     fn forced_x11_overrides_wayland_without_losing_other_electron_switches() {

@@ -32,8 +32,13 @@
     },
     "linux": {
       "deb": {
+        "depends": [
+          "zenity"
+        ],
         "conflicts": [],
-        "replaces": []
+        "replaces": [],
+        "postInstallScript": "templates/linux/postinst.sh",
+        "postRemoveScript": "templates/linux/postrm.sh"
       }
     },
     "windows": {

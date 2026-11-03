@@ -25,7 +25,7 @@ fn main() {
         return;
     }
     if let Err(error) = main::run() {
-        main::desktop::startup::report(&error);
+        main::desktop::startup::report_failure(&error);
         std::process::exit(1);
     }
 }

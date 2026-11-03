@@ -41,6 +41,9 @@ pub struct WindowState {
     /// 尺寸是否为内容区尺寸；旧记录缺少此字段时按外框尺寸迁移
     #[serde(default)]
     pub size_is_inner: bool,
+    /// 采样时的显示器缩放；旧记录缺少此字段时为 0，表示未知、不换算
+    #[serde(default)]
+    pub scale_factor: f64,
 }
 
 impl Default for WindowState {
@@ -52,6 +55,7 @@ impl Default for WindowState {
             width: DEFAULT_WINDOW_WIDTH as u32,
             height: DEFAULT_WINDOW_HEIGHT as u32,
             size_is_inner: true,
+            scale_factor: 0.0,
         }
     }
 }
@@ -145,6 +149,7 @@ pub fn save_geometry<R: Runtime>(window: &Window<R>) {
             .map(|s| s.height)
             .unwrap_or(DEFAULT_WINDOW_HEIGHT as u32),
         size_is_inner: true,
+        scale_factor: window.scale_factor().unwrap_or(0.0),
     };
     save_window_state(window.app_handle(), &state);
 }
@@ -186,13 +191,47 @@ fn is_degenerate_size(saved: &WindowState) -> bool {
     (saved.width as f64) <= MIN_WINDOW_WIDTH && (saved.height as f64) <= MIN_WINDOW_HEIGHT
 }
 
-/// 屏幕矩形（物理像素，左上角为原点）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 窗口将要落在的那块屏幕的缩放；拿不到记录位置时取主屏。
+///
+/// 不能直接用 window.scale_factor()：恢复发生时窗口还在系统的默认位置
+/// （程序化建窗，尚未 set_position），它的缩放来自主屏而非目标屏。
+fn target_scale(saved: &WindowState, screens: &[ScreenRect], primary: Option<ScreenRect>) -> f64 {
+    if let (Some(x), Some(y)) = (saved.x, saved.y) {
+        if let Some(screen) = screens.iter().find(|screen| screen.contains_point(x, y)) {
+            return screen.scale_factor;
+        }
+    }
+    primary.map(|screen| screen.scale_factor).unwrap_or(0.0)
+}
+
+/// 把保存的物理尺寸换算到目标显示器缩放，保持用户看到的逻辑尺寸不变。
+///
+/// 物理像素在不同缩放下不等价：1.5 缩放屏上保存的 3072px 宽，搬到 1.25 缩放屏后
+/// 必须还原成 2560 逻辑宽 × 1.25 = 3200px，否则窗口会比用户设定的大 20%。
+/// 旧记录没有缩放字段（0）时无从换算，按原样使用。
+fn rescale_to_current(saved: &WindowState, current_scale: f64) -> WindowState {
+    if saved.scale_factor <= 0.0 || current_scale <= 0.0 || saved.scale_factor == current_scale {
+        return saved.clone();
+    }
+    let factor = current_scale / saved.scale_factor;
+    let width = (saved.width as f64 * factor).round();
+    let height = (saved.height as f64 * factor).round();
+    WindowState {
+        width: width.clamp(0.0, u32::MAX as f64) as u32,
+        height: height.clamp(0.0, u32::MAX as f64) as u32,
+        scale_factor: current_scale,
+        ..saved.clone()
+    }
+}
+
+/// 屏幕矩形（物理像素，左上角为原点）及其缩放。
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct ScreenRect {
     x: i32,
     y: i32,
     width: u32,
     height: u32,
+    scale_factor: f64,
 }
 
 impl ScreenRect {
@@ -206,13 +245,11 @@ impl ScreenRect {
         self.y.saturating_add(self.height as i32)
     }
 
-    /// 与另一矩形是否有面积交集。
-    fn intersects(&self, other: &ScreenRect) -> bool {
-        self.x < other.right()
-            && self.right() > other.x
-            && self.y < other.bottom()
-            && self.bottom() > other.y
+    /// 点是否落在本屏幕内。
+    fn contains_point(&self, x: i32, y: i32) -> bool {
+        x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
     }
+
 }
 
 /// 多个屏幕矩形的并集；无可用屏幕时 `None`。
@@ -232,13 +269,14 @@ where
             y: top,
             width: (right - left) as u32,
             height: (bottom - top) as u32,
+            scale_factor: 0.0,
         };
     }
     Some(union)
 }
 
 /// 解析结果：尺寸始终可用；位置不可用时为 `None`（交给 Tauri 默认居中）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct ResolvedGeometry {
     size: PhysicalSize<u32>,
     position: Option<PhysicalPosition<i32>>,
@@ -295,14 +333,13 @@ fn resolve_position(
     // 拿不到可见区就无从判断位置是否可恢复，交给系统居中。
     let union = union?;
 
-    let window = ScreenRect {
-        x: sx,
-        y: sy,
-        width: size.width,
-        height: size.height,
-    };
+    let right = sx.saturating_add(size.width as i32);
+    let bottom = sy.saturating_add(size.height as i32);
     // 必须真的压在某一块屏幕上：只落在多屏包围盒的空隙里不算可见。
-    if screens.iter().any(|screen| window.intersects(screen)) {
+    if screens
+        .iter()
+        .any(|screen| sx < screen.right() && right > screen.x && sy < screen.bottom() && bottom > screen.y)
+    {
         // 夹紧坐标到包围盒内，保证窗口至少部分可见
         let max_x = union.right().saturating_sub(size.width as i32);
         let max_y = union.bottom().saturating_sub(size.height as i32);
@@ -331,6 +368,7 @@ fn screens_of<R: Runtime>(app: &AppHandle<R>) -> Vec<ScreenRect> {
                     y: monitor.position().y,
                     width: monitor.size().width,
                     height: monitor.size().height,
+                    scale_factor: monitor.scale_factor(),
                 })
                 .collect()
         })
@@ -345,15 +383,8 @@ fn primary_screen<R: Runtime>(app: &AppHandle<R>) -> Option<ScreenRect> {
         y: monitor.position().y,
         width: monitor.size().width,
         height: monitor.size().height,
+        scale_factor: monitor.scale_factor(),
     })
-}
-
-/// 把保存的几何解析成「实际可用的尺寸 + 可选位置」。
-fn resolve_geometry<R: Runtime>(
-    app: &AppHandle<R>,
-    saved: &WindowState,
-) -> Option<ResolvedGeometry> {
-    resolve_geometry_in(saved, &screens_of(app), primary_screen(app))
 }
 
 /// 恢复主窗口的大小与位置。在 `build_main_window` 成功 build() 之后调用。
@@ -373,7 +404,10 @@ pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindo
             saved = migrate_legacy_outer_size(&saved, outer, inner);
         }
     }
-    if let Some(geometry) = resolve_geometry(app, &saved) {
+    let screens = screens_of(app);
+    let primary = primary_screen(app);
+    saved = rescale_to_current(&saved, target_scale(&saved, &screens, primary));
+    if let Some(geometry) = resolve_geometry_in(&saved, &screens, primary) {
         let _ = window.set_size(Size::Physical(geometry.size));
         if let Some(position) = geometry.position {
             let _ = window.set_position(Position::Physical(position));
@@ -387,6 +421,114 @@ pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_scale_rescales_physical_size_to_the_new_display() {
+        // issue #1360：1.5 缩放屏保存的 3072×1862，搬到 1.25 缩放屏后必须回到
+        // 用户原本看到的逻辑尺寸（2048×1241），而不是放大 20%
+        let saved = WindowState {
+            width: 3072,
+            height: 1862,
+            scale_factor: 1.5,
+            ..WindowState::default()
+        };
+        let rescaled = rescale_to_current(&saved, 1.25);
+        assert_eq!(rescaled.width, 2560);
+        assert_eq!(rescaled.height, 1552);
+        assert_eq!(rescaled.scale_factor, 1.25);
+    }
+
+    #[test]
+    fn saved_scale_is_ignored_when_either_side_is_unknown() {
+        // 旧记录没有 scale_factor（serde 默认 0），或当前缩放不可得：按原样使用，
+        // 不能凭空换算成别的尺寸
+        let legacy = WindowState {
+            width: 1500,
+            height: 1000,
+            scale_factor: 0.0,
+            ..WindowState::default()
+        };
+        assert_eq!(rescale_to_current(&legacy, 2.0), legacy);
+        assert_eq!(rescale_to_current(&legacy, 0.0), legacy);
+
+        let known = WindowState {
+            width: 1500,
+            height: 1000,
+            scale_factor: 2.0,
+            ..WindowState::default()
+        };
+        assert_eq!(rescale_to_current(&known, 2.0), known);
+        assert_eq!(rescale_to_current(&known, 0.0), known);
+    }
+
+    #[test]
+    fn target_scale_comes_from_the_screen_holding_the_saved_position() {
+        // issue #1360：窗口建在系统默认位置时 scale_factor() 来自主屏（1.0），
+        // 而保存的位置压在 1.25 缩放的副屏上——换算必须用目标屏的缩放
+        let screens = [
+            scaled_rect(0, 0, 1920, 1080, 1.0),
+            scaled_rect(1920, 0, 2560, 1600, 1.25),
+        ];
+        let primary = Some(screens[0]);
+        let saved = WindowState {
+            x: Some(2100),
+            y: Some(120),
+            ..WindowState::default()
+        };
+        assert_eq!(target_scale(&saved, &screens, primary), 1.25);
+    }
+
+    #[test]
+    fn target_scale_falls_back_to_the_primary_screen() {
+        let screens = [
+            scaled_rect(0, 0, 1920, 1080, 1.0),
+            scaled_rect(1920, 0, 2560, 1600, 1.25),
+        ];
+        let primary = Some(screens[0]);
+        // 无位置记录 / 位置已不在任何屏幕上（外接屏被拔出）→ 主屏缩放
+        assert_eq!(target_scale(&WindowState::default(), &screens, primary), 1.0);
+        let unplugged = WindowState {
+            x: Some(9000),
+            y: Some(5000),
+            ..WindowState::default()
+        };
+        assert_eq!(target_scale(&unplugged, &screens, primary), 1.0);
+        // 枚举不到显示器 → 未知（0），不换算
+        assert_eq!(target_scale(&unplugged, &[], None), 0.0);
+    }
+
+    #[test]
+    fn saved_geometry_rescales_to_the_target_screen_scale() {
+        // 1.5 缩放屏上保存的 3072×1862 搬到 1.25 缩放副屏：恢复成 2560×1552
+        let screens = [
+            scaled_rect(0, 0, 1920, 1080, 1.0),
+            scaled_rect(1920, 0, 2560, 1600, 1.25),
+        ];
+        let primary = Some(screens[0]);
+        let saved = WindowState {
+            x: Some(2100),
+            y: Some(120),
+            width: 3072,
+            height: 1862,
+            size_is_inner: true,
+            scale_factor: 1.5,
+            ..WindowState::default()
+        };
+        let rescaled = rescale_to_current(&saved, target_scale(&saved, &screens, primary));
+        assert_eq!((rescaled.width, rescaled.height), (2560, 1552));
+        let resolved = resolve_geometry_in(&rescaled, &screens, primary).expect("geometry");
+        assert_eq!(resolved.size, PhysicalSize::new(2560, 1552));
+    }
+
+    #[test]
+    fn legacy_records_without_scale_deserialize_with_unknown_scale() {
+        let legacy: WindowState = serde_json::from_str(
+            r#"{"maximized":false,"x":100,"y":100,"width":1500,"height":1000}"#,
+        )
+        .expect("legacy record");
+        assert_eq!(legacy.scale_factor, 0.0);
+        assert!(!legacy.size_is_inner, "缺少 size_is_inner 的旧记录按外框尺寸迁移");
+    }
 
     #[test]
     fn exit_geometry_does_not_sample_extra_or_remote_windows_without_main() {
@@ -422,6 +564,7 @@ mod tests {
             width: 1920,
             height: 1080,
             size_is_inner: true,
+            scale_factor: 1.5,
         };
         let json = serde_json::to_string(&state).expect("serialize");
         let parsed: WindowState = serde_json::from_str(&json).expect("deserialize");
@@ -516,13 +659,19 @@ mod tests {
         assert!(!is_degenerate_size(&half_normal));
     }
 
-    /// 构造屏幕矩形（测试夹具）。
+    /// 构造屏幕矩形（测试夹具，缩放未知）。
     fn rect(x: i32, y: i32, width: u32, height: u32) -> ScreenRect {
+        scaled_rect(x, y, width, height, 0.0)
+    }
+
+    /// 构造带缩放的屏幕矩形（测试夹具）。
+    fn scaled_rect(x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> ScreenRect {
         ScreenRect {
             x,
             y,
             width,
             height,
+            scale_factor,
         }
     }
 
