@@ -77,6 +77,7 @@ pub(crate) use pnpm::{
 };
 pub use single::{remove_many, update_many};
 // 版本兼容性/发布时长两类拦截的解析结果都要跨到 `bridge`（前端逐项确认后授权），在此定义出口
+pub(crate) use diagnose::trust_policy_rejection;
 pub use diagnose::{IncompatibleVersion, PolicyBlockedVersion};
 
 use allowlist::{add_allow_build_keys, parse_allowlist_keys};
@@ -84,7 +85,7 @@ use artifact::{ensure_plugin_entry_built, verify_installed_products};
 use diagnose::{
     diagnostic_suffix, git_transport_hint, incompatible_versions, network_error_hint,
     pick_error_message, policy_blocked_versions, policy_verification_network_failure,
-    store_mismatch_hint,
+    release_age_policy_rejected, store_mismatch_hint,
 };
 use pnpm::ensure_pnpm;
 use single::single_plugin_args;
@@ -478,6 +479,15 @@ async fn install_with_cancel(
                 .map_err(|e| format!("PREINSTALL_SERIALIZE: {e}"))?;
             return Err(format!("PLUGIN_VERSION_INCOMPATIBLE: {payload}"));
         }
+        // 信任策略拒绝：与发布时长门禁共用同一句标题，但说的是用户自己的依赖被降级。它必须
+        // 排在一切改写之前，且错误前缀刻意不进任何兜底分类，否则内置插件会把真实失败吞成
+        // 「安装成功」（见 [`trust_policy_rejection`]）。
+        if trust_policy_rejection(&last_attempt) {
+            log::warn!("pnpm trust policy rejected the profile lockfile");
+            return Err(format!(
+                "PREINSTALL_TRUST_POLICY: dsh plugin exited with code {exit_code} (pnpm trust policy rejected the lockfile)"
+            ));
+        }
         // 真实的发布时长策略违规：档案已经声明/装了太新的版本，pnpm 的 lockfile 校验
         // 不放行，于是**每一次**插件操作都会在这里失败。它不是安装故障，也不是网络问题
         // （发布时间都拿到了），重试毫无意义——解析成精确 `包名@版本` 交给前端，由用户
@@ -491,6 +501,22 @@ async fn install_with_cancel(
             let payload = serde_json::to_string(&policy_blocked)
                 .map_err(|e| format!("PREINSTALL_SERIALIZE: {e}"))?;
             return Err(format!("PLUGIN_POLICY_BLOCKED: {payload}"));
+        }
+        // 解析不出精确条目（pnpm 文案改版、违规条目来自用户自己的依赖）时，策略标记可能被
+        // `pick_error_message` 的 8 行截断丢掉，内置插件就再也进不了离线兜底（#1348）。
+        // 按**原始输出**先做一次稳定分类，把标题显式写进错误里。
+        //
+        // 拉取元数据失败时 pnpm 会把条目直接判成违规，那种是网络问题（见
+        // [`policy_verification_network_failure`]），要留给下面的网络分类去重试。
+        if release_age_policy_rejected(&last_attempt)
+            && !policy_verification_network_failure(&last_attempt)
+        {
+            log::warn!(
+                "pnpm release-age policy rejected the profile lockfile without parseable entries"
+            );
+            return Err(format!(
+                "PREINSTALL_FAILED: dsh plugin exited with code {exit_code} (lockfile failed supply-chain policy check; minimumReleaseAge)"
+            ));
         }
         // 区分 git 传输层失败与 allowBuilds 构建门禁：前者是 pnpm 走了 git+ssh
         // （用户环境无 SSH 配置），后者才是补充白名单可自愈的。传输层错误给出
