@@ -56,6 +56,10 @@
           "SimpChinese"
         ],
         "displayLanguageSelector": false,
+        "customLanguageFiles": {
+          "English": "templates/languages/English.nsh",
+          "SimpChinese": "templates/languages/SimpChinese.nsh"
+        },
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico"
       }
