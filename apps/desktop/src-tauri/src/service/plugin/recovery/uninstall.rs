@@ -143,13 +143,60 @@ pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
         .filter(|e| !patch_entry_targets(e, id))
         .cloned()
         .collect();
-    if kept.len() == entries.len() {
+    let removed_entry = kept.len() != entries.len();
+    let mut kept = serde_yaml::Value::Sequence(kept);
+    // 顶层条目只按「整条是否针对目标插件」过滤，覆盖不到写在 `insert` 列表里的
+    // 引用：插件被卸载后这些条目仍会被 loader import，抛 ERR_MODULE_NOT_FOUND 让
+    // 整棵插件树加载失败。这里再把 insert 里的目标条目摘掉，同一条目的其它插件原样保留。
+    let removed_insert = remove_inserted_targets(&mut kept, id);
+    if !removed_entry && !removed_insert {
         return;
     }
-    if let Ok(rendered) = render_patch_layer(&serde_yaml::Value::Sequence(kept)) {
+    if let Ok(rendered) = render_patch_layer(&kept) {
         let _ = fs::write(&path, rendered);
         log::info!("Stripped cordis.patch.yml entries for plugin {id}");
     }
+}
+
+/// 递归移除 `insert` 列表中针对目标插件的条目（兼容旧版写入的 group 嵌套结构）。
+///
+/// 与 `internal::manifest::remove_duplicate_bundle_entries_from_patch` 同形：只看
+/// `insert` 项自身的 `id`，不碰同一条目里的其它配置与其它插件。
+fn remove_inserted_targets(value: &mut serde_yaml::Value, id: &str) -> bool {
+    match value {
+        serde_yaml::Value::Sequence(items) => {
+            let mut modified = false;
+            for item in items.iter_mut() {
+                modified |= remove_inserted_targets(item, id);
+            }
+            modified
+        }
+        serde_yaml::Value::Mapping(mapping) => {
+            let mut modified = false;
+            if let Some(insert) = mapping
+                .get_mut(serde_yaml::Value::String("insert".to_string()))
+                .and_then(serde_yaml::Value::as_sequence_mut)
+            {
+                let before = insert.len();
+                insert.retain(|item| !inserted_item_targets(item, id));
+                modified |= insert.len() != before;
+            }
+            for child in mapping.values_mut() {
+                modified |= remove_inserted_targets(child, id);
+            }
+            modified
+        }
+        _ => false,
+    }
+}
+
+/// insert 项是否针对目标插件：`id` / `name` 等字符串字段等于包名。
+fn inserted_item_targets(item: &serde_yaml::Value, id: &str) -> bool {
+    item.as_mapping().is_some_and(|map| {
+        map.iter().any(|(key, value)| {
+            key.as_str() == Some(id) || value.as_str() == Some(id)
+        })
+    })
 }
 
 /// 一个 patch 条目是否「针对」目标插件：顶层 id 字段或任意字段值等于该包名。
@@ -413,6 +460,41 @@ mod tests {
         let kept_doc = serde_yaml::to_string(&serde_yaml::Value::Sequence(kept)).unwrap();
         assert!(kept_doc.contains("dsh-web-ui-all"));
         assert!(!kept_doc.contains("dsh-better-sidebar"));
+    }
+
+    #[test]
+    fn patch_strip_removes_target_inserted_entries_and_keeps_siblings() {
+        let profile = tempfile::tempdir().unwrap();
+        let patch = profile.path().join("cordis.patch.yml");
+        std::fs::write(
+            &patch,
+            "- insert:\n  - id: dsh-old\n  - id: dsh-kept\n- id: dsh-kept\n  config:\n    keep: 1\n",
+        )
+        .unwrap();
+
+        strip_cordis_patch_for(profile.path(), "dsh-old");
+
+        let rendered = std::fs::read_to_string(&patch).unwrap();
+        assert!(!rendered.contains("dsh-old"), "{rendered}");
+        assert!(rendered.contains("dsh-kept"), "{rendered}");
+        assert!(rendered.contains("keep: 1"), "{rendered}");
+    }
+
+    #[test]
+    fn patch_strip_clears_nested_group_inserts() {
+        let profile = tempfile::tempdir().unwrap();
+        let patch = profile.path().join("cordis.patch.yml");
+        std::fs::write(
+            &patch,
+            "- id: group\n  config:\n    insert:\n      - id: dsh-old\n      - id: dsh-kept\n",
+        )
+        .unwrap();
+
+        strip_cordis_patch_for(profile.path(), "dsh-old");
+
+        let rendered = std::fs::read_to_string(&patch).unwrap();
+        assert!(!rendered.contains("dsh-old"), "{rendered}");
+        assert!(rendered.contains("dsh-kept"), "{rendered}");
     }
 
     #[test]

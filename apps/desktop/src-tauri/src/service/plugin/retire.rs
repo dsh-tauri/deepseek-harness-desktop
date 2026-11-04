@@ -28,13 +28,19 @@ fn deprecated_installed_names(
     deprecated: &HashSet<String>,
     mut referenced: impl FnMut(&str) -> bool,
 ) -> Vec<String> {
-    let mut names: Vec<String> = presets
+    let mut names: Vec<String> = Vec::new();
+    for preset in presets
         .iter()
         .filter(|preset| !preset.internal && deprecated.contains(&preset.id))
-        .map(installed_name)
-        .filter(|name| referenced(name))
-        .map(str::to_string)
-        .collect();
+    {
+        // 档案里可能按预设 id 或实际包名落盘：scoped 包名与 id 不一致的预设，
+        // 改名前后各写过一种键，两种都要清，否则只清得掉其中一份。
+        for name in [preset.id.as_str(), installed_name(preset)] {
+            if referenced(name) {
+                names.push(name.to_string());
+            }
+        }
+    }
     for id in deprecated {
         if presets.iter().any(|preset| preset.id == *id) || !referenced(id) {
             continue;
@@ -128,7 +134,26 @@ mod tests {
         let presets = vec![preset("dsh-old-name", Some("@scope/dsh-old-name"), false)];
         let deprecated = ids(&["dsh-old-name", "dsh-tauri-kernel"]);
         let names = deprecated_installed_names(&presets, &deprecated, |_| true);
-        assert_eq!(names, vec!["@scope/dsh-old-name", "dsh-tauri-kernel"]);
+        // 预设 id 与实际包名都可能成为档案里的键，两种都要清；
+        // `dsh-tauri-kernel` 这类已从 preset 删除、只留在弃用名单的 id 同样要清。
+        assert_eq!(
+            names,
+            vec!["@scope/dsh-old-name", "dsh-old-name", "dsh-tauri-kernel"]
+        );
+    }
+
+    #[test]
+    fn deprecation_clears_both_preset_id_and_declared_package_name() {
+        let presets = vec![preset("dsh-old", Some("@scope/dsh-old"), false)];
+        let deprecated = ids(&["dsh-old"]);
+        // 档案里两种键都可能出现（改名前后各写过一种），两种都要清
+        let names = deprecated_installed_names(&presets, &deprecated, |_| true);
+        assert_eq!(names, vec!["@scope/dsh-old", "dsh-old"]);
+        // 只落了其中一种键时，只清真实存在的那一份
+        let only_package = deprecated_installed_names(&presets, &deprecated, |name| {
+            name == "@scope/dsh-old"
+        });
+        assert_eq!(only_package, vec!["@scope/dsh-old"]);
     }
 
     #[test]
@@ -150,14 +175,15 @@ mod tests {
     }
 
     #[test]
-    fn deprecation_reports_each_package_once() {
+    fn deprecation_dedupes_names_shared_by_several_presets() {
         let presets = vec![
             preset("dsh-alias-a", Some("dsh-shared"), false),
             preset("dsh-alias-b", Some("dsh-shared"), false),
         ];
-        let deprecated = ids(&["dsh-alias-a", "dsh-alias-b", "dsh-shared"]);
+        let deprecated = ids(&["@scope/only-package", "dsh-shared"]);
+        // 两个预设共用同一个包名：包名只清一次（别名 id 不在弃用名单里，不参与）。
         let names = deprecated_installed_names(&presets, &deprecated, |_| true);
-        assert_eq!(names, vec!["dsh-shared"]);
+        assert_eq!(names, vec!["@scope/only-package", "dsh-shared"]);
     }
 
     #[test]
