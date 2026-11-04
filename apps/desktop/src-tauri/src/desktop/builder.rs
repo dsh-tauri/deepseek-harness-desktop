@@ -751,10 +751,14 @@ fn with_shell_chrome<'a>(
     let appearance = crate::config::get_store_dat_setting(app).appearance;
     let transparent = shell_window_transparent(&appearance);
     let frame = shell_frame_for(transparent);
+    // Linux 的窗口恒为透明窗，透明度只是前端渲染参数，改设置无需重开；
+    // Windows / macOS 的透明窗在创建时定型，改动必须重启才生效。
+    let live_transparency = cfg!(target_os = "linux");
     let builder = builder
         .transparent(transparent)
         .initialization_script(format!(
-            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_FRAME__ = {frame}; window.__DSH_STORE_FILE__ = {};",
+            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_FRAME__ = {frame}; \
+             window.__DSH_LIVE_TRANSPARENCY__ = {live_transparency}; window.__DSH_STORE_FILE__ = {};",
             serde_json::json!(crate::config::store_dat_file_name())
         ))
         .inner_size(1280.0, 840.0)
