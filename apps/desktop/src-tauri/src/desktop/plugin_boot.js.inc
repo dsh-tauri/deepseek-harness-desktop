@@ -4,8 +4,12 @@
   if (!ipc || !shell || !shell.window || !shell.guest) return
 
   const TITLE = 'Failed to load plugins'
+  // 上报失败时有界重试：失败卡片还在页面上，壳层却收不到事件就永远不会切错误页。
+  const REPORT_ATTEMPTS = 3
   let stopped = false
   let sawBoot = false
+  let reporting = false
+  let attempts = 0
   let observer
   let timer
 
@@ -35,6 +39,25 @@
     return at < 0 ? null : rows.slice(at).join('\n')
   }
 
+  function report(detail) {
+    // 上报在飞时不再发第二个请求：观察器与轮询会重复命中同一张失败卡片。
+    if (reporting) return
+    reporting = true
+    attempts += 1
+    ipc.invoke('plugin:event|emit_to', {
+      target: { kind: 'Window', label: shell.window },
+      event: 'dsh://plugin-boot:failed',
+      payload: { label: shell.guest, detail },
+    }).then(
+      () => stop(),
+      (error) => {
+        console.warn('[boot] failed to report the plugin failure page', error)
+        reporting = false
+        if (attempts >= REPORT_ATTEMPTS) stop()
+      },
+    )
+  }
+
   function evaluate() {
     if (stopped) return
     const boot = document.querySelector('[data-dsh-boot]')
@@ -44,13 +67,7 @@
     }
     sawBoot = true
     const detail = failureDetail(boot)
-    if (detail === null) return
-    stop()
-    void ipc.invoke('plugin:event|emit_to', {
-      target: { kind: 'Window', label: shell.window },
-      event: 'dsh://plugin-boot:failed',
-      payload: { label: shell.guest, detail },
-    }).catch(error => console.warn('[boot] failed to report the plugin failure page', error))
+    if (detail !== null) report(detail)
   }
 
   observer = new MutationObserver(evaluate)

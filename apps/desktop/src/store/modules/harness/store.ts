@@ -377,6 +377,10 @@ export const harness = defineStore({
     },
 
     async handleWebviewBootFailure(detail?: string) {
+      // 下面两次异步等待期间可能已经重启/重挂：沿用旧结论会把新一轮启动改成错误态。
+      const generation = this.webviewKey
+      const token = bootToken
+      const current = () => generation === this.webviewKey && token === bootToken
       const message = detail && detail.includes('Failed to load plugins')
         ? detail
         : i18next.t('errors.client_boot_failed')
@@ -385,7 +389,9 @@ export const harness = defineStore({
       // 可命中 `dsh-tauri-rightclick: pending (waiting for service: remote.session)`）
       const reported = detail ? detail.split(/\n/).filter(line => line.trim() !== '') : []
       const lines = [...reported, ...(error.logLines ?? error.logs ?? [])]
-      await recovery.reviewStartupRecovery(lines)
+      await recovery.reviewStartupRecovery(lines, current)
+      if (!current())
+        return
       // 服务日志里往往没有这张失败页（插件在客户端激活失败，宿主侧无异常行），
       // 因此错误页必须展示失败页原文，否则用户只看到「客户端报告了失败」。
       this.fail(

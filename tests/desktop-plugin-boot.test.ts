@@ -14,10 +14,10 @@ function bootCard(rows: string[]): BootNode {
   return { children: [leaf('HARNESS'), { children: rows.map(leaf), textContent: '' }], textContent: '' }
 }
 
-function setup(initial: BootNode | null) {
+function setup(initial: BootNode | null, invoke: (command: string, args?: unknown) => Promise<unknown> = async () => undefined) {
   let boot = initial
   let rerun: (() => void) | undefined
-  const invoke = vi.fn(async (_command: string, _args?: unknown): Promise<unknown> => undefined)
+  const calls = vi.fn(invoke)
   const timers = new Set<ReturnType<typeof setInterval>>()
   const sandbox: Record<string, unknown> = {
     __DSH_SHELL__: { window: 'main', guest: 'harness-1' },
@@ -39,28 +39,29 @@ function setup(initial: BootNode | null) {
     console,
   }
   sandbox.window = {
-    __TAURI_INTERNALS__: { invoke },
+    __TAURI_INTERNALS__: { invoke: calls },
     addEventListener: () => {},
     removeEventListener: () => {},
   }
   runInNewContext(script, sandbox)
   return {
-    invoke,
+    invoke: calls,
     timers,
     show: (next: BootNode | null) => { boot = next },
     evaluate: () => rerun?.(),
-    payload: () => vi.mocked(invoke).mock.calls[0]?.[1],
+    payload: () => vi.mocked(calls).mock.calls[0]?.[1],
   }
 }
 
 describe('harness boot failure watcher', () => {
-  it('reports the official failure card once, keeping the plugin rows on their own lines', () => {
+  it('reports the official failure card once, keeping the plugin rows on their own lines', async () => {
     const boot = setup(bootCard(['Failed to load plugins', 'dsh-tauri-kernel', 'web boot: 1 entry did not activate']))
     expect(boot.invoke).toHaveBeenCalledExactlyOnceWith('plugin:event|emit_to', {
       target: { kind: 'Window', label: 'main' },
       event: 'dsh://plugin-boot:failed',
       payload: { label: 'harness-1', detail: 'Failed to load plugins\ndsh-tauri-kernel\nweb boot: 1 entry did not activate' },
     })
+    await Promise.resolve()
     expect(boot.timers.size).toBe(0)
     boot.evaluate()
     expect(boot.invoke).toHaveBeenCalledOnce()
@@ -76,6 +77,35 @@ describe('harness boot failure watcher', () => {
       event: 'dsh://plugin-boot:failed',
       payload: { label: 'harness-1', detail: 'Failed to load plugins\ndsh-office-kit\ndsh-office-kit: failed' },
     })
+  })
+
+  it('keeps watching after a failed report so the failure page is not lost', async () => {
+    let failures = 1
+    const boot = setup(
+      bootCard(['Failed to load plugins', 'dsh-tauri-kernel']),
+      async () => {
+        if (failures > 0) {
+          failures -= 1
+          throw new Error('emit rejected')
+        }
+      },
+    )
+    await Promise.resolve()
+    expect(boot.invoke).toHaveBeenCalledOnce()
+    expect(boot.timers.size).toBe(1)
+    boot.evaluate()
+    expect(boot.invoke).toHaveBeenCalledTimes(2)
+    await Promise.resolve()
+    expect(boot.timers.size).toBe(0)
+    boot.evaluate()
+    expect(boot.invoke).toHaveBeenCalledTimes(2)
+  })
+
+  it('never sends a second report while the first one is in flight', () => {
+    const boot = setup(bootCard(['Failed to load plugins', 'dsh-tauri-kernel']), () => new Promise(() => {}))
+    boot.evaluate()
+    boot.evaluate()
+    expect(boot.invoke).toHaveBeenCalledOnce()
   })
 
   it('stops watching once the boot container is replaced by the application shell', () => {
