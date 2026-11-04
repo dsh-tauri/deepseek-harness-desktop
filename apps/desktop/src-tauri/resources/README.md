@@ -267,3 +267,11 @@ shown in the desktop plugin dialog is read from the plugin's own
 the workspace package in debug builds), so it stays in sync with what the package
 publishes instead of being maintained twice. Every built-in plugin package must
 declare a `description`.
+
+The deployed tree also carries native optional dependencies for the platforms
+`dsh-tauri-remote` can provision, not only the build host: `pnpm deploy` runs with
+`--os current,linux,darwin --cpu x64,arm64 --libc glibc,musl`, and
+`build-plugins.ts` fails the build when a binding the remote matrix needs is
+absent. That tree is shipped verbatim to the remote over SSH, so a Windows build
+that held only `oxide-win32-x64-msvc` made every remote instance die with
+`Cannot find native binding` (issue #1389).
