@@ -316,6 +316,14 @@ pub async fn prepare_harness_webview(
         .transparent(true)
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
         .initialization_script(include_str!("browser.js"))
+        // 「打开方式」必须由 Electron 主进程的 shell 交给系统，页内 detached spawn
+        // 在 Windows 上无法激活目标窗口（issue #1346）。只注入本地 guest：远程
+        // Harness 的操作不该让本机窗口让位。
+        .initialization_script(if remote {
+            ""
+        } else {
+            include_str!("open-in-app.js")
+        })
         .on_navigation(move |next| next.origin() == origin)
         .on_download(on_download)
         .on_permission_request(|_, kind| match kind {

@@ -218,6 +218,13 @@ pub fn pet_show_main_window(window: Window) -> Result<(), String> {
     Ok(())
 }
 
+/// 桌宠右键菜单（显示主界面 / 关闭宠物）。
+///
+/// 不能走 `Window::popup_menu`：它经由 `ns_view()`/`hwnd()` 取原生窗口句柄，而
+/// Electron 的 AppKit 视图指针属于另一个进程，runtime 在 macOS 上只能返回
+/// `Unavailable`，整个 popup 分支被静默跳过 —— 用户右键看不到任何菜单（issue #1370，
+/// Windows 因为能拿到菜单代理 HWND 所以不复现）。这里改走 Electron 自己的
+/// `Menu.popup`，三平台一致。
 #[tauri::command]
 pub fn pet_show_context_menu(window: Window) -> Result<(), String> {
     use tauri::menu::{Menu, MenuItem};
@@ -246,9 +253,17 @@ pub fn pet_show_context_menu(window: Window) -> Result<(), String> {
     .map_err(|error| format!("PET_MENU_CREATE_FAILED: {error}"))?;
     let menu = Menu::with_items(app, &[&show, &close])
         .map_err(|error| format!("PET_MENU_CREATE_FAILED: {error}"))?;
-    window
-        .popup_menu(&menu)
-        .map_err(|error| format!("PET_MENU_POPUP_FAILED: {error}"))
+    let handle = app.clone();
+    tauri_runtime_electron::window::popup_context_menu(&window, &menu, move |id| match id.as_ref() {
+        "pet-show-main-window" => crate::utils::show_main_window(&handle),
+        "pet-close" => {
+            if let Err(error) = set_pet_enabled(handle.clone(), false) {
+                log::error!("PET_CLOSE_FAILED: {error}");
+            }
+        }
+        other => log::warn!("PET_MENU_UNKNOWN_COMMAND: {other}"),
+    })
+    .map_err(|error| format!("PET_MENU_POPUP_FAILED: {error}"))
 }
 
 /// 查询桌宠当前完整状态。
@@ -267,6 +282,38 @@ pub fn get_pet_status(app: AppHandle) -> PetStatus {
 #[tauri::command]
 pub fn get_pet_overlay_supported() -> bool {
     crate::pet_overlay_supported_env()
+}
+
+/// 查询「辅助功能」权限状态（macOS 的 CGEventTap 前提）。
+///
+/// 没有这项权限时 `device-mouse-move` 整条流不会启动，桌宠既拖不动、命中判定也
+/// 停在最后一次结果（issue #1370）。前端据此在设置页给出可行动提示。
+/// 其它平台恒为 `true`：不存在同类系统级开关。
+#[tauri::command]
+pub fn get_pet_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::desktop::pet_mouse::macos_accessibility_trusted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// 请求「辅助功能」权限：未授权时弹出系统提示并跳到设置页。
+///
+/// 返回调用当下的授权状态——系统提示是异步的，用户勾选后需重新查询。
+#[tauri::command]
+pub fn request_pet_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::desktop::pet_mouse::request_macos_accessibility()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
 }
 
 #[tauri::command]

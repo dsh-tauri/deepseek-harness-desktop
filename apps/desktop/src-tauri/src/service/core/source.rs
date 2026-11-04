@@ -105,22 +105,41 @@ pub(super) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str
     }
 }
 
+/// 预打包核心目录里**实际安装**的引擎版本（不含 `v` 前缀）。
+///
+/// 先读磁盘清单，再回落到安装记录的 tag：tag 只说明「上次下载了哪个发布」，
+/// 磁盘上那份文件才是真正会被启动的（issue #1374）。
+pub(crate) fn app_core_version(core_dir: &std::path::Path, tag: Option<&str>) -> Option<String> {
+    config::dsh_version_at(&core_dir.join(config::DSH_MANIFEST_RELATIVE))
+        .filter(|version| semver::Version::parse(version).is_ok())
+        .or_else(|| tag.and_then(parse_version_from_tag))
+}
+
 pub(crate) fn ensure_app_core_supported(
     core_dir: &std::path::Path,
     tag: Option<&str>,
     baseline: Option<&str>,
 ) -> Result<(), String> {
-    let version = config::dsh_version_at(&core_dir.join(config::DSH_MANIFEST_RELATIVE))
-        .filter(|version| semver::Version::parse(version).is_ok())
-        .or_else(|| tag.and_then(parse_version_from_tag));
+    let version = app_core_version(core_dir, tag);
     if !core_supports_bundled_plugins(version.as_deref().unwrap_or_default(), baseline) {
         return Err(format!(
-            "CORE_APP_UNSUPPORTED: app dsh {} is below the minimum supported core {}; download and select a newer core in Settings > Core, or update the desktop app for a newer bundled core",
+            "CORE_APP_UNSUPPORTED: app dsh {} is below the minimum supported core {}; {}",
             version.as_deref().unwrap_or_default(),
             baseline.unwrap_or_default(),
+            repair_hint(core_dir, version.as_deref(), baseline),
         ));
     }
     Ok(())
+}
+
+/// 低于基线时的可操作提示：点名磁盘路径与两个版本，而不是让人猜「重试」为什么无效。
+fn repair_hint(core_dir: &std::path::Path, version: Option<&str>, baseline: Option<&str>) -> String {
+    format!(
+        "the core installed at {} is {} but this app requires at least {}; restart the app to reinstall it automatically, or delete that directory and restart, or download a newer core in Settings > Core",
+        core_dir.display(),
+        version.unwrap_or("<unknown>"),
+        baseline.unwrap_or("<unset>"),
+    )
 }
 
 fn warn_unsupported_local_core(version: &str, baseline: Option<&str>) {
@@ -220,12 +239,37 @@ pub fn active_version(app_handle: &AppHandle) -> Option<String> {
             if active_is_bundled(app_handle) {
                 return config::get_dsh_version(app_handle);
             }
-            config::get_dsh_pkg_tag(app_handle)
-                .as_deref()
-                .and_then(parse_version_from_tag)
+            // 磁盘上的实际文件优先：store 里的 tag 只记录「上次下载的是哪个发布」，
+            // 应用自动更新后它与目录里的旧文件可能不一致（issue #1374 的「自报版本与
+            // 实际校验版本不一致」）。
+            app_core_version(&config::get_dsh_install_path(app_handle), config::get_dsh_pkg_tag(app_handle).as_deref())
                 .or_else(|| config::get_dsh_version(app_handle))
         }
     }
+}
+
+/// 当前生效的预打包核心是否达到随包插件的基线（随包内核与未知版本一律放行）。
+///
+/// 应用自动更新只替换 app 本体，托管依赖目录里的旧文件会原样留着，而清单的
+/// `engines.dsh.minimum` 随新版本上调；此处按磁盘上的**实际**版本判定，低于基线即
+/// 视为「未安装」，让安装流程按记录 tag 重新下载，而不是让启动永远卡在校验失败
+/// （issue #1374）。随包内核不参与：它随安装包分发，没有可下载的去处。
+pub fn app_core_meets_baseline(app_handle: &AppHandle) -> bool {
+    // 只判定真正会被启动的那份：本地核心由用户自己的包管理器维护，随包内核随安装包
+    // 分发，两者都不归托管目录管，不该因为托管目录里躺着旧文件就触发重新下载。
+    if active_source(app_handle) != CoreSource::App || active_is_bundled(app_handle) {
+        return true;
+    }
+    let baseline = config::manifest::minimum_dsh_version(app_handle);
+    core_supports_bundled_plugins(
+        app_core_version(
+            &config::get_dsh_install_path(app_handle),
+            config::get_dsh_pkg_tag(app_handle).as_deref(),
+        )
+        .as_deref()
+        .unwrap_or_default(),
+        baseline.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -251,7 +295,8 @@ mod tests {
             assert!(error.starts_with("CORE_APP_UNSUPPORTED:"));
             assert!(error.contains("0.2.0"));
             assert!(error.contains("0.2.1-rc.1"));
-            assert!(error.contains("download and select a newer core"));
+            assert!(error.contains("delete that directory and restart"));
+            assert!(error.contains(&root.path().display().to_string()));
             assert!(ensure_app_core_supported(root.path(), None, None).is_ok());
         }
         for version in ["0.2.1-rc.1", "0.2.1", "unknown", ""] {
@@ -289,6 +334,30 @@ mod tests {
         assert!(ensure_app_core_supported(root.path(), None, baseline).is_err());
         std::fs::write(&manifest, r#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.5"}"#).unwrap();
         assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
+    }
+
+    /// 低于基线的托管核心必须能自愈：`Dsh::check_installed` 以「是否低于基线」判未安装，
+    /// 否则应用自动更新后托管目录留着旧文件，启动永远停在校验失败（issue #1374）。
+    #[test]
+    fn app_core_version_prefers_disk_over_the_recorded_tag() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = root.path().join(config::DSH_MANIFEST_RELATIVE);
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, serde_json::json!({
+            "dependencies": {"@deepseek-ai/dsh": "^0.2.0"},
+        }).to_string()).unwrap();
+        assert_eq!(
+            app_core_version(root.path(), Some("dsh-0.2.1-rc.5-123")).as_deref(),
+            Some("0.2.0"),
+            "磁盘上的实际版本必须压过安装记录的 tag"
+        );
+        std::fs::remove_file(&manifest).unwrap();
+        assert_eq!(
+            app_core_version(root.path(), Some("dsh-0.2.1-rc.5-123")).as_deref(),
+            Some("0.2.1-rc.5"),
+            "清单缺失时才回落到 tag"
+        );
+        assert_eq!(app_core_version(root.path(), None), None);
     }
 
     #[test]

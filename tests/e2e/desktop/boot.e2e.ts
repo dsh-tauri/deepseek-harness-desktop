@@ -21,6 +21,7 @@ interface AppConfig {
 interface HealthCheck {
   status: string
   service_url: string
+  boot_html?: string
 }
 
 const app = shellAppScope()
@@ -29,20 +30,32 @@ beforeAll(async () => {
   await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
 }, ASSEMBLY_TIMEOUT_MS)
 
+/**
+ * 等 Harness 真正就绪：先确认本窗口仍持有核心，再走产品自身的那条门禁
+ * （`proxy_health_check` 同时验证服务在监听与客户端模块都可取）。
+ *
+ * 就绪判据只能有一条：E2E 自造的判据（页面加载完、能取到 bundle）与产品实际
+ * 认可的时机不同，切换档案、复用核心时会把「还没就绪」认成「已就绪」（issue #1384）。
+ * 这里只做一件事——核心进程已退出时立刻失败，不把崩溃耗成超时。
+ */
 async function waitHealthy(page: Page): Promise<HealthCheck> {
-  let health: HealthCheck | undefined
+  let serviceUrl = ''
   await expect.poll(async () => {
+    const info = await invoke<RuntimeInfo>(page, 'get_runtime_info')
+    serviceUrl = info.service_url
     try {
-      health = await invoke<HealthCheck>(page, 'proxy_health_check')
-      return health.status.startsWith('healthy - ')
+      await invoke(page, 'harness_ownership')
     }
     catch (error) {
-      if (String(error).includes('HARNESS_NOT_READY'))
-        return false
-      throw error
+      if (String(error).includes('HARNESS_NOT_OWNED'))
+        throw new Error(`Harness 核心已退出：${String(error)}`)
     }
+    // 就绪判据沿用产品自身那条门禁：它同时验证「服务在监听」与「客户端模块都可取」，
+    // 是壳与 Core 共同认可的信号。核心进程退出已在上面快速失败，不会耗成超时。
+    const health = await invoke<HealthCheck>(page, 'proxy_health_check')
+    return health.status.startsWith('healthy')
   }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
-  return health!
+  return { service_url: serviceUrl, status: `healthy - ${new URL(serviceUrl).origin}` }
 }
 
 describe('desktop boot and profile lifecycle', () => {

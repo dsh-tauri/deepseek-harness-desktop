@@ -2,7 +2,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useRafFn, useTimeoutFn } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useListen } from '@/hooks/use-listen'
 import { nativeScreenPosition, screenCoordinateScale, windowScreenPosition } from '@/utils/screen-coordinates'
 
@@ -90,6 +90,15 @@ const SET_POSITION_INTERVAL = 16
 const DRAG_DIRECTION_IDLE_TIMEOUT = 350
 /** 会话兜底阈值：超过此时长没有新的光标样本，且左键状态未知/已松开时收尾拖拽。 */
 const DRAG_SESSION_TIMEOUT = 1500
+/**
+ * 设备流被判定为「断流」的静默时长。
+ *
+ * macOS 的 `device-mouse-move` 来自 CGEventTap，**没有辅助功能权限时创建失败且不
+ * 自愈**（`desktop/pet_mouse.rs` 只写一行日志）。断流后手势永远等不到坐标原点，
+ * 按在宠物上拖动没有任何反应 —— 正是 issue #1370 的「桌宠无法拽动」。超过这个
+ * 时长就退回到 DOM 指针事件（`screenX/screenY` 与设备流同坐标系）。
+ */
+const DEVICE_STREAM_STALE_MS = 250
 
 /** 一次拖拽手势的状态（位置/速度与窗口、光标流同一坐标系：统一屏幕坐标）。 */
 interface Gesture {
@@ -182,6 +191,8 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
   const gestureRef = useRef<Gesture | null>(null)
   /** 后端设备流最近一次上报的光标位置。 */
   const cursorRef = useRef<{ x: number, y: number } | undefined>(undefined)
+  /** 设备流最近一次样本的时刻；`undefined` = 本次挂载从未收到过。 */
+  const lastDeviceSampleAtRef = useRef<number | undefined>(undefined)
   /**
    * 后端设备流最近一次上报的左键状态。`true` = 确认仍按下（拖拽中长时间静止不算结束）；
    * `undefined` = 本次会话没有收到过上报（设备流失联，停歇兜底按「未知」收尾）。
@@ -291,12 +302,23 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       onReleaseRef.current?.()
   }
 
+  /** 设备流是否已断流（从未上报，或静默超过 `DEVICE_STREAM_STALE_MS`）。 */
+  function isDeviceStreamStale(): boolean {
+    const last = lastDeviceSampleAtRef.current
+    return last === undefined || Date.now() - last >= DEVICE_STREAM_STALE_MS
+  }
+
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     if (event.button !== 0 || event.isPrimary === false || gestureRef.current !== null)
       return
     // 先通知宿主「抓住宠物」：这一步早于手势门槛与异步读窗口位置。
     onGrabRef.current?.()
-    const latest = cursorRef.current
+    // 设备流已断流时，按下事件自带的屏幕坐标优先于 `cursorRef`：后者停留在
+    // 上一次会话的旧位置，拿它当原点会让窗口跳一下、轻微移动就误触门槛。
+    // 设备流正常时才用它的样本（DOM 坐标与设备流的分辨率/时机并不等价）。
+    const latest = isDeviceStreamStale()
+      ? { x: event.screenX * screenCoordinateScale(), y: event.screenY * screenCoordinateScale() }
+      : cursorRef.current
     const gesture: Gesture = {
       pointerId: event.pointerId,
       anchor: latest === undefined ? undefined : { x: latest.x, y: latest.y },
@@ -330,7 +352,41 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
     endDrag()
   }
 
-  useListen<DeviceMousePosition>('device-mouse-move', ({ payload }) => {
+  /**
+   * 设备流断流时的回退：拖拽中用 DOM 指针事件喂坐标。
+   *
+   * CGEventTap 因缺权限而死掉时（macOS），前端收不到任何 `device-mouse-move`，
+   * 手势拿不到原点，按下去永远不跟手。这里在「已按下且设备流静默超过
+   * `DEVICE_STREAM_STALE_MS`」时接管；设备流一旦恢复（`lastDeviceSampleAtRef`
+   * 被刷新）就立刻让位，两条路径不会互相抖动。
+   */
+  useEffect(() => {
+    function handlePointerMove(event: PointerEvent): void {
+      if (gestureRef.current === null || !isDeviceStreamStale())
+        return
+      // screenX/screenY 是 CSS 像素；乘 scale 得到与设备流同一套屏幕坐标。
+      applyCursor({ x: event.screenX * screenCoordinateScale(), y: event.screenY * screenCoordinateScale() })
+    }
+    function handlePointerUp(): void {
+      // 命中箱收到了本次手势的 pointerup 就是确定的松手事实，不该再用设备流的
+      // 时间戳去否决它：否决后事件不会重放，`pressedRef` 仍为 true 时兜底计时
+      // 会一直自我续命，拖拽再也结束不了。
+      if (gestureRef.current === null)
+        return
+      endDrag()
+    }
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+  })
+
+  /** 用一次光标样本推进手势（设备流与 DOM 回退共用）。 */
+  function applyCursor(payload: DeviceMousePosition): void {
     cursorRef.current = { x: payload.x, y: payload.y }
     const gesture = gestureRef.current
     if (gesture === null)
@@ -366,6 +422,11 @@ export function useWindowDraggable(options: UseWindowDraggableOptions): UseWindo
       gesture.directionAnchor = { x: payload.x, y: payload.y }
     }
     armDirectionTimer()
+  }
+
+  useListen<DeviceMousePosition>('device-mouse-move', ({ payload }) => {
+    lastDeviceSampleAtRef.current = Date.now()
+    applyCursor(payload)
   })
 
   // 只认松开：拖拽会话由 onPointerDown 开启，后端设备流补的是 OS 侧的结束时刻

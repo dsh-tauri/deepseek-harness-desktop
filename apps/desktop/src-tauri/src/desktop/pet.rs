@@ -22,8 +22,6 @@ use crate::{AppHandle, Window};
 use crate::config::{store_dat_file_name, STORE_PET_WINDOW_STATE_KEY};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
-#[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
 use tauri::{ Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
@@ -191,60 +189,42 @@ pub fn save_pet_window_position<R: Runtime>(app: &AppHandle<R>, position: &PetWi
     store.save().expect("Failed to save pet window position");
 }
 
-/// 采样当前桌宠窗口位置并保存（窗口 Moved 时由 builder 调用）。
+/// 内存中待落盘的桌宠位置。与主窗口（`config::GEOMETRY_CACHE`）同一策略：
+/// 移动事件只覆盖这里，磁盘在退出或收起宠物时写一次。
 ///
-/// 接收基础 `Window`（`on_window_event` 回调类型），仅需其外部位与可见性。
-///
-/// 拖动期间每个 `Moved` 都会进到这里（高刷屏上每秒数百次），而 `store.save()` 是
-/// 同步整文件写盘 —— 逐事件落盘会以同等频率阻塞主线程，正是拖动卡顿的放大器。
-pub fn save_pet_window_geometry<R: Runtime>(window: &Window<R>) {
-    // 窗口未显示或正在全屏时采样到的可能是瞬态/无意义的位置，跳过。
+/// 逐事件 `store.save()` 是同步整文件写盘；即便按 500ms 节流，事件本身仍要
+/// `outer_position()` —— 在 Electron 运行时里那是一次同步 IPC 往返，拖动时每秒
+/// 数百次往返足以让跟手明显发滞（issue #1380）。
+static PET_GEOMETRY_PENDING: Mutex<Option<PetWindowPosition>> = Mutex::new(None);
+
+/// 记一帧桌宠移动（`Moved` 事件自带位置，不再回问 `outer_position()`）。
+pub fn record_pet_window_moved<R: Runtime>(window: &Window<R>, position: PhysicalPosition<i32>) {
     if !window.is_visible().unwrap_or(false) {
         return;
     }
-    let Some(pos) = window.outer_position().ok() else {
-        return;
+    let next = PetWindowPosition {
+        x: Some(position.x),
+        y: Some(position.y),
+        #[cfg(target_os = "macos")]
+        scale_factor: window
+            .scale_factor()
+            .ok()
+            .filter(|scale| scale.is_finite() && *scale > 0.0),
     };
-    let app = window.app_handle().clone();
-    save_pet_window_position_throttled(
-        &app,
-        &PetWindowPosition {
-            x: Some(pos.x),
-            y: Some(pos.y),
-            #[cfg(target_os = "macos")]
-            scale_factor: window
-                .scale_factor()
-                .ok()
-                .filter(|scale| scale.is_finite() && *scale > 0.0),
-        },
-    );
+    *PET_GEOMETRY_PENDING
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(next);
 }
 
-/// 几何落盘节流间隔：拖动中每秒数百个 Moved，写盘压到 ~2 次/秒足够。
-const PET_GEOMETRY_SAVE_INTERVAL: Duration = Duration::from_millis(500);
-
-static PET_GEOMETRY_SAVE: Mutex<Option<(Instant, PetWindowPosition)>> = Mutex::new(None);
-
-/// 节流版几何落盘：节流窗口内只更新暂存值，间隔到了才真正写盘。
-fn save_pet_window_position_throttled<R: Runtime>(
-    app: &AppHandle<R>,
-    position: &PetWindowPosition,
-) {
-    let mut pending = PET_GEOMETRY_SAVE
+/// 把暂存位置落盘（退出、收起宠物、拖拽收尾时调用）。没有暂存就什么都不做。
+pub fn flush_pet_window_position<R: Runtime>(app: &AppHandle<R>) {
+    let pending = PET_GEOMETRY_PENDING
         .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let now = Instant::now();
-    if let Some((last, slot)) = pending.as_mut() {
-        *slot = position.clone();
-        if now.duration_since(*last) < PET_GEOMETRY_SAVE_INTERVAL {
-            return;
-        }
-        *last = now;
-    } else {
-        *pending = Some((now, position.clone()));
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
+    if let Some(position) = pending {
+        save_pet_window_position(app, &position);
     }
-    drop(pending);
-    save_pet_window_position(app, position);
 }
 
 /// 读取宠物大小百分比（设置持久化值；缺省回落默认，越界收敛进合法区间）。
@@ -468,7 +448,7 @@ pub fn persist_pet_window_position<R: Runtime>(app: &AppHandle<R>) -> Result<(),
                 .filter(|scale| scale.is_finite() && *scale > 0.0),
         },
     );
-    PET_GEOMETRY_SAVE
+    PET_GEOMETRY_PENDING
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .take();
