@@ -136,7 +136,21 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --target ${{ matrix.target }} --config src-tauri/tauri.macos-bundle.conf.json
+        # 公证走 appstoreconnect.apple.com，runner 偶发 NSURLErrorDomain -1009
+        # "offline" 会让整次打包失败；重试即可规避，非网络类失败立刻放弃。
+        run: |
+          for attempt in 1 2 3; do
+            log="tauri-build-$attempt.log"
+            if pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --target ${{ matrix.target }} --config src-tauri/tauri.macos-bundle.conf.json 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ] || ! grep -Eq 'Notariz|notarize|NSURLError|Internet connection appears to be offline|codesign' "$log"; then
+              exit 1
+            fi
+            echo "::warning::notarization/reachability failure on attempt $attempt; retrying"
+            sleep 30
+          done
+          exit 1
 
       - name: Verify signature and notarization
         if: steps.check.outputs.should_run == 'true'
