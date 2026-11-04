@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { HarnessWebview } from './harness-webview'
 
 interface NativeState { label: string, loaded: boolean, alive: boolean, crashed: boolean }
+interface BootFailure { label: string, detail: string }
+type ListenPayload = NativeState | BootFailure
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args: Record<string, unknown>) => Promise<unknown>>(),
   decode: vi.fn<() => Promise<void>>(),
@@ -25,7 +27,7 @@ const mocks = vi.hoisted(() => ({
     handleWebviewBootFailure: vi.fn(),
   },
   setting: { zoom_factor: 1.25 },
-  listeners: new Map<string, (event: { payload: NativeState }) => void>(),
+  listeners: new Map<string, (event: { payload: ListenPayload }) => void>(),
   options: new Map<string, unknown>(),
   resize: new Set<() => void>(),
   rect: { x: 24, y: 72, left: 24, top: 72, width: 960, height: 600, right: 984, bottom: 672, toJSON: () => ({}) },
@@ -36,7 +38,7 @@ vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@/store', () => ({ store: { harness: mocks.harness, setting: { zoom: mocks.zoom, get zoom_factor() {
   return mocks.setting.zoom_factor
 } } } }))
-vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (event: { payload: NativeState }) => void, options?: unknown) => {
+vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (event: { payload: ListenPayload }) => void, options?: unknown) => {
   mocks.listeners.set(event, handler)
   mocks.options.set(event, options)
 } }))
