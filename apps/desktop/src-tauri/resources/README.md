@@ -270,8 +270,15 @@ declare a `description`.
 
 The deployed tree also carries native optional dependencies for the platforms
 `dsh-tauri-remote` can provision, not only the build host: `pnpm deploy` runs with
-`--os current,linux,darwin --cpu x64,arm64 --libc glibc,musl`, and
+`--os current,linux,darwin --cpu x64,arm64 --libc glibc`, and
 `build-plugins.ts` fails the build when a binding the remote matrix needs is
 absent. That tree is shipped verbatim to the remote over SSH, so a Windows build
 that held only `oxide-win32-x64-msvc` made every remote instance die with
 `Cannot find native binding` (issue #1389).
+
+Only **glibc** bindings are shipped, never musl: the remote matrix is glibc hosts
+only, and a musl `.node` drags Linux AppImage packaging down — linuxdeploy runs
+`ldd` on every ELF in the AppDir, and a musl shared object on a glibc host fails
+with `libc.so: invalid ELF header`, aborting the bundle (`failed to run linuxdeploy`).
+`pnpm deploy`'s `--libc` does not reliably exclude them, so `build-plugins.ts`
+removes the musl platform packages explicitly after deploy.

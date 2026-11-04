@@ -139,6 +139,11 @@ const BUILD_TOOL_PEERS = ['typescript', '@genapi/shared'] as const
  * 也会被 SSH 插件原样打包同步到远端（`dsh-tauri-remote` 的 plugins-sync），而
  * `pnpm deploy` 默认只落构建机平台的绑定：Windows 上打出的包装到 Linux 远端即
  * `Cannot find module '@tailwindcss/oxide-linux-x64-gnu'`（issue #1389）。
+ *
+ * 只取 glibc：musl 绑定不在远端矩阵内（远端只有 glibc 主机），却会拖垮 Linux
+ * AppImage 打包——linuxdeploy 会对 AppDir 里每个 ELF 跑 `ldd`，在 glibc 主机上
+ * 解析 musl 的 `.node` 报 `libc.so: invalid ELF header` 直接失败
+ * （`failed to run linuxdeploy`，v0.30.4 两架构同挂）。
  */
 const DEPLOY_PLATFORM_ARGS = [
   '--os',
@@ -153,21 +158,35 @@ const DEPLOY_PLATFORM_ARGS = [
   'arm64',
   '--libc',
   'glibc',
-  '--libc',
-  'musl',
 ] as const
 
 /**
  * 远端安装矩阵（`builtin-plugin-remote` 的 assets 表：linux x64、linux arm64、
  * macOS x64；远端 Windows 与 macOS arm64 明确不支持）必需的原生绑定。
+ * 均为 glibc/原生绑定，不含 musl（见上方 linuxdeploy 说明）。
  */
 const REMOTE_NATIVE_BINDINGS = [
   '@tailwindcss/oxide-linux-x64-gnu',
-  '@tailwindcss/oxide-linux-x64-musl',
   '@tailwindcss/oxide-linux-arm64-gnu',
-  '@tailwindcss/oxide-linux-arm64-musl',
   '@tailwindcss/oxide-darwin-x64',
 ] as const
+
+/**
+ * musl 绑定不属于远端矩阵（远端只有 glibc 主机），却会让 linuxdeploy 在 glibc 主机上
+ * `ldd` musl 共享对象时因 `libc.so: invalid ELF header` 直接失败，拖垮 AppImage 打包。
+ * `pnpm deploy` 的 `--libc` 并不能可靠排除它们（会把可选平台包都落盘），这里显式剔除，
+ * 与 `verifyRemoteNativeBindings` 一删一验，保证进入 AppDir 的绑定只有 glibc 三种。
+ */
+const FOREIGN_LIBC_BINDINGS = [
+  '@tailwindcss/oxide-linux-x64-musl',
+  '@tailwindcss/oxide-linux-arm64-musl',
+] as const
+
+export function pruneForeignLibcBindings(root: string): void {
+  for (const name of FOREIGN_LIBC_BINDINGS) {
+    rmSync(join(root, name), { recursive: true, force: true })
+  }
+}
 
 /** 每个绑定包都带一个 `.node` 原生模块；缺了它远端 require 会退回 WASI 并最终抛错。 */
 export function verifyRemoteNativeBindings(root: string): void {
@@ -649,6 +668,7 @@ export function pruneDeployment(root: string, pluginNames: readonly string[]): v
   for (const subtree of DEAD_SUBTREES) {
     rmSync(join(root, subtree), { recursive: true, force: true })
   }
+  pruneForeignLibcBindings(root)
   pruneBuildTools(root)
   const orphans = pruneOrphanPackages(root, pluginNames)
   const files = pruneNonRuntimeFiles(root)
