@@ -50,18 +50,31 @@ export async function loadSchedulerMessageFactory(loader: PlatformModuleLoader):
  * @returns 观察结果与归还租约的回调。
  */
 export async function observeSession(query: SessionQueryLike, sessionId: string): Promise<ObservedSession> {
-  const observation = await withSessionDeadline(query.observeSession(sessionId as SessionId, { projectionMode: 'none' }))
-  let released = false
-  return {
-    header: observation.header,
-    events: observation.events,
-    release: () => {
-      if (released)
-        return
-      released = true
-      ;(observation as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.()
-    },
+  const controller = new AbortController()
+  const pending = query.observeSession(sessionId as SessionId, {
+    projectionMode: 'none',
+    signal: controller.signal,
+  })
+  let observed: SessionObservationLike
+  try {
+    observed = await withSessionDeadline(pending)
   }
+  catch (error) {
+    // 超时后观察仍可能兑现：注销它，避免租约把冷会话钉在缓存里。
+    controller.abort()
+    void pending.then(releaseObservation, () => {})
+    throw error
+  }
+  return {
+    header: observed.header,
+    events: observed.events,
+    release: () => releaseObservation(observed),
+  }
+}
+
+/** 归还一次观察租约（幂等：`Symbol.dispose` 自身只生效一次）。 */
+function releaseObservation(observation: SessionObservationLike): void {
+  ;(observation as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.()
 }
 
 export async function isSchedulerSessionNotFound(loader: PlatformModuleLoader | undefined, error: unknown): Promise<boolean> {
