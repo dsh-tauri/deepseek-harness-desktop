@@ -97,9 +97,10 @@ ${StrLoc}
   ${If} $R0 == 10
     ${IfNot} ${Silent}
     ${AndIf} $PassiveMode != 1
-      nsis_tauri_utils::StrReplace "$(appRunningOkKill)" "{{product_name}}" "${productName}"
-      Pop $R2
-      MessageBox MB_OKCANCEL $R2 IDOK +2
+      ; 文案里的产品名由语言文件在编译期展开，无需再运行期替换：
+      ; 语言文件是按原文包含的，模板里的 {{product_name}} 已被构建期渲染掉，
+      ; 用作替换针会退化成空操作，占位符就原样留在界面上。
+      MessageBox MB_OKCANCEL "$(appRunningOkKill)" IDOK +2
       Abort
     ${EndIf}
     System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_STOP", w "1")'
@@ -111,9 +112,7 @@ ${StrLoc}
   System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_RUNTIME", p 0)'
   System::Call 'kernel32::SetEnvironmentVariableW(w "DSH_INSTALL_STOP", p 0)'
   ${If} $R0 != 0
-    nsis_tauri_utils::StrReplace "$(failedToKillApp)" "{{product_name}}" "${productName}"
-    Pop $R3
-    Abort $R3
+    Abort "$(failedToKillApp)"
   ${EndIf}
   !undef ELECTRONARCH
   !undef DSH_PROCESS_COMMAND
