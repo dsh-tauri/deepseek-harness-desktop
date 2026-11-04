@@ -1,7 +1,31 @@
 # 核心文件补丁清单与 asar 可行性（issue #1376）
 
-对照核心 `0.2.1-rc.5`（源码 `b830ec950f`），asar 取自 `deepseek-harness-pkg` release
-`dsh-0.2.1-rc.5-41234040595` 的 `deepseek-harness-pkg-windows.asar.zip`。评估日期 2026-11-04。
+评估日期 2026-11-04。支持范围以 `apps/desktop/src-tauri/resources/manifest.jsonc` 为准：
+推荐 `0.2.1-rc.5`，最低 `0.2.1-rc.1`（`engines.dsh` 与 `dependencies.dsh.engine` 两处同口径）。
+锚点核对的结论在**最低支持版本 rc.1 与推荐版本 rc.5 上各做一遍**，两端一致。
+
+asar 样本：rc.5 取自 `deepseek-harness-pkg` release `dsh-0.2.1-rc.5-41234040595` 的
+`deepseek-harness-pkg-windows.asar.zip`；rc.1 的 release **没有 asar 资产**（见版本矩阵），
+用本机 `dependencies/dsh-0.2.1-rc.1-39009013600` 目录核心经 `@electron/asar@4.3.1 pack` 自行打包。
+
+## 支持范围与 asar 资产可用性
+
+| 核心版本 | 在支持范围内 | pkg 是否发布 asar | 44.7.0 直跑 | 13 项锚点 |
+| --- | --- | --- | --- | --- |
+| `0.2.1-rc.1`（最低） | 是 | **否**，只有 zip | 通过 | 全部命中 |
+| `0.2.1-rc.2` | 是 | **否**，只有 zip | 未验证 | 未验证 |
+| `0.2.1-rc.3` | 是 | **否**，只有 zip | 未验证 | 未验证 |
+| `0.2.1-rc.4` | 是 | 是 | 未验证 | 未验证 |
+| `0.2.1-rc.5`（推荐） | 是 | 是 | 通过 | 全部命中 |
+
+asar 资产是 rc.4 才引入的：`dsh-0.2.1-rc.1-39009013600`、`-rc.2-39022695148`、
+`-rc.3-39940661749` 三个 release 的资产清单只有六个 zip，没有 `.asar.zip`。
+所以「asar 直跑」在最低支持版本上**需要先补发 asar 资产**才对用户成立，这是 issue #1377
+分发的硬前置，不能只在 rc.5 上验证就算完成。
+
+Electron 侧不是瓶颈：rc.1 到 rc.5 的 `node-addon-require-builtin` 都锁 `^0.1.9`，其原生包
+内嵌白名单同为 `43.0.0 / 44.0.0 / 44.7.0 / 45.0.0-alpha.6`，与桌面端 `electron-rs` 的
+`DEFAULT_VERSION = 44.7.0` 相容。
 
 ## 结论
 
@@ -14,38 +38,43 @@ asar 核心**不能承载运行期文件补丁**：asar 是只读归档，对归
 
 ## asar 直跑实测
 
-| 项目 | 结果 |
-| --- | --- |
-| `ELECTRON_RUN_AS_NODE=1 electron.exe <asar>/node_modules/@deepseek-ai/dsh/lib/bin.js --version` | 通过，输出 `0.2.1-rc.5` |
-| `dsh web --no-open --port` 从 asar 启动 | 通过，正常监听，未认证请求返回 401 |
-| 普通 Node 读 asar | 失败（`Cannot find module`），只有 Electron 的 `fs` 认识归档 |
-| 写归档内文件 | 失败（`EACCES`） |
-| `node-pty` 真终端（从 asar 内 require + spawn cmd.exe） | 通过，中文与转义序列正常 |
-| `koffi` / `node-pty` 原生模块加载 | 通过 |
-| Electron 45.0.0 | 失败：核心 `node-addon-require-builtin` 的指纹白名单只到 `45.0.0-alpha.6` |
-| Electron 44.7.0 | 通过（桌面端 `electron-rs` 的 `DEFAULT_VERSION` 正是 44.7.0） |
+| 项目 | rc.5 | rc.1（自行打包） |
+| --- | --- | --- |
+| `ELECTRON_RUN_AS_NODE=1 electron.exe <asar>/.../dsh/lib/bin.js --version` | 通过，`0.2.1-rc.5` | 通过，`0.2.1-rc.1` |
+| 从 asar 启动 `dsh web --no-open --port` | 通过，未认证返回 401 | 通过，未认证返回 401 |
+| 普通 Node 读 asar | 失败（`Cannot find module`） | 同样失败（机制相同，未重复跑） |
+| 写归档内文件 | 失败（`EACCES`） | 失败（`ENOENT`，同为只读拒绝） |
+| `node-pty` / `koffi` 从归档内加载 | 通过 | 通过 |
+| `node-pty` spawn 真终端 | 通过，中文与转义序列正常 | 通过 |
+| Electron 44.7.0 | 通过 | 通过 |
+| Electron 45.0.0 | 失败，白名单只到 `45.0.0-alpha.6` | 失败，同一白名单同一错误 |
+
+写回被拒的错误码在两个版本上不同（rc.5 报 `EACCES`，rc.1 自打包样本报 `ENOENT`），
+但都来自同一条机制：归档内条目没有可写 inode。结论不受影响。
 
 推论：asar 直跑必须钉住 Electron 44.7.0；升到 45.x 会在核心 boot 阶段直接 fatal。
 
 ## 13 项核心文件补丁
 
-「锚点」列针对干净 asar，`命中` 表示补丁当前仍能生效。
+「rc.1 / rc.5 锚点」列针对未被任何补丁改写过的干净核心（rc.1 用本机目录核心，
+rc.5 用官方 asar）。两列都是 `命中` 说明这些补丁在整个支持区间上都能生效，
+不依赖某个具体小版本。
 
-| # | 补丁 | 目标文件 | 锚点 | 去向 |
+| # | 补丁 | 目标文件 | rc.1 / rc.5 锚点 | 去向 |
 | --- | --- | --- | --- | --- |
-| 1 | `renderer` 导出 `SlotOutlet` | `dsh-client-ui-renderer/lib/client.js` | 命中 | 保留 |
-| 2 | `composer` 未分组会话可输入 | `dsh-client-ui-conversation/lib/client.js` | 命中 | 保留 |
-| 3 | `scroll_follow` 跟随 `data-reduce-motion` | `dsh-client-ui-chat/lib/client.js` | 命中 | 保留 |
-| 4 | `mobile_composer` 触屏输入 | `dsh-client-ui-conversation/lib/client.js` | 命中 | 保留 |
-| 5 | `mobile_sidebar` 移动侧栏宽度 | `dsh-client-ui-layout/lib/client.js` | 命中 | 保留 |
-| 6 | `session` 暴露 `SessionStore.remove` | `dsh-session/lib/index.js` | 命中 | 可下放（需宿主门面） |
-| 7 | `llm_session` OpenCode 会话头 | `dsh-llm-pi-ai/lib/index.js` | 命中 | 保留 |
-| 8 | `pi_ai_thinking` `<thinking>` 改道 | `@earendil-works/pi-ai/dist/api/openai-completions.js` | 命中 | 保留 |
-| 9 | `workspace` 工作树会话关联 | `dsh-workspace/lib/index.js` | 命中（两布局之一） | 保留 |
-| 10 | `workspace_view` 旧视图状态容错 | `dsh-client-ui-workspace/lib/client.js` | 命中 | 保留 |
-| 11 | `plugin_visibility` 隐藏 `dsh-tauri-*` | `dsh-client-ui-plugin-manager/lib/client.js` | 命中 | 保留 |
-| 12 | `permission_settings` 保存错误 | `dsh-client-ui-permission-presets/lib/client.js` | 命中 | 保留 |
-| 13 | `mcp_startup` 非严格 MCP + OAuth | `dsh-mcp-client/lib/index.js` | 命中 | 保留 |
+| 1 | `renderer` 导出 `SlotOutlet` | `dsh-client-ui-renderer/lib/client.js` | 命中 / 命中 | 保留 |
+| 2 | `composer` 未分组会话可输入 | `dsh-client-ui-conversation/lib/client.js` | 命中 / 命中 | 保留 |
+| 3 | `scroll_follow` 跟随 `data-reduce-motion` | `dsh-client-ui-chat/lib/client.js` | 命中 / 命中 | 保留 |
+| 4 | `mobile_composer` 触屏输入 | `dsh-client-ui-conversation/lib/client.js` | 命中 / 命中 | 保留 |
+| 5 | `mobile_sidebar` 移动侧栏宽度 | `dsh-client-ui-layout/lib/client.js` | 命中 / 命中 | 保留 |
+| 6 | `session` 暴露 `SessionStore.remove` | `dsh-session/lib/index.js` | 命中 / 命中 | 可下放（需宿主门面） |
+| 7 | `llm_session` OpenCode 会话头 | `dsh-llm-pi-ai/lib/index.js` | 命中 / 命中 | 保留 |
+| 8 | `pi_ai_thinking` `<thinking>` 改道 | `@earendil-works/pi-ai/dist/api/openai-completions.js` | 命中 / 命中 | 保留 |
+| 9 | `workspace` 工作树会话关联 | `dsh-workspace/lib/index.js` | 命中 / 命中 | 保留 |
+| 10 | `workspace_view` 旧视图状态容错 | `dsh-client-ui-workspace/lib/client.js` | 命中 / 命中 | 保留 |
+| 11 | `plugin_visibility` 隐藏 `dsh-tauri-*` | `dsh-client-ui-plugin-manager/lib/client.js` | 命中 / 命中 | 保留 |
+| 12 | `permission_settings` 保存错误 | `dsh-client-ui-permission-presets/lib/client.js` | 命中 / 命中 | 保留 |
+| 13 | `mcp_startup` 非严格 MCP + OAuth | `dsh-mcp-client/lib/index.js` | 命中 / 命中 | 保留 |
 
 ### 唯一的可下放项：`session`
 
@@ -81,7 +110,10 @@ asar 核心**不能承载运行期文件补丁**：asar 是只读归档，对归
 
 ## 后续动作
 
-1. 保留项逐条开上游 issue，附锚点原文与期望 API；替代方案落地后删除对应补丁。
-2. `session` 的宿主门面先做，才能摘掉第 6 项。
-3. 桌面端 Electron 钉住 44.7.0；升 45.x 前必须先让核心的指纹白名单放开。
-4. 若 pkg 仓库在打包期烘补丁，必须复用同一份补丁源码，避免打包期与运行期两套实现分叉。
+1. **先补发 rc.1–rc.3 的 asar 资产**：用户可能停留在最低支持版本，而这几个 release 根本没有
+   `.asar.zip`。不补发的话 #1377 的 asar 分发只能是「升级到 rc.4+ 才可用」，这个限制必须写进
+   产品文案，不能默认用户已经在 rc.5。
+2. 保留项逐条开上游 issue，附锚点原文与期望 API；替代方案落地后删除对应补丁。
+3. `session` 的宿主门面先做，才能摘掉第 6 项。
+4. 桌面端 Electron 钉住 44.7.0；升 45.x 前必须先让核心的指纹白名单放开。
+5. 若 pkg 仓库在打包期烘补丁，必须复用同一份补丁源码，避免打包期与运行期两套实现分叉。
