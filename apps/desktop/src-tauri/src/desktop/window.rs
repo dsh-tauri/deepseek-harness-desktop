@@ -532,6 +532,9 @@ const PRESENTATION_FULL_SIDEBAR: &str = "full-sidebar";
 ///
 /// `presentation` 与 `session_id` 同行：壳层读它决定导航栏形态，插件读它把右栏展开成全屏。
 ///
+/// 传入 `profile` 时新窗口绑定到该档案（档案面板「在新窗口打开」），由新窗口自己拉起
+/// 该档案的服务；缺省沿用发起窗口的档案。
+///
 /// 异步命令（不占用主线程）是唯一安全的调用侧：`WebviewWindowBuilder::build()`
 /// 需要主线程事件循环回包，主线程调用会死锁（与 `pet::ensure_pet_window` 同约束）。
 #[tauri::command]
@@ -540,6 +543,7 @@ pub async fn create_app_window(
     window: Window<tauri_runtime_electron::ElectronRuntime>,
     session_id: Option<String>,
     presentation: Option<String>,
+    profile: Option<String>,
 ) -> Result<(), String> {
     if let Some(value) = presentation.as_deref() {
         if value != PRESENTATION_FULL_SIDEBAR {
@@ -549,8 +553,16 @@ pub async fn create_app_window(
             return Err("WINDOW_CREATE_FAILED: presentation requires sessionId".into());
         }
     }
+    let target = match profile {
+        Some(id) => {
+            crate::service::profile::select(&app_handle, &id)
+                .map_err(|error| format!("WINDOW_CREATE_FAILED: {error}"))?;
+            id
+        }
+        None => crate::service::workflow::instances::window_profile(&app_handle, window.label()),
+    };
     log::info!(
-        "[window] create_app_window from {}: session={session_id:?} presentation={presentation:?}",
+        "[window] create_app_window from {}: profile={target} session={session_id:?} presentation={presentation:?}",
         window.label()
     );
     let navigation = session_id
@@ -558,11 +570,10 @@ pub async fn create_app_window(
         .map(|session_id| session_navigation_script(session_id, presentation.as_deref()))
         .transpose()?;
     let _transition = crate::service::workflow::acquire_core_transition().await?;
-    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::desktop::builder::build_extra_window(
         &app_handle,
         "index.html".into(),
-        &profile,
+        &target,
         navigation.as_deref(),
     )
     .map(|_| ())
