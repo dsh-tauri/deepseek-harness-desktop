@@ -488,8 +488,6 @@
   "core.not_downloaded": "not downloaded",
   "core.switch_confirm_title": "Switch version",
   "core.switch_confirm_desc": "Switch to the {{version}} version? The running engine will change to this copy.",
-  "core.recommended_warning_title": "Warning",
-  "core.recommended_warning_desc": "The current recommended version is “{{version}}”. Switching to this version may cause software errors. Continue switching?",
   "core.activate_toast": "Switched to {{version}}",
   "core.uninstalled_toast": "Uninstalled {{version}}",
   "core.remove_confirm_title": "Uninstall version",

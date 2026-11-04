@@ -108,14 +108,14 @@ export function readManifest(repo = process.cwd()) {
   }
 }
 
-/** 资源清单中的推荐核心版本（`engines.dsh.recommend`）。 */
-export function readRecommendedDshVersion(repo = process.cwd()) {
+/** 离线安装包随包分发的内核版本（`engines.dsh.bundle`；只影响构建期选择，不参与更新判定）。 */
+export function readBundleDshVersion(repo = process.cwd()) {
   const manifest = readManifest(repo)
-  const version = typeof manifest?.engines?.dsh?.recommend === 'string'
-    ? manifest.engines.dsh.recommend.trim()
+  const version = typeof manifest?.engines?.dsh?.bundle === 'string'
+    ? manifest.engines.dsh.bundle.trim()
     : ''
   if (!version)
-    throw bundleError('manifest.jsonc is missing engines.dsh.recommend')
+    throw bundleError('manifest.jsonc is missing engines.dsh.bundle')
   return version
 }
 
@@ -375,7 +375,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2))
   const repo = process.env.GITHUB_WORKSPACE || process.cwd()
   const constants = readBuildConstants(repo)
-  const dshVersion = readRecommendedDshVersion(repo)
+  const dshVersion = readBundleDshVersion(repo)
 
   if (args.assets) {
     requirePlatformArch(args)

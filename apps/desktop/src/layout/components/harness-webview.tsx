@@ -31,13 +31,29 @@ const BLOCKING_OVERLAY_SELECTOR = [
   '[data-slot$="-popover"]',
 ].join(',')
 
+/** `toast({ reveal: true })` 在 body 上留下的标记（见 `@/utils/toast`） */
+const REVEAL_TOAST_ATTRIBUTE = 'data-dsh-toast-reveal'
+
+function visible(element: HTMLElement): boolean {
+  const style = getComputedStyle(element)
+  return element.getAttribute('aria-hidden') !== 'true' && style.display !== 'none'
+    && style.visibility !== 'hidden' && element.getClientRects().length > 0
+}
+
+/**
+ * 是否必须让 guest 让位。Electron 的原生 guest 视图永远画在壳层 DOM 之上，壳层的内容
+ * 只有先隐藏 guest 并留一张静态快照才看得见——旧 WebView 架构里这些是普通 DOM，
+ * 没有这层让位需求。
+ *
+ * toast 只认显式标了 `reveal` 的条目：更新提示这类必须被看见并点到的内容不能被整块
+ * 页面盖住，而加载进度、操作结果等普通提示若也算进来，页面会随每条提示闪成静态快照。
+ */
 function visibleBlockingOverlay(): boolean {
+  if (document.body.getAttribute(REVEAL_TOAST_ATTRIBUTE) === 'true')
+    return true
   for (const element of document.body.querySelectorAll<HTMLElement>(BLOCKING_OVERLAY_SELECTOR)) {
-    const style = getComputedStyle(element)
-    if (element.getAttribute('aria-hidden') !== 'true' && style.display !== 'none'
-      && style.visibility !== 'hidden' && element.getClientRects().length > 0) {
+    if (visible(element))
       return true
-    }
   }
   return false
 }
@@ -224,7 +240,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     for (let element: HTMLElement | null = host; element; element = element.parentElement)
       resizeObserver?.observe(element)
     const mutationObserver = new MutationObserver(sync)
-    mutationObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-hidden', 'class', 'data-state', 'hidden', 'style'], childList: true, subtree: true })
+    mutationObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-hidden', 'class', 'data-state', 'hidden', 'style', REVEAL_TOAST_ATTRIBUTE], childList: true, subtree: true })
     window.addEventListener('resize', sync)
     window.addEventListener('scroll', sync, true)
     sync()

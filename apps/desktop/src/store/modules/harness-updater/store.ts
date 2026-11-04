@@ -86,7 +86,10 @@ export const harnessUpdater = defineStore({
     showToast(onUpdate: () => void) {
       if (!this.updateInfo)
         return
+      // reveal：Electron 下 Harness 页面是原生子视图，会把壳层 toast 整块盖住；
+      // 更新提示必须让用户看见并点到，其余提示不为此把页面变成静态快照。
       toast(t('update.available', { tag: this.updateInfo.tag }), {
+        reveal: true,
         actionProps: {
           children: t('update.now'),
           onPress: () => {

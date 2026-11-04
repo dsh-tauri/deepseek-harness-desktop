@@ -101,7 +101,7 @@ export function ConfigCore() {
   // 版本"（预览版不参与更新判定；本地版本已是最新时不再展示更新入口，避免
   // "已最新仍提示更新"）。
   const localVersion = localCore?.version ?? ''
-  const latestVersion = cores.find(c => c.source === 'app' && !c.preview && !c.aboveRecommended)?.version ?? ''
+  const latestVersion = cores.find(c => c.source === 'app' && !c.preview)?.version ?? ''
   const hasLocalUpdate = !!(localCore?.present && localVersion && latestVersion && compareVersions(localVersion, latestVersion) < 0)
 
   /** 包裹行内操作：全局单例守卫 + 该行 busy 标记 */
@@ -131,18 +131,12 @@ export function ConfigCore() {
       return
     }
     try {
-      const isRiskyVersion = core.recommendedVersion !== null
-        && (core.aboveRecommended || compareVersions(core.version, core.recommendedVersion) > 0)
       await openDialog({
-        status: isRiskyVersion ? 'danger' : 'warning',
-        title: isRiskyVersion ? t('core.recommended_warning_title') : t('core.switch_confirm_title'),
+        status: 'warning',
+        title: t('core.switch_confirm_title'),
         description: (
           <p>
-            <If
-              cond={isRiskyVersion}
-              then={t('core.recommended_warning_desc', { version: core.recommendedVersion ?? '' })}
-              else={t('core.switch_confirm_desc', { version: displayVersion(core) })}
-            />
+            {t('core.switch_confirm_desc', { version: displayVersion(core) })}
           </p>
         ),
       })

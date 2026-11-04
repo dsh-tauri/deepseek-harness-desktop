@@ -30,10 +30,8 @@ const localFixture: HarnessCore = {
   active: false,
   removable: false,
   preview: false,
-  aboveRecommended: false,
   orphaned: false,
   bundled: false,
-  recommendedVersion: '0.2.1-rc.5',
 }
 const managedFixture: HarnessCore = {
   id: 'app-dsh-0.2.1-rc.5-41234040595',
@@ -46,10 +44,8 @@ const managedFixture: HarnessCore = {
   active: true,
   removable: false,
   preview: false,
-  aboveRecommended: false,
   orphaned: false,
   bundled: false,
-  recommendedVersion: '0.2.1-rc.5',
 }
 const clients = new Set<QueryClient>()
 let cores: HarnessCore[]
@@ -215,7 +211,7 @@ describe('本地核心更新档案安全', () => {
 
     const dialog = await screen.findByRole('alertdialog')
     expect(within(dialog).queryByRole('textbox')).toBeNull()
-    expect(within(dialog).getByRole('heading').textContent).toBe('Warning')
+    expect(within(dialog).getByRole('heading').textContent).toBe('Switch version')
     expectNoCoreOrProfileSwitch()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))

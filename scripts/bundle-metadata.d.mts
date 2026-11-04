@@ -45,7 +45,7 @@ export function stripJsonc(raw: string): string
 
 export function readManifest(repo?: string): Record<string, unknown>
 
-export function readRecommendedDshVersion(repo?: string): string
+export function readBundleDshVersion(repo?: string): string
 
 export function parseVersionFromTag(tag: unknown): string | null
 

@@ -488,8 +488,6 @@
   "core.not_downloaded": "не загружено",
   "core.switch_confirm_title": "Переключить версию",
   "core.switch_confirm_desc": "Переключиться на версию {{version}}? Запущенный движок изменится на эту копию.",
-  "core.recommended_warning_title": "Предупреждение",
-  "core.recommended_warning_desc": "Текущая рекомендуемая версия — «{{version}}». Переключение на эту версию может вызвать ошибки ПО. Продолжить переключение?",
   "core.activate_toast": "Переключено на {{version}}",
   "core.uninstalled_toast": "Удалено {{version}}",
   "core.remove_confirm_title": "Удалить версию",

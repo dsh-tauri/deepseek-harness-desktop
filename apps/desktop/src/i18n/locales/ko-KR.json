@@ -488,8 +488,6 @@
   "core.not_downloaded": "다운로드되지 않음",
   "core.switch_confirm_title": "버전 전환",
   "core.switch_confirm_desc": "{{version}} 버전으로 전환하시겠습니까? 실행 중인 엔진이 이 사본으로 변경됩니다.",
-  "core.recommended_warning_title": "경고",
-  "core.recommended_warning_desc": "현재 권장 버전은 ‘{{version}}’입니다. 이 버전으로 전환하면 소프트웨어 오류가 발생할 수 있습니다. 계속 전환하시겠습니까?",
   "core.activate_toast": "{{version}} 버전으로 전환했습니다",
   "core.uninstalled_toast": "{{version}}을 제거했습니다",
   "core.remove_confirm_title": "버전 제거",

@@ -1,6 +1,5 @@
 import semver from 'semver'
 
-declare const __REMOTE_DSH_RECOMMEND__: string
 declare const __REMOTE_DSH_MINIMUM__: string
 
 export interface DshPkgReleaseMeta {
@@ -8,7 +7,7 @@ export interface DshPkgReleaseMeta {
   prerelease: boolean
 }
 
-export type DshTagSource = 'pin' | 'recommended' | 'latest-stable' | 'fallback'
+export type DshTagSource = 'pin' | 'latest-stable' | 'fallback'
 
 export interface ResolvedDshTag {
   tag: string
@@ -16,8 +15,6 @@ export interface ResolvedDshTag {
   source: DshTagSource
   notes: string[]
 }
-
-export const RECOMMENDED_DSH_VERSION = __REMOTE_DSH_RECOMMEND__
 
 export const MINIMUM_DSH_VERSION = __REMOTE_DSH_MINIMUM__
 
@@ -79,11 +76,11 @@ export function isPreviewTag(tag: string): boolean {
   return pre.split('.').some(id => PREVIEW_MARKERS.some(marker => id.startsWith(marker)))
 }
 
+/** 解析远端要安装的内核 tag：显式 pin 优先，否则取最新稳定 release。 */
 export function pickReleaseTag(
   metas: DshPkgReleaseMeta[] | undefined,
-  options: { ref?: string | undefined, recommended?: string | undefined } = {},
+  options: { ref?: string | undefined } = {},
 ): ResolvedDshTag {
-  const recommended = options.recommended ?? RECOMMENDED_DSH_VERSION
   const notes: string[] = []
   const ref = options.ref === undefined || options.ref.trim() === '' ? undefined : options.ref.trim()
   if (ref !== undefined) {
@@ -97,29 +94,17 @@ export function pickReleaseTag(
     const pinned = metas?.find(meta => parseVersionFromTag(meta.tag) === ref)
     if (pinned !== undefined)
       return { tag: pinned.tag, version: ref, source: 'pin', notes }
-    notes.push(`版本 pin ${ref} 未找到匹配 release，回退推荐/最新稳定版`)
+    notes.push(`版本 pin ${ref} 未找到匹配 release，回退最新稳定版`)
   }
   if (metas === undefined || metas.length === 0) {
     notes.push('release 列表不可用（网络/限流），回退已知稳定 tag')
     return { tag: FALLBACK_DSH_TAG, version: parseVersionFromTag(FALLBACK_DSH_TAG) ?? '', source: 'fallback', notes }
   }
-  const byVersion = new Map<string, DshPkgReleaseMeta>()
-  for (const meta of metas) {
-    const version = parseVersionFromTag(meta.tag)
-    if (version === undefined)
-      continue
-    if (!byVersion.has(version))
-      byVersion.set(version, meta)
-  }
-  const recommendedMeta = byVersion.get(recommended)
-  if (recommendedMeta !== undefined)
-    return { tag: recommendedMeta.tag, version: recommended, source: 'recommended', notes }
   const fallback = metas.find(meta => !meta.prerelease && !isPreviewTag(meta.tag))
   if (fallback === undefined) {
-    notes.push('推荐版本不在 release 列表且无稳定 release，回退已知稳定 tag')
+    notes.push('release 列表里没有稳定 release，回退已知稳定 tag')
     return { tag: FALLBACK_DSH_TAG, version: parseVersionFromTag(FALLBACK_DSH_TAG) ?? '', source: 'fallback', notes }
   }
-  notes.push(`推荐版本 ${recommended} 不在 release 列表，回退最新稳定 ${fallback.tag}`)
   return { tag: fallback.tag, version: parseVersionFromTag(fallback.tag) ?? '', source: 'latest-stable', notes }
 }
 

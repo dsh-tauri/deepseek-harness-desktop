@@ -488,8 +488,6 @@
   "core.not_downloaded": "未下载",
   "core.switch_confirm_title": "切换版本",
   "core.switch_confirm_desc": "切换至 {{version}} 版本吗？运行中的引擎将切换为该副本。",
-  "core.recommended_warning_title": "警告",
-  "core.recommended_warning_desc": "当前推荐版本是 “{{version}}”，切换到该版本可能导致软件异常，确定切换吗？",
   "core.activate_toast": "已切换到 {{version}}",
   "core.uninstalled_toast": "已卸载 {{version}}",
   "core.remove_confirm_title": "卸载版本",
