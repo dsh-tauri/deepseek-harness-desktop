@@ -194,15 +194,16 @@ fn remove_inserted_targets(value: &mut serde_yaml::Value, id: &str) -> bool {
     }
 }
 
-/// insert 项是否针对目标插件：`id` / `name` 等字符串字段等于包名，或指向它的子路径
-/// 入口（`dsh-old/tool`）。
+/// insert 项是否针对目标插件：某个字段值等于包名，或指向它的子路径入口
+/// （`dsh-old/tool`）。
 ///
-/// 子路径按 npm 包名边界判定：`dsh-old/tool` 属于 `dsh-old`，`dsh-old-extra/tool` 不是。
+/// 只看字段值：insert 项里键名是 `id`/`name`/`config` 这类字段名，把键名当插件引用
+/// 会让一条恰好含同名字段的其它插件条目被误删。子路径按 npm 包名边界判定，
+/// `dsh-old/tool` 属于 `dsh-old`，`dsh-old-extra/tool` 不是。
 fn inserted_item_targets(item: &serde_yaml::Value, id: &str) -> bool {
     item.as_mapping().is_some_and(|map| {
-        map.iter().any(|(key, value)| {
-            key.as_str() == Some(id) || value.as_str().is_some_and(|text| refers_to_package(text, id))
-        })
+        map.values()
+            .any(|value| value.as_str().is_some_and(|text| refers_to_package(text, id)))
     })
 }
 
@@ -475,6 +476,23 @@ mod tests {
         let kept_doc = serde_yaml::to_string(&serde_yaml::Value::Sequence(kept)).unwrap();
         assert!(kept_doc.contains("dsh-web-ui-all"));
         assert!(!kept_doc.contains("dsh-better-sidebar"));
+    }
+
+    #[test]
+    fn patch_strip_ignores_field_names_that_look_like_the_package() {
+        let profile = tempfile::tempdir().unwrap();
+        let patch = profile.path().join("cordis.patch.yml");
+        // 键名等于被卸载的包名，但字段值指向另一个插件：这不是对该包的引用。
+        std::fs::write(
+            &patch,
+            "- insert:\n  - id: other\n    dsh-old: enabled\n    name: dsh-other\n",
+        )
+        .unwrap();
+
+        strip_cordis_patch_for(profile.path(), "dsh-old").unwrap();
+
+        let rendered = std::fs::read_to_string(&patch).unwrap();
+        assert!(rendered.contains("dsh-other"), "{rendered}");
     }
 
     #[test]

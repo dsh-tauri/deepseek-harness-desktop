@@ -83,7 +83,7 @@ relative path).
 | `dependencies` | Dependency mapping spec: entry path per platform, default managed root, whether arbitrary overrides are allowed |
 | `plugins.preset` | Community preset list shown by the first-run wizard / sidebar |
 | `plugins.built-in` | Plugins shipped *with* the installer (auto-installed and auto-healed at startup) |
-| `plugins.depercated` | Ids of presets that are no longer offered and get uninstalled at startup (key spelling is kept for compatibility) |
+| `plugins.depercated` | Package names no longer offered that get uninstalled before launch (key spelling is kept for compatibility) |
 | `pets.built-in` | Preset pet catalog |
 
 ### Dependency mapping
@@ -232,6 +232,20 @@ matching entry drives both the UI compatibility mark and core-driven cleanup:
 
 The separate `plugins.depercated` list is unaffected and continues to remove
 listed plugins independently of these ranges.
+
+### Retiring a deprecated plugin
+
+`plugins.depercated` is matched against the **package names actually present in
+the profile** (`package.json` dependencies + bundles, plus any `node_modules`
+entry). That is deliberately independent of `plugins.preset`: once a plugin drops
+out of the preset list it also loses its `package` declaration, so the deprecated
+entry must spell the name the profile really uses. Sibling packages that only
+share a prefix or a scope-local basename are never touched.
+
+Retirement reuses the offline uninstall path (rewrite the profile manifest, drop
+the `node_modules` entry, strip matching `cordis.patch.yml` entries — including
+`insert` lists). Built-in plugins (`plugins.built-in`) are skipped: they belong
+to the shell, and removing them would only fight the startup self-healing.
 
 ### Built-in (internal) plugins
 

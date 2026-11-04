@@ -42,28 +42,23 @@ fn deprecated_installed_names(
         }
     }
     for id in deprecated {
+        // 仍在预设清单里的 id 已由上面处理（含内置插件豁免）；这里只补「已从清单
+        // 删除、仅剩弃用登记」的那些。
         if presets.iter().any(|preset| preset.id == *id) {
             continue;
         }
-        // 已从预设清单删除的 id 失去了 `package` 声明，但仍可能以 scoped 名字装着
-        // （`dsh-session-context-menu` 实际是 `@baihejiangnan/dsh-session-context-menu`）。
-        // 只认包名末段等于该 id 的条目，不用 `contains` 之类的模糊匹配误伤同前缀插件。
-        names.extend(
-            present
-                .iter()
-                .filter(|name| package_basename(name) == id.as_str())
-                .cloned(),
-        );
+        // 这类 id 失去了 `package` 声明，其历史安装名只能在弃用名单里逐个登记
+        // （如 `dsh-session-context-menu` 实际是 `@baihejiangnan/dsh-session-context-menu`：
+        // 要退役它就把这个 scoped 名本身写进名单）。这里只做精确比对——按包名末段
+        // 之类的模糊匹配会把别的 scope 下的同名包一并卸掉，那些从未被登记为弃用。
+        if present.contains(id) {
+            names.push(id.clone());
+        }
     }
     names.retain(|name| is_actionable_plugin_ref(name));
     names.sort();
     names.dedup();
     names
-}
-
-/// 包名的最后一段：`@scope/name` → `name`，`name` → `name`。
-fn package_basename(name: &str) -> &str {
-    name.rsplit('/').next().unwrap_or(name)
 }
 
 /// 给定档案目录下的待退役插件（纯路径版，启动快路径与常规启动共用）。
@@ -197,23 +192,19 @@ mod tests {
     }
 
     #[test]
-    fn deprecation_finds_legacy_scoped_install_of_a_dropped_id() {
-        // `dsh-session-context-menu` 已从 preset 删除，历史安装名是 scoped 包名，
-        // 只剩弃用名单里的裸 id 时也必须能把它找出来。
-        let deprecated = ids(&["dsh-session-context-menu"]);
-        let present = ids(&["@baihejiangnan/dsh-session-context-menu", "dsh-other"]);
+    fn deprecation_matches_only_exact_registered_names() {
+        let deprecated = ids(&["dsh-session-context-menu", "dsh-kernel"]);
+        // 只做精确比对：别的 scope 下同名包、同前缀邻居都不在弃用名单里，
+        // 按包名末段或前缀匹配会把它们一并卸掉。
+        let present = ids(&[
+            "@other/dsh-session-context-menu",
+            "dsh-kernel-extra",
+            "dsh-session-context-menu",
+        ]);
         assert_eq!(
             deprecated_installed_names(&[], &deprecated, &present),
-            vec!["@baihejiangnan/dsh-session-context-menu"]
+            vec!["dsh-session-context-menu"]
         );
-    }
-
-    #[test]
-    fn deprecation_ignores_prefix_neighbours_of_a_dropped_id() {
-        let deprecated = ids(&["dsh-kernel"]);
-        // 末段必须完全相等：`dsh-kernel-extra` / `@scope/x-dsh-kernel` 都不是它。
-        let present = ids(&["dsh-kernel-extra", "@scope/x-dsh-kernel"]);
-        assert!(deprecated_installed_names(&[], &deprecated, &present).is_empty());
     }
 
     #[test]
@@ -254,10 +245,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let profile = root.path().join("profile");
         std::fs::create_dir_all(profile.join("node_modules/dsh-tauri-kernel")).unwrap();
-        std::fs::create_dir_all(
-            profile.join("node_modules/@baihejiangnan/dsh-session-context-menu"),
-        )
-        .unwrap();
+        std::fs::create_dir_all(profile.join("node_modules/@baihejiangnan/dsh-orphan")).unwrap();
         std::fs::write(
             profile.join("package.json"),
             serde_json::json!({
@@ -276,13 +264,12 @@ mod tests {
             "dsh-legacy-session",
             "dsh-legacy-panel",
             "dsh-tauri-kernel",
-            "dsh-session-context-menu",
             "dsh-never-installed",
         ]);
+        // 清单声明的、以及只有 node_modules 入口的孤儿，都算「档案里真实存在」。
         assert_eq!(
             installed_names_at(&profile, &presets, &deprecated),
             vec![
-                "@baihejiangnan/dsh-session-context-menu".to_string(),
                 "dsh-legacy-panel".to_string(),
                 "dsh-legacy-session".to_string(),
                 "dsh-tauri-kernel".to_string()
