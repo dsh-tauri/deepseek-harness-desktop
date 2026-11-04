@@ -48,6 +48,7 @@ mod patch_yaml;
 mod preset;
 mod process;
 pub mod recovery;
+mod retire;
 mod safe;
 pub mod snapshot;
 pub mod update;
@@ -97,6 +98,7 @@ pub(crate) use preset::{
 pub(crate) use process::{
     acquire_operation_lock, is_internal_plugin_startup_failure, is_process_cleanup_failure,
 };
+pub(crate) use retire::uninstall as retire_deprecated_plugins;
 pub use recovery::{
     detect as detect_recovery, uninstall as uninstall_recovery, PluginRecoveryInfo,
 };

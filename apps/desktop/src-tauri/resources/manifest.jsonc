@@ -64,6 +64,7 @@
     "depercated": [
       "dsh-win-terminal-inspector",
       "dsh-session-context-menu",
+      "@baihejiangnan/dsh-session-context-menu",
       "dsh-tauri-model-config",
       "dsh-tauri-taiwindcss",
       "dsh-tauri-session",
