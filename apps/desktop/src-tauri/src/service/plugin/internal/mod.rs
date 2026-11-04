@@ -805,6 +805,12 @@ pub(crate) fn prepare_early_plugins(
         return Ok(EarlyPluginState::Defer);
     };
     let presets = presets_from_manifest(manifest, resources);
+    // 档案里还有弃用插件时让出快路径：它们的卸载要走离线精准路径（改清单、删入口），
+    // 快路径只做内置插件核对与链接，没法安全处理，直接交给常规启动的退役阶段。
+    let deprecated: HashSet<String> = manifest.plugins.deprecated.iter().cloned().collect();
+    if !super::retire::installed_names_at(profile, &presets, &deprecated).is_empty() {
+        return Ok(EarlyPluginState::Defer);
+    }
     prepare_early_plugins_from(profile, dsh_home, &presets, core_version, |id| {
         bundled_plugin_dir_from(resources, id)
     })

@@ -772,6 +772,13 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::plugin::ensure_profile_npmrc(&app_handle) {
         log::warn!("ensure profile .npmrc failed: {e}");
     }
+    // 弃用插件退役：清单 plugins.depercated 登记的插件若还在档案里，启动前移除。
+    // 它们与新核心不兼容，留着会被 loader 展开成启动白屏（Failed to load plugins），
+    // 而界面已不列这些 id，用户没有别的卸载入口。最佳努力：失败只告警，不阻断启动。
+    if let Err(e) = crate::service::plugin::retire_deprecated_plugins(&app_handle) {
+        log::warn!("retire deprecated plugins failed: {e}");
+    }
+    mark_phase("retire_deprecated_plugins", &mut phase_started);
     if let Err(e) = crate::service::plugin::ensure_internal_plugins(&app_handle).await {
         if crate::service::plugin::is_internal_plugin_startup_failure(&e) {
             log::error!("ensure internal plugins blocked startup: {e}");
