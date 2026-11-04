@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { HarnessWebview } from './harness-webview'
 
 interface NativeState { label: string, loaded: boolean, alive: boolean, crashed: boolean }
+interface BootFailure { label: string, detail: string }
+type ListenPayload = NativeState | BootFailure
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args: Record<string, unknown>) => Promise<unknown>>(),
   decode: vi.fn<() => Promise<void>>(),
@@ -22,9 +24,10 @@ const mocks = vi.hoisted(() => ({
     markWebviewAlive: vi.fn(),
     markWebviewLeaving: vi.fn(),
     markWebviewBootReady: vi.fn(),
+    handleWebviewBootFailure: vi.fn(),
   },
   setting: { zoom_factor: 1.25 },
-  listeners: new Map<string, (event: { payload: NativeState }) => void>(),
+  listeners: new Map<string, (event: { payload: ListenPayload }) => void>(),
   options: new Map<string, unknown>(),
   resize: new Set<() => void>(),
   rect: { x: 24, y: 72, left: 24, top: 72, width: 960, height: 600, right: 984, bottom: 672, toJSON: () => ({}) },
@@ -35,7 +38,7 @@ vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@/store', () => ({ store: { harness: mocks.harness, setting: { zoom: mocks.zoom, get zoom_factor() {
   return mocks.setting.zoom_factor
 } } } }))
-vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (event: { payload: NativeState }) => void, options?: unknown) => {
+vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (event: { payload: ListenPayload }) => void, options?: unknown) => {
   mocks.listeners.set(event, handler)
   mocks.options.set(event, options)
 } }))
@@ -409,6 +412,29 @@ it('subscribes to window-targeted native state, keeping boot readiness separate'
   expect(mocks.harness.markWebviewLeaving).toHaveBeenCalledOnce()
   state({ loaded: false, alive: false, crashed: true })
   expect(mocks.harness.markWebviewError).toHaveBeenCalledOnce()
+})
+
+it('fails the shell with the boot failure page reported by the current guest only', async () => {
+  mocks.harness.handleWebviewBootFailure = vi.fn()
+  render(<HarnessWebview />)
+  await screen.findByTitle('Harness')
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'other-guest', detail: 'Failed to load plugins' } }))
+  expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
+  mocks.harness.webviewKey++
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'guest-local', detail: 'Failed to load plugins' } }))
+  expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
+  mocks.harness.webviewKey = 0
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'guest-local', detail: 'Failed to load plugins\ndsh-tauri-kernel: failed' } }))
+  expect(mocks.harness.handleWebviewBootFailure).toHaveBeenCalledWith('Failed to load plugins\ndsh-tauri-kernel: failed')
+  expect(mocks.options.get('dsh://plugin-boot:failed')).toEqual({ target: { kind: 'Window', label: 'main' } })
+})
+
+it('ignores local boot failures for a remote guest', async () => {
+  mocks.harness.handleWebviewBootFailure = vi.fn()
+  render(<HarnessWebview srcOverride="https://remote.test" />)
+  await screen.findByTitle('Harness')
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'guest-local', detail: 'Failed to load plugins' } }))
+  expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
 })
 
 it('rejects stale labels and old generations while reloading', async () => {

@@ -315,14 +315,14 @@ pub async fn prepare_harness_webview(
     let mut builder = tauri::WebviewBuilder::new(&label, tauri::WebviewUrl::External(url.clone()))
         .transparent(true)
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
-        .initialization_script(include_str!("browser.js"))
+        .initialization_script(include_str!("browser.js.inc"))
         // 「打开方式」必须由 Electron 主进程的 shell 交给系统，页内 detached spawn
         // 在 Windows 上无法激活目标窗口（issue #1346）。只注入本地 guest：远程
         // Harness 的操作不该让本机窗口让位。
         .initialization_script(if remote {
             ""
         } else {
-            include_str!("open-in-app.js")
+            include_str!("open_in_app.js.inc")
         })
         .on_navigation(move |next| next.origin() == origin)
         .on_download(on_download)
@@ -340,6 +340,16 @@ pub async fn prepare_harness_webview(
             .and_then(serde_json::Value::as_str);
         builder = builder.initialization_script(session_navigation_script(session, presentation)?);
     }
+    if !remote {
+        // 远程 Harness 的失败由它自己的人机界面负责，壳层只接管本机 guest 的
+        // 官方失败卡片（「Failed to load plugins」）；壳层据此切错误页并定位插件。
+        builder = builder
+            .initialization_script(format!(
+                "globalThis.__DSH_SHELL__ = {};",
+                serde_json::json!({ "window": webview.window().label(), "guest": label })
+            ))
+            .initialization_script(include_str!("plugin_boot.js.inc"));
+    }
     let capability = harness_capability(&label, &url)?;
     app.add_capability(capability.to_string())
         .map_err(|error| error.to_string())?;
@@ -349,7 +359,7 @@ pub async fn prepare_harness_webview(
     let _setup = if remote {
         setup
     } else {
-        setup.preload_script(include_str!("host-paths.preload.cjs"))
+        setup.preload_script(include_str!("preload.js.inc"))
     };
     let guest = webview
         .window()
