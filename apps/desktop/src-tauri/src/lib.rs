@@ -23,6 +23,32 @@ pub fn patch_core_dir(core_dir: &std::path::Path) -> Result<(), String> {
     service::patch::apply_all_at(core_dir)
 }
 
+/// 声明 Windows 任务栏身份，让固定项重启本应用而不是内嵌的 Electron 运行时。
+///
+/// 图钉由 Windows 按窗口所属进程创建：壳窗口的属主是内嵌运行时进程，缺 relaunch
+/// 命令时只能「裸 exe + 空参数」重启，于是打开 Electron 自带的默认欢迎页（用户
+/// 看到的 `path-to-app`）。这里补上安装器写进快捷方式的同一 AUMID，并把重启命令
+/// 指回主程序，图钉与开始菜单因此指向同一个入口。
+#[cfg(windows)]
+fn declare_taskbar_identity(context: &tauri::Context<tauri_runtime_electron::ElectronRuntime>) {
+    let identifier = context.config().identifier.clone();
+    let display_name = context
+        .config()
+        .product_name
+        .clone()
+        .unwrap_or_else(|| identifier.clone());
+    let Ok(executable) = std::env::current_exe() else {
+        log::warn!("TASKBAR_IDENTITY_FAILED: current executable unavailable");
+        return;
+    };
+    let executable = executable.to_string_lossy();
+    tauri_runtime_electron::set_app_details(
+        identifier,
+        format!("\"{executable}\""),
+        display_name,
+    );
+}
+
 pub fn run() -> Result<(), String> {
     let started = std::time::Instant::now();
     #[cfg(unix)]
@@ -67,6 +93,12 @@ pub fn run() -> Result<(), String> {
         #[cfg(all(windows, not(debug_assertions)))]
         single_instance.clone(),
     );
+    // 任务栏固定项按窗口所属进程创建：壳窗口跑在内嵌 Electron 运行时进程里，
+    // 没有 relaunch 命令时 Windows 只能裸启动该 exe，落到 Electron 默认页而不是
+    // 本应用（0.30 用户的「升级后打不开」即此）。显式声明与安装器一致的 AUMID，
+    // 并让重启目标回到主程序。
+    #[cfg(windows)]
+    declare_taskbar_identity(&context);
     desktop::builder()
         .invoke_handler(desktop::handler())
         .build(context)
