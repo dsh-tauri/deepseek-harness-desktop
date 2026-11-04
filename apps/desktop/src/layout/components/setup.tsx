@@ -1,6 +1,6 @@
 import type { IconComponent } from './loadable'
 import type { SetupStatus } from '@/store/modules/harness'
-import { ArrowRightFromSquare, CircleCheck, CircleExclamation, CircleInfo, Copy, Magnifier, Rocket, ShieldCheck } from '@gravity-ui/icons'
+import { ArrowRightFromSquare, CircleCheck, CircleExclamation, CircleInfo, Copy, Magnifier, Rocket } from '@gravity-ui/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { If, Then } from 'react-if-lite'
@@ -83,7 +83,7 @@ export function Setup() {
       )}
       <If cond={error}>
         <Then>
-          {/* 错误态操作区：重试 / 复制日志 / 安全模式 三按钮放同一行，避免叠罗汉 */}
+          {/* 错误态操作区：复制日志 / 重试 / 补丁层恢复入口放同一行，避免叠罗汉 */}
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               className={button({ tone: 'ghost', size: 'sm' })}
@@ -120,19 +120,7 @@ export function Setup() {
                 {t('buttons.strip_patch_entries')}
               </button>
             </If>
-            <button
-              className={button({ tone: 'primary', size: 'sm' })}
-              onClick={() => {
-                void store.harness.enterSafeMode()
-              }}
-            >
-              <ShieldCheck className="size-4" />
-              {t('buttons.safe_mode')}
-            </button>
           </div>
-          <p className="m-0 text-xs leading-[18px] break-all text-load-muted">
-            {t('hints.safe_mode')}
-          </p>
         </Then>
       </If>
     </Loadable>

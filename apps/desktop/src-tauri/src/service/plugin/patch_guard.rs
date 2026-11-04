@@ -1,4 +1,4 @@
-//! 补丁层语法错误的隔离：让安全模式在用户补丁层损坏时仍然可用。
+//! 补丁层语法错误的隔离：让用户在补丁层损坏时仍能恢复启动。
 //!
 //! `$DSH_HOME/cordis.patch.yml`（机器级 home 层）与
 //! `$DSH_HOME/profiles/<id>/cordis.patch.yml`（档案层）都是用户可手写的 YAML
@@ -6,13 +6,13 @@
 //! （`@deepseek-ai/dsh-app-boot` 的 `loadOptionalPatches` 明确写着这一点），桌面端
 //! 的内置插件自愈（[`super::internal::repair_loader_state`]）同样在解析阶段直接失败。
 //! 于是一处手写笔误——典型是 `!!js` 表达式里带 `: `/`?` 却没加引号——会让应用
-//! **永久不可用**：每次启动都停在同一处，而唯一的兜底入口「安全模式」也走同一份
-//! home 层（home 层作用于所有档案，安全档案不例外），连兜底一起失效（issue #525）。
+//! **永久不可用**：每次启动都停在同一处，而错误页的恢复入口同样要读这份 home 层
+//! （home 层作用于所有档案），不隔离就永远走不出失败（issue #525）。
 //!
 //! 因此这里提供「隔离」这一**显式**恢复动作：把解析不了的补丁文件改名为
 //! `<原文件名>.broken-<UTC 时间戳>`（绝不删除，内容原样保留），决定权交回用户
-//! ——修好语法后改回原名即可恢复。只有用户点「安全模式」或错误页的「隔离损坏的
-//! 补丁文件」时才执行，绝不自动发生；普通档案的启动路径仍然按上游契约大声失败，
+//! ——修好语法后改回原名即可恢复。只有用户点错误页的「隔离损坏的补丁文件」时才
+//! 执行，绝不自动发生；普通启动路径仍然按上游契约大声失败，
 //! 由前端给出「哪个文件、哪一行、怎么改」的针对性提示。
 
 use std::path::{Path, PathBuf};
@@ -199,7 +199,7 @@ pub(crate) fn quarantine_patch_layers_in(
 
 /// 隔离「当前档案层 + home 层」里解析失败的补丁文件。
 ///
-/// 由错误页的「隔离损坏的补丁文件并重启」入口调用：用户想留在自己的档案里恢复。
+/// 由错误页的「隔离损坏的补丁文件并重启」入口调用：只动当前档案层与 home 层。
 pub(crate) fn quarantine_active_patch_layers(app_handle: &AppHandle) -> PatchQuarantineReport {
     quarantine_patch_layers_in(
         &profile_dir(app_handle),
@@ -393,7 +393,7 @@ mod tests {
                 .len(),
             1
         );
-        // 第二次调用：文件已不在，不再产生任何动作（可反复点「安全模式」）。
+        // 第二次调用：文件已不在，不再产生任何动作（可反复点恢复入口）。
         let second = quarantine_patch_layers_in(&profile, &home);
         assert!(second.quarantined.is_empty());
         assert!(second.failures.is_empty());
@@ -444,8 +444,8 @@ mod tests {
 
     #[test]
     fn patch_layer_paths_are_profile_then_home() {
-        let paths = patch_layer_paths(Path::new("/profiles/safe"), Path::new("/dsh-home"));
-        assert_eq!(paths[0], Path::new("/profiles/safe").join(PATCH_FILENAME));
+        let paths = patch_layer_paths(Path::new("/profiles/custom"), Path::new("/dsh-home"));
+        assert_eq!(paths[0], Path::new("/profiles/custom").join(PATCH_FILENAME));
         assert_eq!(paths[1], Path::new("/dsh-home").join(PATCH_FILENAME));
     }
 
@@ -455,7 +455,7 @@ mod tests {
     /// 这里直接构造失败报告，锁定「报告 → has_failures / 错误串」的契约本身。
     #[test]
     fn report_flags_failures_and_renders_message() {
-        let broken = PathBuf::from("/profiles/safe/cordis.patch.yml");
+        let broken = PathBuf::from("/profiles/custom/cordis.patch.yml");
         let report = PatchQuarantineReport {
             quarantined: Vec::new(),
             failures: vec![PatchQuarantineFailure {

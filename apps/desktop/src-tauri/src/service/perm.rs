@@ -4,9 +4,8 @@
 //! 此前用 `sudo` 运行过 dsh（macOS 的 `sudo` 保留 `$HOME`，`~/.dsh` 因此被 root
 //! 创建）。此时应用**能读、能遍历**（`profiles/web/package.json` 读得到），但任何
 //! 写入都以 `EACCES (os error 13)` 失败：`.npmrc`、`cordis.yml`、内置插件链接、
-//! 安全档案目录全部写不进去。用户最终只看到裸 `os error 13` 与一个「安全模式」
-//! 按钮——而安全模式要在同一个不可写目录下新建 `profiles/safe`，必然再次失败，
-//! 于是无路可走。
+//! 档案目录全部写不进去。用户最终只看到裸 `os error 13`，重试与切档案都要在同一个
+//! 不可写目录下新建 `profiles/<id>`，必然再次失败，于是无路可走。
 //!
 //! 应用无权 chown（也不应为此引入提权面），唯一正确的做法是**尽早**、且用
 //! **可执行**的语言把问题摊开：本模块提供真实写入探测 + 「失败路径 + 目录属主 +
@@ -43,7 +42,7 @@ pub fn is_permission_error(error: &io::Error) -> bool {
 pub fn ensure_dir_writable(dir: &Path, prefix: &str) -> Result<(), String> {
     if let Err(error) = std::fs::create_dir_all(dir) {
         // 创建失败时 `dir` 往往**根本不存在**（父级不可写，例如 `$DSH_HOME/profiles`
-        // 属主是 root 时新建 `profiles/safe`）：修复指引里的 chown/takeown 目标必须
+        // 属主是 root 时新建 `profiles/<id>`）：修复指引里的 chown/takeown 目标必须
         // 是真实存在的目录，否则那条命令会以 "No such file or directory" 失败。上溯
         // 到最近的已存在祖先。
         let remedy = nearest_existing_dir(dir).unwrap_or_else(|| dir.to_path_buf());
@@ -230,7 +229,7 @@ mod tests {
         let root = temp_root("no-lazy-init");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let target = root.join("profiles").join("safe");
+        let target = root.join("profiles").join("new");
 
         assert!(ensure_writable_path(&target, &root, "PROFILE_NOT_WRITABLE").is_ok());
         // issue #452：预检不得抢先建出半初始化档案目录
@@ -282,9 +281,9 @@ mod tests {
             assert!(error.contains(&shell_quote(&root)), "{error}");
 
             // 创建失败（父级不可写）时修复目标必须是**已存在**的目录：新建
-            // `dir/safe` 会 EACCES，若按不存在的目标给出 chown 命令，用户照抄只会得到
+            // `dir/new` 会 EACCES，若按不存在的目标给出 chown 命令，用户照抄只会得到
             // "No such file or directory"。
-            let missing = dir.join("safe");
+            let missing = dir.join("new");
             let error = ensure_dir_writable(&missing, "PROFILE_MKDIR").unwrap_err();
             assert!(error.starts_with("PROFILE_MKDIR:"), "{error}");
             assert!(error.contains(&shell_quote(&dir)), "{error}");

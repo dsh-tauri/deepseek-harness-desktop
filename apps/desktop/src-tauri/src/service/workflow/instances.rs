@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::status::Status;
@@ -53,16 +52,6 @@ pub(super) fn begin_shutdown_at(gate: &Mutex<bool>) {
 
 pub fn current_profile() -> Option<String> {
     PROFILE.try_with(Clone::clone).ok()
-}
-
-static SAFE_MODE: AtomicBool = AtomicBool::new(false);
-
-pub fn safe_mode() -> bool {
-    SAFE_MODE.load(Ordering::Relaxed)
-}
-
-pub fn set_safe_mode(active: bool) {
-    SAFE_MODE.store(active, Ordering::Relaxed);
 }
 
 pub async fn scope<T>(profile: String, future: impl Future<Output = T>) -> T {
@@ -226,15 +215,6 @@ pub fn set_port(port: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn safe_mode_is_a_session_flag_and_never_a_persisted_profile() {
-        assert!(!safe_mode());
-        set_safe_mode(true);
-        assert!(safe_mode());
-        set_safe_mode(false);
-        assert!(!safe_mode());
-    }
 
     #[test]
     fn unscoped_instance_uses_desktop_default() {

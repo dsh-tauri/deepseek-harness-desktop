@@ -29,11 +29,6 @@ pub(crate) fn carrier_node_args(desktop_host: bool) -> [std::ffi::OsString; 2] {
     ]
 }
 
-/// 安全模式档案：仅加载 web 模板核心 bundles、不带任何用户插件/补丁层。
-/// 错误界面「安全模式」按钮切到此档案重启（`--profile safe`），隔离问题插件
-/// 让应用先可用，用户随后在档案列表切回原档案即退出安全模式。
-pub const SAFE_PROFILE: &str = "safe";
-
 /// 新建档案的初始 bundles：web 模板（`@deepseek-ai/dsh-base` +
 /// `@deepseek-ai/dsh-web-app`，与 dsh-app-boot `PROFILE_TEMPLATES.web` 一致）。
 /// 桌面端内嵌的是 dsh web 应用，新档案不带 `dsh-web-app` 将无法渲染任何界面。
@@ -290,9 +285,6 @@ pub fn active_profile<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> String {
     if let Some(profile) = crate::service::workflow::instances::current_profile() {
         return profile;
     }
-    if crate::service::workflow::instances::safe_mode() {
-        return SAFE_PROFILE.to_string();
-    }
     let stored = config::get_store_dat_setting(app_handle).active_profile;
     if !stored.is_empty()
         && stored != DEFAULT_PROFILE
@@ -443,7 +435,6 @@ pub fn set_active<R: tauri::Runtime>(app_handle: &AppHandle<R>, id: &str) -> Res
     config::update_store_dat_setting(app_handle, |setting| {
         setting.active_profile = id.to_string();
     });
-    crate::service::workflow::instances::set_safe_mode(false);
     select(app_handle, id)
 }
 
@@ -478,17 +469,6 @@ pub fn ensure_desktop_profile(app_handle: &AppHandle) {
     if let Err(e) = ensure_desktop_profile_with_root(&profiles_root) {
         log::warn!("Desktop profile init failed: {e}");
     }
-}
-
-/// 确保安全模式档案目录存在且含核心 web bundle 层（幂等，绝不覆盖用户改动）。
-///
-/// 与 `ensure_desktop_profile_with_root` 同构：已存在时复用档案内容，只补齐缺失的
-/// 档案文件与核心 bundle 条目（web 模板 bundles，可正常渲染桌面内嵌的 web UI）。
-/// 安全档案只含核心 bundles 与空 patch 层——不装任何用户插件，用于错误界面
-/// 「安全模式」按钮把问题插件隔离在启动链路之外。
-pub fn ensure_safe_profile(app_handle: &AppHandle) -> Result<(), String> {
-    let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
-    init_profile_dir(&profiles_root.join(SAFE_PROFILE), SAFE_PROFILE)
 }
 
 /// 删除档案（默认档案与使用中的档案不可删除）。
@@ -864,8 +844,8 @@ pub(crate) fn prepare_at(data_home: &Path, id: &str) -> Result<bool, String> {
 fn init_profile_dir(dir: &Path, id: &str) -> Result<(), String> {
     // 建目录 + 真实写入探测：目录已存在但属主不是当前用户时（issue #466，典型：
     // 此前用 sudo 运行过 dsh），std 的 `create_dir_all` 会直接返回 Ok，直到后面
-    // 写清单才以裸 EACCES 失败——安全模式报的 `PROFILE_MKDIR: Permission denied`
-    // 就是这条路径。用 perm 的探测把「不可写 + 属主 + chown 命令」在最早一步给出。
+    // 写清单才以裸 EACCES 失败——`PROFILE_MKDIR: Permission denied` 报的就是这条
+    // 路径。用 perm 的探测把「不可写 + 属主 + chown 命令」在最早一步给出。
     crate::service::perm::ensure_dir_writable(dir, "PROFILE_MKDIR")?;
 
     ensure_profile_core_bundles(dir, id)?;

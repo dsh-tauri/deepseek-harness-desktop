@@ -807,20 +807,20 @@ mod tests {
     }
 
     #[test]
-    fn wholesale_setting_writes_cannot_pin_the_safe_profile_as_startup_profile() {
+    fn wholesale_setting_writes_cannot_override_the_startup_profile() {
         let current = Setting {
             active_profile: "custom".into(),
             ..Default::default()
         };
         let stale = Setting {
-            active_profile: "safe".into(),
+            active_profile: "other".into(),
             language: "en-US".into(),
             ..Default::default()
         };
         let merged = preserve_persisted_fields(stale, &current);
         assert_eq!(
             merged.active_profile, "custom",
-            "安全模式是临时档案，整对象写入不得把它落成下次启动档案"
+            "整对象写入不得覆盖精确更新路径刚写入的启动档案"
         );
         assert_eq!(merged.language, "en-US");
     }
