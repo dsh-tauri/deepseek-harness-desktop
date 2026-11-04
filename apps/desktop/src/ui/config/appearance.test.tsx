@@ -51,7 +51,7 @@ describe('appearance settings controls', () => {
     ;(window as any).__DSH_TRANSPARENT__ = true
     ;(window as any).__DSH_LIVE_TRANSPARENCY__ = false
     setup()
-    expect(await screen.findByTestId('dsh-appearance-restart')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByTestId('dsh-appearance-restart')).toBeNull())
     fireEvent.click(screen.getByRole('switch', { name: 'appearance.transparency' }))
     await waitFor(() => expect(screen.getByTestId('dsh-appearance-restart')).toBeTruthy())
   })
