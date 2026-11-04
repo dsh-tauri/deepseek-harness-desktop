@@ -740,13 +740,17 @@ fn shell_window_transparent(appearance: &crate::config::Appearance) -> bool {
     }
 }
 
+fn shell_frame_for(transparent: bool) -> bool {
+    transparent && (cfg!(target_os = "linux") || cfg!(windows))
+}
+
 fn with_shell_chrome<'a>(
     app: &'a crate::AppHandle<ElectronRuntime>,
     builder: WebviewWindowBuilder<'a, ElectronRuntime, crate::AppHandle<ElectronRuntime>>,
 ) -> tauri::Result<WebviewWindowBuilder<'a, ElectronRuntime, crate::AppHandle<ElectronRuntime>>> {
     let appearance = crate::config::get_store_dat_setting(app).appearance;
     let transparent = shell_window_transparent(&appearance);
-    let frame = cfg!(target_os = "linux") && transparent;
+    let frame = shell_frame_for(transparent);
     let builder = builder
         .transparent(transparent)
         .initialization_script(format!(
@@ -986,6 +990,21 @@ mod shell_nav_tests {
             "navbar.tsx 的 h-{steps}（{}px）与 SHELL_NAV_HEIGHT（{SHELL_NAV_HEIGHT}px）不一致：\
              macOS 交通灯纵向位置由 SHELL_NAV_HEIGHT 推导，改栏高必须两处同步（issue #524）",
             steps * TAILWIND_SPACING_PX,
+        );
+    }
+}
+
+#[cfg(test)]
+mod shell_frame_tests {
+    use super::shell_frame_for;
+
+    #[test]
+    fn transparent_shells_draw_their_own_frame_where_the_os_stops_rounding() {
+        assert!(!shell_frame_for(false), "不透明窗沿用系统外框");
+        assert_eq!(
+            shell_frame_for(true),
+            cfg!(target_os = "linux") || cfg!(windows),
+            "Windows 透明窗拿不到 DWM 圆角，Linux 没有装饰边框，两边都要壳层自绘"
         );
     }
 }
