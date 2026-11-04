@@ -11,5 +11,16 @@
 - insert:
     - id: dsh-tauri-scheduler
       name: dsh-tauri-scheduler
+      disabled: !!js |
+        (() => {
+          const version = process.env.DSH_TAURI_CORE_VERSION
+          if (!version) return false
+          const [core, pre = ''] = version.split('-')
+          const [major, minor, patch] = core.split('.').map(Number)
+          if (major !== 0) return major > 0
+          if (minor !== 2) return minor > 2
+          if (patch !== 2) return patch > 2
+          return pre === '' || pre.localeCompare('rc.1', undefined, { numeric: true }) >= 0
+        })()
     - id: dsh-taiwind
       name: dsh-taiwind

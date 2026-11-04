@@ -3,11 +3,11 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Reference version: `dsh-v0.2.1-rc.5`
-- Reference revision: `b830ec950faba0a46dda564be3e2d854afed94f1`
+- Reference version: `dsh-v0.2.2-rc.1`
+- Reference revision: `66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`
 - Previous documented reference: `dsh-v0.2.1-rc.1` (`1600d8a1e140dcde43a1a0941940a0480712c011`); alpha.1 (`5badb15009ae1756c3afe0ae0cef1faafc290ccc`) remains historical attribution. This release does not recopy or revalidate every derived file.
 - Source: `source/deepseek-harness`
-- Support policy: recommended core `0.2.1-rc.5`, minimum core `0.2.1-rc.1`; earlier cores are unsupported. Verification scope: [current compatibility record](<../builtin-plugin-tauri/docs/compatibility-0.2.1-rc.5.md>). Earlier version comparisons below are historical, not a current support promise.
+- Support policy: recommended core `0.2.2-rc.1`, minimum core `0.2.1-rc.1`; earlier cores are unsupported. Verification scope: [current compatibility record](<../builtin-plugin-tauri/docs/compatibility-0.2.2-rc.1.md>). Earlier version comparisons below are historical, not a current support promise.
 - License: MIT — Copyright (c) 2026 DeepSeek
 - Not copied: the plugin mounts an official provider and consumes official client contracts.
 

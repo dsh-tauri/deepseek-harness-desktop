@@ -349,6 +349,7 @@ pub(super) fn prepare(
         resources: Some(resources.to_path_buf()),
         git_dir,
         user_pnpm,
+        core_version: Some(version),
     }))
 }
 

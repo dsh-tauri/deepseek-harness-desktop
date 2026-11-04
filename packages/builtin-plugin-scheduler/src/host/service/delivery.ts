@@ -6,7 +6,7 @@ import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { runtime } from '../config/runtime'
 import { server } from '../server'
-import { isSchedulerSessionNotFound, loadSchedulerMessageFactory } from '../utils/agent-runtime'
+import { isSchedulerSessionNotFound, loadSchedulerMessageFactory, observeSession } from '../utils/agent-runtime'
 import { nextFutureOccurrence } from '../utils/occurrence'
 import { SessionOperationTimeout, withSessionDeadline } from '../utils/session-deadline'
 import { sameTaskRecord } from '../utils/task-record'
@@ -16,14 +16,19 @@ import { task } from './task'
 export const delivery = defineService({
   async run(target: SchedulerTask, trigger: RunTrigger, scheduledAt: string): Promise<OperationResult> {
     const ctx = getServerContext<HostContext>(server)
-    if (typeof ctx.sessionController?.resolveAgent !== 'function' || typeof ctx.sessionController?.inspect !== 'function' || typeof ctx.sessions?.flush !== 'function')
+    if (typeof ctx.sessionController?.resolveAgent !== 'function' || typeof ctx.sessionQuery?.observeSession !== 'function' || typeof ctx.sessions?.flush !== 'function')
       return { ok: false, error: '宿主无法恢复或持久化目标会话', code: 'session_unavailable' }
     let pending = runtime.pending.get(target.id) ?? (await history.pending(target.id))[0]
     let enqueued = runtime.pending.has(target.id)
     if (pending && !enqueued) {
       try {
-        const inspected = await withSessionDeadline<Awaited<ReturnType<SessionController['inspect']>>>(ctx.sessionController.inspect(pending.task.sessionId!))
-        enqueued = containsMessage(inspected.events, pending.message.id)
+        const observed = await observeSession(ctx.sessionQuery, pending.task.sessionId!)
+        try {
+          enqueued = containsMessage(observed.events, pending.message.id)
+        }
+        finally {
+          observed.release()
+        }
       }
       catch (error) {
         if (error instanceof SessionOperationTimeout)

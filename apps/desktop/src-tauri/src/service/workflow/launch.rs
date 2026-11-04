@@ -47,6 +47,8 @@ pub(super) struct LaunchPlan {
     pub(super) resources: Option<PathBuf>,
     pub(super) git_dir: Option<PathBuf>,
     pub(super) user_pnpm: Option<PathBuf>,
+    /// 本次启动的活动核心版本；内置插件补丁层按它决定默认启停。
+    pub(super) core_version: Option<String>,
 }
 
 /// 端口释放等待上限：刚结束/清扫过上个会话的残留 dsh 进程后，TCP 端口释放
@@ -843,6 +845,7 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         resources: app_handle.path().resource_dir().ok(),
         git_dir: config::get_git_cmd_dir(&app_handle),
         user_pnpm: crate::service::cli::find_user_pnpm(&app_handle),
+        core_version: crate::service::core::active_version(&app_handle),
     };
     let notifications = Arc::new(OnceLock::new());
     let _ = notifications.set(app_handle);
@@ -889,6 +892,7 @@ pub(super) async fn launch_prepared(
         resources,
         git_dir,
         user_pnpm,
+        core_version,
     } = plan;
     let mut envs: HashMap<String, String> = HashMap::new();
     envs.insert(
@@ -998,6 +1002,11 @@ pub(super) async fn launch_prepared(
     envs.extend(config::proxy::proxy_child_env(&setting.proxy_url));
 
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
+    // 内置插件自带的补丁层按核心版本决定默认状态（0.2.2-rc.1 起官方 schedule
+    // 已支持新建会话，自研定时任务默认关闭）；表达式跑在核心进程里，读不到版本。
+    if let Some(version) = core_version {
+        envs.insert("DSH_TAURI_CORE_VERSION".to_string(), version);
+    }
 
     // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
     #[cfg(target_os = "linux")]

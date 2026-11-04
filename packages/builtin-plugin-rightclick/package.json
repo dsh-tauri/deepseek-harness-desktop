@@ -41,6 +41,7 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-workspace",
         "dsh-tauri",
         "dsh-tauri-ui"

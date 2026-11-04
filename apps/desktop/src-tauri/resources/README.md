@@ -2,7 +2,7 @@
 
 This directory is bundled into the installer as `resources/**`.
 
-The current recommended Harness core is `0.2.1-rc.5`; the minimum supported core
+The current recommended Harness core is `0.2.2-rc.1`; the minimum supported core
 is `0.2.1-rc.1`. Earlier core versions are unsupported. Legacy data-location notes
 below describe migration history, not support for earlier Harness versions.
 
@@ -50,7 +50,7 @@ mapping entry**.
 
 ```jsonc
 {
-  "engines": { "dsh": { "recommend": "0.2.1-rc.5", "minimum": "0.2.1-rc.1" } },
+  "engines": { "dsh": { "recommend": "0.2.2-rc.1", "minimum": "0.2.1-rc.1" } },
   "dependencies": {
     "node": {
       "engine": ">=22.22.0",
