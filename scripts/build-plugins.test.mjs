@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apply } from 'dsh-taiwind'
 import { afterEach, expect, it } from 'vitest'
-import { pruneDeployment } from './build-plugins.ts'
+import { pruneDeployment, verifyRemoteNativeBindings } from './build-plugins.ts'
 
 const roots = []
 const optionalWasi = `let nativeBinding = {}
@@ -151,4 +151,33 @@ it.each([
   const { root, names } = fixture('@tailwindcss/oxide', source)
   expect(() => pruneDeployment(root, names)).toThrow(`PLUGIN_DEPLOY_RELATIVE_MISSING:
   ${join('@tailwindcss/oxide', 'index.js')} -> ./tailwindcss-oxide.wasi.cjs`)
+})
+
+it('accepts a deploy tree that carries every binding the remote matrix needs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'plugin-deploy-native-'))
+  roots.push(root)
+  for (const name of ['linux-x64-gnu', 'linux-x64-musl', 'linux-arm64-gnu', 'linux-arm64-musl', 'darwin-x64']) {
+    const dir = join(root, '@tailwindcss', `oxide-${name}`)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, `tailwindcss-oxide.${name}.node`), '')
+  }
+  expect(() => verifyRemoteNativeBindings(root)).not.toThrow()
+})
+
+it.each([
+  ['a missing platform package', 'linux-x64-gnu', false],
+  ['a platform package shipped without its native addon', 'linux-arm64-musl', true],
+])('rejects %s so a Windows build cannot ship bindings the remote cannot load', (_, omit, withAddon) => {
+  const root = mkdtempSync(join(tmpdir(), 'plugin-deploy-native-'))
+  roots.push(root)
+  for (const name of ['linux-x64-gnu', 'linux-x64-musl', 'linux-arm64-gnu', 'linux-arm64-musl', 'darwin-x64']) {
+    const dir = join(root, '@tailwindcss', `oxide-${name}`)
+    if (name === omit && !withAddon)
+      continue
+    mkdirSync(dir, { recursive: true })
+    if (name !== omit)
+      writeFileSync(join(dir, `tailwindcss-oxide.${name}.node`), '')
+  }
+  expect(() => verifyRemoteNativeBindings(root)).toThrow(`PLUGIN_DEPLOY_NATIVE_MISSING:
+  @tailwindcss/oxide-${omit}`)
 })

@@ -134,6 +134,52 @@ const FALLBACK_CONDITION = 'default'
 const RUNTIME_FILE_PATTERN = /\.(?:js|cjs|mjs)$/
 const BUILD_TOOL_PEERS = ['typescript', '@genapi/shared'] as const
 
+/**
+ * 部署树的原生可选依赖必须一次带全宿主与远端平台。这棵树既是本机插件的解析根，
+ * 也会被 SSH 插件原样打包同步到远端（`dsh-tauri-remote` 的 plugins-sync），而
+ * `pnpm deploy` 默认只落构建机平台的绑定：Windows 上打出的包装到 Linux 远端即
+ * `Cannot find module '@tailwindcss/oxide-linux-x64-gnu'`（issue #1389）。
+ */
+const DEPLOY_PLATFORM_ARGS = [
+  '--os',
+  'current',
+  '--os',
+  'linux',
+  '--os',
+  'darwin',
+  '--cpu',
+  'x64',
+  '--cpu',
+  'arm64',
+  '--libc',
+  'glibc',
+  '--libc',
+  'musl',
+] as const
+
+/**
+ * 远端安装矩阵（`builtin-plugin-remote` 的 assets 表：linux x64、linux arm64、
+ * macOS x64；远端 Windows 与 macOS arm64 明确不支持）必需的原生绑定。
+ */
+const REMOTE_NATIVE_BINDINGS = [
+  '@tailwindcss/oxide-linux-x64-gnu',
+  '@tailwindcss/oxide-linux-x64-musl',
+  '@tailwindcss/oxide-linux-arm64-gnu',
+  '@tailwindcss/oxide-linux-arm64-musl',
+  '@tailwindcss/oxide-darwin-x64',
+] as const
+
+/** 每个绑定包都带一个 `.node` 原生模块；缺了它远端 require 会退回 WASI 并最终抛错。 */
+export function verifyRemoteNativeBindings(root: string): void {
+  const missing = REMOTE_NATIVE_BINDINGS.filter((name) => {
+    const dir = join(root, name)
+    return !existsSync(dir) || !collectFiles(dir).some(file => file.endsWith('.node'))
+  })
+  if (missing.length > 0) {
+    throw new Error(`PLUGIN_DEPLOY_NATIVE_MISSING:\n  ${missing.join('\n  ')}`)
+  }
+}
+
 export function relativeSpecifiers(source: string): string[] {
   return moduleSpecifiers(source).filter(specifier => specifier.startsWith('.'))
 }
@@ -655,6 +701,7 @@ function main(): void {
       '--prod',
       '--config.inject-workspace-packages=true',
       '--config.node-linker=hoisted',
+      ...DEPLOY_PLATFORM_ARGS,
       deployTarget,
     ])
     const deployed = join(temp, 'node_modules')
@@ -663,6 +710,7 @@ function main(): void {
     }
     materializeTree(deployed, DEPLOYED_NODE_MODULES)
     pruneDeployment(DEPLOYED_NODE_MODULES, names)
+    verifyRemoteNativeBindings(DEPLOYED_NODE_MODULES)
     verifyMaterialized(DEPLOYED_NODE_MODULES)
     console.log(`[build:plugins] deployed ${names.length} plugins to ${RESOURCE_ROOT}`)
   }
