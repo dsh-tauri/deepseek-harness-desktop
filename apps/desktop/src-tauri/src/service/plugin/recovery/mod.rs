@@ -174,6 +174,11 @@ pub fn uninstall(app_handle: &AppHandle, id: &str) -> Result<(), String> {
     let mut manifest: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("PLUGIN_RECOVERY_PARSE: {e}"))?;
 
+    // 补丁层先清：条目还在而包已被删时，loader 仍会 import 它并让整棵插件树加载
+    // 失败，而档案与 node_modules 都已改过，下一次退役扫描也不会再发现这个包。
+    // 反过来（补丁清了、清单没写成）只是丢了该插件的补丁配置，插件照常加载。
+    strip_cordis_patch_for(&profile, id)?;
+
     let modified = remove_plugin_from_manifest(&mut manifest, id);
     if modified {
         let rendered = serde_json::to_string_pretty(&manifest)
@@ -184,7 +189,6 @@ pub fn uninstall(app_handle: &AppHandle, id: &str) -> Result<(), String> {
     }
 
     remove_plugin_dir(&profile, id);
-    strip_cordis_patch_for(&profile, id);
     // 清掉 lockfile，让 pnpm 重装时重建干净依赖图（best-effort）。
     if let Err(e) = std::fs::remove_file(profile.join("pnpm-lock.yaml")) {
         if e.kind() != std::io::ErrorKind::NotFound {

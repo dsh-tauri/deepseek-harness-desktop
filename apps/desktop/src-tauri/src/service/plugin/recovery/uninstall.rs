@@ -126,17 +126,19 @@ pub(super) fn remove_plugin_dir(profile: &Path, id: &str) {
 /// 从 `cordis.patch.yml` 中剥离目标插件的 patch 条目（保留其它插件的 patch）。
 ///
 /// 与 dsh-desktop「直接重置为 []」不同：这里只移除与目标插件相关的条目，不破坏
-/// 其它插件的配置层，符合「其它插件不会被删除」的承诺。解析失败则原样保留。
-pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
+/// 其它插件的配置层，符合「其它插件不会被删除」的承诺。文件缺失或解析失败（属
+/// `patch_guard` 的语法错误路径）原样保留；写入失败必须上抛——补丁条目还在时
+/// loader 仍会 import 已删除的包，日志里既有「卸载成功」又有启动崩溃，无从排查。
+pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) -> Result<(), String> {
     let path = profile.join("cordis.patch.yml");
     let Ok(content) = fs::read_to_string(&path) else {
-        return;
+        return Ok(());
     };
     let Ok(doc) = parse_patch_layer(&content) else {
-        return;
+        return Ok(());
     };
     let Some(entries) = doc.as_sequence() else {
-        return;
+        return Ok(());
     };
     let kept: Vec<serde_yaml::Value> = entries
         .iter()
@@ -150,12 +152,14 @@ pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
     // 整棵插件树加载失败。这里再把 insert 里的目标条目摘掉，同一条目的其它插件原样保留。
     let removed_insert = remove_inserted_targets(&mut kept, id);
     if !removed_entry && !removed_insert {
-        return;
+        return Ok(());
     }
-    if let Ok(rendered) = render_patch_layer(&kept) {
-        let _ = fs::write(&path, rendered);
-        log::info!("Stripped cordis.patch.yml entries for plugin {id}");
-    }
+    let rendered = render_patch_layer(&kept)
+        .map_err(|e| format!("PLUGIN_PATCH_STRIP_RENDER_FAILED: {}: {e}", path.display()))?;
+    fs::write(&path, rendered)
+        .map_err(|e| format!("PLUGIN_PATCH_STRIP_WRITE_FAILED: {}: {e}", path.display()))?;
+    log::info!("Stripped cordis.patch.yml entries for plugin {id}");
+    Ok(())
 }
 
 /// 递归移除 `insert` 列表中针对目标插件的条目（兼容旧版写入的 group 嵌套结构）。
@@ -190,13 +194,24 @@ fn remove_inserted_targets(value: &mut serde_yaml::Value, id: &str) -> bool {
     }
 }
 
-/// insert 项是否针对目标插件：`id` / `name` 等字符串字段等于包名。
+/// insert 项是否针对目标插件：`id` / `name` 等字符串字段等于包名，或指向它的子路径
+/// 入口（`dsh-old/tool`）。
+///
+/// 子路径按 npm 包名边界判定：`dsh-old/tool` 属于 `dsh-old`，`dsh-old-extra/tool` 不是。
 fn inserted_item_targets(item: &serde_yaml::Value, id: &str) -> bool {
     item.as_mapping().is_some_and(|map| {
         map.iter().any(|(key, value)| {
-            key.as_str() == Some(id) || value.as_str() == Some(id)
+            key.as_str() == Some(id) || value.as_str().is_some_and(|text| refers_to_package(text, id))
         })
     })
+}
+
+/// 引用文本是否指向该包（或它的子路径入口）。
+fn refers_to_package(text: &str, id: &str) -> bool {
+    text == id
+        || text
+            .strip_prefix(id)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// 一个 patch 条目是否「针对」目标插件：顶层 id 字段或任意字段值等于该包名。
@@ -461,6 +476,25 @@ mod tests {
         assert!(kept_doc.contains("dsh-web-ui-all"));
         assert!(!kept_doc.contains("dsh-better-sidebar"));
     }
+
+    #[test]
+    fn patch_strip_matches_subpath_entry_by_package_boundary() {
+        let profile = tempfile::tempdir().unwrap();
+        let patch = profile.path().join("cordis.patch.yml");
+        // `name: dsh-old/tool` 指向被卸载包的子路径入口，包目录删除后同样 import 失败。
+        std::fs::write(
+            &patch,
+            "- insert:\n  - id: old-tool\n    name: dsh-old/tool\n  - id: neighbour\n    name: dsh-old-extra/tool\n",
+        )
+        .unwrap();
+
+        strip_cordis_patch_for(profile.path(), "dsh-old").unwrap();
+
+        let rendered = std::fs::read_to_string(&patch).unwrap();
+        assert!(!rendered.contains("dsh-old/tool"), "{rendered}");
+        assert!(rendered.contains("dsh-old-extra/tool"), "{rendered}");
+    }
+
 
     #[test]
     fn patch_strip_removes_target_inserted_entries_and_keeps_siblings() {
