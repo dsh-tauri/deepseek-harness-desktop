@@ -383,18 +383,19 @@ export const harness = defineStore({
       const error = await attachStartupDiagnostics(new Error(message))
       // 失败页文本是最直接的证据，优先作为日志行参与插件定位（pending 行正则
       // 可命中 `dsh-tauri-rightclick: pending (waiting for service: remote.session)`）
-      const lines = [
-        ...(detail ? detail.split(/\n/) : []),
-        ...(error.logLines ?? error.logs ?? []),
-      ]
+      const reported = detail ? detail.split(/\n/).filter(line => line.trim() !== '') : []
+      const lines = [...reported, ...(error.logLines ?? error.logs ?? [])]
       await recovery.reviewStartupRecovery(lines)
+      // 服务日志里往往没有这张失败页（插件在客户端激活失败，宿主侧无异常行），
+      // 因此错误页必须展示失败页原文，否则用户只看到「客户端报告了失败」。
       this.fail(
         error.message,
-        error.logs,
+        reported.length > 0 ? reported : error.logs,
         error.pluginConflictHint,
         error.inotifyLimitHint,
         this.serviceRunning,
         error.patchLayerHint,
+        error.heapOomHint,
       )
     },
 

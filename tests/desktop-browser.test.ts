@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 
-const script = readFileSync(new URL('../apps/desktop/src-tauri/src/desktop/browser.js', import.meta.url), 'utf8')
+const script = readFileSync(new URL('../apps/desktop/src-tauri/src/desktop/browser.js.inc', import.meta.url), 'utf8')
 
 function setup() {
   let callback: ((event: { payload: { lease: string, url: string } }) => void) | undefined

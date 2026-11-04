@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     markWebviewAlive: vi.fn(),
     markWebviewLeaving: vi.fn(),
     markWebviewBootReady: vi.fn(),
+    handleWebviewBootFailure: vi.fn(),
   },
   setting: { zoom_factor: 1.25 },
   listeners: new Map<string, (event: { payload: NativeState }) => void>(),
@@ -409,6 +410,29 @@ it('subscribes to window-targeted native state, keeping boot readiness separate'
   expect(mocks.harness.markWebviewLeaving).toHaveBeenCalledOnce()
   state({ loaded: false, alive: false, crashed: true })
   expect(mocks.harness.markWebviewError).toHaveBeenCalledOnce()
+})
+
+it('fails the shell with the boot failure page reported by the current guest only', async () => {
+  mocks.harness.handleWebviewBootFailure = vi.fn()
+  render(<HarnessWebview />)
+  await screen.findByTitle('Harness')
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'other-guest', detail: 'Failed to load plugins' } }))
+  expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
+  mocks.harness.webviewKey++
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'guest-local', detail: 'Failed to load plugins' } }))
+  expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
+  mocks.harness.webviewKey = 0
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'guest-local', detail: 'Failed to load plugins\ndsh-tauri-kernel: failed' } }))
+  expect(mocks.harness.handleWebviewBootFailure).toHaveBeenCalledWith('Failed to load plugins\ndsh-tauri-kernel: failed')
+  expect(mocks.options.get('dsh://plugin-boot:failed')).toEqual({ target: { kind: 'Window', label: 'main' } })
+})
+
+it('ignores local boot failures for a remote guest', async () => {
+  mocks.harness.handleWebviewBootFailure = vi.fn()
+  render(<HarnessWebview srcOverride="https://remote.test" />)
+  await screen.findByTitle('Harness')
+  act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'guest-local', detail: 'Failed to load plugins' } }))
+  expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
 })
 
 it('rejects stale labels and old generations while reloading', async () => {

@@ -115,6 +115,12 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
       store.harness.markWebviewError()
   }, { target: { kind: 'Window', label: getCurrentWindow().label } })
 
+  useListen<{ label?: string, detail?: string }>('dsh://plugin-boot:failed', ({ payload }) => {
+    if (remoteMode || guest === null || payload?.label !== guest.label || store.harness.webviewKey !== generation)
+      return
+    void store.harness.handleWebviewBootFailure(payload.detail)
+  }, { target: { kind: 'Window', label: getCurrentWindow().label } })
+
   useEffect(() => {
     const host = hostRef.current
     if (host === null || guest === null)
