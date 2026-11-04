@@ -23,6 +23,19 @@ fn active_dsh_version(app_handle: &AppHandle) -> Option<String> {
     core::active_version(app_handle).or_else(|| config::get_dsh_version(app_handle))
 }
 
+/// 托管安装目录里实际落盘的核心版本。
+///
+/// 自动更新替换的是这个目录，而不是当前选中的核心：本地核心生效时
+/// `active_dsh_version` 给出的是用户自己包管理器那份，拿它判断「是否高于最新稳定版」
+/// 会把托管目录里更高的版本（用户手动下载的预览版）覆盖成更旧的稳定版。
+fn installed_dsh_version(app_handle: &AppHandle) -> Option<String> {
+    core::app_core_version(
+        &config::get_dsh_install_path(app_handle),
+        config::get_dsh_pkg_tag(app_handle).as_deref(),
+    )
+    .or_else(|| config::get_dsh_version(app_handle))
+}
+
 /// 比较两个版本的先后（`candidate` 相对 `baseline`）。
 ///
 /// 两者都须能解析为语义化版本，否则返回 None——无从比较就不下结论，各调用点
@@ -150,7 +163,7 @@ pub async fn install_dependencies(
     // `fetch_latest_dsh_pkg_info` 内部已排除预览版（Pre-release label 或 tag 命名），
     // 并保证资产 URL 与摘要来自同一个 tag。
     let installed_version = dsh_files_ok
-        .then(|| active_dsh_version(&app_handle))
+        .then(|| installed_dsh_version(&app_handle))
         .flatten();
     let dsh_latest = download::fetch_latest_dsh_pkg_info(&app_handle).await;
     // 已装核心高于最新稳定版（用户主动装了预览版/更高版本）时保持本地安装：

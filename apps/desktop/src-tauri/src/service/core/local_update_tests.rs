@@ -26,6 +26,7 @@ fn local_update_isolation_checks_real_state_before_running_the_package_manager()
         "unreadable-app",
         "transition-reread",
         "holds-transition",
+        "newer-local",
     ] {
         let scratch = tempfile::tempdir().unwrap();
         let home = scratch.path().join("home");
@@ -193,6 +194,8 @@ fn local_update_isolation_child() {
         "unchanged-version" | "missing-version" | "pnpm-success"
     ) {
         "0.2.0-rc.2"
+    } else if case == "newer-local" {
+        "0.2.2-rc.1"
     } else {
         "0.1.6"
     };
@@ -341,6 +344,18 @@ fn local_update_isolation_child() {
                 let error = result.unwrap_err();
                 assert!(error.starts_with("CORE_UPDATE_FAILED:"), "{case}: {error}");
                 assert!(error.contains("fixture package manager failed"), "{error}");
+            } else if case == "newer-local" {
+                let error = result.unwrap_err();
+                assert!(
+                    error.starts_with("CORE_UPDATE_TARGET_OLDER:"),
+                    "{case}: {error}"
+                );
+                assert!(error.contains("0.2.2-rc.1"), "{error}");
+                assert!(
+                    !marker.exists(),
+                    "refused downgrades must not execute the package manager"
+                );
+                assert_eq!(local_core(app.handle()).unwrap().version, local_version);
             } else if matches!(case.as_str(), "unchanged-version" | "missing-version") {
                 let error = result.unwrap_err();
                 assert!(

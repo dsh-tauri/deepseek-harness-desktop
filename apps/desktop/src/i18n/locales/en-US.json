@@ -502,6 +502,7 @@
   "core.updated_toast": "Local core updated: {{version}}",
   "core.updated_switch_back_hint": "The desktop will keep using the current managed core. Switch back to the local core manually.",
   "core.update_failed": "Failed to update the local core",
+  "core.update_local_downgrade": "The installed core is newer than the package manager's latest, so nothing was installed. Pick the version yourself with your package manager",
   "core.switch_restart_hint": "Core switched — restarting the service…",
   "core.switch_failed": "Failed to switch the core",
   "core.download": "Download",

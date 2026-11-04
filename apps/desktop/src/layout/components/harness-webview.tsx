@@ -34,6 +34,11 @@ const BLOCKING_OVERLAY_SELECTOR = [
 /** `toast({ reveal: true })` 在 body 上留下的标记（见 `@/utils/toast`） */
 const REVEAL_TOAST_ATTRIBUTE = 'data-dsh-toast-reveal'
 
+/** 是否有必须被看见的壳层提示（即使 guest 还在加载也要让位） */
+function revealRequested(): boolean {
+  return document.body.getAttribute(REVEAL_TOAST_ATTRIBUTE) === 'true'
+}
+
 function visible(element: HTMLElement): boolean {
   const style = getComputedStyle(element)
   return element.getAttribute('aria-hidden') !== 'true' && style.display !== 'none'
@@ -41,16 +46,11 @@ function visible(element: HTMLElement): boolean {
 }
 
 /**
- * 是否必须让 guest 让位。Electron 的原生 guest 视图永远画在壳层 DOM 之上，壳层的内容
- * 只有先隐藏 guest 并留一张静态快照才看得见——旧 WebView 架构里这些是普通 DOM，
- * 没有这层让位需求。
- *
- * toast 只认显式标了 `reveal` 的条目：更新提示这类必须被看见并点到的内容不能被整块
- * 页面盖住，而加载进度、操作结果等普通提示若也算进来，页面会随每条提示闪成静态快照。
+ * 是否有必须让 guest 让位的壳层浮层。Electron 的原生 guest 视图永远画在壳层 DOM 之上，
+ * 壳层的内容只有先隐藏 guest 并留一张静态快照才看得见——旧 WebView 架构里这些是普通
+ * DOM，没有这层让位需求。
  */
 function visibleBlockingOverlay(): boolean {
-  if (document.body.getAttribute(REVEAL_TOAST_ATTRIBUTE) === 'true')
-    return true
   for (const element of document.body.querySelectorAll<HTMLElement>(BLOCKING_OVERLAY_SELECTOR)) {
     if (visible(element))
       return true
@@ -154,7 +154,11 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
       if (![rect.left, rect.top, rect.width, rect.height].every(Number.isFinite))
         return
       const available = (remoteMode || !layoutRef.current.showError) && rect.width > 0 && rect.height > 0
-      const blocked = available && readyLabelRef.current === guest!.label && visibleBlockingOverlay()
+      const ready = readyLabelRef.current === guest!.label
+      // 更新提示（`reveal`）先于页面加载也成立：启动即检查更新，guest 加载完之前
+      // 提示会被整块盖住，等加载完提示可能已经超时消失。其余浮层仍等加载完再让位，
+      // 免得首帧就隐藏一个正在初始化的页面。
+      const blocked = available && (revealRequested() || (ready && visibleBlockingOverlay()))
       const devicePixelRatio = window.devicePixelRatio
       const zoomFactor = layoutRef.current.zoom
       const request = JSON.stringify([rect.left, rect.top, rect.width, rect.height, available, blocked, devicePixelRatio, zoomFactor])
@@ -186,7 +190,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
             return
           const bounds = { label: guest!.label, x: rect.left * ratio, y: rect.top * ratio, width: Math.max(1, rect.width * ratio), height: Math.max(1, rect.height * ratio), zoomFactor }
           const geometry = JSON.stringify(bounds)
-          if (blocked && !backdrop) {
+          if (blocked && ready && !backdrop) {
             if (appliedGeometry !== geometry) {
               await invoke('update_harness_webview', { ...bounds, visible: true })
               appliedGeometry = geometry

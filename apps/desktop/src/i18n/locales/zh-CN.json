@@ -502,6 +502,7 @@
   "core.updated_toast": "本地核心已更新：{{version}}",
   "core.updated_switch_back_hint": "桌面端将继续使用当前受管核心。请手动切回本地核心。",
   "core.update_failed": "本地核心更新失败",
+  "core.update_local_downgrade": "本地已安装的版本高于包管理器的 latest，未做降级；请在包管理器中手动选择版本",
   "core.switch_restart_hint": "核心已切换，正在自动重启服务…",
   "core.switch_failed": "切换核心失败",
   "core.download": "下载",
