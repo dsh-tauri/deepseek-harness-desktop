@@ -553,6 +553,17 @@ pub async fn create_app_window(
             return Err("WINDOW_CREATE_FAILED: presentation requires sessionId".into());
         }
     }
+    log::info!(
+        "[window] create_app_window from {}: profile={profile:?} session={session_id:?} presentation={presentation:?}",
+        window.label()
+    );
+    let navigation = session_id
+        .as_deref()
+        .map(|session_id| session_navigation_script(session_id, presentation.as_deref()))
+        .transpose()?;
+    let _transition = crate::service::workflow::acquire_core_transition().await?;
+    // 档案存在性必须在锁内复查：等锁期间别的窗口可能已经把它删掉，锁外校验通过后
+    // 再绑定就会把新窗口挂到一个不存在的档案上。
     let target = match profile {
         Some(id) => {
             crate::service::profile::select(&app_handle, &id)
@@ -561,15 +572,6 @@ pub async fn create_app_window(
         }
         None => crate::service::workflow::instances::window_profile(&app_handle, window.label()),
     };
-    log::info!(
-        "[window] create_app_window from {}: profile={target} session={session_id:?} presentation={presentation:?}",
-        window.label()
-    );
-    let navigation = session_id
-        .as_deref()
-        .map(|session_id| session_navigation_script(session_id, presentation.as_deref()))
-        .transpose()?;
-    let _transition = crate::service::workflow::acquire_core_transition().await?;
     crate::desktop::builder::build_extra_window(
         &app_handle,
         "index.html".into(),

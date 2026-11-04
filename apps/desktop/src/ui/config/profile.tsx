@@ -430,18 +430,18 @@ export function ConfigProfile() {
                       </Checkbox.Control>
                     </Checkbox.Content>
                   </Checkbox>
-                  <Chip
-                    className={busy ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}
-                    color="accent"
-                    size="sm"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      if (!busy)
-                        void openProfileWindow(profile)
-                    }}
-                  >
-                    {t('profiles.open_window')}
-                  </Chip>
+                  {/* 单独包一层拦冒泡：行本体是「切换档案」，按钮点击不该顺带切档案 */}
+                  <span onClick={event => event.stopPropagation()}>
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      className="h-7"
+                      isDisabled={busy}
+                      onPress={() => void openProfileWindow(profile)}
+                    >
+                      {t('profiles.open_window')}
+                    </Button>
+                  </span>
                   <If cond={advanced}>
                     <Chip
                       size="sm"
