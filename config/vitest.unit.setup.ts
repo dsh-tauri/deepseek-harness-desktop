@@ -26,5 +26,7 @@ function escape(value: string): string {
 if (typeof window !== 'undefined') {
   const css = window.CSS ?? (window.CSS = {} as typeof CSS)
   css.escape ??= escape
+  // jsdom ships neither CSS.supports nor a cascade it could report; official hooks probe it for feature detection.
+  css.supports ??= () => false
   globalThis.CSS = css
 }
