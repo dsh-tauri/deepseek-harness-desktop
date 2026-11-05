@@ -115,10 +115,11 @@ function ensureHostRoot(): void {
   mount.id = MOUNT_ID
   mount.style.cssText = 'pointer-events:none'
   // 弹层容器铺满视口且自身不拦截点击：react-aria 的浮层是 `position: fixed`，
-  // 锚点按视口算；可交互区域由浮层自己声明。
+  // 锚点按视口算；可交互区域由浮层自己声明。层级必须高于挂载点，否则菜单、对话框会被
+  // 导航栏整条盖住（截图里表现为「菜单藏在白底下面」）。
   const portal = document.createElement('div')
   portal.id = PORTAL_ID
-  portal.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:1'
+  portal.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483000'
   shadow.append(style, mount, portal)
   root.append(host)
   root.append(createDragNeutralizer())

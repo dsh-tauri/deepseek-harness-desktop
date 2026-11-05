@@ -191,8 +191,12 @@ export function Shell() {
     return () => window.clearTimeout(timer)
   }, [fullSidebar, fullSidebarRevealed])
 
+  // 文档即 DSH 时壳层根元素必须保持透明：`dshStyle.frame` 是 DSH 自己那层的外框底色，
+  // 铺到壳层根元素上会糊住背后的文档，表现为整窗一片纯色。
+  const frameStyle = isHostedServiceDocument() ? undefined : (dshStyle.frame || {})
+
   return (
-    <main className="relative flex flex-col min-h-0 flex-1" style={dshStyle.frame || {}}>
+    <main className="relative flex flex-col min-h-0 flex-1" style={frameStyle}>
       {/* 启动页、预装引导与恢复页共用外观变量 */}
       <style>{appearanceCss}</style>
       <If
