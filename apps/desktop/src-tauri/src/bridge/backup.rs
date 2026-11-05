@@ -82,12 +82,9 @@ pub async fn restore_profile(
     timestamp: String,
     as_new: bool,
 ) -> Result<(), String> {
+    let current_profile = instances::window_profile(&app_handle, window.label());
     let transition = crate::service::workflow::acquire_core_transition().await?;
-    let profile = target_profile(
-        &app_handle,
-        instances::window_profile(&app_handle, window.label()),
-        profile_id,
-    )?;
+    let profile = target_profile(&app_handle, current_profile, profile_id)?;
     instances::scope(profile.clone(), async move {
         let mode = if as_new {
             backup::RestoreMode::AsNew
