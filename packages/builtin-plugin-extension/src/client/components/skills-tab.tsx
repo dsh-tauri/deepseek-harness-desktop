@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { Translate } from '../locales/index.types'
 import type { SkillRowView } from '../types'
-import { Action, ArrowRotateRight, Button, Card, Checkbox, Field, GraduationCap, Icon, Input, LogoGithub, Modal, Pill, SegmentedControl, Switch, Tag, Text, Textarea, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
+import { Action, ArrowRotateRight, Button, Card, Checkbox, Field, Icon, Input, LogoGithub, Modal, Pill, SegmentedControl, Switch, Tag, Text, Textarea, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
 import { orderBy, uniq } from 'dsh-tauri/client'
 import { useEffect, useMemo, useState } from 'react'
 import { deleteSkill, getSkill, getSkills, postOpenDir, postRoots, postSkill, postSkillPolicy, postSkillsRefresh } from '../apis'
@@ -24,11 +24,12 @@ export interface SkillEditorState {
 export type OpenTarget = { target: 'user-skills' } | { target: 'skill', name: string }
 
 export interface SkillsTabProps {
+  close?: () => void
   t: Translate
   createSkill: () => Promise<void>
 }
 
-export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
+export function SkillsTab({ close, t, createSkill }: SkillsTabProps): ReactElement {
   const [skills, setSkills] = useState<SkillRowView[] | null>(null)
   const [editor, setEditor] = useState<SkillEditorState | null>(null)
   const [preview, setPreview] = useState(false)
@@ -171,6 +172,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     setBusy(true)
     try {
       await createSkill()
+      close?.()
     }
     catch (error) { setToast({ text: `${t('skillCreatorFailed')}: ${error instanceof Error ? error.message : String(error)}`, seq: Date.now() }) }
     finally {
@@ -215,9 +217,8 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
 
   return (
     <div className="flex flex-col gap-[14px] text-primary">
-      <div className="flex items-center gap-[10px] flex-wrap [&_h3]:m-0 [&_h3]:text-[16px] [&_h3]:leading-[24px] [&_h3]:font-medium">
-        <span className="inline-flex items-center justify-center flex-none w-[22px] h-[22px]"><Icon as={GraduationCap} size={16} /></span>
-        <h3>{t('skillsTitle')}</h3>
+      <div className="flex items-center gap-[10px] flex-wrap">
+        <h2 className="m-0 text-[16px] leading-[24px] font-medium">{t('skillsTitle')}</h2>
         <span className="flex-1" />
         <Button variant="ghost" size="sm" onClick={() => void doOpen({ target: 'user-skills' })}>{t('openUserSkills')}</Button>
         <Button
@@ -234,8 +235,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
         <Button variant="primary" size="sm" disabled={busy} onClick={() => void doCreate()}>{t('newSkill')}</Button>
       </div>
       <Text tone="tertiary">{t('skillsIntro')}</Text>
-      <div className="flex items-center gap-[7px] px-[2px] mt-[2px] [&_h3]:m-0 [&_h3]:text-[13px] [&_h3]:leading-[20px] [&_h3]:font-semibold">
-        <h3>{t('skillsTab')}</h3>
+      <div className="flex items-center gap-[7px] flex-wrap">
         {skills && (
           <span className="text-[12px] leading-[18px] text-tertiary tabular-nums">
             {filtered.length}

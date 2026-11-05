@@ -1,4 +1,4 @@
-import type { SessionListSnapshot, WorkspaceListItem, WorkspaceListSnapshot } from './extension-panel.types'
+import type { SessionListSnapshot, WorkspaceListItem, WorkspaceListSnapshot } from './skills-section.types'
 
 function workspaceId(item: WorkspaceListItem): string | undefined {
   return item.workspaceId ?? item.id

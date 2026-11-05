@@ -54,7 +54,7 @@ export default c([c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
   c('[data-dsh-dock-fallback]', {
     display: 'none !important',
   }),
-  c('[data-slot="main"] header[class*="_pageHead"]:not([data-dsh-extension-plugins] *)', {
+  c('[data-slot="main"] header[class*="_pageHead"]', {
     paddingLeft: '0 !important',
     paddingTop: '24px !important',
   }),
