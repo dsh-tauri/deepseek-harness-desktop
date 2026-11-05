@@ -55,29 +55,6 @@ pub(super) struct LaunchPlan {
 /// 复用配置端口；到期仍未释放才按“真占用”逐级递增。
 const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-#[cfg(target_os = "linux")]
-fn harness_library_path(
-    appdir: Option<&std::ffi::OsStr>,
-    library_path: Option<&std::ffi::OsStr>,
-) -> Option<OsString> {
-    use std::os::unix::ffi::OsStrExt;
-
-    let library_path = library_path?;
-    let Some(appdir) = appdir.filter(|path| !path.is_empty()) else {
-        return Some(library_path.to_os_string());
-    };
-    Some(
-        std::env::join_paths(
-            library_path
-                .as_bytes()
-                .split(|byte| matches!(*byte, b':' | b';'))
-                .map(|path| Path::new(std::ffi::OsStr::from_bytes(path)))
-                .filter(|path| !path.starts_with(Path::new(appdir))),
-        )
-        .expect("split Linux library paths contain no path separator"),
-    )
-}
-
 fn fatal_report_path(log_path: &Path) -> PathBuf {
     static NEXT_REPORT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let timestamp = std::time::SystemTime::now()
@@ -996,7 +973,7 @@ pub(super) async fn launch_prepared(
 
     // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
     #[cfg(target_os = "linux")]
-    let library_path = harness_library_path(
+    let library_path = crate::utils::child_library_path(
         std::env::var_os("APPDIR").as_deref(),
         std::env::var_os("LD_LIBRARY_PATH").as_deref(),
     );
@@ -1224,118 +1201,6 @@ pub(super) async fn launch_prepared(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(target_os = "linux")]
-    mod appimage_library_path {
-        use super::*;
-        use std::ffi::OsStr;
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-        #[test]
-        fn removes_only_appimage_library_directories() {
-            assert_eq!(
-                harness_library_path(
-                    Some(OsStr::new("/tmp/.mount_DSH")),
-                    Some(OsStr::new("/opt/custom/lib:/tmp/.mount_DSH/usr/lib:/tmp/.mount_DSH:/tmp/.mount_DSH-other/lib:")),
-                ),
-                Some(OsString::from("/opt/custom/lib:/tmp/.mount_DSH-other/lib:")),
-            );
-        }
-
-        #[test]
-        fn filters_semicolon_and_mixed_library_path_separators() {
-            for path in [
-                "/opt/custom/lib;/tmp/.mount_DSH/usr/lib",
-                "/tmp/.mount_DSH/usr/lib;/opt/custom/lib",
-                "/tmp/.mount_DSH/usr/lib:/opt/custom/lib;/tmp/.mount_DSH/usr/lib64",
-            ] {
-                assert_eq!(
-                    harness_library_path(
-                        Some(OsStr::new("/tmp/.mount_DSH")),
-                        Some(OsStr::new(path))
-                    ),
-                    Some(OsString::from("/opt/custom/lib")),
-                    "{path}",
-                );
-            }
-        }
-
-        #[test]
-        fn retains_empty_components_and_loader_tokens() {
-            assert_eq!(
-                harness_library_path(
-                    Some(OsStr::new("/tmp/.mount_DSH")),
-                    Some(OsStr::new(";/tmp/.mount_DSH/usr/lib;;$ORIGIN/$LIB:;")),
-                ),
-                Some(OsString::from("::$ORIGIN/$LIB::")),
-            );
-        }
-
-        #[test]
-        fn filters_non_utf8_appimage_paths_without_removing_siblings() {
-            assert_eq!(
-                harness_library_path(
-                    Some(OsStr::from_bytes(b"/tmp/.mount_\xff")),
-                    Some(OsStr::from_bytes(
-                        b"/tmp/.mount_\xff/usr/lib;/opt/\xfe/lib:/tmp/.mount_\xff-other/lib"
-                    )),
-                ),
-                Some(OsString::from_vec(
-                    b"/opt/\xfe/lib:/tmp/.mount_\xff-other/lib".to_vec()
-                )),
-            );
-        }
-
-        #[test]
-        fn preserves_library_path_without_an_appimage_directory() {
-            let path = Some(OsStr::new("/opt/custom/lib"));
-            assert_eq!(
-                harness_library_path(None, path),
-                Some(OsString::from("/opt/custom/lib"))
-            );
-            assert_eq!(
-                harness_library_path(Some(OsStr::new("")), path),
-                Some(OsString::from("/opt/custom/lib"))
-            );
-        }
-
-        #[test]
-        fn preserves_an_unset_library_path() {
-            assert_eq!(
-                harness_library_path(Some(OsStr::new("/tmp/.mount_DSH")), None),
-                None
-            );
-        }
-
-        #[test]
-        fn clears_a_library_path_containing_only_appimage_directories() {
-            for path in [
-                "/tmp/.mount_DSH/usr/lib",
-                "/tmp/.mount_DSH/usr/lib;/tmp/.mount_DSH/usr/lib64",
-                "",
-            ] {
-                assert_eq!(
-                    harness_library_path(
-                        Some(OsStr::new("/tmp/.mount_DSH")),
-                        Some(OsStr::new(path))
-                    ),
-                    Some(OsString::new()),
-                    "{path}",
-                );
-            }
-        }
-
-        #[test]
-        fn preserves_non_utf8_user_library_paths() {
-            assert_eq!(
-                harness_library_path(
-                    Some(OsStr::new("/tmp/.mount_DSH")),
-                    Some(OsStr::from_bytes(b"/opt/\xff/lib:/tmp/.mount_DSH/usr/lib"))
-                ),
-                Some(OsString::from_vec(b"/opt/\xff/lib".to_vec())),
-            );
-        }
-    }
 
     #[test]
     fn occupied_port_advances_to_a_free_port() {
