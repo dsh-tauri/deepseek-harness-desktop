@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "toast",
+  "description": "Transparent toast overlay window: renders shell toasts above the native Harness view and forwards button actions back to the shell.",
+  "local": true,
+  "windows": [
+    "toast"
+  ],
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:window:allow-set-size",
+    "core:window:allow-scale-factor"
+  ]
+}

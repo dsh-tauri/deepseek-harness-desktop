@@ -1,189 +1,209 @@
 import type { ToastContentValue } from '@heroui/react/toast'
 import type { ToastVariants } from '@heroui/styles'
 import type { ReactNode } from 'react'
-import { ToastQueue } from '@heroui/react'
-import { hooks } from '@/config/hooks'
+import type { ToastCloseReason, ToastOptions, ToastUpdateOptions } from './toast.handle'
+import { invoke } from '@tauri-apps/api/core'
+import { emitTo, listen } from '@tauri-apps/api/event'
+import { toast as local } from './toast.handle'
 
-/** toast 关闭来源：库侧 close 不携带原因，只能由本模块预记或按超时配置反推 */
-export type ToastCloseReason = 'closed' | 'evicted' | 'dismissed'
+export type { Placement, ToastCloseReason, ToastOptions, ToastUpdateOptions } from './toast.handle'
+export { activeQueues, placements } from './toast.handle'
 
-/** toast() 可选项：库内未暴露的 HeroUIToastOptions（toast-queue 收敛的 content + 超时回调），这里用公开的 ToastContentValue 组合 */
-export type ToastOptions = Partial<ToastContentValue & { timeout?: number, onClose?: (reason: ToastCloseReason) => void }> & { placement?: Placement, sticky?: boolean }
-export type ToastUpdateOptions = Partial<ToastContentValue>
+type Placement = NonNullable<ToastVariants['placement']>
+type ToastVariant = NonNullable<ToastContentValue['variant']>
 
-/**
- * react-stately 队列的内部形态：`updateVisibleToasts` 是 TS private 但运行时存在，
- * 只重建 visibleToasts 并通知订阅者，不改动条目，因此改 content 后必须自己调它。
- */
-interface StatelyQueue {
-  queue: Array<{ key: string, content?: ToastContentValue }>
-  updateVisibleToasts: (action: string) => void
-}
+/** 透明 toast 窗口的 label。与 `desktop::toast_view` 的常量逐字一致。 */
+export const TOAST_WINDOW_LABEL = 'toast'
 
-export type Placement = NonNullable<ToastVariants['placement']>
-export const placements = [
-  'top start',
-  'top',
-  'top end',
-  'bottom start',
-  'bottom',
-  'bottom end',
-] as const
-
-/**
- * 单个 placement 同时存在的 toast 上限：渲染层（maxVisibleToasts）与丢弃层
- * （placementKeys 超限关最旧）共用同一数值。
- */
-const MAX_VISIBLE_TOASTS = 3
-
-export const queues = Object.fromEntries(
-  placements.map(p => [p, new ToastQueue({ maxVisibleToasts: MAX_VISIBLE_TOASTS })]),
-) as Record<Placement, ToastQueue>
-
-const linuxQueues = Object.fromEntries(
-  placements.map(p => [p, new ToastQueue({ maxVisibleToasts: MAX_VISIBLE_TOASTS, wrapUpdate: fn => fn() })]),
-) as Record<Placement, ToastQueue>
-
-export const activeQueues = navigator.platform.toLowerCase().includes('linux')
-  ? linuxQueues
-  : queues
-
-const toastContents = new Map<string, ToastContentValue>()
-const placementsKeys = new Map<string, Placement>()
-/**
- * 程序化关闭的原因旁路表。底层 react-stately 的 `close(key)` 对「自动超时 / 用户点
- * 关闭 / 外部 close」走同一条路径且不透传参数，本模块只能在调用 close 前先登记，
- * 回调时取出；未登记（用户点关闭按钮）再按超时配置反推，见 `takeCloseReason`。
- */
-const closeReasons = new Map<string, ToastCloseReason>()
-/**
- * 每个 placement 的存活 key（按创建顺序，旧→新）。stately queue 对超出
- * maxVisibleToasts 的条目只做「窗口外排队、等旧条目关闭后复现」，常驻
- * （timeout: 0）气泡会无限积压并在旧气泡关闭时复现；这里在新 toast 入队后
- * 直接关闭最旧的条目，保证任何时刻只存在最新的 MAX_VISIBLE_TOASTS 条。
- * `sticky` 的气泡（授权按钮）不入表：它们必须一直可点，被淘汰就等于把用户
- * 堵在「等待授权」上再也点不到（见 config/plugin 的授权流程）。
- */
-const placementOrder = new Map<Placement, string[]>()
-
-/**
- * 同步清理一条 toast 的登记。`keepReason` 为真时保留关闭原因，供库侧稍后
- * （rAF 异步）触发的 onClose 读取——`close()` 必须这样调用，否则常驻气泡
- * （`timeout: 0`）的程序化关闭会被误判为用户拒绝。
- */
-function forgetKey(key: string, keepReason = false): void {
-  toastContents.delete(key)
-  if (!keepReason)
-    closeReasons.delete(key)
-  const placement = placementsKeys.get(key)
-  placementsKeys.delete(key)
-  if (placement === undefined)
-    return
-  const order = placementOrder.get(placement)
-  if (order === undefined)
-    return
-  const index = order.indexOf(key)
-  if (index >= 0)
-    order.splice(index, 1)
-  if (order.length === 0)
-    placementOrder.delete(placement)
+/** 一条 toast 的可序列化描述：这是唯一能跨进程传的形式。 */
+export interface ToastRecord {
+  key: string
+  placement: Placement
+  title: string
+  description?: string
+  variant?: ToastVariant
+  isLoading?: boolean
+  sticky?: boolean
+  autoClose: boolean
+  action?: { id: string, label: string, variant?: string }
 }
 
 /**
- * 关闭原因：优先取本模块登记的程序化原因；未登记说明是用户在气泡上点了关闭
- * （或自动超时），按该条是否配了自动关闭超时反推——配了就是超时自动消失，
- * 没配（`timeout: 0` 常驻）只能是用户点了关闭。
+ * 壳层 toast 的转发层。
+ *
+ * Electron 架构下 Harness 页面是主窗口里的原生 WebContentsView，永远画在壳层 DOM 之上，
+ * 壳层右下角的 toast 会被整块盖住。这里把每条 toast 的**可序列化描述**镜像给独立的
+ * 透明置顶窗口（`toast.html`），由那个窗口里的 HeroUI 渲染（issue #1408）。
+ *
+ * 壳层本地队列照旧保留：`key` / `onClose` / `sticky` / 淘汰规则全部由 `toast.handle` 决定，
+ * 对外暴露的接口与拆分前完全一致，42 处调用点一行不用改。
+ *
+ * 两样不可跨进程的东西在这里被换成可传输的表示：
+ * - `description` 可能是 JSX，只保留文本；
+ * - `actionProps.onPress` 是闭包，登记成 action id，点击由透明窗口回传后执行。
  */
-function takeCloseReason(key: string, autoClose: boolean): ToastCloseReason {
-  const recorded = closeReasons.get(key)
-  if (recorded !== undefined) {
-    closeReasons.delete(key)
-    return recorded
+const actions = { next: 0, handlers: new Map<string, () => void>() }
+const records = new Map<string, ToastRecord>()
+
+/** 把 JSX / 数组 / 字符串压成纯文本；压不出来的（自定义组件）返回 undefined。 */
+function textOf(value: unknown): string | undefined {
+  if (value === null || value === undefined || typeof value === 'boolean')
+    return undefined
+  if (typeof value === 'string' || typeof value === 'number')
+    return String(value)
+  if (Array.isArray(value))
+    return value.map(textOf).filter(part => part !== undefined && part !== '').join('') || undefined
+  if (typeof value === 'object' && 'props' in value) {
+    const props = (value as { props?: { children?: unknown } }).props
+    return textOf(props?.children)
   }
-  return autoClose ? 'closed' : 'dismissed'
+  return undefined
+}
+
+function recordOf(
+  key: string,
+  placement: Placement,
+  content: ToastContentValue & { sticky?: boolean, autoClose?: boolean },
+): ToastRecord {
+  const button = content.actionProps
+  let action: ToastRecord['action']
+  if (button?.onPress !== undefined && button.children !== undefined) {
+    const id = `act-${++actions.next}`
+    const press = button.onPress
+    actions.handlers.set(id, () => press(undefined as never))
+    action = {
+      id,
+      label: textOf(button.children) ?? '',
+      variant: typeof button.variant === 'string' ? button.variant : undefined,
+    }
+  }
+  return {
+    key,
+    placement,
+    title: textOf(content.title) ?? '',
+    description: textOf(content.description),
+    variant: content.variant,
+    isLoading: content.isLoading,
+    sticky: content.sticky,
+    autoClose: content.autoClose ?? true,
+    action,
+  }
+}
+
+function push(record: ToastRecord): void {
+  records.set(record.key, record)
+  // 窗口需要先存在才能收事件：`toast_view_show` 幂等地创建、贴合并显示，
+  // 之后再用 emitTo 推内容。顺序不能反，否则首条提示会丢在未挂载的页面里。
+  void invoke('toast_view_show')
+    .then(() => emitTo({ kind: 'Window', label: TOAST_WINDOW_LABEL }, 'dsh://toast:show', record))
+    .catch(error => console.warn('[toast] overlay forward failed:', error))
+}
+
+/** 最后一条提示消失时收起窗口，避免留下一块置顶的透明层。 */
+function hideWhenEmpty(): void {
+  if (records.size > 0)
+    return
+  void invoke('toast_view_hide').catch(() => {})
 }
 
 /**
- * 统一 toast API：直接调用创建，toast.update/close/clear/isActive 通过 key 管理。
- * HeroUI 默认气泡直接读队列条目的 content，而 HeroUI ToastQueue 没有 update 方法：
- * 这里原地改写条目 content 并通知 react-stately 队列重渲染，同时触发
- * `hooks['toast.updated']`（见 config/hooks）供桌宠窗口的自定义气泡消费。
+ * 统一 toast API：签名与拆分前完全一致（`toast(...)` / `update` / `close` / `clear` /
+ * `isActive`）。本地照旧入壳层队列，同时把可序列化镜像推给透明窗口。
  */
 export const toast = Object.assign(
   (message: string | ReactNode, options?: ToastOptions) => {
-    // 默认右下角；个别调用方需要其他位置时显式传 placement
-    const { placement = 'bottom end', timeout, onClose, sticky = false, ...rest } = options || {}
-    const content = { title: message, ...rest }
-    // 未指定 timeout 时 HeroUI 会补默认超时（`constants: DEFAULT_TOAST_TIMEOUT`），
-    // 因此「undefined 或正数」都意味着这条会自己消失。
+    const { placement = 'bottom end', timeout, onClose, ...rest } = options || {}
+    let key = ''
+    // 包一层 onClose：库侧自动超时 / 用户点关闭同样要把透明窗口里的那条收掉，
+    // 否则气泡会在覆盖层里一直停着（那个窗口的条目只能由壳层通知关闭）。
+    // `autoClose` 与 toast.handle 同一判定：未指定超时由库补默认值，只有显式 0 才常驻。
     const autoClose = timeout === undefined || timeout > 0
-    const key = activeQueues[placement].add(content, {
-      timeout,
-      onClose: () => {
-        // 自动超时 / 用户关闭 / 外部 close 都会走到这里；延后业务回调，避免渲染中更新组件。
-        const reason = takeCloseReason(key, autoClose)
-        forgetKey(key)
-        queueMicrotask(() => onClose?.(reason))
+    key = local(message, {
+      ...options,
+      onClose: (reason: ToastCloseReason) => {
+        records.delete(key)
+        void emitTo({ kind: 'Window', label: TOAST_WINDOW_LABEL }, 'dsh://toast:close', { key })
+          .catch(() => {})
+        hideWhenEmpty()
+        onClose?.(reason)
       },
     })
-    toastContents.set(key, content)
-    placementsKeys.set(key, placement)
-    if (sticky)
-      return key
-    const order = placementOrder.get(placement) ?? []
-    order.push(key)
-    placementOrder.set(placement, order)
-    // 丢弃超出上限的最旧条目（含 rAF 清理延迟期内的死 key），维持「仅最新 N 条」
-    while (order.length > MAX_VISIBLE_TOASTS) {
-      const oldest = order.shift()
-      if (oldest !== undefined) {
-        closeReasons.set(oldest, 'evicted')
-        activeQueues[placement].close(oldest)
-      }
-    }
+    push(recordOf(key, placement, { title: message, autoClose, ...rest }))
     return key
   },
   {
     update(key: string, options: ToastUpdateOptions): void {
-      const placement = placementsKeys.get(key)
-      if (placement === undefined)
+      local.update(key, options)
+      const current = records.get(key)
+      if (current === undefined)
         return
-      toastContents.set(key, { ...(toastContents.get(key) ?? {}), ...options })
-      const queue = activeQueues[placement].getQueue() as unknown as StatelyQueue
-      const entry = queue.queue.find(item => item.key === key)
-      if (entry !== undefined) {
-        entry.content = { ...entry.content, ...options }
-        queue.updateVisibleToasts('update')
-      }
-      void hooks['toast.updated'].trigger({ key, options })
+      const next = recordOf(key, current.placement, { ...current, ...options })
+      // 只改文案时沿用原 action：新内容里没有 onPress，不该把已登记的按钮弄丢。
+      push({ ...next, action: next.action ?? current.action })
     },
 
-    /** 该 key 是否仍是活着的 toast：被限额淘汰后 update/close 都会静默失效 */
     isActive(key: string): boolean {
-      return placementsKeys.has(key)
+      return local.isActive(key)
     },
 
     close(key: string): void {
-      const placement = placementsKeys.get(key)
-      if (placement) {
-        closeReasons.set(key, 'closed')
-        activeQueues[placement].close(key)
-        // onClose 是 rAF 异步回调：保留关闭原因到那时再取，但同步清掉其余登记，
-        // 紧随其后的 add 不会把死 key 计入限额
-        forgetKey(key, true)
-      }
-      else {
-        toastContents.delete(key)
-        closeReasons.delete(key)
-      }
+      local.close(key)
+      records.delete(key)
+      void emitTo({ kind: 'Window', label: TOAST_WINDOW_LABEL }, 'dsh://toast:close', { key })
+        .catch(() => {})
+      hideWhenEmpty()
     },
 
     clear(): void {
-      toastContents.clear()
-      placementsKeys.clear()
-      placementOrder.clear()
-      closeReasons.clear()
-      placements.forEach(p => activeQueues[p].clear())
+      local.clear()
+      records.clear()
+      actions.handlers.clear()
+      void emitTo({ kind: 'Window', label: TOAST_WINDOW_LABEL }, 'dsh://toast:clear', {})
+        .catch(() => {})
+      hideWhenEmpty()
     },
   },
 )
+
+/**
+ * 透明窗口就绪后要一次全量，避免窗口创建晚于首条提示时丢内容。
+ * 由 toast 页面在挂载时发 `{ kind: 'ready' }` 触发。
+ */
+function syncToastMirrors(): void {
+  void emitTo({ kind: 'Window', label: TOAST_WINDOW_LABEL }, 'dsh://toast:sync', {
+    records: [...records.values()],
+  }).catch(() => {})
+}
+
+/**
+ * 透明窗口回传的两类消息都在这里处理：`ready` 请求全量回放，`press` 执行壳层登记的
+ * 原回调（action 闭包无法跨进程，只能登记成 id 再回查）。由壳层入口挂一次。
+ */
+export function startToastActionBridge(): () => void {
+  let disposed = false
+  let unlisten: (() => void) | undefined
+  void listen<{ kind?: string, id?: string }>('dsh://toast:action', ({ payload }) => {
+    if (payload?.kind === 'ready') {
+      syncToastMirrors()
+      return
+    }
+    const id = payload?.id
+    if (typeof id !== 'string')
+      return
+    const run = actions.handlers.get(id)
+    if (run === undefined)
+      return
+    // 一次性消费：同一个按钮重复点击不该重复执行（安装/更新这类操作不可重入）。
+    actions.handlers.delete(id)
+    run()
+  }).then((off) => {
+    if (disposed)
+      off()
+    else
+      unlisten = off
+  }).catch(error => console.warn('[toast] action bridge failed:', error))
+  return () => {
+    disposed = true
+    unlisten?.()
+  }
+}

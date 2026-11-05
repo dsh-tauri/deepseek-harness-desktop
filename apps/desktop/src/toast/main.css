@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@config "../../tailwind.config.js";
+@import "@heroui/styles";
+
+/*
+ * 透明 toast 窗口的样式入口。
+ *
+ * 只引 HeroUI 与 Tailwind，不引壳层的 scrollbar / frame 等整窗规则：这个窗口是
+ * 一层覆盖在 Harness 页面之上的透明画布，除了 toast 卡片之外必须保持完全透明，
+ * 任何整窗背景或圆角裁剪都会在页面上留下可见色块。
+ */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}

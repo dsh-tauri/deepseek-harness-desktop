@@ -1313,6 +1313,9 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::desktop::builder::sync_view_menu,
         crate::desktop::window::quit_app,
         crate::desktop::window::toggle_devtools,
+        crate::desktop::toast_view::toast_view_show,
+        crate::desktop::toast_view::toast_view_hide,
+        crate::desktop::toast_view::toast_view_resize,
         crate::bridge::log_frontend,
         crate::bridge::get_pet_status,
         crate::bridge::pet_show_main_window,
@@ -1346,7 +1349,10 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
     ];
     move |invoke| {
         let webview = invoke.message.webview_ref();
-        let allowed = if webview.label() == webview.window().label() {
+        let allowed = if webview.label() == crate::desktop::toast_view::TOAST_WINDOW_LABEL {
+            // toast 窗口只允许上报自身高度与窗口尺寸相关的自省命令，其余一律拒绝。
+            matches!(invoke.message.command(), "toast_view_resize")
+        } else if webview.label() == webview.window().label() {
             crate::desktop::window::require_shell(webview).is_ok()
         } else {
             webview.label().starts_with("harness-")
@@ -1575,6 +1581,9 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                 }
                 #[cfg(not(target_os = "macos"))]
                 let _ = window.hide();
+                // 收起主窗口时透明 toast 窗必须一并让位：兄弟窗口结构下它不会自动跟随，
+                // 留在桌面上就是一块孤立的置顶透明层（issue #1408）。
+                crate::desktop::toast_view::sync_visibility(window.app_handle());
             }
             tauri::WindowEvent::Destroyed => {
                 crate::desktop::window::forget_harness_documents(window.app_handle(), window.label());
@@ -1610,13 +1619,17 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                 label if label == crate::desktop::pet::PET_WINDOW_LABEL => {
                     crate::desktop::pet::record_pet_window_moved(window, *position);
                 }
-                label if label == MAIN_WINDOW_LABEL => crate::config::record_moved(*position),
+                label if label == MAIN_WINDOW_LABEL => {
+                    crate::config::record_moved(*position);
+                    crate::desktop::toast_view::reposition(window.app_handle());
+                }
                 _ => {}
             },
             tauri::WindowEvent::Resized(size) => {
                 // 桌宠尺寸由前端按宠物比例设定，与位置记录无关；只记主窗口。
                 if window.label() == MAIN_WINDOW_LABEL {
                     crate::config::record_resized(window, *size);
+                    crate::desktop::toast_view::reposition(window.app_handle());
                 }
                 #[cfg(target_os = "macos")]
                 {

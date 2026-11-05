@@ -10,6 +10,7 @@ pub mod pet_mouse;
 #[cfg(all(windows, any(not(debug_assertions), test)))]
 pub(crate) mod single_instance;
 pub mod startup;
+pub mod toast_view;
 pub mod window;
 pub mod zoom;
 
