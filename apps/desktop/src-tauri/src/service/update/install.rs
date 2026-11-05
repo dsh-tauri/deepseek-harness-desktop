@@ -18,6 +18,8 @@ use crate::service::workflow;
 
 use super::meta::{fetch_latest_release, LatestRelease};
 use super::version::current_version;
+#[cfg(target_os = "linux")]
+use super::version::self_updatable;
 use super::{DOWNLOAD_TIMEOUT_SECS, UPDATES_DIR};
 
 /// 安装包目录（AppData/updates，不存在则创建）
@@ -123,6 +125,16 @@ pub struct DesktopUpdateInfo {
 
 /// 检查是否有新版本可用（含安装包是否已下载）
 pub async fn check(app_handle: &AppHandle) -> Result<Option<DesktopUpdateInfo>, String> {
+    // 就地替换不了的媒介不发起更新：系统包安装（非 deb/rpm 宿主）下载的任何格式都
+    // 只会「另跑一份」，桌面条目仍指向旧版本，用户点完「立即更新」版本号没变。
+    // 这里必须报错而不是返回 `Ok(None)`——后者会被读成「已是最新」。
+    #[cfg(target_os = "linux")]
+    if !self_updatable() {
+        return Err(
+            "UPDATE_MEDIA_UNSUPPORTED: current install cannot be replaced in place; update through the channel it was installed from"
+                .to_string(),
+        );
+    }
     prune_old_installers(app_handle);
     match fetch_latest_release(app_handle).await? {
         None => Ok(None),
