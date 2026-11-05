@@ -7,7 +7,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<ActionResult | { 
   const body = await readBody<SkillDeleteBody>(event, { type: 'json' })
   const name = typeof body?.name === 'string' ? body.name : ''
   try {
-    if (!skills.remove(name)) {
+    if (!await skills.remove(name)) {
       event.res.status = 404
       return { error: 'skill not found' }
     }

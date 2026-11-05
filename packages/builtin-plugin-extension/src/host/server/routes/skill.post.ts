@@ -2,8 +2,6 @@ import type { EventHandlerRequest } from 'h3'
 import type { SkillInput } from '../../service/skills.types'
 import type { ActionResult, SkillSaveBody } from './index.types'
 import { defineEventHandler, readBody } from 'h3'
-import { join } from 'pathe'
-import { SKILL_FILE_NAME } from '../../config/constants'
 import { skills } from '../../service/skills'
 import { validateSkillInput } from '../../service/skills.utils'
 
@@ -29,7 +27,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<ActionResult | { 
         event.res.status = 403
         return { error: `skills from source '${existing.source}' are read-only` }
       }
-      skills.save(input, join(existing.dir, SKILL_FILE_NAME))
+      skills.save(input, existing)
     }
     else {
       skills.save(input)
