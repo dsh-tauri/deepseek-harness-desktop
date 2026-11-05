@@ -470,20 +470,18 @@ pub(crate) fn enable_plugin_at(profile: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 禁用插件（AppHandle 入口）：获取 profile 目录 → 持有操作锁 → 执行纯逻辑 → 推送变更。
 pub fn disable(app_handle: &AppHandle, id: &str) -> Result<(), String> {
-    let profile = profile_dir(app_handle);
     let _guard = tauri::async_runtime::block_on(process::acquire_operation_lock())?;
+    let profile = profile_dir(app_handle);
     let result = disable_plugin_at(&profile, id);
     drop(_guard);
     watch::force_emit(app_handle);
     result
 }
 
-/// 启用插件（AppHandle 入口）：获取 profile 目录 → 持有操作锁 → 执行纯逻辑 → 推送变更。
 pub fn enable(app_handle: &AppHandle, id: &str) -> Result<(), String> {
-    let profile = profile_dir(app_handle);
     let _guard = tauri::async_runtime::block_on(process::acquire_operation_lock())?;
+    let profile = profile_dir(app_handle);
     let result = enable_plugin_at(&profile, id);
     drop(_guard);
     watch::force_emit(app_handle);

@@ -97,6 +97,8 @@ pub(crate) use process::{
     acquire_operation_lock, acquire_process_lock, is_internal_plugin_startup_failure,
     is_process_cleanup_failure,
 };
+#[cfg(test)]
+pub(crate) use process::TEST_PROCESS_LOCK;
 pub(crate) use retire::uninstall as retire_deprecated_plugins;
 pub use recovery::{
     detect as detect_recovery, uninstall as uninstall_recovery, PluginRecoveryInfo,
