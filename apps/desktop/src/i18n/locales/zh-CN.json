@@ -61,6 +61,7 @@
   "update.up_to_date": "已是最新版本",
   "update.distro_managed": "本应用由系统包管理器安装，请使用包管理器更新",
   "update.check_failed": "检查更新失败，请检查网络后重试",
+  "update.media_unsupported": "这份安装无法在应用内替换，请用它原来的安装渠道（系统包管理器）升级",
   "update.verify_failed": "暂时无法更新：GitHub 限流，未能校验新版完整性，请稍后重试",
   "update.desktop_title": "发现新版本",
   "update.new_version_label": "新版本",

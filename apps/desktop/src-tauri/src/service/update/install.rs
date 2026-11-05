@@ -18,7 +18,27 @@ use crate::service::workflow;
 
 use super::meta::{LatestRelease, fetch_latest_release};
 use super::version::current_version;
+#[cfg(target_os = "linux")]
+use super::version::{running_appimage, self_updatable};
 use super::{DOWNLOAD_TIMEOUT_SECS, UPDATES_DIR};
+
+/// 就地替换不了的媒介不发起更新：系统包安装（非 deb/rpm 宿主，或当前二进制不归该
+/// 家族的包管理）下载的任何格式都只会「另跑一份」，桌面条目仍指向旧版本，用户点完
+/// 「立即更新」版本号没变。
+///
+/// 检查、下载、打开安装包三条入口都要先过这一步：只拦在 [`check`] 里时，直接调
+/// `download_desktop_update` 的调用方仍会先下载并登记「待安装」，退出应用时又把这个
+/// 白下的包拉起来。必须报错而不是返回 `Ok(None)`——后者会被读成「已是最新」。
+fn ensure_self_updatable() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if !self_updatable() {
+        return Err(
+            "UPDATE_MEDIA_UNSUPPORTED: current install cannot be replaced in place; update through the channel it was installed from"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
 
 /// 安装包目录（AppData/updates，不存在则创建）
 fn updates_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
@@ -123,6 +143,7 @@ pub struct DesktopUpdateInfo {
 
 /// 检查是否有新版本可用（含安装包是否已下载）
 pub async fn check(app_handle: &AppHandle) -> Result<Option<DesktopUpdateInfo>, String> {
+    ensure_self_updatable()?;
     prune_old_installers(app_handle);
     match fetch_latest_release(app_handle).await? {
         None => Ok(None),
@@ -285,6 +306,8 @@ fn verify_installer_sha256(path: &std::path::Path, expected: &str) -> Result<(),
 /// 宁可失败，防止第三方镜像投毒未被察觉；官方 GitHub 直连在摘要缺失时仍可
 /// 按旧行为下载（兼容早期未填摘要的发布），下载后若有摘要则强制校验。
 pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, String> {
+    // 副作用之前就拒绝：这里之后要么复用已落盘的包，要么开始下载并登记「待安装」。
+    ensure_self_updatable()?;
     let release = fetch_latest_release(app_handle)
         .await?
         .ok_or_else(|| "UPDATE_NONE".to_string())?;
@@ -491,11 +514,56 @@ fn resolve_installer_path(app_handle: &AppHandle, path: &str) -> Result<PathBuf,
     Ok(canonical)
 }
 
-/// 是否为 AppImage 安装包（Linux 便携格式，自带运行时可执行）。
+/// 是否是 AppImage 安装包（Linux 便携格式，自带运行时可执行）。
 #[cfg(target_os = "linux")]
 fn is_appimage(path: &std::path::Path) -> bool {
     path.extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
+}
+
+/// 把下载好的新镜像覆盖到用户启动时使用的那个 AppImage 上（issue #1410）。
+///
+/// 只 exec 下载目录里的副本时，桌面条目与命令名仍指向旧镜像，用户下次从原路径启动
+/// 还是旧版本。先复制到原文件同目录的暂存文件再 `rename` 覆盖：旧镜像已映射进当前
+/// 进程，替换目录项不影响运行中的实例，且 `rename` 本身是原子的，中途失败不会留下
+/// 半截镜像。暂存名带进程号并用 `create_new` 独占创建——固定名会被残留文件或符号
+/// 链接接管，把新镜像写到别处、还会在失败清理时删掉别人的文件。原目录不可写
+/// （例如放在 root 拥有的 `/opt`）时明确拒绝，不做「另跑一份」。
+#[cfg(target_os = "linux")]
+fn replace_running_appimage(
+    target: &std::path::Path,
+    downloaded: &std::path::Path,
+) -> Result<(), String> {
+    let staging = target.with_extension(format!("AppImage.{}.new", std::process::id()));
+    // 独占创建：名字已被占用（残留文件或符号链接）就放弃，不覆盖、也不认领别人的文件，
+    // 后面的清理因此只会删掉本次真正创建的那个。
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staging)
+        .map_err(|error| {
+            format!(
+                "UPDATE_MEDIA_UNSUPPORTED: cannot create {}: {error}",
+                staging.display()
+            )
+        })?;
+    let result = std::fs::copy(downloaded, &staging)
+        .map_err(|error| error.to_string())
+        .and_then(|_| ensure_installer_executable(&staging))
+        .and_then(|()| std::fs::rename(&staging, target).map_err(|error| error.to_string()));
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&staging);
+        return Err(format!(
+            "UPDATE_MEDIA_UNSUPPORTED: cannot replace {}: {error}",
+            target.display()
+        ));
+    }
+    log::info!(
+        "Replaced running AppImage {} with {}",
+        target.display(),
+        downloaded.display()
+    );
+    Ok(())
 }
 
 /// 安装包对应的 MIME 类型（用于解析桌面默认处理器），只认 /deb/rpm。
@@ -792,6 +860,7 @@ fn open_with_system_handler(file: &std::path::Path) -> Result<(), String> {
 /// 用同步的 `stop_for_installer`（退出路径没有 async 运行时可用）。停止动作不放在
 /// 这里，是为了让每条路径都能按自己的时序等待端口释放。
 pub(super) fn open_installer_now(app_handle: &AppHandle, path: &str) -> Result<(), String> {
+    ensure_self_updatable()?;
     let resolved = resolve_installer_path(app_handle, path)?;
     log::info!("Opening desktop installer: {}", resolved.display());
     // 兜底补充可执行权限：兼容老版本下载的 AppImage（0644）被打包用户留存，
@@ -804,7 +873,18 @@ pub(super) fn open_installer_now(app_handle: &AppHandle, path: &str) -> Result<(
     // 进程是否 spawn 成功，看不到 xdg-open 的退出码）。
     #[cfg(target_os = "linux")]
     if is_appimage(&resolved) {
-        std::process::Command::new(&resolved)
+        // 便携镜像的更新目标是「用户启动时用的那个文件」，不是下载目录里的副本：
+        // 只 exec 副本，桌面条目与命令名仍指向旧镜像（issue #1410）。替换成功后就
+        // 从原路径重启，新实例的 `APPIMAGE` 也回到原路径，不留第二条升级链。
+        // 当前不是镜像启动的（系统包安装却拿到 AppImage 兜底），替换目标不存在，
+        // 一律拒绝，不做「另跑一份」的假升级。
+        let Some(running) = running_appimage() else {
+            return Err(
+                "UPDATE_MEDIA_UNSUPPORTED: portable image cannot replace this install".to_string(),
+            );
+        };
+        replace_running_appimage(&running, &resolved)?;
+        std::process::Command::new(&running)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1552,6 +1632,65 @@ mod tests {
             "应包含所有者/组/其他可执行位，mode={mode:o}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 便携镜像的就地替换：新镜像覆盖用户在用的那个文件，且不留暂存文件。
+    ///
+    /// 旧行为只 exec 下载目录里的副本，桌面条目仍指向旧镜像（issue #1410）。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn replace_running_appimage_overwrites_the_original_image() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let running = dir.path().join("DSH.AppImage");
+        let downloaded = dir.path().join("updates/DSH_0.30.5.AppImage");
+        std::fs::create_dir_all(downloaded.parent().unwrap()).unwrap();
+        std::fs::write(&running, b"old-image").unwrap();
+        std::fs::write(&downloaded, b"new-image").unwrap();
+
+        replace_running_appimage(&running, &downloaded).unwrap();
+        assert_eq!(std::fs::read(&running).unwrap(), b"new-image");
+        let mode = std::fs::metadata(&running).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "替换后的镜像必须可执行，mode={mode:o}");
+        assert_eq!(std::fs::read(&downloaded).unwrap(), b"new-image");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            2,
+            "暂存文件必须已被 rename 掉"
+        );
+
+        // 原目录不可写（镜像放在 root 拥有的目录）时明确拒绝，不静默「另跑一份」
+        let read_only = dir.path().join("readonly");
+        std::fs::create_dir_all(&read_only).unwrap();
+        let target = read_only.join("DSH.AppImage");
+        std::fs::write(&target, b"old-image").unwrap();
+        std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let result = replace_running_appimage(&target, &downloaded);
+        std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // root 无视目录权限位，该断言只在普通用户下有意义
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(result.is_err(), "只读目录必须拒绝替换");
+        }
+        assert_eq!(std::fs::read(&target).unwrap(), b"old-image");
+    }
+
+    /// 暂存文件独占创建：同名残留文件不会被覆盖，失败清理也不会删掉别人的文件。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn replace_running_appimage_never_reuses_a_stale_staging_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = dir.path().join("DSH.AppImage");
+        let downloaded = dir.path().join("DSH_0.30.5.AppImage");
+        std::fs::write(&running, b"old-image").unwrap();
+        std::fs::write(&downloaded, b"new-image").unwrap();
+        let stale = dir
+            .path()
+            .join(format!("DSH.AppImage.{}.new", std::process::id()));
+        std::fs::write(&stale, b"someone-else").unwrap();
+
+        assert!(replace_running_appimage(&running, &downloaded).is_err());
+        assert_eq!(std::fs::read(&running).unwrap(), b"old-image");
+        assert_eq!(std::fs::read(&stale).unwrap(), b"someone-else");
     }
 
     /// AppImage 识别按扩展名匹配且大小写不敏感；其它安装包格式不受影响。
