@@ -31,29 +31,13 @@ const BLOCKING_OVERLAY_SELECTOR = [
   '[data-slot$="-popover"]',
 ].join(',')
 
-/** `toast({ reveal: true })` 在 body 上留下的标记（见 `@/utils/toast`） */
-const REVEAL_TOAST_ATTRIBUTE = 'data-dsh-toast-reveal'
-
-/** 是否有必须被看见的壳层提示（即使 guest 还在加载也要让位） */
-function revealRequested(): boolean {
-  return document.body.getAttribute(REVEAL_TOAST_ATTRIBUTE) === 'true'
-}
-
-function visible(element: HTMLElement): boolean {
-  const style = getComputedStyle(element)
-  return element.getAttribute('aria-hidden') !== 'true' && style.display !== 'none'
-    && style.visibility !== 'hidden' && element.getClientRects().length > 0
-}
-
-/**
- * 是否有必须让 guest 让位的壳层浮层。Electron 的原生 guest 视图永远画在壳层 DOM 之上，
- * 壳层的内容只有先隐藏 guest 并留一张静态快照才看得见——旧 WebView 架构里这些是普通
- * DOM，没有这层让位需求。
- */
 function visibleBlockingOverlay(): boolean {
   for (const element of document.body.querySelectorAll<HTMLElement>(BLOCKING_OVERLAY_SELECTOR)) {
-    if (visible(element))
+    const style = getComputedStyle(element)
+    if (element.getAttribute('aria-hidden') !== 'true' && style.display !== 'none'
+      && style.visibility !== 'hidden' && element.getClientRects().length > 0) {
       return true
+    }
   }
   return false
 }
@@ -154,11 +138,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
       if (![rect.left, rect.top, rect.width, rect.height].every(Number.isFinite))
         return
       const available = (remoteMode || !layoutRef.current.showError) && rect.width > 0 && rect.height > 0
-      const ready = readyLabelRef.current === guest!.label
-      // 更新提示（`reveal`）先于页面加载也成立：启动即检查更新，guest 加载完之前
-      // 提示会被整块盖住，等加载完提示可能已经超时消失。其余浮层仍等加载完再让位，
-      // 免得首帧就隐藏一个正在初始化的页面。
-      const blocked = available && (revealRequested() || (ready && visibleBlockingOverlay()))
+      const blocked = available && readyLabelRef.current === guest!.label && visibleBlockingOverlay()
       const devicePixelRatio = window.devicePixelRatio
       const zoomFactor = layoutRef.current.zoom
       const request = JSON.stringify([rect.left, rect.top, rect.width, rect.height, available, blocked, devicePixelRatio, zoomFactor])
@@ -190,7 +170,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
             return
           const bounds = { label: guest!.label, x: rect.left * ratio, y: rect.top * ratio, width: Math.max(1, rect.width * ratio), height: Math.max(1, rect.height * ratio), zoomFactor }
           const geometry = JSON.stringify(bounds)
-          if (blocked && ready && !backdrop) {
+          if (blocked && !backdrop) {
             if (appliedGeometry !== geometry) {
               await invoke('update_harness_webview', { ...bounds, visible: true })
               appliedGeometry = geometry
@@ -244,7 +224,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     for (let element: HTMLElement | null = host; element; element = element.parentElement)
       resizeObserver?.observe(element)
     const mutationObserver = new MutationObserver(sync)
-    mutationObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-hidden', 'class', 'data-state', 'hidden', 'style', REVEAL_TOAST_ATTRIBUTE], childList: true, subtree: true })
+    mutationObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-hidden', 'class', 'data-state', 'hidden', 'style'], childList: true, subtree: true })
     window.addEventListener('resize', sync)
     window.addEventListener('scroll', sync, true)
     sync()

@@ -7,14 +7,8 @@ import { hooks } from '@/config/hooks'
 /** toast 关闭来源：库侧 close 不携带原因，只能由本模块预记或按超时配置反推 */
 export type ToastCloseReason = 'closed' | 'evicted' | 'dismissed'
 
-/**
- * toast() 可选项：库内未暴露的 HeroUIToastOptions（toast-queue 收敛的 content + 超时回调），
- * 这里用公开的 ToastContentValue 组合。
- *
- * `reveal`：这条提示必须让用户看见——Electron 的 Harness guest 是原生视图，永远画在
- * 壳层 DOM 之上，壳层 toast 会被它整块盖住，只有带这个标记的条目才会让 guest 让位。
- */
-export type ToastOptions = Partial<ToastContentValue & { timeout?: number, onClose?: (reason: ToastCloseReason) => void }> & { placement?: Placement, sticky?: boolean, reveal?: boolean }
+/** toast() 可选项：库内未暴露的 HeroUIToastOptions（toast-queue 收敛的 content + 超时回调），这里用公开的 ToastContentValue 组合 */
+export type ToastOptions = Partial<ToastContentValue & { timeout?: number, onClose?: (reason: ToastCloseReason) => void }> & { placement?: Placement, sticky?: boolean }
 export type ToastUpdateOptions = Partial<ToastContentValue>
 
 /**
@@ -72,25 +66,12 @@ const closeReasons = new Map<string, ToastCloseReason>()
  */
 const placementOrder = new Map<Placement, string[]>()
 
-/** 需要 guest 让位的存活 key：body 上留一个标记属性，供 Harness 视图订阅 */
-const revealKeys = new Set<string>()
-const REVEAL_ATTRIBUTE = 'data-dsh-toast-reveal'
-
-function syncRevealAttribute(): void {
-  if (revealKeys.size > 0)
-    document.body.setAttribute(REVEAL_ATTRIBUTE, 'true')
-  else
-    document.body.removeAttribute(REVEAL_ATTRIBUTE)
-}
-
 /**
  * 同步清理一条 toast 的登记。`keepReason` 为真时保留关闭原因，供库侧稍后
  * （rAF 异步）触发的 onClose 读取——`close()` 必须这样调用，否则常驻气泡
  * （`timeout: 0`）的程序化关闭会被误判为用户拒绝。
  */
 function forgetKey(key: string, keepReason = false): void {
-  if (revealKeys.delete(key))
-    syncRevealAttribute()
   toastContents.delete(key)
   if (!keepReason)
     closeReasons.delete(key)
@@ -131,7 +112,7 @@ function takeCloseReason(key: string, autoClose: boolean): ToastCloseReason {
 export const toast = Object.assign(
   (message: string | ReactNode, options?: ToastOptions) => {
     // 默认右下角；个别调用方需要其他位置时显式传 placement
-    const { placement = 'bottom end', timeout, onClose, sticky = false, reveal = false, ...rest } = options || {}
+    const { placement = 'bottom end', timeout, onClose, sticky = false, ...rest } = options || {}
     const content = { title: message, ...rest }
     // 未指定 timeout 时 HeroUI 会补默认超时（`constants: DEFAULT_TOAST_TIMEOUT`），
     // 因此「undefined 或正数」都意味着这条会自己消失。
@@ -147,10 +128,6 @@ export const toast = Object.assign(
     })
     toastContents.set(key, content)
     placementsKeys.set(key, placement)
-    if (reveal) {
-      revealKeys.add(key)
-      syncRevealAttribute()
-    }
     if (sticky)
       return key
     const order = placementOrder.get(placement) ?? []
@@ -202,8 +179,6 @@ export const toast = Object.assign(
     },
 
     clear(): void {
-      revealKeys.clear()
-      syncRevealAttribute()
       toastContents.clear()
       placementsKeys.clear()
       placementOrder.clear()

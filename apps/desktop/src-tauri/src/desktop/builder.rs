@@ -508,12 +508,19 @@ fn fullscreen_menu_label_key(is_fullscreen: bool) -> &'static str {
     }
 }
 
+/// 这些窗口不是「壳层窗口」：菜单动作、快捷键与 View 菜单同步都不该路由到它们。
+/// 覆盖窗口只在显示时短暂置顶，若被当成目标会把菜单操作发进一个没有处理器的 webview。
+fn is_non_shell_window(label: &str) -> bool {
+    label == crate::desktop::pet::PET_WINDOW_LABEL
+        || label == crate::desktop::toast_overlay::TOAST_OVERLAY_WINDOW_LABEL
+}
+
 fn help_menu_window_label<'a>(
     windows: impl IntoIterator<Item = (&'a str, bool)>,
 ) -> Option<&'a str> {
     let mut main_window = None;
     for (label, focused) in windows {
-        if label == crate::desktop::pet::PET_WINDOW_LABEL {
+        if is_non_shell_window(label) {
             continue;
         }
         if focused {
@@ -586,9 +593,7 @@ pub fn sync_view_menu(
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        if window.label() == crate::desktop::pet::PET_WINDOW_LABEL
-            || !window.is_focused().unwrap_or(false)
-        {
+        if is_non_shell_window(window.label()) || !window.is_focused().unwrap_or(false) {
             return Ok(());
         }
         let Some(menu) = window.app_handle().menu() else {
@@ -636,9 +641,7 @@ pub fn sync_view_menu(
 
 #[cfg(target_os = "macos")]
 fn sync_macos_fullscreen_menu(window: &crate::Window<ElectronRuntime>) {
-    if window.label() == crate::desktop::pet::PET_WINDOW_LABEL
-        || !window.is_focused().unwrap_or(false)
-    {
+    if is_non_shell_window(window.label()) || !window.is_focused().unwrap_or(false) {
         return;
     }
     let Ok(is_fullscreen) = window.is_fullscreen() else {
@@ -1288,6 +1291,11 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::read_clipboard_text,
         crate::bridge::write_clipboard_text,
         crate::desktop::window::create_app_window,
+        crate::desktop::toast_overlay::show_toast_overlay,
+        crate::desktop::toast_overlay::hide_toast_overlay,
+        crate::desktop::toast_overlay::get_toast_overlay_content,
+        crate::desktop::toast_overlay::toast_overlay_request_update,
+        crate::desktop::toast_overlay::toast_overlay_dismiss,
         crate::desktop::builder::sync_view_menu,
         crate::desktop::window::quit_app,
         crate::desktop::window::toggle_devtools,
@@ -1399,7 +1407,7 @@ fn menu_action_window_label<'a>(
 ) -> Option<&'a str> {
     let mut main = None;
     for (label, focused) in windows {
-        if label == crate::desktop::pet::PET_WINDOW_LABEL {
+        if is_non_shell_window(label) {
             continue;
         }
         if focused {
@@ -1419,6 +1427,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
 
     let builder = builder
         .manage(crate::desktop::pet_mouse::PetMouseStreamState::default())
+        .manage(crate::desktop::toast_overlay::ToastOverlayState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
             crate::desktop::autostart::init(&app_handle)?;
@@ -1453,8 +1462,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             | "desktop-zoom-reset"
             | "desktop-task-manager" => {
                 if let Some(window) = app.windows().into_values().find(|window| {
-                    window.label() != crate::desktop::pet::PET_WINDOW_LABEL
-                        && window.is_focused().unwrap_or(false)
+                    !is_non_shell_window(window.label()) && window.is_focused().unwrap_or(false)
                 }) {
                     if let Err(error) =
                         app.emit_to(window.label(), "macos-menu-action", event.id().as_ref())
@@ -1482,8 +1490,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             #[cfg(target_os = "macos")]
             "desktop-fullscreen" => {
                 if let Some(window) = app.windows().into_values().find(|window| {
-                    window.label() != crate::desktop::pet::PET_WINDOW_LABEL
-                        && window.is_focused().unwrap_or(false)
+                    !is_non_shell_window(window.label()) && window.is_focused().unwrap_or(false)
                 }) {
                     if let Err(error) = window
                         .is_fullscreen()
@@ -1543,6 +1550,14 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                     return;
                 }
                 api.prevent_close();
+                // 主窗口收起后不能把更新提示留在桌面上（覆盖窗口是置顶的，会一直挂在
+                // 其它应用之上）。
+                if let Some(overlay) = window
+                    .app_handle()
+                    .get_window(crate::desktop::toast_overlay::TOAST_OVERLAY_WINDOW_LABEL)
+                {
+                    let _ = overlay.hide();
+                }
                 #[cfg(target_os = "macos")]
                 {
                     crate::desktop::activation::on_window_hidden(window, &close_action);
@@ -1588,13 +1603,22 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                 label if label == crate::desktop::pet::PET_WINDOW_LABEL => {
                     crate::desktop::pet::record_pet_window_moved(window, *position);
                 }
-                label if label == MAIN_WINDOW_LABEL => crate::config::record_moved(*position),
+                label if label == MAIN_WINDOW_LABEL => {
+                    crate::config::record_moved(*position);
+                    // 覆盖窗口可见时跟着主窗口走，否则提示会停在旧位置甚至飘到窗口外。
+                    crate::desktop::toast_overlay::reposition_if_visible(
+                        &window.app_handle().clone(),
+                    );
+                }
                 _ => {}
             },
             tauri::WindowEvent::Resized(size) => {
                 // 桌宠尺寸由前端按宠物比例设定，与位置记录无关；只记主窗口。
                 if window.label() == MAIN_WINDOW_LABEL {
                     crate::config::record_resized(window, *size);
+                    crate::desktop::toast_overlay::reposition_if_visible(
+                        &window.app_handle().clone(),
+                    );
                 }
                 #[cfg(target_os = "macos")]
                 {

@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@theme inline {
+  --radius-xl: calc(var(--radius) * 1.25);
+}
+
+:root {
+  --radius: 16px;
+  --color-panel: #1b1b1c;
+  --color-ink: #f9fafb;
+  --color-muted: #adb2b8;
+  --color-line: rgba(255, 255, 255, 0.12);
+  --color-btn-fill: #f9fafb;
+  --color-btn-ink: #0f1115;
+}
+
+html[data-theme="light"] {
+  --color-panel: #ffffff;
+  --color-ink: #0f1115;
+  --color-muted: #61666b;
+  --color-line: rgba(0, 0, 0, 0.1);
+  --color-btn-fill: #0f1115;
+  --color-btn-ink: #ffffff;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+}
+
+.toast-overlay {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.toast-overlay__card {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  color: var(--color-ink);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--color-line);
+}
+
+.toast-overlay__body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.toast-overlay__title {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.toast-overlay__description {
+  margin: 2px 0 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.toast-overlay__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.toast-overlay__action {
+  border: 0;
+  border-radius: 10px;
+  padding: 6px 12px;
+  background: var(--color-btn-fill);
+  color: var(--color-btn-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-overlay__action:hover {
+  opacity: 0.9;
+}
+
+.toast-overlay__close {
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.toast-overlay__close:hover {
+  color: var(--color-ink);
+}

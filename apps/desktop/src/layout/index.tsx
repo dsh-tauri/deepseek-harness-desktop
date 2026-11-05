@@ -113,10 +113,21 @@ export function App() {
   })
 
   useWatch([updateInfo, updating], () => {
-    if (!updateInfo || updating)
+    if (!updateInfo || updating) {
+      store.harnessUpdater.hideToast()
       return
+    }
     store.harnessUpdater.showToast(() => store.harnessUpdater.handleUpdate())
   }, { immediate: true })
+
+  // 覆盖窗口里的「立即更新」/「关闭」都通过窗口事件回到本窗口处理：
+  // 前者走与壳层 toast 按钮一致的安装流程，后者记下用户的忽略。
+  useListen('dsh://toast-overlay:update', () => {
+    void store.harnessUpdater.handleUpdate()
+  })
+  useListen('dsh://toast-overlay:dismissed', () => {
+    store.harnessUpdater.dismissUpdate()
+  })
 
   return (
     <div className="flex h-screen w-screen" data-testid="dsh-shell-root">

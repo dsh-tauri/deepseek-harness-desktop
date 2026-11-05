@@ -213,28 +213,6 @@ it.each(['dialog', 'alertdialog', 'menu', 'listbox', 'dropdown-popover', 'dsh-fu
   expect(backing.isConnected).toBe(false)
 })
 
-it('hides the guest while a reveal toast must be seen', async () => {
-  render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  state()
-  document.body.setAttribute('data-dsh-toast-reveal', 'true')
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-  expect(screen.getByTitle('Harness').querySelector('img')?.src).toBe('data:image/png;base64,cGl4ZWw=')
-  document.body.removeAttribute('data-dsh-toast-reveal')
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: true }))
-  expect(screen.getByTitle('Harness').querySelector('img')).toBeNull()
-})
-
-it('hides the guest for a reveal toast that arrives before the page loads', async () => {
-  document.body.setAttribute('data-dsh-toast-reveal', 'true')
-  render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-  expect(mocks.invoke.mock.calls.some(([command]) => command === 'capture_harness_webview')).toBe(false)
-  document.body.removeAttribute('data-dsh-toast-reveal')
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: true }))
-})
-
 it.each(['capture', 'decode', 'paint'] as const)('cancels a pending %s when a menu closes or the guest unmounts', async (phase) => {
   const invoke = mocks.invoke.getMockImplementation()!
   let finish!: () => void

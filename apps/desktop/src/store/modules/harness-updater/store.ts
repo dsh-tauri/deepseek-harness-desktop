@@ -1,8 +1,10 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { DshUpdateInfo } from './types'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import i18next, { t } from 'i18next'
 import { defineStore } from 'valtio-define'
+import { isElectronRuntime } from '@/utils/runtime'
 import { toast } from '@/utils/toast'
 import { harness } from '../harness'
 
@@ -83,15 +85,31 @@ export const harnessUpdater = defineStore({
       this.updateInfo = null
     },
 
+    /**
+     * 展示更新提示。
+     *
+     * Electron 下 Harness 页面是主窗口内容区的原生子视图，会整块盖住壳层右下角的
+     * toast，因此在原生运行时改用独立的透明置顶覆盖窗口承载提示
+     * （`desktop::toast_overlay`），它天然盖在 guest 之上、窗口只贴提示卡片大小。
+     * 其它运行时（WebView）仍用普通 toast。
+     *
+     * `onUpdate` 由覆盖窗口的「立即更新」经 `dsh://toast-overlay:update` 事件触发。
+     */
     showToast(onUpdate: () => void) {
       if (!this.updateInfo)
         return
-      // reveal：Electron 下 Harness 页面是原生子视图，会把壳层 toast 整块盖住；
-      // 更新提示必须让用户看见并点到，其余提示不为此把页面变成静态快照。
-      toast(t('update.available', { tag: this.updateInfo.tag }), {
-        reveal: true,
+      const title = t('update.available', { tag: this.updateInfo.tag })
+      const description = this.updateInfo.commit.slice(0, 7)
+      const actionLabel = t('update.now')
+      if (isElectronRuntime()) {
+        void invoke('show_toast_overlay', {
+          content: { title, description, action_label: actionLabel, source: getCurrentWindow().label },
+        }).catch((error: unknown) => console.error('[Harness] show toast overlay failed:', error))
+        return
+      }
+      toast(title, {
         actionProps: {
-          children: t('update.now'),
+          children: actionLabel,
           onPress: () => {
             toast.clear()
             onUpdate()
@@ -99,9 +117,16 @@ export const harnessUpdater = defineStore({
           variant: 'tertiary',
         },
         placement: 'bottom end',
-        description: this.updateInfo.commit.slice(0, 7),
+        description,
         variant: 'default',
       })
+    },
+
+    /** 隐藏覆盖窗口（提示消失或开始安装时调用）。 */
+    hideToast() {
+      if (!isElectronRuntime())
+        return
+      void invoke('hide_toast_overlay').catch((error: unknown) => console.error('[Harness] hide toast overlay failed:', error))
     },
   },
 })
