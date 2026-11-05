@@ -81,32 +81,26 @@ vi.mock('./harness/content', () => ({
 it('logs the selected shell branch and deduplicates unrelated rerenders without exposing remote URLs', () => {
   window.location.hash = ''
   const view = render(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({
-    branch: 'webview',
-    status: 'ready',
-    remoteMode: false,
-    serviceHealthy: true,
-    webviewKey: 0,
-    webviewLoaded: false,
-    webviewAlive: false,
-    webviewError: false,
-  }))
+  expect(console.warn).toHaveBeenLastCalledWith(
+    expect.stringContaining('branch=webview status=ready remote=false healthy=true'),
+  )
+  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('loaded=false'))
   view.rerender(<Shell />)
   expect(console.warn).toHaveBeenCalledTimes(1)
   mocks.harness.status = 'error'
   view.rerender(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'setup' }))
+  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('branch=setup'))
   mocks.recovery.recovery.required = true
   view.rerender(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'recovery' }))
+  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('branch=recovery'))
   mocks.harness.status = 'preinstall'
   view.rerender(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'preinstall' }))
+  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('branch=preinstall'))
   mocks.harness.status = 'ready'
   mocks.harness.serviceHealthy = false
   view.rerender(<Shell />)
   act(() => navbar().onRemoteChange('https://example.test/?token=secret', null))
-  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'webview', remoteMode: true, serviceHealthy: false }))
+  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('remote=true'))
   expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('secret')
   expect(console.warn).toHaveBeenCalledTimes(6)
 })

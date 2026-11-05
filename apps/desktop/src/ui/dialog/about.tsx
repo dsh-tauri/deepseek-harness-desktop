@@ -55,8 +55,10 @@ export function DesktopAboutDialog(props: DesktopAboutDialogProps) {
                     size="sm"
                     className="h-8"
                     onPress={() => {
-                      if (about?.repo)
+                      if (about?.repo) {
                         void invoke('open_external_url', { url: about.repo })
+                          .catch(error => console.error('[About] open repo failed:', error))
+                      }
                     }}
                   >
                     {t('about.github')}

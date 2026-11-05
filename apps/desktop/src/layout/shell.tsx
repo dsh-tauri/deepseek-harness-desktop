@@ -54,16 +54,20 @@ export function Shell() {
   const remoteMode = activeTunnelUrl !== ''
   // 文档即 DSH 时启动流程被跳过，`serviceHealthy` 停在初值 false；此时页面本身就是
   // 服务产物，直接视为可用，否则导航栏的切换/远程控件全部不渲染。
-  const live = status === 'ready' && (remoteMode || serviceHealthy || isHostedServiceDocument())
+  // 文档即 DSH 时启动流程被跳过，`serviceHealthy` 可能停在初值；页面本身就是服务产物，
+  // 直接视为可用。判据用 `isHostedDocument`：origin 精确匹配在带 token 或端口变化时会漏判，
+  // `live` 变 false 会让左侧侧栏开关与远程/SSH 控件整块不渲染。
+  const live = status === 'ready' && (remoteMode || serviceHealthy || isHostedDocument())
   const notificationSource = activeTunnelUrl || webviewSrc
   const notifications = useNativeNotifications(notificationSource)
 
   useNotificationAction(notifications.handleAction)
   useNotificationClicked(notifications.handleClick)
-  // 文档即 DSH 时 `App` 里的 startup() 被跳过，runtime 状态会停在初值，内容分支永远
-  // 进不到 ready；这里在渲染前把就绪态补齐。
+  // 文档即 DSH 时 `App` 里的 startup() 被跳过，runtime 状态会停在初值，内容分支与导航栏
+  // 控件都进不到可用态；这里在渲染前把就绪态补齐。判据用 `isHostedDocument` 而非
+  // origin 精确匹配——带 token 的导航或端口变化会让后者漏判，把已经就绪的界面打回启动页。
   useMount(() => {
-    if (isHostedServiceDocument())
+    if (isHostedDocument())
       store.harness.markHostedReady()
   })
   useListen<Parameters<typeof setDshStyle>[0]>('dsh://style', ({ payload }) => setDshStyle(payload))
@@ -129,20 +133,14 @@ export function Shell() {
   })
 
   const branch = status === 'ready' ? 'webview' : status === 'preinstall' ? 'preinstall' : status === 'error' && recovery.required ? 'recovery' : 'setup'
+  // 传对象的 console.warn 会被前端 logger 序列化成 `[object Object]`，日志里等于没有信息；
+  // 这里拼成一行纯文本，字段名与取值都直接可读。
   useWatch([branch, status, remoteMode, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, startupPhase, busyAction], () => {
-    console.warn('[Shell] shell view', {
-      branch,
-      status,
-      remoteMode,
-      serviceHealthy,
-      serviceRunning,
-      webviewKey,
-      webviewLoaded,
-      webviewAlive,
-      webviewError,
-      startupPhase,
-      busyAction,
-    })
+    console.warn(
+      `[Shell] view branch=${branch} status=${status} remote=${remoteMode} healthy=${serviceHealthy}`
+      + ` running=${serviceRunning} loaded=${webviewLoaded} alive=${webviewAlive}`
+      + ` error=${webviewError} phase=${startupPhase} busy=${busyAction}`,
+    )
   }, { immediate: true })
 
   function handleRemoteChange(url: string, tint: string | null) {
@@ -165,13 +163,20 @@ export function Shell() {
 
   // 4. 派生数据提取
   const fullSidebar = isFullSidebarWindow()
+  // IPC 失败此前完全静默（`void emitTo(...)` 丢弃了拒绝），界面上只剩「点了没反应」。
+  // 统一走这里，失败时把事件名与原因打到控制台/日志，便于定位权限或目标错误。
+  function broadcast(event: string, payload?: unknown) {
+    void emitTo({ kind: 'Window', label: getCurrentWindow().label }, event, payload).catch((error) => {
+      console.error(`[Shell] emit ${event} failed:`, error)
+    })
+  }
   const controls = live
     ? {
-        onToggleSidebar: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://sidebar:toggle') },
-        onNewChat: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://session:new') },
-        onOpenFolder: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://workspace:add') },
-        onOpenShortcuts: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://shortcuts:open') },
-        onViewCommand: (command: DshViewCommand) => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://view:command', { command }) },
+        onToggleSidebar: () => { broadcast('dsh://sidebar:toggle') },
+        onNewChat: () => { broadcast('dsh://session:new') },
+        onOpenFolder: () => { broadcast('dsh://workspace:add') },
+        onOpenShortcuts: () => { broadcast('dsh://shortcuts:open') },
+        onViewCommand: (command: DshViewCommand) => { broadcast('dsh://view:command', { command }) },
         onOpenMachineManager: () => openLocalSettingsTab(REMOTE_TAB_MACHINES),
         onOpenRemoteAccess: () => openLocalSettingsTab(REMOTE_TAB_ACCESS),
         onOpenSyncToRemote: () => openLocalSettingsTab(REMOTE_TAB_SYNC),
