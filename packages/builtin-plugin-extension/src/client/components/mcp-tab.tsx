@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { PostApiTauriExtensionMcpBody as McpSaveBody } from '../apis/index.type'
 import type { McpRow } from '../types'
 import type { McpEditorMode, McpEditorState, McpImportItem, McpTabProps } from './mcp-tab.types'
-import { Action, ArrowRotateRight, Button, Card, Icon, Modal, PlugConnection, Select, Tag, Text, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
+import { Action, ArrowRotateRight, Button, Card, Icon, Modal, Select, Tag, Text, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
 import { compact, invoke } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import { deleteMcp, getImportScan, getMcp, getMcpAuthorize, postImportApply, postMcp, postMcpAuthorize, postMcpCheck, postMcpToggle } from '../apis'
@@ -398,9 +398,8 @@ export function McpTab({ t }: McpTabProps): ReactElement {
 
   return (
     <div className="flex flex-col gap-[14px] text-primary">
-      <div className="flex items-center gap-[10px] flex-wrap [&_h3]:m-0 [&_h3]:text-[16px] [&_h3]:leading-[24px] [&_h3]:font-medium">
-        <span className="inline-flex items-center justify-center flex-none w-[22px] h-[22px]"><Icon as={PlugConnection} size={16} /></span>
-        <h3>{t('mcpTitle')}</h3>
+      <div className="flex items-center gap-[10px] flex-wrap">
+        <h2 className="m-0 text-[16px] leading-[24px] font-medium">{t('mcpTitle')}</h2>
         <span className="flex-1" />
         <Button variant="ghost" size="sm" disabled={restarting} onClick={() => setRestartConfirm(true)}>{t('restart')}</Button>
         <Button variant="ghost" size="sm" onClick={() => void openImport()}>{t('importServers')}</Button>
@@ -408,8 +407,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       </div>
       <Text tone="tertiary">{t('mcpIntro')}</Text>
 
-      <div className="flex items-center gap-[7px] px-[2px] mt-[2px] [&_h3]:m-0 [&_h3]:text-[13px] [&_h3]:leading-[20px] [&_h3]:font-semibold">
-        <h3>{t('mcpTab')}</h3>
+      <div className="flex items-center gap-[7px] flex-wrap">
         {servers !== null && <span className="text-[12px] leading-[18px] text-tertiary tabular-nums">{servers.length}</span>}
         <Select
           label={t('scope')}
