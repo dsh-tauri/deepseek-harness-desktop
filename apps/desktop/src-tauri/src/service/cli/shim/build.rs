@@ -770,6 +770,21 @@ mod tests {
         assert!(!content.contains(r#"set "APP_DIR=C:\Users\100%test""#));
     }
 
+    /// node 启动器直接执行烘焙路径：`fs::canonicalize` 的 `\\?\` 前缀会让 cmd
+    /// 以退出码 3 报「系统找不到指定的路径」，整个转发器无法使用。
+    #[cfg(windows)]
+    #[test]
+    fn node_cmd_shim_strips_verbatim_prefix() {
+        let mut paths = sample_shim_paths();
+        paths.node_bin =
+            PathBuf::from(r"\\?\G:\Deepseek Harness Desktop\runtime\win32-x64\DSH Tauri.exe");
+        let content = build_node_cmd_shim(&paths);
+        assert!(content.contains(
+            r#""G:\Deepseek Harness Desktop\runtime\win32-x64\DSH Tauri.exe" --expose-internals %*"#
+        ));
+        assert!(!content.contains(r"\\?\"));
+    }
+
     /// npx/npm shim 的 cli 入口必须按「与所选 node 同目录的 npm」优先解析，
     /// 且 PATH 上用户的同名命令只作最后兜底（排除本 shim 目录，防自指递归）。
     /// issue #581：Windows `.cmd` 必须全 CRLF。Rust 源码被 `.gitattributes`
@@ -782,6 +797,7 @@ mod tests {
                 "dsh.cmd",
                 build_cmd_shim(&sample_shim_paths(), &sample_dsh_home()),
             ),
+            ("node.cmd", build_node_cmd_shim(&sample_shim_paths())),
             ("pnpm.cmd", build_pnpm_cmd_shim(&sample_shim_paths())),
             ("npx.cmd", build_npx_cmd_shim(&sample_shim_paths())),
             ("npm.cmd", build_npm_cmd_shim(&sample_shim_paths())),
