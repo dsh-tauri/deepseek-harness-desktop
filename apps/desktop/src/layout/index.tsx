@@ -12,7 +12,7 @@ import { useThemeAdaptive } from '@/hooks/use-theme-adaptive'
 import { useWakelockRelease } from '@/hooks/use-wakelock-release'
 import { useFrameChrome } from '@/hooks/use-window-chrome'
 import { toast } from '@/utils/toast'
-import { isHostedDocument } from '@/utils/window-presentation'
+import { isHostedServiceDocument } from '@/utils/window-presentation'
 import { store } from '../store'
 import { Recovery } from '../ui/plugin/recovery'
 import { Shell } from './shell'
@@ -67,12 +67,12 @@ export function App() {
     }
   })
 
-  // 主窗口把 DSH 当作自身文档时，服务已由外部进程拉起，这里不能再启动一遍：重复启动会
-  // 覆盖已经就绪的状态（`ready` 被打回 `error`），导航栏的远程/侧栏控件随之消失。
-  // `isHostedServiceDocument` 要求 origin 精确匹配，导航带 token 或端口变化时会漏判，
-  // 因此只要文档已被注入壳层样式（说明当前就是承载方）就不再启动。
+  // 主窗口有两个阶段：先加载壳层页（需要拉起服务），再导航到 DSH 页面（服务已在跑，
+  // 不能再启动一遍，否则会把承载当前文档的服务重启掉）。
+  // 判据必须用 origin 匹配的 `isHostedServiceDocument`：注入脚本对所有 frame 生效，
+  // `isHostedDocument` 在壳层页里同样为 true，用它当开关会让服务永远起不来。
   useMount(() => {
-    if (!isHostedDocument())
+    if (!isHostedServiceDocument())
       store.harness.startup()
   })
 

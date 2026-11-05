@@ -30,8 +30,10 @@ export const APP_TITLE = 'DeepSeek Harness'
 
 export const SHELL_ROOT = '[data-testid="dsh-shell-root"]'
 export const SHELL_WEBVIEW = '[data-testid="dsh-shell-webview"]'
-export const NAVBAR_MENU_CONFIG = '[data-testid="dsh-navbar-menu-config"]'
-export const NAVBAR_MENU_POPOVER = '[data-testid="dsh-navbar-menu-popover"]'
+/** 壳层 UI 渲染在注入的 Shadow root 内，选择器必须带穿透段。 */
+export const SHELL_HOST = '[data-dsh-shell-host]'
+export const NAVBAR_MENU_CONFIG = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-config"]`
+export const NAVBAR_MENU_POPOVER = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-popover"]`
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 

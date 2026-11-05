@@ -55,19 +55,19 @@ export function Shell() {
   // 文档即 DSH 时启动流程被跳过，`serviceHealthy` 停在初值 false；此时页面本身就是
   // 服务产物，直接视为可用，否则导航栏的切换/远程控件全部不渲染。
   // 文档即 DSH 时启动流程被跳过，`serviceHealthy` 可能停在初值；页面本身就是服务产物，
-  // 直接视为可用。判据用 `isHostedDocument`：origin 精确匹配在带 token 或端口变化时会漏判，
-  // `live` 变 false 会让左侧侧栏开关与远程/SSH 控件整块不渲染。
-  const live = status === 'ready' && (remoteMode || serviceHealthy || isHostedDocument())
+  // 直接视为可用。判据必须与启动开关一致（origin 匹配），否则壳层页里 `live` 会提前为真，
+  // 把还没就绪的引导界面当成可用态。
+  const live = status === 'ready' && (remoteMode || serviceHealthy || isHostedServiceDocument())
   const notificationSource = activeTunnelUrl || webviewSrc
   const notifications = useNativeNotifications(notificationSource)
 
   useNotificationAction(notifications.handleAction)
   useNotificationClicked(notifications.handleClick)
   // 文档即 DSH 时 `App` 里的 startup() 被跳过，runtime 状态会停在初值，内容分支与导航栏
-  // 控件都进不到可用态；这里在渲染前把就绪态补齐。判据用 `isHostedDocument` 而非
-  // origin 精确匹配——带 token 的导航或端口变化会让后者漏判，把已经就绪的界面打回启动页。
+  // 控件都进不到可用态；这里在渲染前把就绪态补齐。判据与 `App` 保持一致用 origin 匹配：
+  // 壳层页里 `isHostedDocument` 也为 true，用它会把启动前的引导页误判成已就绪。
   useMount(() => {
-    if (isHostedDocument())
+    if (isHostedServiceDocument())
       store.harness.markHostedReady()
   })
   useListen<Parameters<typeof setDshStyle>[0]>('dsh://style', ({ payload }) => setDshStyle(payload))
