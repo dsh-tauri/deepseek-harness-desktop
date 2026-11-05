@@ -34,9 +34,8 @@ pub(crate) use path::find_user_pnpm_executable;
 pub(crate) use path::{
     delete_user_env, expand_env, notify_environment_change, read_user_env, write_user_env,
 };
-pub use path::{find_user_pnpm, get_bin_dir, pnpm_env_value};
-#[cfg(any(windows, test))]
-pub(crate) use path::{find_user_pnpm_from, get_bin_dir_from};
+pub use path::get_bin_dir;
+pub(crate) use path::{find_user_pnpm, pnpm_env_value};
 #[cfg(unix)]
 pub(crate) use path::{strip_rc_block, upsert_rc_block, write_rc_with_backup};
 pub use shim::is_generated_shim;

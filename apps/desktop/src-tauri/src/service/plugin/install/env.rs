@@ -20,14 +20,11 @@ use crate::service::cli;
 pub(crate) fn build_plugin_envs(
     app_handle: &AppHandle,
     prefer_bundled_pnpm: bool,
-) -> HashMap<String, String> {
-    let node = config::get_node_binary_path(app_handle);
-    // 规范化为绝对路径：get_node_binary_path 可能返回相对路径（PATH 上出现
-    // 相对条目时，如 `.` 或 `tools\node`），而子进程 CWD 与应用进程不同，
-    // 相对路径会被解析到错误位置——shim 经 DSH_NODE / PATH 都找不到 node
-    // （issue #121 的 "Node.js runtime not found"）。已存在（预检通过）的
-    // node 可安全 canonicalize；失败时回退原值。
-    let node_abs = dunce::canonicalize(&node).unwrap_or_else(|_| node.clone());
+) -> Result<HashMap<String, String>, String> {
+    // 运行时只有一个：随包 Electron（Node 模式）。canonicalize 掉 Windows 的
+    // `\\?\` verbatim 前缀：cmd.exe 无法直接启动带该前缀的路径（issue #121）。
+    let node = crate::service::workflow::electron_executable(app_handle)?;
+    let node_abs = dunce::canonicalize(&node).unwrap_or(node);
     let bin_dir = cli::get_bin_dir(app_handle);
     let mut envs = HashMap::from([
         (
@@ -143,7 +140,7 @@ pub(crate) fn build_plugin_envs(
             library_path.to_string_lossy().into_owned(),
         );
     }
-    envs
+    Ok(envs)
 }
 
 /// 检测用户 git 配置中「把 GitHub HTTPS 改写为 SSH」的 `url.<base>.insteadOf`

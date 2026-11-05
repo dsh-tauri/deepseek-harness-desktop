@@ -138,7 +138,7 @@ async fn user_pnpm_major_version_bounded(
     };
     pnpm_major_version_at_bounded(
         &pnpm,
-        Some(&config::get_node_binary_path(app_handle)),
+        Some(&crate::service::workflow::electron_executable(app_handle)?),
         Some(&cli::get_bin_dir(app_handle)),
         owner,
     )
@@ -629,7 +629,7 @@ pub(crate) async fn harness_prefer_bundled_pnpm(app_handle: &AppHandle) -> Resul
         &config::get_pnpm_install_path(app_handle),
         &config::get_pnpm_binary_path(app_handle),
         cli::find_user_pnpm(app_handle).as_deref(),
-        &config::get_node_binary_path(app_handle),
+        &crate::service::workflow::electron_executable(app_handle)?,
         &cli::get_bin_dir(app_handle),
     )
     .await
