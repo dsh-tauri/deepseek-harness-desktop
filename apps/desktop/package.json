@@ -5,11 +5,13 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && pnpm build:shell-css",
+    "build": "tsc && vite build && pnpm build:shell",
     "preview": "vite preview",
     "tauri": "tauri",
     "icons": "tauri icon public/deepseek-harness-desktop-tauri.svg --output src-tauri/icons && tauri icon public/deepseek-harness-desktop-tauri-nightly.svg --output src-tauri/icons/nightly --ios-color \"#000000\" && tsx scripts/rebuild-macos-icon.ts",
-    "build:shell-css": "tsx scripts/build-shell-css.ts"
+    "build:shell": "vite build --config vite.shell.config.ts",
+    "dev:desktop": "tauri dev",
+    "build:desktop": "tauri build"
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-notifications-api": "catalog:",
