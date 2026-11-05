@@ -1233,7 +1233,7 @@ pub(super) fn warn_if_inotify_watch_limit_low() {
 }
 
 /// 停止 Harness 服务
-pub async fn stop(app_handle: crate::AppHandle) -> Result<(), String> {
+pub async fn stop<R: tauri::Runtime>(app_handle: crate::AppHandle<R>) -> Result<(), String> {
     let profile = super::instances::current_profile()
         .unwrap_or_else(|| crate::service::profile::active_profile(&app_handle));
     super::instances::scope(profile.clone(), async move {
@@ -1242,7 +1242,7 @@ pub async fn stop(app_handle: crate::AppHandle) -> Result<(), String> {
         // 进程终止涉及 WaitForSingleObject（至多 5s）与 taskkill/kill 等同步阻塞
         // 调用，移出 Tokio 执行线程避免卡住其他并发任务（WARN-7/P2-#20）。
         launch_guard().store(false, Ordering::SeqCst);
-        tauri::async_runtime::spawn_blocking(move || {
+        let terminated = tauri::async_runtime::spawn_blocking(move || {
             super::instances::scope_sync(profile, terminate_owned_process)
         })
         .await
@@ -1257,12 +1257,11 @@ pub async fn stop(app_handle: crate::AppHandle) -> Result<(), String> {
         let profile = super::instances::current_profile().unwrap();
         tauri::async_runtime::spawn_blocking(move || {
             super::instances::scope_sync(profile, || -> Result<(), String> {
-                if !wait_for_port_release(port, PORT_RELEASE_WAIT) {
-                    #[cfg(windows)]
-                    {
-                        reclaim_orphan_port(&entry, port)?;
-                    }
+                if terminated && wait_for_port_release(port, PORT_RELEASE_WAIT) {
+                    return Ok(());
                 }
+                #[cfg(windows)]
+                reclaim_orphan_port(&entry, port)?;
                 Ok(())
             })
         })
@@ -1351,38 +1350,139 @@ pub fn stop_on_exit(app_handle: &crate::AppHandle) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn stop_keeps_all_instance_effects_in_resolved_profile_scope() {
-        let source = include_str!("process.rs");
-        let stop = source
-            .split("pub async fn stop(")
-            .nth(1)
-            .unwrap()
-            .split("/// 交付安装包前")
-            .next()
-            .unwrap();
-        let scope = stop
-            .find("super::instances::scope(profile.clone(), async move {")
-            .unwrap();
-        for effect in [
-            "launch_guard().store",
-            "spawn_blocking",
-            "harness_pid_path",
-            "super::instances::port",
-            "status::set_status",
-            "status::emit_status",
-        ] {
+    #[tokio::test]
+    async fn stop_keeps_instance_effects_scoped_without_waiting_for_another_profiles_port() {
+        use crate::service::{profile, workflow::instances};
+        use tauri::utils::config::AppDirectoriesOverride;
+
+        const CHILD: &str = "DSH_TEST_STOP_PROFILE";
+        if std::env::var_os(CHILD).is_none() {
+            let scratch = tempfile::tempdir().unwrap();
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "service::workflow::process::tests::stop_keeps_instance_effects_scoped_without_waiting_for_another_profiles_port", "--nocapture"])
+                .env(CHILD, scratch.path())
+                .env("HOME", scratch.path())
+                .env("USERPROFILE", scratch.path())
+                .env("APPDATA", scratch.path().join("AppData/Roaming"))
+                .env("LOCALAPPDATA", scratch.path().join("AppData/Local"))
+                .env("XDG_DATA_HOME", scratch.path().join(".local/share"))
+                .env("DSH_HOME", scratch.path().join(".dsh"))
+                .env("DSH_E2E_HOME", scratch.path())
+                .env("TAURI_WEBDRIVER_PORT", "4445")
+                .env_remove("DSH_CLI_PATH")
+                .kill_on_drop(true);
+            #[cfg(unix)]
+            command.process_group(0);
+            #[cfg(windows)]
+            command.creation_flags(0x08000000);
+            let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+                .await
+                .expect("isolated stop regression timed out")
+                .unwrap();
             assert!(
-                stop.find(effect).unwrap() > scope,
-                "{effect} must run inside resolved profile scope"
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
             );
+            return;
         }
-        assert!(
-            stop.chars()
-                .filter(|character| !character.is_whitespace())
-                .collect::<String>()
-                .ends_with("}).await}")
-        );
+
+        let root = std::path::PathBuf::from(std::env::var_os(CHILD).unwrap());
+        for directory in ["AppData/Roaming", "AppData/Local", ".local/share"] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Root(root.join("store")));
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(context)
+            .unwrap();
+        let app = app.handle();
+        for id in ["profile-a", "profile-b"] {
+            fs::create_dir_all(profile::profile_dir_of(app, id)).unwrap();
+        }
+        profile::set_active(app, "profile-a").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        config::update_store_dat_setting(app, |setting| setting.port = port);
+        let owned = OwnedProcess {
+            pid: std::process::id(),
+            #[cfg(windows)]
+            handle: {
+                use std::os::windows::io::FromRawHandle;
+                use windows_sys::Win32::System::Threading::{
+                    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+                    PROCESS_TERMINATE,
+                };
+                let handle = unsafe {
+                    OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE,
+                        0,
+                        std::process::id(),
+                    )
+                };
+                assert!(!handle.is_null(), "{}", std::io::Error::last_os_error());
+                Arc::new(unsafe { OwnedHandle::from_raw_handle(handle) })
+            },
+        };
+        let marker_a = instances::scope_sync("profile-a".into(), || {
+            *instances::instance().process.lock().unwrap() = Some(owned);
+            *instances::instance().port.lock().unwrap() = Some(port);
+            launch_guard().store(true, Ordering::SeqCst);
+            status::set_status(status::Status::Running);
+            harness_pid_path(app)
+        });
+        fs::write(&marker_a, "profile-a marker").unwrap();
+
+        for explicit_scope in [true, false] {
+            if !explicit_scope {
+                profile::set_active(app, "profile-b").unwrap();
+            }
+            let marker_b = instances::scope_sync("profile-b".into(), || {
+                assert!(!has_owned_process());
+                assert_eq!(*instances::instance().port.lock().unwrap(), None);
+                assert_eq!(instances::port(app), port);
+                launch_guard().store(true, Ordering::SeqCst);
+                status::set_status(status::Status::Starting);
+                harness_pid_path(app)
+            });
+            fs::write(&marker_b, "profile-b marker").unwrap();
+            let deadline = std::time::Duration::from_secs(if cfg!(windows) { 10 } else { 1 });
+            tokio::time::timeout(deadline, async {
+                if explicit_scope {
+                    instances::scope("profile-b".into(), stop(app.clone())).await
+                } else {
+                    stop(app.clone()).await
+                }
+            })
+            .await
+            .expect("unowned profile stop waited for another profile's occupied port")
+            .unwrap();
+
+            assert!(!marker_b.exists());
+            instances::scope_sync("profile-b".into(), || {
+                assert!(!has_owned_process());
+                assert!(!launch_guard().load(Ordering::SeqCst));
+                assert_eq!(status::get_status(), status::Status::Stopped);
+            });
+            assert_eq!(fs::read_to_string(&marker_a).unwrap(), "profile-a marker");
+            instances::scope_sync("profile-a".into(), || {
+                assert_eq!(owned_process_pid(), Some(std::process::id()));
+                assert!(launch_guard().load(Ordering::SeqCst));
+                assert_eq!(status::get_status(), status::Status::Running);
+                assert_eq!(instances::port(app), port);
+            });
+            let connection =
+                std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).unwrap();
+            drop(listener.accept().unwrap());
+            drop(connection);
+        }
+        instances::scope_sync("profile-a".into(), || {
+            instances::instance().process.lock().unwrap().take();
+        });
     }
 
     #[test]
