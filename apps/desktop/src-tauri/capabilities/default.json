@@ -6,7 +6,6 @@
   "windows": [
     "main",
     "pet",
-    "toast-overlay",
     "remote-*",
     "window-*"
   ],

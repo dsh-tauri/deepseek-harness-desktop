@@ -12,7 +12,6 @@ export default defineConfig({
       input: {
         main: '/index.html',
         pet: '/pet.html',
-        toast: '/toast.html',
       },
     },
   },
