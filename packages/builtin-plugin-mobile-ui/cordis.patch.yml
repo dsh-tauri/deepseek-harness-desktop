@@ -1,5 +1,6 @@
 - insert:
     - id: dsh-tauri-mobile-ui
       name: dsh-tauri-mobile-ui
+      disabled: !!js "process.env.DSH_TAURI_OFFICIAL_ADAPTERS === '1'"
     - id: dsh-taiwind
       name: dsh-taiwind

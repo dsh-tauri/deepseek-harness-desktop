@@ -43,8 +43,8 @@ pub(crate) fn profile_dir(app_handle: &AppHandle) -> PathBuf {
 
 /// 已安装的插件 id 集合：通过强类型反序列化读取 package.json 的 `dependencies` 键与 `bundles` 列表。
 ///
-/// 供「插件是否已安装」的单点判定（[`is_installed`]）与安全模式的用户插件清除
-/// （[`super::safe`]）共用：后者需要的是全量清单，而非逐个 id 的探测。
+/// 供「插件是否已安装」的单点判定（[`is_installed`]）等需要的全量清单场景共用：
+/// 后者要的是整份清单，而非逐个 id 的探测。
 pub(crate) fn list_installed(app_handle: &AppHandle) -> HashSet<String> {
     declared_packages(app_handle).unwrap_or_default()
 }

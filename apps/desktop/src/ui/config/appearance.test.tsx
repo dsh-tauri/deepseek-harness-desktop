@@ -16,6 +16,7 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 afterEach(() => {
   cleanup()
   delete (window as any).__DSH_TRANSPARENT__
+  delete (window as any).__DSH_LIVE_TRANSPARENCY__
   vi.clearAllMocks()
 })
 
@@ -44,6 +45,15 @@ describe('appearance settings controls', () => {
     await waitFor(() => expect(update).toHaveBeenLastCalledWith({ appearance: expect.objectContaining({ transparency: true, opacity: 100 }) }))
     await waitFor(() => expect(screen.queryByTestId('dsh-appearance-restart')).toBeNull())
     expect((screen.getByRole('switch', { name: 'appearance.transparency' }) as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('still asks for a restart when a self-drawn Windows frame turns transparency off', async () => {
+    ;(window as any).__DSH_TRANSPARENT__ = true
+    ;(window as any).__DSH_LIVE_TRANSPARENCY__ = false
+    setup()
+    await waitFor(() => expect(screen.queryByTestId('dsh-appearance-restart')).toBeNull())
+    fireEvent.click(screen.getByRole('switch', { name: 'appearance.transparency' }))
+    await waitFor(() => expect(screen.getByTestId('dsh-appearance-restart')).toBeTruthy())
   })
 
   it('hides opacity controls when native transparency is switched off and remembers the opacity', async () => {

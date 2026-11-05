@@ -349,6 +349,7 @@ pub(super) fn prepare(
         resources: Some(resources.to_path_buf()),
         git_dir,
         user_pnpm,
+        core_version: Some(version),
     }))
 }
 
@@ -405,7 +406,6 @@ mod tests {
             ("language", json!(null)),
             ("active_core", json!(null)),
             ("active_core", json!("local")),
-            ("active_profile", json!("safe")),
             ("active_profile", json!("tauri")),
             ("active_profile", json!("custom")),
             ("active_profile", json!("web")),

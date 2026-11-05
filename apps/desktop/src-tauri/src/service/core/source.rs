@@ -101,6 +101,24 @@ pub(super) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str
     }
 }
 
+/// 自研适配插件已被官方取代的核心基线。
+///
+/// 0.2.2-rc.1 起官方 schedule 支持新建会话、官方客户端自带移动端适配，因此
+/// `dsh-tauri-scheduler` 与 `dsh-tauri-mobile-ui` 在该版本及以上默认停用；更早
+/// 的核心没有这些能力，仍由它们补位。补丁层据此决定默认状态。
+const OFFICIAL_ADAPTERS_BASELINE: &str = "0.2.2-rc.1";
+
+/// 当前核心是否已自带上述能力（版本无法解析时按「未达标」处理，保持插件启用）。
+pub(crate) fn retires_bundled_adapters(version: &str) -> bool {
+    match semver::Version::parse(version) {
+        Ok(actual) => match semver::Version::parse(OFFICIAL_ADAPTERS_BASELINE) {
+            Ok(baseline) => actual >= baseline,
+            Err(_) => false,
+        },
+        Err(_) => false,
+    }
+}
+
 /// 预打包核心目录里**实际安装**的引擎版本（不含 `v` 前缀）。
 ///
 /// 先读磁盘清单，再回落到安装记录的 tag：tag 只说明「上次下载了哪个发布」，
@@ -387,6 +405,18 @@ mod tests {
         ] {
             assert!(!meets_baseline(version, baseline), "version={version}");
         }
+    }
+
+    #[test]
+    fn bundled_adapter_retirement_starts_at_rc1() {
+        for version in ["0.2.1-rc.5", "0.2.2-alpha.3", "0.2.1"] {
+            assert!(!retires_bundled_adapters(version), "version={version}");
+        }
+        for version in ["0.2.2-rc.1", "0.2.2-rc.2", "0.2.2", "0.3.0-rc.1", "1.0.0"] {
+            assert!(retires_bundled_adapters(version), "version={version}");
+        }
+        assert!(!retires_bundled_adapters(""), "unknown core keeps the plugins");
+        assert!(!retires_bundled_adapters("not-a-version"));
     }
 
     #[test]

@@ -37,7 +37,6 @@ pub async fn set_active_profile(
     } else {
         profile::select(&app_handle, &id)?
     };
-    crate::service::workflow::instances::set_safe_mode(false);
     selected.active = true;
     crate::service::workflow::instances::bind_window(window.label(), &id);
     if old != id && !crate::service::workflow::instances::is_attached(&old) {
@@ -190,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn safe_mode_is_transient_and_never_written_to_the_startup_profile() {
+    fn stale_setting_writes_never_replace_the_startup_profile() {
         use crate::{config, service::profile, service::workflow::instances};
         use tauri::utils::config::AppDirectoriesOverride;
 
@@ -200,7 +199,7 @@ mod tests {
             command
                 .args([
                     "--exact",
-                    "bridge::profile::tests::safe_mode_is_transient_and_never_written_to_the_startup_profile",
+                    "bridge::profile::tests::stale_setting_writes_never_replace_the_startup_profile",
                     "--nocapture",
                 ])
                 .env("DSH_TEST_PROFILE_PERSISTENCE", scratch.path())
@@ -236,19 +235,16 @@ mod tests {
             .build(context)
             .unwrap();
         let app = app.handle();
-        for id in ["custom", profile::SAFE_PROFILE] {
+        for id in ["custom", "second"] {
             std::fs::create_dir_all(profile::profile_dir_of(app, id)).unwrap();
         }
         assert!(profile::set_active(app, "custom").unwrap().active);
         assert_eq!(config::get_store_dat_setting(app).active_profile, "custom");
-        instances::set_safe_mode(true);
-        assert_eq!(profile::active_profile(app), "safe");
-        assert_eq!(config::get_store_dat_setting(app).active_profile, "custom");
-        instances::scope_sync("custom".into(), || {
-            assert_eq!(profile::active_profile(app), "custom");
+        instances::scope_sync("second".into(), || {
+            assert_eq!(profile::active_profile(app), "second");
         });
         let mut stale = config::get_store_dat_setting(app);
-        stale.active_profile = "safe".into();
+        stale.active_profile = "second".into();
         config::set_store_dat_setting(app, stale);
         assert_eq!(config::get_store_dat_setting(app).active_profile, "custom");
         assert!(
@@ -256,12 +252,8 @@ mod tests {
                 .unwrap_err()
                 .starts_with("PROFILE_NOT_FOUND:")
         );
-        assert_eq!(profile::active_profile(app), "safe");
-        instances::set_safe_mode(false);
         assert_eq!(profile::active_profile(app), "custom");
-        instances::set_safe_mode(true);
         assert!(profile::set_active(app, "desktop").unwrap().active);
-        assert!(!instances::safe_mode());
         assert_eq!(config::get_store_dat_setting(app).active_profile, "desktop");
     }
 
@@ -277,11 +269,6 @@ mod tests {
                 include_str!("remote.rs"),
                 "pub async fn remote_open_window(",
                 "#[cfg(test)]",
-            ),
-            (
-                include_str!("lifecycle.rs"),
-                "pub async fn enter_safe_mode(",
-                "pub async fn quarantine_broken_patch_layers(",
             ),
             (
                 include_str!("profile.rs"),

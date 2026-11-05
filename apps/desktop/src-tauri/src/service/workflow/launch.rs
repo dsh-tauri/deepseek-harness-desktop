@@ -12,7 +12,6 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 
-use super::instances::safe_mode;
 #[cfg(unix)]
 use super::process::warn_if_inotify_watch_limit_low;
 use super::process::{
@@ -47,6 +46,8 @@ pub(super) struct LaunchPlan {
     pub(super) resources: Option<PathBuf>,
     pub(super) git_dir: Option<PathBuf>,
     pub(super) user_pnpm: Option<PathBuf>,
+    /// 本次启动的活动核心版本；内置插件补丁层按它决定默认启停。
+    pub(super) core_version: Option<String>,
 }
 
 /// 端口释放等待上限：刚结束/清扫过上个会话的残留 dsh 进程后，TCP 端口释放
@@ -533,14 +534,7 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         if let Err(error) =
             crate::service::core::ensure_app_core_supported(&core_dir, tag.as_deref(), baseline.as_deref())
         {
-            // 安全模式的语义是「隔离启动失败，先让应用可用」：核心版本过低属于环境问题，
-            // 隔离插件改变不了它，但用户至少要能进设置换核心，否则唯一的出口也堵死了
-            // （issue #1374）。
-            if safe_mode() {
-                log::warn!("{error} (safe mode continues without the baseline check)");
-            } else {
-                return Err(error);
-            }
+            return Err(error);
         }
     }
     mark_phase("resolve", &mut phase_started);
@@ -662,8 +656,8 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     let dsh_home = config::get_dsh_data_path(&app_handle);
     crate::service::perm::ensure_dir_writable(&dsh_home, "DSH_HOME_MKDIR_FAILED")?;
     // 当前档案目录同样必须在 spawn 前可写：`$DSH_HOME` 可写不代表档案可写——属主
-    // 错位可能只落在 `profiles` 或 `profiles/<id>` 上（安全模式要新建 `profiles/safe`，
-    // 因此 `profiles` 不可写同样是致命状态）。
+    // 错位可能只落在 `profiles` 或 `profiles/<id>` 上（新建档案要写 `profiles`，
+    // 因此父目录不可写同样是致命状态）。
     //
     // 先确保默认档案目录存在（幂等）：desktop::setup 的引导若失败（磁盘/权限抖动）
     // 或本进程没进过 setup，这里兜底。最佳努力：失败只告警，不阻断启动。
@@ -689,16 +683,6 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         log::warn!("ensure active profile core bundles failed: {e}");
     }
 
-    // 安全模式：安全档案的契约是「只加载 web 模板核心 bundles、不带任何用户插件」，
-    // 但档案目录一旦存在就绝不重建（用户可能反复进出安全模式），而内置插件自愈与
-    // 首次引导安装都作用于「当时的活动档案」，于是安全档案里会累积用户插件——它们
-    // 往往正是启动失败的元凶，不清干净的话每次进入安全模式都带着同一批插件重启，
-    // 隔离形同虚设。必须在 spawn dsh 之前做（服务未运行时改清单、删 node_modules
-    // 目录才安全）。内置插件与核心包由被调方保留；非安全档案直接跳过。最佳努力：
-    // 失败只告警，不阻断启动（清理不彻底只是隔离效果打折，启动阻塞则让应用彻底不可用）。
-    if let Err(e) = crate::service::plugin::purge_user_plugins_in_safe_profile(&app_handle) {
-        log::warn!("safe mode user plugin purge failed: {e}");
-    }
     mark_phase("profile_prepare", &mut phase_started);
 
     // Linux 起步前探测 inotify 监视上限：harness 服务（dsh web）用 chokidar 递归
@@ -843,6 +827,7 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         resources: app_handle.path().resource_dir().ok(),
         git_dir: config::get_git_cmd_dir(&app_handle),
         user_pnpm: crate::service::cli::find_user_pnpm(&app_handle),
+        core_version: crate::service::core::active_version(&app_handle),
     };
     let notifications = Arc::new(OnceLock::new());
     let _ = notifications.set(app_handle);
@@ -889,6 +874,7 @@ pub(super) async fn launch_prepared(
         resources,
         git_dir,
         user_pnpm,
+        core_version,
     } = plan;
     let mut envs: HashMap<String, String> = HashMap::new();
     envs.insert(
@@ -998,6 +984,15 @@ pub(super) async fn launch_prepared(
     envs.extend(config::proxy::proxy_child_env(&setting.proxy_url));
 
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
+    // 内置插件自带的补丁层按核心版本决定默认状态；表达式跑在核心进程里，读不到版本。
+    // 0.2.2-rc.1 起官方 schedule 支持新建会话，自研定时任务默认关闭。
+    if let Some(version) = core_version.as_deref() {
+        envs.insert("DSH_TAURI_CORE_VERSION".to_string(), version.to_string());
+        // 同一基线也覆盖了官方移动端适配，自研移动端插件随之默认关闭。
+        if crate::service::core::retires_bundled_adapters(version) {
+            envs.insert("DSH_TAURI_OFFICIAL_ADAPTERS".to_string(), "1".to_string());
+        }
+    }
 
     // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
     #[cfg(target_os = "linux")]

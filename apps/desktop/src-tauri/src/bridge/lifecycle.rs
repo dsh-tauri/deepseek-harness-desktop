@@ -401,68 +401,10 @@ pub async fn restart_harness(
     .await
 }
 
-/// 进入安全模式：确保安全档案存在并切换为当前档案（不重启，由前端走标准重启链路）。
-///
-/// 安全模式只是本次运行的临时档案：不写入 store 的 `active_profile`，退出应用后
-/// 下次启动回到用户原本的档案，不会把「安全模式」带进下一次运行。
-///
-/// 错误界面「安全模式」按钮的入口：安全档案只含 web 模板核心 bundles、不带
-/// 用户插件/补丁层，启动失败的插件（如 pending waiting for service）被隔离，
-/// 应用先恢复可用；用户在档案列表切回原档案即退出安全模式。
-///
-/// 档案目录一旦存在就绝不重建，因此里面可能残留此前被装进去的用户插件（内置插件
-/// 自愈与首次引导安装都作用于「当时的活动档案」）；这些插件由启动前的清除流程卸载
-/// （见 `service::plugin::safe::purge_user_plugins_in_safe_profile`），本命令只负责
-/// 切档案——服务仍在运行时删除插件目录不安全，必须等重启后的 spawn 之前再清。
-///
-/// 补丁层是这里唯一的例外：**home 层（`$DSH_HOME/cordis.patch.yml`）作用于所有
-/// 档案**，安全档案也不例外，因此一处手写笔误（典型是 `!!js` 表达式含 `: ` 却没加
-/// 引号）会让安全模式也起不来，把兜底入口一起废掉（issue #525）。这里在切档案前把
-/// 解析不了的补丁文件改名为同名 `.broken-<时间戳>` 备份（只改名、不删除），保证
-/// 「安全模式一定起得来」；记录回传前端提示备份路径，用户修好语法后改回原名即可恢复。
-///
-/// 改名失败（权限/占用）时**不切换档案层**并返回错误：损坏文件还在原地，重启只会
-/// 再次解析失败，切过去等于把「安全模式」也变成失败循环。此时让用户先处理文件，
-/// 而不是假装已恢复。
-#[tauri::command]
-pub async fn enter_safe_mode(
-    window: crate::Window,
-    app_handle: AppHandle,
-) -> Result<crate::service::plugin::PatchQuarantineReport, String> {
-    let _transition = crate::service::workflow::acquire_core_transition().await?;
-    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
-    crate::service::workflow::instances::scope(profile, async move {
-        crate::service::profile::ensure_safe_profile(&app_handle)?;
-        let report = crate::service::plugin::quarantine_patch_layers_in(
-            &crate::service::profile::profile_dir_of(
-                &app_handle,
-                crate::service::profile::SAFE_PROFILE,
-            ),
-            &config::get_dsh_data_path(&app_handle),
-        );
-        if report.has_failures() {
-            return Err(crate::service::plugin::quarantine_failure_message(&report));
-        }
-        let old = crate::service::profile::active_profile(&app_handle);
-        crate::service::workflow::instances::set_safe_mode(true);
-        crate::service::workflow::instances::bind_window(
-            window.label(),
-            crate::service::profile::SAFE_PROFILE,
-        );
-        if !crate::service::workflow::instances::is_attached(&old) {
-            workflow::stop(app_handle.clone()).await?;
-        }
-        Ok(report)
-    })
-    .await
-}
-
 /// 隔离解析失败的补丁层：当前档案层 + home 层（错误页「隔离损坏的补丁文件」入口）。
 ///
-/// 与 [`enter_safe_mode`] 共用同一套隔离逻辑，区别只在作用范围——本命令让用户留在
-/// 自己的档案里恢复，不切档案、不动插件。补丁文件只改名保存，内容原样保留。
-///
-/// 与 [`enter_safe_mode`] 同样：只要有损坏层没能移走就返回错误，前端不重启——否则
+/// 补丁文件只改名保存（`.broken-<时间戳>`），内容原样保留，用户修好语法后改回原名
+/// 即可恢复；不切档案、不动插件。只要有损坏层没能移走就返回错误，前端不重启——否则
 /// 会立刻回到同一个解析失败。
 #[tauri::command]
 pub async fn quarantine_broken_patch_layers(

@@ -1,4 +1,3 @@
-import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import type { HostContext, OperationResult, SchedulerSchedule, SchedulerTask, TaskInput } from '../types'
 import { randomUUID } from 'node:crypto'
 import { getServerContext } from 'dsh-h3/utils'
@@ -7,9 +6,9 @@ import { isEqual } from 'lodash-es'
 import { runtime, withTaskQueue, withWriteQueue } from '../config/runtime'
 import { server } from '../server'
 import { storage } from '../storage'
-import { isSchedulerSessionNotFound } from '../utils/agent-runtime'
+import { isSchedulerSessionNotFound, observeSession } from '../utils/agent-runtime'
 import { localTimeZone, nextOccurrence, validateSchedule } from '../utils/schedule'
-import { SessionOperationTimeout, withSessionDeadline } from '../utils/session-deadline'
+import { SessionOperationTimeout } from '../utils/session-deadline'
 import { sameTaskRecord } from '../utils/task-record'
 
 const SCHEDULER_TASKS_KEY = 'tasks'
@@ -263,16 +262,21 @@ async function validateBinding(input: Pick<TaskInput, 'delivery' | 'sessionId' |
   if (!verifySession)
     return { ok: true }
   const ctx = getServerContext<HostContext>(server)
-  if (typeof ctx.sessionController?.inspect !== 'function' || !Array.isArray(ctx.workspaceRegistry?.archivedSessionIds))
+  if (typeof ctx.sessionQuery?.observeSession !== 'function' || !Array.isArray(ctx.workspaceRegistry?.archivedSessionIds))
     return { ok: false, error: '宿主无法验证目标会话', code: 'session_unavailable' }
   if (ctx.workspaceRegistry.archivedSessionIds.includes(sessionId))
     return { ok: false, error: '目标会话已归档', code: 'session_archived' }
   try {
-    const inspected = await withSessionDeadline<Awaited<ReturnType<SessionController['inspect']>>>(ctx.sessionController.inspect(sessionId))
-    if (inspected?.meta?.id !== sessionId)
-      return { ok: false, error: '目标会话不存在', code: 'session_not_found' }
-    if (inspected.meta.origin === 'subagent' || (inspected.meta.delegationDepth ?? 0) > 0)
-      return { ok: false, error: '不能为子代理会话创建原会话任务', code: 'session_mismatch' }
+    const observed = await observeSession(ctx.sessionQuery, sessionId)
+    try {
+      if (observed.header?.id !== sessionId)
+        return { ok: false, error: '目标会话不存在', code: 'session_not_found' }
+      if (observed.header.origin === 'subagent' || (observed.header.delegationDepth ?? 0) > 0)
+        return { ok: false, error: '不能为子代理会话创建原会话任务', code: 'session_mismatch' }
+    }
+    finally {
+      observed.release()
+    }
     if (ctx.workspaceRegistry.archivedSessionIds.includes(sessionId))
       return { ok: false, error: '目标会话已归档', code: 'session_archived' }
     return { ok: true }

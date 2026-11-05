@@ -20,10 +20,10 @@ export function ConfigAppearance() {
   const appearance = normalizeAppearance(saved)
   const [opacity, setOpacity] = useState<number>()
   const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
-  // Linux 自绘圆角边框的窗口恒为透明窗（透明度是前端渲染参数），无需重启；
-  // 其余平台透明窗在启动时建立，改动 transparency 需要退出重开。
-  const framed = (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
-  const restartPending = (framed ? true : appearance.transparency) !== transparent
+  // 自绘窗沿与透明度能否实时切换是两件事：Windows 透明窗也要自绘窗沿，
+  // 但它的透明与否仍由建窗决定，改动必须重启。
+  const liveTransparency = (window as Window & { __DSH_LIVE_TRANSPARENCY__?: boolean }).__DSH_LIVE_TRANSPARENCY__ === true
+  const restartPending = (liveTransparency ? true : appearance.transparency) !== transparent
   const { mutate: save, isPending } = useMutation({
     mutationFn: (update: AppSettingUpdate) => store.setting.update(update),
     onError: () => toast(t('appearance.save_failed'), { variant: 'danger' }),
