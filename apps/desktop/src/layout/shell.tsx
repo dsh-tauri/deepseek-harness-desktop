@@ -72,13 +72,22 @@ export function Shell() {
   })
 
   // keep:effect 主窗口文档即 DSH：本机服务就绪后把当前 webview 导航到 DSH 页面。
+  // `serviceHealthy` 在启动收尾阶段会反复翻转，重复导航会互相打断（ERR_ABORTED），
+  // 用 ref 记住已发起的地址，只在目标真正变化时再导航。
+  const hostedNavigationRef = useRef<string | null>(null)
   useEffect(() => {
     if (isHostedServiceDocument() || !isHostedDocument() || remoteMode)
       return
     if (status !== 'ready' || !serviceHealthy || !webviewSrc)
       return
+    if (hostedNavigationRef.current === webviewSrc)
+      return
+    hostedNavigationRef.current = webviewSrc
     void invoke('host_harness_document', { url: webviewSrc })
-      .catch(error => console.error('[Shell] host document failed:', error))
+      .catch((error) => {
+        hostedNavigationRef.current = null
+        console.error('[Shell] host document failed:', error)
+      })
   }, [status, serviceHealthy, webviewSrc, remoteMode])
 
   function syncViewMenu() {

@@ -45,3 +45,10 @@ describe('frameMode', () => {
     }
   })
 })
+
+describe('hosted titlebar and drag band', () => {
+  it('reserves the navbar strip through the titlebar variable', () => {
+    applyHostedTitlebar(true, false)
+    expect(document.documentElement.style.getPropertyValue('--dsh-windows-titlebar-height')).toBe(`${SHELL_NAVBAR_HEIGHT}px`)
+  })
+})
