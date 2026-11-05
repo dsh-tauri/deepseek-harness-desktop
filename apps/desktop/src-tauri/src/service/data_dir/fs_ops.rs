@@ -6,7 +6,7 @@
 
 use rayon::prelude::*;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 每复制多少个文件回报一次进度：约 900MB / 2.6 万文件的一次迁移，
@@ -125,33 +125,96 @@ impl<'a> CopyProgress<'a> {
 /// 顶层条目并行处理（同 `service::profile::copy_dir_tree`）：pnpm 档案下
 /// `node_modules` 层级深、文件多，串行复制会让 900MB 的迁移明显变慢。
 pub(super) fn copy_tree(src: &Path, dst: &Path, progress: &CopyProgress) -> Result<(), String> {
+    let roots = CopyRoots {
+        source: std::path::absolute(src).map_err(|e| format!("DATA_DIR_COPY_SOURCE: {e}"))?,
+        canonical_source: fs::canonicalize(src)
+            .map_err(|e| format!("DATA_DIR_COPY_SOURCE: {e}"))?,
+        destination: std::path::absolute(dst).map_err(|e| format!("DATA_DIR_COPY_TARGET: {e}"))?,
+    };
+    copy_tree_contents(src, dst, progress, &roots)
+}
+
+struct CopyRoots {
+    source: PathBuf,
+    canonical_source: PathBuf,
+    destination: PathBuf,
+}
+
+fn internal_link_suffix<'a>(target: &'a Path, root: &Path) -> Option<&'a Path> {
+    if !target.is_absolute() {
+        return None;
+    }
+    let mut remaining = dunce::simplified(target).components();
+    for component in dunce::simplified(root).components() {
+        let found = remaining.next()?;
+        let matches = if cfg!(windows) {
+            found
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&component.as_os_str().to_string_lossy())
+        } else {
+            found == component
+        };
+        if !matches {
+            return None;
+        }
+    }
+    let suffix = remaining.as_path();
+    let mut depth = 0_usize;
+    for component in suffix.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => depth = depth.checked_sub(1)?,
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    Some(suffix)
+}
+
+fn relocated_link_target(target: &Path, roots: &CopyRoots) -> PathBuf {
+    [&roots.source, &roots.canonical_source]
+        .into_iter()
+        .find_map(|source| internal_link_suffix(target, source))
+        .map(|suffix| roots.destination.join(suffix))
+        .unwrap_or_else(|| target.to_path_buf())
+}
+
+fn copy_tree_contents(
+    src: &Path,
+    dst: &Path,
+    progress: &CopyProgress,
+    roots: &CopyRoots,
+) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("DATA_DIR_COPY_MKDIR: {}: {e}", dst.display()))?;
     let read_dir =
         fs::read_dir(src).map_err(|e| format!("DATA_DIR_COPY_READ: {}: {e}", src.display()))?;
     let entries: Vec<fs::DirEntry> = read_dir
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("DATA_DIR_COPY_ENTRY: {e}"))?;
-    entries.par_iter().try_for_each(|entry| -> Result<(), String> {
-        let name = entry.file_name();
-        if name.to_str().map(is_skipped).unwrap_or(false) {
-            return Ok(());
-        }
-        let src_path = entry.path();
-        let dst_path = dst.join(&name);
-        let meta = fs::symlink_metadata(&src_path)
-            .map_err(|e| format!("DATA_DIR_COPY_META: {}: {e}", src_path.display()))?;
-        if is_reparse_point(&meta) {
-            copy_link(&src_path, &dst_path);
-            progress.record_link();
-        } else if meta.is_dir() {
-            copy_tree(&src_path, &dst_path, progress)?;
-        } else if meta.is_file() {
-            fs::copy(&src_path, &dst_path)
-                .map_err(|e| format!("DATA_DIR_COPY_FILE: {}: {e}", src_path.display()))?;
-            progress.record_file(meta.len());
-        }
-        Ok(())
-    })
+    entries
+        .par_iter()
+        .try_for_each(|entry| -> Result<(), String> {
+            let name = entry.file_name();
+            if name.to_str().map(is_skipped).unwrap_or(false) {
+                return Ok(());
+            }
+            let src_path = entry.path();
+            let dst_path = dst.join(&name);
+            let meta = fs::symlink_metadata(&src_path)
+                .map_err(|e| format!("DATA_DIR_COPY_META: {}: {e}", src_path.display()))?;
+            if is_reparse_point(&meta) {
+                copy_link(&src_path, &dst_path, roots);
+                progress.record_link();
+            } else if meta.is_dir() {
+                copy_tree_contents(&src_path, &dst_path, progress, roots)?;
+            } else if meta.is_file() {
+                fs::copy(&src_path, &dst_path)
+                    .map_err(|e| format!("DATA_DIR_COPY_FILE: {}: {e}", src_path.display()))?;
+                progress.record_file(meta.len());
+            }
+            Ok(())
+        })
 }
 
 /// 重建一条重复解析点（best-effort）。
@@ -160,11 +223,12 @@ pub(super) fn copy_tree(src: &Path, dst: &Path, progress: &CopyProgress) -> Resu
 /// 数据量，也会让新旧目录共享同一份文件。重建失败（Windows 创建符号链接需要
 /// 权限或开发者模式）只告警、不阻断迁移——链接可以由插件重装流程重建，
 /// 而数据文件不能重来。
-fn copy_link(src: &Path, dst: &Path) {
+fn copy_link(src: &Path, dst: &Path, roots: &CopyRoots) {
     let Ok(target) = fs::read_link(src) else {
         log::warn!("DATA_DIR_COPY_LINK_READ: {}", src.display());
         return;
     };
+    let target = relocated_link_target(&target, roots);
     #[cfg(unix)]
     let created = std::os::unix::fs::symlink(&target, dst);
     #[cfg(windows)]
@@ -244,6 +308,143 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(path, text).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrated_internal_absolute_links_survive_source_retirement() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        let dst = root.path().join("dst");
+        write(&src.join("plugins/local/package.json"), "local plugin");
+        fs::create_dir_all(src.join("profiles/web/node_modules")).unwrap();
+        symlink(
+            src.join("plugins/local"),
+            src.join("profiles/web/node_modules/local"),
+        )
+        .unwrap();
+        symlink(src.join("future"), src.join("pending")).unwrap();
+
+        let tick = |_files: u64, _bytes: u64| {};
+        copy_tree(&src, &dst, &CopyProgress::new(&tick)).unwrap();
+        fs::rename(&src, root.path().join("retired")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dst.join("profiles/web/node_modules/local/package.json")).unwrap(),
+            "local plugin"
+        );
+        assert_eq!(
+            fs::read_link(dst.join("pending")).unwrap(),
+            dst.join("future")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_preserves_external_and_relative_link_targets() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        let dst = root.path().join("dst");
+        let external = root.path().join("src-external");
+        write(&src.join("data/value"), "internal");
+        write(&external.join("value"), "external");
+        symlink(&external, src.join("external")).unwrap();
+        symlink("data", src.join("relative")).unwrap();
+        let escaped = src.join("../src-external");
+        symlink(&escaped, src.join("escaped")).unwrap();
+
+        let tick = |_files: u64, _bytes: u64| {};
+        copy_tree(&src, &dst, &CopyProgress::new(&tick)).unwrap();
+        fs::rename(&src, root.path().join("retired")).unwrap();
+
+        assert_eq!(fs::read_link(dst.join("external")).unwrap(), external);
+        assert_eq!(
+            fs::read_link(dst.join("relative")).unwrap(),
+            Path::new("data")
+        );
+        assert_eq!(fs::read_link(dst.join("escaped")).unwrap(), escaped);
+        assert_eq!(
+            fs::read_to_string(dst.join("relative/value")).unwrap(),
+            "internal"
+        );
+        assert_eq!(
+            fs::read_to_string(dst.join("external/value")).unwrap(),
+            "external"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_relocates_links_using_either_source_alias() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let alias = root.path().join("source-alias");
+        let target = root.path().join("target");
+        write(&source.join("data/value"), "data");
+        symlink(&source, &alias).unwrap();
+        symlink(alias.join("data"), source.join("alias-link")).unwrap();
+        symlink(
+            fs::canonicalize(source.join("data")).unwrap(),
+            source.join("canonical-link"),
+        )
+        .unwrap();
+
+        let tick = |_files: u64, _bytes: u64| {};
+        copy_tree(&alias, &target, &CopyProgress::new(&tick)).unwrap();
+        fs::rename(&source, root.path().join("retired")).unwrap();
+
+        for name in ["alias-link", "canonical-link"] {
+            assert_eq!(
+                fs::read_to_string(target.join(name).join("value")).unwrap(),
+                "data"
+            );
+            assert_eq!(
+                fs::read_link(target.join(name)).unwrap(),
+                target.join("data")
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn migration_maps_verbatim_junction_targets_without_changing_external_links() {
+        let roots = CopyRoots {
+            source: PathBuf::from(r"C:\Old\.dsh"),
+            canonical_source: PathBuf::from(r"\\?\C:\Old\.dsh"),
+            destination: PathBuf::from(r"D:\New\.dsh"),
+        };
+        assert_eq!(
+            relocated_link_target(Path::new(r"\\?\c:\old\.dsh\plugins\local"), &roots),
+            Path::new(r"D:\New\.dsh\plugins\local")
+        );
+        for target in [
+            r"..\shared",
+            r"C:\Old\.dsh-other\plugin",
+            r"C:\Old\.dsh\..\outside",
+        ] {
+            assert_eq!(
+                relocated_link_target(Path::new(target), &roots),
+                Path::new(target)
+            );
+        }
+        let unc_roots = CopyRoots {
+            source: PathBuf::from(r"\\server\share\.dsh"),
+            canonical_source: PathBuf::from(r"\\?\UNC\server\share\.dsh"),
+            destination: PathBuf::from(r"D:\New\.dsh"),
+        };
+        assert_eq!(
+            relocated_link_target(
+                Path::new(r"\\?\UNC\SERVER\SHARE\.dsh\plugins\local"),
+                &unc_roots
+            ),
+            Path::new(r"D:\New\.dsh\plugins\local")
+        );
     }
 
     #[test]

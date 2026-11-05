@@ -145,12 +145,8 @@ fn rows_with_release_catalog(
         active: source == CoreSource::Local,
         removable: false,
         preview: false,
-        above_recommended: local
-            .as_ref()
-            .is_some_and(|c| config::is_dsh_version_above_recommended(app_handle, &c.version)),
         orphaned: false,
         bundled: false,
-        recommended_version: config::recommended_dsh_version(app_handle),
         error: None,
     }];
 
@@ -166,7 +162,6 @@ fn rows_with_release_catalog(
             HarnessCore {
                 id: BUNDLED_CORE_ID.to_string(),
                 source: CoreSource::App,
-                above_recommended: config::is_dsh_version_above_recommended(app_handle, &version),
                 version,
                 tag: String::new(),
                 path: dir_str.clone(),
@@ -182,7 +177,6 @@ fn rows_with_release_catalog(
                 preview: false,
                 orphaned: false,
                 bundled: true,
-                recommended_version: config::recommended_dsh_version(app_handle),
                 error: None,
             },
         );
@@ -281,10 +275,8 @@ fn rows_with_release_catalog(
             active: is_active,
             removable,
             preview: *preview,
-            above_recommended: config::is_dsh_version_above_recommended(app_handle, version),
             orphaned: false,
             bundled: false,
-            recommended_version: config::recommended_dsh_version(app_handle),
             error: None,
         });
     }
@@ -311,10 +303,6 @@ fn rows_with_release_catalog(
             bundled: false,
             // 无远程元数据（离线/限流）：预览标记按 tag 命名兜底
             preview: active_tag.as_deref().is_some_and(download::is_preview_tag),
-            above_recommended: manifest_version
-                .as_deref()
-                .is_some_and(|v| config::is_dsh_version_above_recommended(app_handle, v)),
-            recommended_version: config::recommended_dsh_version(app_handle),
             error: None,
         });
     }
@@ -370,10 +358,8 @@ fn rows_with_release_catalog(
                 removable: true,
                 // 无远程元数据（离线/限流）：预览标记按 tag 命名兜底
                 preview: download::is_preview_tag(&tag),
-                above_recommended: config::is_dsh_version_above_recommended(app_handle, &version),
                 orphaned,
                 bundled: false,
-                recommended_version: config::recommended_dsh_version(app_handle),
                 error: None,
             });
         }
@@ -866,11 +852,8 @@ fn row_for_tag(app_handle: &AppHandle, tag: &str, dir: &Path) -> HarnessCore {
         active,
         removable: true,
         preview: download::is_preview_tag(tag),
-        above_recommended: download::parse_version_from_tag(tag)
-            .is_some_and(|version| config::is_dsh_version_above_recommended(app_handle, &version)),
         orphaned: false,
         bundled: false,
-        recommended_version: config::recommended_dsh_version(app_handle),
         error: None,
     }
 }
@@ -1005,10 +988,8 @@ mod tests {
             active: false,
             removable: false,
             preview: false,
-            above_recommended: false,
             orphaned: false,
             bundled,
-            recommended_version: None,
             error: None,
         }
     }

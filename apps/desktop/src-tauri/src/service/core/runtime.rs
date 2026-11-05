@@ -186,6 +186,7 @@ impl NativeProbe {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // ABI 结论供测试断言与诊断使用
     fn has_abi_mismatch(&self) -> bool {
         self.failures().iter().any(|failure| failure.abi)
     }
@@ -288,7 +289,7 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
     }
 
     let core_root = crate::config::get_dsh_install_path(app_handle);
-    let node = crate::config::get_node_binary_path(app_handle);
+    let node = crate::service::workflow::electron_executable(app_handle)?;
     let base = crate::config::get_base_dir(app_handle);
     let profile = crate::service::plugin::profile_dir(app_handle);
     let profiles = crate::config::get_dsh_data_path(app_handle).join("profiles");
@@ -374,26 +375,8 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
         probe = next;
     }
 
-    // 2) ABI 不匹配（issue #441）：本地 node 与核心原生模块的构建 ABI 不同。核心由
-    //    pkg 在固定 Node 大版本下构建，捆绑运行时与之对齐，因此先验证捆绑运行时；
-    //    探测通过则本进程内固定使用它（config::set_prefer_bundled_node_runtime）。
-    if probe.has_abi_mismatch() && !is_bundled_runtime_node(&node, app_handle) {
-        if let Some(bundled) = crate::config::bundled_node_binary(app_handle) {
-            if probe_native_modules(&bundled, &core_root).await.is_ready() {
-                log::warn!(
-                    "CORE_NATIVE_ABI_MISMATCH: {:?} cannot load under {}; switching to the bundled Node.js runtime {}",
-                    probe.abi_packages(),
-                    node.display(),
-                    bundled.display()
-                );
-                crate::config::set_prefer_bundled_node_runtime(true);
-                return Ok(());
-            }
-        }
-    }
-
-    // 3) ABI 不匹配且捆绑运行时也救不了（核心由更高 ABI 的 Node 构建）：用所选运行时
-    //    自带的 npm 重建这些包，装了 C++ 工具链的环境可以自愈。
+    // 2) ABI 不匹配：运行时只有一个（随包 Electron），没有可切换的候选，只能用
+    //    它自带的 npm 重建这些包——装了 C++ 工具链的环境可以自愈。
     let abi_packages = probe.abi_packages();
     if !abi_packages.is_empty() {
         log::warn!(
@@ -1523,16 +1506,6 @@ fn parse_native_probe_failures(stdout: &str) -> Option<Vec<NativeProbeFailure>> 
     serde_json::from_str::<Vec<NativeProbeFailure>>(json).ok()
 }
 
-/// 当前 node 是否就是捆绑运行时（用于避免重复尝试同一个运行时）
-fn is_bundled_runtime_node(node: &Path, app_handle: &AppHandle) -> bool {
-    crate::config::bundled_node_binary(app_handle).is_some_and(|bundled| {
-        bundled == node
-            || bundled
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&node.to_string_lossy())
-    })
-}
-
 /// 生成原生模块加载失败的诊断信息：ABI 不匹配单独给出可读结论，其余按原样列出。
 fn native_failure_diagnostic(
     failures: &[NativeProbeFailure],
@@ -1769,7 +1742,9 @@ fn run_command(
     cwd: &Path,
 ) -> Result<std::process::Output, String> {
     let mut command = Command::new(program);
+    // 可执行文件是 Electron：不进 Node 模式会当 GUI 启动（无显示器时直接失败）。
     command
+        .env("ELECTRON_RUN_AS_NODE", "1")
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())
@@ -1792,7 +1767,9 @@ fn run_process_with_timeout(
     label: &str,
 ) -> Result<std::process::Output, String> {
     let mut command = Command::new(program);
+    // 可执行文件是 Electron：不进 Node 模式会当 GUI 启动（无显示器时直接失败）。
     command
+        .env("ELECTRON_RUN_AS_NODE", "1")
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())
@@ -2134,7 +2111,9 @@ mod tests {
         let script = cwd.join("dsh-native-probe-test.mjs");
         std::fs::write(&script, NATIVE_PROBE_SCRIPT).unwrap();
         let mut command = Command::new(node);
+        // 运行时是 Electron：不进 Node 模式就会当 GUI 启动（无 X server 时直接失败）。
         command
+            .env("ELECTRON_RUN_AS_NODE", "1")
             .arg(&script)
             .current_dir(cwd)
             .stdout(Stdio::piped())
@@ -2727,7 +2706,7 @@ mod tests {
     /// 本机没有兼容 node 时跳过（受限环境）。
     #[test]
     fn native_probe_script_runs_on_real_node() {
-        let Some(node) = crate::config::get_local_node_path() else {
+        let Some(node) = crate::service::workflow::test_runtime_executable() else {
             return;
         };
         let root = std::env::temp_dir().join(format!("dsh-native-probe-{}", std::process::id()));
@@ -2753,7 +2732,7 @@ mod tests {
     /// （issue #441 的 fs-ext 形态：binding.gyp + build/Release/*.node，包入口抛 ABI 错误）。
     #[test]
     fn native_probe_detects_abi_mismatch_package() {
-        let Some(node) = crate::config::get_local_node_path() else {
+        let Some(node) = crate::service::workflow::test_runtime_executable() else {
             return;
         };
         let root = std::env::temp_dir().join(format!("dsh-native-abi-{}", std::process::id()));

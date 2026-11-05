@@ -292,11 +292,6 @@ pub(crate) fn detect_first_install_at(app_data: Option<&std::path::Path>) -> boo
         .get_or_init(|| app_data.is_some_and(|dir| !dir.join(store_dat_file_name()).exists()))
 }
 
-/// 读取首装检测结果；尚未检测（或检测失败）时返回 `false`，保守按老用户处理。
-pub fn is_first_install() -> bool {
-    FIRST_INSTALL.get().copied().unwrap_or(false)
-}
-
 pub(crate) fn unwrap_json_value(
     value: &serde_json::Value,
 ) -> std::borrow::Cow<'_, serde_json::Value> {

@@ -155,7 +155,7 @@ async fn repair_with_pnpm_install(app_handle: &AppHandle, profile: &Path) -> Res
 
     let window = crate::utils::operation_window(app_handle)
         .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
-    let envs = build_plugin_envs(app_handle, prefer_bundled);
+    let envs = build_plugin_envs(app_handle, prefer_bundled)?;
     log::info!(
         "repairing profile node_modules via pnpm install in {}",
         profile.display()
@@ -212,7 +212,7 @@ pub(crate) async fn pnpm_direct(
         bundled_ready && store.is_none_or(|s| bundled_pnpm_major(app_handle) == Some(s));
 
     if bundled_matches {
-        let node = config::get_node_binary_path(app_handle);
+        let node = crate::service::workflow::electron_executable(app_handle)?;
         return Ok(Some((node, vec![bundled.into_os_string()])));
     }
 
@@ -228,7 +228,7 @@ pub(crate) async fn pnpm_direct(
             Some(store) => {
                 pnpm_major_version_at_bounded(
                     &user,
-                    Some(&config::get_node_binary_path(app_handle)),
+                    Some(&crate::service::workflow::electron_executable(app_handle)?),
                     None,
                     super::process::new_process_owner(),
                 )
@@ -243,7 +243,7 @@ pub(crate) async fn pnpm_direct(
 
     // 都不匹配：退回捆绑版尽力一试（pnpm 会因 store 不兼容失败，由调用方记录）
     if bundled_ready {
-        let node = config::get_node_binary_path(app_handle);
+        let node = crate::service::workflow::electron_executable(app_handle)?;
         return Ok(Some((node, vec![bundled.into_os_string()])));
     }
     Ok(None)

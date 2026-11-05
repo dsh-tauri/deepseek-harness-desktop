@@ -108,17 +108,6 @@ export function readManifest(repo = process.cwd()) {
   }
 }
 
-/** 资源清单中的推荐核心版本（`engines.dsh.recommend`）。 */
-export function readRecommendedDshVersion(repo = process.cwd()) {
-  const manifest = readManifest(repo)
-  const version = typeof manifest?.engines?.dsh?.recommend === 'string'
-    ? manifest.engines.dsh.recommend.trim()
-    : ''
-  if (!version)
-    throw bundleError('manifest.jsonc is missing engines.dsh.recommend')
-  return version
-}
-
 /** 从 release tag 解析版本号，与 Rust `download::parse_version_from_tag` 等价。 */
 export function parseVersionFromTag(tag) {
   if (typeof tag !== 'string')
@@ -303,16 +292,6 @@ export function applyBundleManifest({ repo = process.cwd(), platform, withGit = 
   return { file, applied }
 }
 
-/** 解析 GitHub Release 响应中版本号命中推荐版本的 tag（与 Rust 侧版本解析同源）。 */
-export function findReleaseTag(releases, version) {
-  if (!Array.isArray(releases))
-    throw bundleError('GitHub releases response is not an array')
-  const release = releases.find(item => parseVersionFromTag(item?.tag_name) === version)
-  if (!release)
-    throw bundleError(`no ${DSH_PKG_REPO} release found for version ${version}`)
-  return requireString(release.tag_name, 'release tag_name')
-}
-
 async function githubJson(url) {
   const headers = {
     'accept': 'application/vnd.github+json',
@@ -327,12 +306,36 @@ async function githubJson(url) {
   return response.json()
 }
 
-/** 按推荐版本反查 pkg 仓库的固定 tag。 */
-export async function resolveDshTag(version, fetchJson = githubJson) {
+/** 预览标记：与 Rust `download::is_preview_tag` 一致（rc 不算预览版）。 */
+const PREVIEW_MARKERS = ['preview', 'beta', 'alpha', 'canary', 'next']
+
+function isPreviewVersion(version) {
+  const pre = version.split('+')[0].split('-').slice(1).join('-')
+  return pre.split('.').some(id => PREVIEW_MARKERS.some(marker => id.startsWith(marker)))
+}
+
+/**
+ * pkg 仓库里最新的**稳定版** release tag（不含预览版、不含 draft）。
+ *
+ * 随包内核与更新提示使用同一个来源：不再有人工维护的「推荐版本」，离线包随包的内核
+ * 就是此刻最新的稳定发行版。返回完整 tag（含 build-id），下载地址与摘要都以它为准。
+ */
+export async function resolveLatestStableDshTag(fetchJson = githubJson) {
   const releases = await fetchJson(
     `https://api.github.com/repos/${DSH_PKG_REPO}/releases?per_page=100`,
   )
-  return findReleaseTag(releases, version)
+  if (!Array.isArray(releases))
+    throw bundleError('GitHub releases response is not an array')
+  // 列表按创建时间倒序，取第一条非 draft、非 Prerelease label、tag 命名也非预览的 release。
+  const release = releases.find((item) => {
+    if (item?.draft === true || item?.prerelease === true)
+      return false
+    const version = parseVersionFromTag(item?.tag_name)
+    return version !== null && !isPreviewVersion(version)
+  })
+  if (!release)
+    throw bundleError(`no stable ${DSH_PKG_REPO} release found`)
+  return requireString(release.tag_name, 'release tag_name')
 }
 
 function appendOutputs(outputPath, values) {
@@ -375,7 +378,6 @@ async function main() {
   const args = parseArgs(process.argv.slice(2))
   const repo = process.env.GITHUB_WORKSPACE || process.cwd()
   const constants = readBuildConstants(repo)
-  const dshVersion = readRecommendedDshVersion(repo)
 
   if (args.assets) {
     requirePlatformArch(args)
@@ -391,12 +393,11 @@ async function main() {
     return
   }
 
-  const dshTag = await resolveDshTag(dshVersion)
+  const dshTag = await resolveLatestStableDshTag()
   appendOutputs(process.env.GITHUB_OUTPUT, {
     node_version: constants.nodeVersion,
     pnpm_version: constants.pnpmVersion,
     mingit_version: constants.mingitVersion,
-    dsh_version: dshVersion,
     dsh_tag: dshTag,
   })
 }

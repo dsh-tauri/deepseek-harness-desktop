@@ -6,7 +6,6 @@ use std::ffi::OsString;
 use std::path::Path;
 use crate::AppHandle;
 
-use crate::config;
 use crate::service::cli;
 use crate::service::core;
 use crate::service::profile::active_profile;
@@ -591,7 +590,7 @@ async fn run_plugin_command(
 
     cli::ensure_shims(app_handle)?;
 
-    let node = config::get_node_binary_path(app_handle);
+    let node = crate::service::workflow::electron_executable(app_handle)?;
     let dsh_bin = core::active_dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
@@ -617,7 +616,7 @@ async fn run_plugin_command(
         }
     }
 
-    let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm);
+    let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm)?;
 
     let profile = active_profile(app_handle);
     let profile_path = crate::service::profile::profile_dir_of(app_handle, &profile);
@@ -787,7 +786,7 @@ async fn verify_update_landed(
     };
     let window = crate::utils::operation_window(app_handle)
         .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
-    let envs = build_plugin_envs(app_handle, harness_prefer_bundled_pnpm(app_handle).await?);
+    let envs = build_plugin_envs(app_handle, harness_prefer_bundled_pnpm(app_handle).await?)?;
     let pkg_dir = profile_dir(app_handle).join("node_modules").join(name);
     if let Err(e) = ensure_plugin_entry_built(app_handle, id, &pkg_dir, &envs, &window).await {
         if let Err(err) = errors::record(app_handle, id, "update", &e) {

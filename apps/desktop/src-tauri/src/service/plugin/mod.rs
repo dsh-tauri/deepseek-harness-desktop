@@ -67,28 +67,21 @@ pub use install::{
     allow_policy_versions, allow_version_exemptions, inspect_specs, install, install_specs,
     remove_many, update_many, IncompatibleVersion, PolicyBlockedVersion,
 };
-#[cfg(any(windows, test))]
-pub(crate) use installed::ensure_npmrc_at;
 pub(crate) use installed::{
-    declared_packages, ensure_profile_npmrc, installed_name, list_installed, profile_dir,
-    ProfilePackageJson,
+    declared_packages, ensure_profile_npmrc, installed_name, profile_dir, ProfilePackageJson,
 };
 pub use installed::{list, PreinstallPlugin};
 pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
 pub(crate) use internal::{internal_plugin_entry_is_ready, skip_unavailable_plugins};
-#[cfg(any(windows, test))]
-pub(crate) use internal::{prepare_early_plugins, EarlyPluginState};
 pub(crate) use patch_entries::{strip_active_unresolved_entries, PatchEntryStripReport};
 pub(crate) use patch_guard::preflight_at as preflight_patch_entries_at;
 pub(crate) use patch_guard::{
     patch_layer_paths, quarantine_active_patch_layers, quarantine_failure_message,
-    quarantine_patch_layers_in, PatchQuarantineReport,
+    PatchQuarantineReport,
 };
 pub(crate) use patch_yaml::{parse_patch_layer, render_patch_layer};
 pub use preset::repo_url_of;
-#[cfg(any(windows, test))]
-pub(crate) use preset::{bundled_plugin_dir_from, presets_from_manifest};
 pub(crate) use preset::{
     bundled_plugin_dir, current_preset_hash, load_presets, preinstall_pending,
     remove_legacy_bundled_plugins,

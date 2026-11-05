@@ -7,7 +7,6 @@ use crate::AppHandle;
 /// 而不是按任务在 `tasks` 向量里的位置索引（重排向量不应改变行为）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallKind {
-    Node,
     Dsh,
     Pnpm,
     /// 仅 Windows 构造：`Git` 安装任务按 `#[cfg(windows)]` 加入任务列表。
@@ -19,7 +18,6 @@ impl InstallKind {
     /// 对应的依赖映射键（见 `config::dependencies`）
     pub fn dependency_key(self) -> &'static str {
         match self {
-            InstallKind::Node => config::dependencies::DEP_NODE,
             InstallKind::Dsh => config::dependencies::DEP_DSH,
             InstallKind::Pnpm => config::dependencies::DEP_PNPM,
             InstallKind::Git => config::dependencies::DEP_GIT,
@@ -44,8 +42,7 @@ pub trait Installable: Send + Sync {
 /// 依赖任务清单（唯一构造点：安装流程与映射回写共用同一组任务）。
 pub fn tasks() -> Vec<Box<dyn Installable>> {
     #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut tasks: Vec<Box<dyn Installable>> =
-        vec![Box::new(Nodejs), Box::new(Dsh), Box::new(Pnpm)];
+    let mut tasks: Vec<Box<dyn Installable>> = vec![Box::new(Dsh), Box::new(Pnpm)];
     #[cfg(windows)]
     tasks.push(Box::new(Git));
     tasks
@@ -55,53 +52,6 @@ pub fn tasks() -> Vec<Box<dyn Installable>> {
 pub fn record_mappings(app: &AppHandle) {
     for task in tasks() {
         task.record_mapping(app);
-    }
-}
-
-// --- Node.js 实现 ---
-pub struct Nodejs;
-
-#[async_trait]
-impl Installable for Nodejs {
-    fn kind(&self) -> InstallKind {
-        InstallKind::Node
-    }
-    fn title(&self) -> &str {
-        "运行环境"
-    }
-    fn get_download_url(&self) -> Result<String, String> {
-        config::get_node_download_url()
-    }
-    fn get_install_path(&self, app: &AppHandle) -> PathBuf {
-        config::get_node_install_path(app)
-    }
-    fn check_installed(&self, app: &AppHandle) -> bool {
-        // 原生模块 ABI 探测已判定本地 node 无法加载核心的原生模块（issue #441）：
-        // 此时不能再以"本机有版本兼容的 node"为由跳过捆绑运行时，否则服务进程仍会
-        // 用那个 ABI 不匹配的运行时启动。
-        if config::prefer_bundled_node_runtime() {
-            return config::bundled_node_binary(app).is_some()
-                && config::is_runtime_compatible(app);
-        }
-        if let Some(local_node) = config::get_local_node_path() {
-            log::info!(
-                "Detected compatible local Node.js ({}), skipping bundled runtime",
-                local_node.display()
-            );
-            return true;
-        }
-        config::get_node_binary_path(app).exists() && config::is_runtime_compatible(app)
-    }
-    fn record_mapping(&self, app: &AppHandle) {
-        let managed = config::get_node_install_path(app);
-        // ABI 探测要求捆绑运行时时不能把系统 node 记为可用（与实际拉起的进程一致）。
-        let system =
-            !config::prefer_bundled_node_runtime() && config::get_local_node_path().is_some();
-        config::dependencies::record(
-            app,
-            InstallKind::Node.dependency_key(),
-            (!system).then_some(managed),
-        );
     }
 }
 

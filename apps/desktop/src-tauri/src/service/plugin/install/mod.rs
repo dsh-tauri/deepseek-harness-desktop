@@ -32,7 +32,6 @@
 //! - [`artifact`]：安装产物落盘核验（防「假成功」）+ 声明入口就地补构建
 
 use crate::{AppHandle, Window};
-use crate::config;
 use crate::service::cli;
 use crate::service::core;
 use crate::service::profile::{
@@ -385,7 +384,7 @@ async fn install_with_guard(
     // 确保 pnpm/dsh shim 存在
     cli::ensure_shims(app_handle)?;
 
-    let node = config::get_node_binary_path(app_handle);
+    let node = crate::service::workflow::electron_executable(app_handle)?;
     // 活动核心的 dsh 入口：本地核心存在时用本地 CLI，否则预打包
     let dsh_bin = core::active_dsh_binary(app_handle);
     if !node.exists() {
@@ -416,7 +415,7 @@ async fn install_with_guard(
         }
     }
 
-    let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm);
+    let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm)?;
 
     // 拼装命令行参数
     let profile = active_profile(app_handle);
@@ -671,7 +670,7 @@ pub async fn allow_version_exemptions(
     let _operation = acquire_operation_lock().await?;
     let window = crate::utils::operation_window(app_handle)
         .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
-    let node = config::get_node_binary_path(app_handle);
+    let node = crate::service::workflow::electron_executable(app_handle)?;
     let dsh_bin = core::active_dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
@@ -682,7 +681,7 @@ pub async fn allow_version_exemptions(
 
     // 豁免分支不进 pnpm（见函数文档），这里不做 pnpm 就绪探测：探测失败不该
     // 让一条本不需要 pnpm 的授权落不了地。
-    let envs = build_plugin_envs(app_handle, false);
+    let envs = build_plugin_envs(app_handle, false)?;
     let cwd = crate::service::core::active_core_dir(app_handle);
     let profile = active_profile(app_handle);
     let owner = new_process_owner();

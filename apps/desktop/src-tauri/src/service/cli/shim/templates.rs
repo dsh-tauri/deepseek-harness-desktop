@@ -10,81 +10,45 @@
 //! format! 的参数占位符区分）。
 
 // ---------------------------------------------------------------------------
-// shim 共享片段：node 解析逻辑（dsh / pnpm shim 共用）
+// shim 共享片段：node 解析逻辑（dsh / pnpm / npm / npx shim 共用）
 //
-// 规则：优先 `DSH_NODE` 环境变量（桌面端注入其已解析并核验过的 node 路径，
-// 保证 shim 与应用预检一致），其次 PATH 中版本兼容的本地 node（v22.19+ /
-// v24+，与 config::is_supported_node_version 一致），否则回退捆绑
-// 运行时。`DSH_NODE` 只在桌面端自身派生的子进程里存在，终端用户环境不受影响。
+// 运行时只有一个：随包分发的 Electron，以 Node 模式运行（ELECTRON_RUN_AS_NODE=1）。
+// 没有独立 Node 运行时，也不再去 PATH 里挑本地 node —— 那会让 shim 与桌面端
+// 实际拉起的运行时分叉，且本地 node 的 ABI 未必能加载核心的原生模块。
+//
+// 顺序：桌面端注入的 DSH_NODE（与宿主同一二进制）> 已烘焙的 NODE_BIN。
+// 两者都要显式置上 ELECTRON_RUN_AS_NODE，否则 Electron 会当 GUI 启动。
+// DSH_NODE 只在桌面端自身派生的子进程里存在，终端用户环境不受影响。
 // ---------------------------------------------------------------------------
 
 pub(super) const CMD_NODE_RESOLVE: &str = r#"
-rem Prefer the desktop-resolved node (DSH_NODE, injected by the app into its
-rem own child processes), then a version-compatible local node, then the
-rem bundled runtime. DSH_NODE makes the shim and the app's pre-check agree:
-rem the app verified the node exists before spawning the child, and the shim
-rem must not re-derive it from PATH (which can miss nodes the app found).
-rem Pure batch version check (for /f tokens + numeric compare), no powershell
-rem child: avoids console flashes when invoked without a console and skips the
-rem per-call powershell startup cost.
+rem The only runtime is the bundled Electron in Node mode. DSH_NODE (injected by
+rem the app into its own child processes) wins so the shim and the app agree;
+rem otherwise fall back to the baked path. ELECTRON_RUN_AS_NODE is mandatory:
+rem without it Electron starts its GUI instead of running the script.
+set "ELECTRON_RUN_AS_NODE=1"
 if not defined DSH_NODE goto :skip_dsh_node
 set "NODE=%DSH_NODE%"
-rem Windows canonical paths may carry a \\?\ verbatim prefix that cmd.exe
+rem Windows canonical paths may carry a \\\\?\\ verbatim prefix that cmd.exe
 rem cannot launch directly; strip it before checking/using the path.
-if "%NODE:~0,4%"=="\\?\" set "NODE=%NODE:~4%"
+if "%NODE:~0,4%"=="\\\\?\\" set "NODE=%NODE:~4%"
 if exist "%NODE%" goto :launch
 :skip_dsh_node
-where node >nul 2>nul
-if errorlevel 1 goto :use_bundled
-set "NODE_VERSION="
-for /f "delims=" %%v in ('node --version 2^>nul ^| findstr /r /x "v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"') do set "NODE_VERSION=%%v"
-if not defined NODE_VERSION goto :use_bundled
-for /f "tokens=1,2 delims=v." %%a in ("%NODE_VERSION%") do set "NODE_MAJOR=%%a" & set "NODE_MINOR=%%b"
-if not defined NODE_MAJOR goto :use_bundled
-if %NODE_MAJOR% GEQ 24 goto :node_ok
-if %NODE_MAJOR% EQU 22 if defined NODE_MINOR if %NODE_MINOR% GEQ 19 goto :node_ok
-goto :use_bundled
-
-:node_ok
-set "NODE=node"
-goto :launch
-
-:node_dsh
-set "NODE=%DSH_NODE%"
-goto :launch
-
-:use_bundled
 if not exist "%NODE_BIN%" goto :no_node
 set "NODE=%NODE_BIN%"
 set "PATH=%NODE_DIR%;%PATH%"
 "#;
 
 pub(super) const PS1_NODE_RESOLVE: &str = r#"
-# Prefer the desktop-resolved node (DSH_NODE, injected by the app into its
-# own child processes), then a version-compatible local node, then the
-# bundled runtime — see the CMD shim for why DSH_NODE wins first.
+# The only runtime is the bundled Electron in Node mode — see the CMD shim for
+# why DSH_NODE wins and why ELECTRON_RUN_AS_NODE is mandatory.
 $node = $null
 if ($env:DSH_NODE) {
     $node = $env:DSH_NODE
-    # Windows canonical paths may carry a \\?\ verbatim prefix; strip it so
+    # Windows canonical paths may carry a \\\\?\\ verbatim prefix; strip it so
     # PowerShell/cmd can launch the path directly.
-    if ($node.StartsWith('\\?\')) { $node = $node.Substring(4) }
+    if ($node.StartsWith('\\\\?\\')) { $node = $node.Substring(4) }
     if (-not (Test-Path -LiteralPath $node)) { $node = $null }
-}
-if (-not $node) {
-    $localNode = Get-Command node -ErrorAction SilentlyContinue
-    if ($localNode) {
-        try {
-            $version = & node --version 2>$null
-            if ($version -match '^v(\d+)\.(\d+)\.(\d+)$') {
-                $major = [int]$matches[1]
-                $minor = [int]$matches[2]
-                if (($major -eq 22 -and $minor -ge 19) -or $major -ge 24) {
-                    $node = 'node'
-                }
-            }
-        } catch { }
-    }
 }
 if (-not $node) {
     if (Test-Path -LiteralPath $nodeBin) {
@@ -93,29 +57,18 @@ if (-not $node) {
     }
 }
 if (-not $node) {
-    Write-Error 'Node.js runtime not found. Please run DeepSeek Harness Desktop to install it first.'
+    Write-Error 'Runtime not found. Please run DeepSeekRuntime Desktop to install it first.'
     exit 1
 }
+$env:ELECTRON_RUN_AS_NODE = '1'
 "#;
 
 pub(super) const SH_NODE_RESOLVE: &str = r#"
 NODE=""
-# Prefer the desktop-resolved node (DSH_NODE, injected by the app into its
-# own child processes), then a version-compatible local node, then the
-# bundled runtime — see the CMD shim for why DSH_NODE wins first.
+# The only runtime is the bundled Electron in Node mode — see the CMD shim for
+# why DSH_NODE wins and why ELECTRON_RUN_AS_NODE is mandatory.
 if [ -n "$DSH_NODE" ] && [ -x "$DSH_NODE" ]; then
   NODE="$DSH_NODE"
-fi
-if [ -z "$NODE" ] && command -v node >/dev/null 2>&1; then
-  NODE_V=$(node --version 2>/dev/null)
-  if printf '%s\n' "$NODE_V" | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ { exit 0 } { exit 1 }'; then
-    MAJOR=$(printf '%s' "$NODE_V" | awk -F. '{ gsub(/^v/, "", $1); print $1 }')
-    MINOR=$(printf '%s' "$NODE_V" | awk -F. '{ print $2 }')
-    if { [ -n "$MAJOR" ] && [ "$MAJOR" -ge 24 ]; } 2>/dev/null || \
-       { [ "$MAJOR" -eq 22 ] && [ "$MINOR" -ge 19 ]; } 2>/dev/null; then
-      NODE="node"
-    fi
-  fi
 fi
 if [ -z "$NODE" ]; then
   if [ -x "$NODE_BIN" ]; then
@@ -124,9 +77,10 @@ if [ -z "$NODE" ]; then
   fi
 fi
 if [ -z "$NODE" ]; then
-  echo "Node.js runtime not found. Please run DeepSeek Harness Desktop to install it first." >&2
+  echo "Runtime not found. Please run DeepSeekRuntime Desktop to install it first." >&2
   exit 1
 fi
+export ELECTRON_RUN_AS_NODE=1
 "#;
 
 // ---------------------------------------------------------------------------

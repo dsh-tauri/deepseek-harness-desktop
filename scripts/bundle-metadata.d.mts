@@ -45,8 +45,6 @@ export function stripJsonc(raw: string): string
 
 export function readManifest(repo?: string): Record<string, unknown>
 
-export function readRecommendedDshVersion(repo?: string): string
-
 export function parseVersionFromTag(tag: unknown): string | null
 
 export function nodeAssetName(platform: BundlePlatform, arch: BundleArch, version: string): string
@@ -76,9 +74,6 @@ export function applyBundleManifest(input: {
   withGit?: boolean
 }): { file: string, applied: string[] }
 
-export function findReleaseTag(releases: unknown, version: string): string
-
-export function resolveDshTag(
-  version: string,
+export function resolveLatestStableDshTag(
   fetchJson?: (url: string) => Promise<unknown>,
 ): Promise<string>

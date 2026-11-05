@@ -413,6 +413,8 @@ pub async fn update_local_core<R: Runtime>(app_handle: AppHandle<R>) -> Result<S
     } else {
         pm.to_string()
     };
+    let installed = core.version.clone();
+    let current = semver::Version::parse(&installed).ok();
     let (target_version, status, stdout, stderr) =
         tauri::async_runtime::spawn_blocking(move || {
             let mut query = std::process::Command::new(&program);
@@ -446,8 +448,19 @@ pub async fn update_local_core<R: Runtime>(app_handle: AppHandle<R>) -> Result<S
             }
             .ok_or_else(|| "CORE_UPDATE_TARGET_INVALID: expected one version".to_string())?
             .to_string();
-            semver::Version::parse(&target_version)
+            let target = semver::Version::parse(&target_version)
                 .map_err(|e| format!("CORE_UPDATE_TARGET_INVALID: {e}"))?;
+            // 包管理器的 `latest` 与 pkg 仓库的最新稳定版不是同一个东西：本地装的
+            // 预发布版（或手动指定的更高版本）完全可能高于 npm 的 latest，照着装就是
+            // 一次静默降级。宁可拒绝，让用户自己在包管理器里挑版本。
+            if current
+                .as_ref()
+                .is_some_and(|current| target < *current)
+            {
+                return Err(format!(
+                    "CORE_UPDATE_TARGET_OLDER: {pm} would install {target_version}, older than the installed {installed}"
+                ));
+            }
             let package = format!("@deepseek-ai/dsh@{target_version}");
             log::info!("Updating local dsh core via `{pm} {action} -g {package}`");
             let mut cmd = std::process::Command::new(&program);

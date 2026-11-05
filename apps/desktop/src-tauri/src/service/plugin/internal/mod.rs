@@ -27,8 +27,6 @@ use super::preset::{
 };
 use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
 use crate::config;
-#[cfg(any(windows, test))]
-use super::preset::{bundled_plugin_dir_from, presets_from_manifest};
 
 use manifest::{
     collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec,
@@ -355,7 +353,6 @@ pub(crate) async fn ensure(app_handle: &AppHandle) -> Result<(), String> {
 }
 
 async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
-    crate::service::workflow::early::wait_preparation().await?;
     let lock = ensure_lock(&crate::service::profile::active_profile(app_handle));
     let presets = load_presets(app_handle);
     let core_version = crate::service::core::active_version(app_handle);
@@ -631,8 +628,6 @@ fn emit_phase(
 
 struct InternalPluginCheck {
     manifest: Option<serde_json::Value>,
-    #[cfg(any(windows, test))]
-    parsed: Option<ProfilePackageJson>,
     need: Vec<(String, String, PathBuf)>,
     orphans: Vec<String>,
     sources_ready: bool,
@@ -655,16 +650,16 @@ fn prepare_internal_plugins(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("INTERNAL_PLUGIN_MANIFEST_READ_FAILED: {e}")),
     };
-    let parsed = manifest
-        .as_ref()
-        .map(|value| serde_json::from_value::<ProfilePackageJson>(value.clone()))
-        .transpose()
-        .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_SCHEMA_FAILED: {error}"))?;
     if prepare {
         crate::service::perm::ensure_writable_path(profile, dsh_home, "PROFILE_NOT_WRITABLE")?;
     }
     let mut migration_pending =
         repair_loader_state(profile, dsh_home, internal, &mut manifest, prepare)?;
+    let parsed = manifest
+        .as_ref()
+        .map(|value| serde_json::from_value::<ProfilePackageJson>(value.clone()))
+        .transpose()
+        .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_SCHEMA_FAILED: {error}"))?;
     let empty_dependencies = HashMap::new();
     let dependencies = parsed
         .as_ref()
@@ -741,18 +736,10 @@ fn prepare_internal_plugins(
             }
         }
     }
-    #[cfg(any(windows, test))]
-    let parsed = manifest
-        .as_ref()
-        .map(|value| serde_json::from_value::<ProfilePackageJson>(value.clone()))
-        .transpose()
-        .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_SCHEMA_FAILED: {error}"))?;
     orphans.sort();
     orphans.dedup();
     Ok(InternalPluginCheck {
         manifest,
-        #[cfg(any(windows, test))]
-        parsed,
         need,
         orphans,
         sources_ready,
@@ -784,91 +771,6 @@ fn require_running_plugins_ready(
         ));
     }
     Ok(())
-}
-
-#[cfg(any(windows, test))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EarlyPluginState {
-    Ready,
-    Defer,
-}
-
-#[cfg(any(windows, test))]
-pub(crate) fn prepare_early_plugins(
-    profile: &Path,
-    dsh_home: &Path,
-    resources: Option<&Path>,
-    manifest: Option<&config::manifest::Manifest>,
-    core_version: Option<&str>,
-) -> Result<EarlyPluginState, String> {
-    let Some(manifest) = manifest.filter(|manifest| !manifest.plugins.built_in.is_empty()) else {
-        return Ok(EarlyPluginState::Defer);
-    };
-    let presets = presets_from_manifest(manifest, resources);
-    // 档案里还有弃用插件时让出快路径：它们的卸载要走离线精准路径（改清单、删入口），
-    // 快路径只做内置插件核对与链接，没法安全处理，直接交给常规启动的退役阶段。
-    let deprecated: HashSet<String> = manifest.plugins.deprecated.iter().cloned().collect();
-    if !super::retire::installed_names_at(profile, &presets, &deprecated).is_empty() {
-        return Ok(EarlyPluginState::Defer);
-    }
-    prepare_early_plugins_from(profile, dsh_home, &presets, core_version, |id| {
-        bundled_plugin_dir_from(resources, id)
-    })
-}
-
-#[cfg(any(windows, test))]
-fn prepare_early_plugins_from(
-    profile: &Path,
-    dsh_home: &Path,
-    presets: &[PreinstallPluginInfo],
-    core_version: Option<&str>,
-    resolve_bundle: impl Fn(&str) -> Option<PathBuf>,
-) -> Result<EarlyPluginState, String> {
-    if presets.is_empty()
-        || presets.iter().any(|preset| {
-            matches!(
-                preset.version,
-                Some(config::manifest::PluginVersion::Matrix(_))
-            )
-        }) && !core_version.is_some_and(|version| semver::Version::parse(version).is_ok())
-    {
-        return Ok(EarlyPluginState::Defer);
-    }
-    let internal: Vec<_> = presets
-        .iter()
-        .filter(|preset| preset.internal && !preset.unsupported_on(core_version))
-        .collect();
-    let check = prepare_internal_plugins(profile, dsh_home, &internal, true, resolve_bundle)?;
-    let Some(parsed) = check.parsed.as_ref() else {
-        return Ok(EarlyPluginState::Defer);
-    };
-    if !check.sources_ready
-        || !check.need.is_empty()
-        || !check.orphans.is_empty()
-        || profile
-            .join(".dsh-module-fallback")
-            .try_exists()
-            .map_err(|error| format!("INTERNAL_PLUGIN_FALLBACK_READ_FAILED: {error}"))?
-    {
-        return Ok(EarlyPluginState::Defer);
-    }
-    let bundles = parsed
-        .dsh
-        .as_ref()
-        .and_then(|dsh| dsh.profile.as_ref())
-        .map(|profile| profile.bundles.as_slice())
-        .unwrap_or_default();
-    if !super::verify::missing_plugin_ids(
-        &presets,
-        &parsed.dependencies,
-        bundles,
-        &profile.join("node_modules"),
-    )
-    .is_empty()
-    {
-        return Ok(EarlyPluginState::Defer);
-    }
-    Ok(EarlyPluginState::Ready)
 }
 
 async fn prepare_internal_plugins_for_install(
@@ -1735,166 +1637,6 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&patch).unwrap(),
             "- insert:\n  - id: user-plugin\n    config:\n      token: !!js process.env.TOKEN\n"
-        );
-    }
-
-    #[test]
-    fn early_prepare_uses_normal_kernel_and_defers_repairs_without_installing() {
-        let root = tempfile::tempdir().unwrap();
-        let profile = root.path().join("profiles/web");
-        let source = root.path().join("resources/builtin");
-        let entry = profile.join("node_modules/builtin");
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::create_dir_all(&entry).unwrap();
-        std::fs::write(source.join("package.json"), "{}").unwrap();
-        std::fs::write(entry.join("package.json"), "{}").unwrap();
-        let preset = |id: &str, internal| PreinstallPluginInfo {
-            id: id.into(),
-            spec: id.into(),
-            internal,
-            package: None,
-            version: None,
-            name: id.into(),
-            description: String::new(),
-            repo_url: String::new(),
-            recommended: false,
-            fix: false,
-            default_checked: false,
-            default_unchecked: false,
-            win_only: false,
-        };
-        let presets = vec![preset("builtin", true), preset("community", false)];
-        let path = profile.join("package.json");
-        let healthy = serde_json::json!({
-            "dependencies": {"builtin": bundled_dep_spec(&source)},
-            "dsh": {"profile": {"bundles": ["builtin", "builtin"]}}
-        });
-        let check = |manifest: &serde_json::Value| {
-            std::fs::write(&path, manifest.to_string()).unwrap();
-            prepare_early_plugins_from(&profile, root.path(), &presets, None, |_| {
-                Some(source.clone())
-            })
-        };
-        std::fs::write(
-            profile.join("cordis.patch.yml"),
-            "- insert:\n  - id: builtin\n  - id: user-plugin\n",
-        )
-        .unwrap();
-        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Ready);
-        let migrated: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            migrated["dsh"]["profile"]["bundles"],
-            serde_json::json!(["builtin"])
-        );
-        assert!(std::fs::read_to_string(profile.join("cordis.patch.yml"))
-            .unwrap()
-            .contains("user-plugin"));
-        assert_eq!(
-            prepare_early_plugins_from(&profile, root.path(), &presets, None, |_| {
-                Some(source.clone())
-            })
-            .unwrap(),
-            EarlyPluginState::Ready
-        );
-        let running_root = "- id: builtin\n  name: runtime-composed\n";
-        std::fs::write(profile.join("cordis.yml"), running_root).unwrap();
-        let running_check = || {
-            prepare_internal_plugins(&profile, root.path(), &[&presets[0]], false, |_| {
-                Some(source.clone())
-            })
-        };
-        let running = running_check().unwrap();
-        require_running_plugins_ready(&profile, &running).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(profile.join("cordis.yml")).unwrap(),
-            running_root
-        );
-        let mut needs_repair = migrated.clone();
-        needs_repair["dsh"]["profile"]["bundles"] = serde_json::json!([]);
-        std::fs::write(&path, needs_repair.to_string()).unwrap();
-        let running = running_check().unwrap();
-        assert_eq!(
-            running
-                .need
-                .iter()
-                .map(|(id, _, _)| id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["builtin"]
-        );
-        assert!(require_running_plugins_ready(&profile, &running)
-            .unwrap_err()
-            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
-        assert_eq!(
-            std::fs::read_to_string(profile.join("cordis.yml")).unwrap(),
-            running_root
-        );
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            needs_repair.to_string()
-        );
-        assert_eq!(
-            std::fs::read_to_string(entry.join("package.json")).unwrap(),
-            "{}"
-        );
-        std::fs::write(&path, healthy.to_string()).unwrap();
-        let running = running_check().unwrap();
-        assert!(running.migration_pending);
-        assert!(require_running_plugins_ready(&profile, &running)
-            .unwrap_err()
-            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), healthy.to_string());
-        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Ready);
-        assert_eq!(
-            prepare_early_plugins_from(&profile, root.path(), &presets, None, |_| None).unwrap(),
-            EarlyPluginState::Defer
-        );
-        std::fs::remove_file(source.join("package.json")).unwrap();
-        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Defer);
-        std::fs::write(source.join("package.json"), "{}").unwrap();
-        let mut missing_bundle = healthy.clone();
-        missing_bundle["dsh"]["profile"]["bundles"] = serde_json::json!([]);
-        assert_eq!(check(&missing_bundle).unwrap(), EarlyPluginState::Defer);
-        assert_eq!(
-            std::fs::read_to_string(entry.join("package.json")).unwrap(),
-            "{}"
-        );
-        let mut wrong_dep = healthy.clone();
-        wrong_dep["dependencies"]["builtin"] = serde_json::json!("link:/missing/source");
-        assert_eq!(check(&wrong_dep).unwrap(), EarlyPluginState::Defer);
-        let mut missing_preset = healthy.clone();
-        missing_preset["dependencies"]["community"] = serde_json::json!("1.0.0");
-        assert_eq!(check(&missing_preset).unwrap(), EarlyPluginState::Defer);
-        let mut dangling = healthy.clone();
-        dangling["dependencies"]["removed"] = serde_json::json!("link:missing-source");
-        assert_eq!(check(&dangling).unwrap(), EarlyPluginState::Defer);
-        let old_plugin = profile.join("node_modules/old-plugin");
-        std::fs::create_dir_all(&old_plugin).unwrap();
-        std::fs::write(old_plugin.join("data.json"), "user data").unwrap();
-        let mut with_old_plugin = migrated.clone();
-        with_old_plugin["dependencies"]["old-plugin"] = serde_json::json!("1.0.0");
-        with_old_plugin["dsh"]["profile"]["bundles"] = serde_json::json!(["builtin", "old-plugin"]);
-        assert_eq!(check(&with_old_plugin).unwrap(), EarlyPluginState::Ready);
-        let preserved: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(preserved, with_old_plugin);
-        assert_eq!(
-            std::fs::read_to_string(old_plugin.join("data.json")).unwrap(),
-            "user data"
-        );
-        std::fs::remove_file(entry.join("package.json")).unwrap();
-        assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Defer);
-        assert!(!entry.join("package.json").exists());
-        std::fs::write(&path, "{").unwrap();
-        assert!(
-            prepare_early_plugins_from(&profile, root.path(), &presets, None, |_| None)
-                .unwrap_err()
-                .starts_with("INTERNAL_PLUGIN_MANIFEST_PARSE_FAILED:")
-        );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{");
-        assert_eq!(
-            prepare_early_plugins(&profile, root.path(), None, None, None).unwrap(),
-            EarlyPluginState::Defer
         );
     }
 

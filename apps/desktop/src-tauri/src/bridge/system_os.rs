@@ -285,7 +285,7 @@ pub async fn read_run_logs(
     let env_text = format_env_info(
         &app_version,
         dsh_version.as_deref(),
-        &config::get_active_node_version(),
+        &config::get_active_node_version(&app_handle),
         std::env::consts::OS,
         std::env::consts::ARCH,
         &profile::active_profile(&app_handle),
