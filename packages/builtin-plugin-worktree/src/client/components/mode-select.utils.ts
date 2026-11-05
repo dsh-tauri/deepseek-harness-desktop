@@ -64,3 +64,14 @@ export function resolveAccessModeGroup(button: HTMLElement, planSlot: Element | 
   }
   return button
 }
+
+/** 提交手势判定：鼠标点击官方发送按钮，或在编辑区按下未组合的 Enter。 */
+export function isSubmitTrigger(event: Event, submitLabel: () => string): boolean {
+  if (event instanceof MouseEvent) {
+    const button = event.target instanceof Element ? event.target.closest('button[aria-label]') : null
+    return button !== null && button.getAttribute('aria-label') === submitLabel()
+  }
+  if (event instanceof KeyboardEvent)
+    return event.key === 'Enter' && !event.shiftKey && !event.isComposing
+  return false
+}

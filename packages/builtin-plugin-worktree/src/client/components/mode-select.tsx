@@ -19,7 +19,7 @@ import { awaitDraftUploads, captureDraftAttachments, mergeCapturedAttachments, r
 import { waitForInputActions, waitForSessionListed } from '../service/session-switch'
 import { attach, create } from '../service/worktree'
 import { store } from '../store'
-import { addDraftAttachments, canAddDraftAttachments, draftAttachmentIds, hasSendableContent, interceptsSubmit, removeDraftAttachment, resolveAccessModeGroup, restoreSessionDraft, showsModeSelect } from './mode-select.utils'
+import { addDraftAttachments, canAddDraftAttachments, draftAttachmentIds, hasSendableContent, interceptsSubmit, isSubmitTrigger, removeDraftAttachment, resolveAccessModeGroup, restoreSessionDraft, showsModeSelect } from './mode-select.utils'
 
 export interface ModeSelectProps {
   sessionId: string
@@ -29,6 +29,7 @@ export interface ModeSelectProps {
   workspacesRuntime: WorkspacesRuntime
   resolveAttachments: () => ConversationAttachments | undefined
   resolveInput?: (sessionId: string) => SessionInputRuntime | undefined
+  submitLabel: () => string
 }
 
 export function WorktreeModeSelect(props: ModeSelectProps): ReactElement {
@@ -88,7 +89,7 @@ export function WorktreeModeSelect(props: ModeSelectProps): ReactElement {
   )
 }
 
-function WorktreeModeControl({ sessionId, useInput, inputActions, sessionsRuntime, workspacesRuntime, resolveAttachments, resolveInput }: ModeSelectProps): ReactElement | null {
+function WorktreeModeControl({ sessionId, useInput, inputActions, sessionsRuntime, workspacesRuntime, resolveAttachments, resolveInput, submitLabel }: ModeSelectProps): ReactElement | null {
   const state = useWorktreeSession(sessionId)
   const draft = useInput(input => input.draft)
   const attachmentIds = useInput(draftAttachmentIds)
@@ -249,12 +250,7 @@ function WorktreeModeControl({ sessionId, useInput, inputActions, sessionsRuntim
       const target = event.target
       if (!(target instanceof Node) || !composerSeat.contains(target))
         return
-      if (event instanceof MouseEvent) {
-        const button = target instanceof Element ? target.closest('button[aria-label]') : null
-        if (button?.getAttribute('aria-label')?.includes('发送') !== true && button?.getAttribute('aria-label')?.toLowerCase().includes('send') !== true)
-          return
-      }
-      if (event instanceof KeyboardEvent && (event.key !== 'Enter' || event.shiftKey || event.isComposing))
+      if (!isSubmitTrigger(event, submitLabel))
         return
       if (!sendable)
         return
@@ -269,7 +265,7 @@ function WorktreeModeControl({ sessionId, useInput, inputActions, sessionsRuntim
       composerSeat.removeEventListener('click', intercept, true)
       composerSeat.removeEventListener('keydown', intercept, true)
     }
-  }, [draft, attachmentIds, inputActions, resolveAttachments, resolveInput, sendable, sessionId, sessionsRuntime, state.isGit, state.mode, wait, workspacesRuntime])
+  }, [draft, attachmentIds, inputActions, resolveAttachments, resolveInput, sendable, sessionId, sessionsRuntime, state.isGit, state.mode, submitLabel, wait, workspacesRuntime])
 
   if (!showsModeSelect(state))
     return null

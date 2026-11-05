@@ -10,6 +10,8 @@ import { conversationAttachments } from '../service/attachments'
 type ModeSelectInjected = Omit<ModeSelectProps, 'useInput' | 'inputActions'>
 
 export const modeSelectFeature = defineRegister<ClientContext>((controller, ctx, adapter) => {
+  const translate = ctx.locale.bind('conversation')
+  const submitLabel = (): string => translate('input.send')
   const resolveAttachments = () => conversationAttachments(ctx)
   const resolveInput = (sessionId: string): SessionInputRuntime | undefined => {
     const scope = (adapter.sessions as unknown as SessionsRuntime).binding?.(sessionId)?.ctx
@@ -37,6 +39,7 @@ export const modeSelectFeature = defineRegister<ClientContext>((controller, ctx,
               workspacesRuntime: adapter.workspaces as unknown as WorkspacesRuntime,
               resolveAttachments,
               resolveInput,
+              submitLabel,
             },
       } as never,
       WorktreeModeSelect,
