@@ -8,12 +8,12 @@ import type {
   SkillRow,
   SkillSourceEntry,
 } from './skills.types'
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { orderBy } from 'lodash-es'
-import { isAbsolute, relative, resolve, sep } from 'pathe'
-import { SKILL_NAME_RE, SKILLS_DATA_DIR } from '../config/constants'
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'pathe'
+import { SKILL_FILE_NAME, SKILL_NAME_RE, SKILLS_DATA_DIR } from '../config/constants'
 import { server } from '../server'
 import { storage } from '../storage'
 import { skillDir, skillFilePath } from '../utils/paths.utils'
@@ -27,8 +27,11 @@ export const skills = defineService({
     return (await getServerContext<PanelExtensionHost>(server).skills.get(name)) ?? null
   },
 
-  save(input: SkillInput, file?: string): string {
-    if (file !== undefined) {
+  save(input: SkillInput, existing?: SkillRow): string {
+    if (existing !== undefined) {
+      const file = existing.name === input.name && existing.editable ? instructionFile(existing) : undefined
+      if (file === undefined)
+        throw new Error('skill has no writable instruction file')
       writeFileSync(file, rewriteSkillContent(readFileSync(file, 'utf8'), input), 'utf8')
       return file
     }
@@ -38,13 +41,14 @@ export const skills = defineService({
     return target
   },
 
-  remove(name: string): boolean {
+  async remove(name: string): Promise<boolean> {
     if (!SKILL_NAME_RE.test(name))
       return false
-    const dir = skillDir(name)
-    if (!existsSync(dir) || !statSync(dir).isDirectory())
+    const skill = (await getServerContext<PanelExtensionHost>(server).skills.list()).find(skill => skill.name === name)
+    const target = skill === undefined ? undefined : removalTarget(skill)
+    if (target === undefined)
       return false
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(target.path, { recursive: target.recursive, force: true })
     return true
   },
 
@@ -104,17 +108,23 @@ async function writeSources(sources: SkillSourceEntry[]): Promise<void> {
 }
 
 async function customSkillWritable(dir: string): Promise<boolean> {
-  if (dir === SKILLS_DATA_DIR || dir.startsWith(SKILLS_DATA_DIR + sep))
+  if (pathWithin(dir, SKILLS_DATA_DIR))
     return true
   return (await readSources()).some(entry =>
-    entry.roots.some(root => dir === root || dir.startsWith(root + sep)))
+    entry.roots.some(root => pathWithin(dir, root)))
 }
 
 async function skillWritable(skill: HostSkill, dir: string | undefined): Promise<boolean> {
   if (dir === undefined)
     return false
-  if (skill.source === 'user-dsh')
-    return true
+  if (skill.source === 'user-dsh') {
+    try {
+      return pathWithin(realpathSync(dir), realpathSync(SKILLS_DATA_DIR))
+    }
+    catch {
+      return false
+    }
+  }
   return skill.source === 'custom' && await customSkillWritable(dir)
 }
 
@@ -148,10 +158,45 @@ async function toSkillRow(skill: HostSkill, entries: SkillSourceEntry[]): Promis
   const repository = repositoryForSkill(skill, entries)
   return {
     ...skill,
-    editable: await skillWritable(skill, dir),
-    removable: skill.source === 'user-dsh',
+    editable: instructionFile(skill) !== undefined && await skillWritable(skill, dir),
+    removable: removalTarget(skill) !== undefined,
     ...(dir !== undefined ? { dir } : {}),
     policyEditable: dir !== undefined,
     ...(repository !== undefined ? { repository } : {}),
+  }
+}
+
+function instructionFile(skill: HostSkill): string | undefined {
+  const dir = skill.resourceBase?.kind === 'directory' ? skill.resourceBase.path : undefined
+  if (typeof skill.path !== 'string' || !isAbsolute(skill.path) || typeof dir !== 'string' || !isAbsolute(dir))
+    return undefined
+  try {
+    const file = resolve(realpathSync(skill.path))
+    return dirname(file) === resolve(realpathSync(dir)) && basename(file).endsWith('.md') && statSync(file).isFile() ? file : undefined
+  }
+  catch {
+    return undefined
+  }
+}
+
+function removalTarget(skill: HostSkill): { path: string, recursive: boolean } | undefined {
+  if (skill.source !== 'user-dsh')
+    return undefined
+  const file = instructionFile(skill)
+  if (file === undefined)
+    return undefined
+  try {
+    const root = resolve(realpathSync(SKILLS_DATA_DIR))
+    const dir = dirname(file)
+    if (dir === root)
+      return { path: file, recursive: false }
+    if (basename(file) !== SKILL_FILE_NAME || dirname(dir) !== root || ['.system', 'repos'].includes(basename(dir)))
+      return undefined
+    if (skill.resourceBase?.kind !== 'directory' || lstatSync(skill.resourceBase.path).isSymbolicLink())
+      return undefined
+    return { path: dir, recursive: true }
+  }
+  catch {
+    return undefined
   }
 }

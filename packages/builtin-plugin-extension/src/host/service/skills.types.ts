@@ -1,4 +1,5 @@
 export interface HostSkill {
+  readonly path?: string
   readonly name: string
   readonly description: string
   readonly whenToUse?: string
