@@ -24,12 +24,14 @@ const MOUNT_ID = 'dsh-shell-root'
 const PORTAL_ID = 'dsh-shell-portal'
 
 /**
- * 把壳层内的弹层挂载点交给 react-aria。
+ * 把壳层内所有浮层挂载点交给 react-aria。
  *
- * HeroUI 的 Dropdown / Modal 内部走 react-aria 的 Overlay，默认 portal 到
- * `document.body`——那是 Shadow 外的 light DOM，拿不到壳层样式表，于是菜单、对话框
- * 渲染成无样式黑字。由 Provider 指定容器后，React 会把节点直接渲染进去；绝不能事后
- * 搬移 DOM 节点，那会打断 React 的节点表（`removeChild ... not a child of this node`）。
+ * HeroUI 的 Dropdown / Modal / Toast 默认 portal 到 `document.body`——那是 Shadow 外的
+ * light DOM，拿不到壳层样式表，会渲染成无样式黑字；留在壳层挂载点里又会低于弹层容器，
+ * 被导航栏或其它浮层盖住。由 Provider 统一指定容器后，React 把节点直接渲染进去；
+ * 绝不能事后搬移 DOM 节点，那会打断 React 的节点表（`removeChild ... not a child`）。
+ *
+ * 必须包住 `ToastProvider`：toast 的 region 也是 portal，放外层才进得来。
  */
 function ShellRoot() {
   const [container, setContainer] = useState<HTMLElement | null>(null)
@@ -38,13 +40,13 @@ function ShellRoot() {
   })
   return (
     <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <OverlaysProvider>
-          <PortalTarget container={container}>
+      <PortalTarget container={container}>
+        <ToastProvider>
+          <OverlaysProvider>
             <App />
-          </PortalTarget>
-        </OverlaysProvider>
-      </ToastProvider>
+          </OverlaysProvider>
+        </ToastProvider>
+      </PortalTarget>
     </QueryClientProvider>
   )
 }
