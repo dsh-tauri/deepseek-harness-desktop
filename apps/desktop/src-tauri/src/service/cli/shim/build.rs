@@ -1736,7 +1736,7 @@ mod tests {
         {
             let content = build_sh_shim(&sample_shim_paths(), &sample_dsh_home());
             let dsh_node_at = content.find("$DSH_NODE").unwrap();
-            let baked_at = content.find("").unwrap();
+            let baked_at = content.find(r#"$NODE_BIN"#).unwrap();
             assert!(
                 dsh_node_at < baked_at,
                 "DSH_NODE must be checked before the baked runtime"
