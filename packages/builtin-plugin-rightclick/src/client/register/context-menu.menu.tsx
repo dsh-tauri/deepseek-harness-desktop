@@ -6,6 +6,19 @@ import type {
   WorkspaceViewLike,
 } from '../types'
 import type { MenuComposer } from './context-menu.types'
+import {
+  IconArchiveOutlineRegular,
+  IconBranchOutlineRegular,
+  IconCopyOutlineRegular,
+  IconEditOutlineRegular,
+  IconFolderOpenOutlineRegular,
+  IconPinFillRegular,
+  IconPinOutlineRegular,
+  IconPlusOutlineRegular,
+  IconRefreshOutlineRegular,
+  IconRightUpOutlineRegular,
+  IconTrashOutlineRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { invoke } from 'dsh-tauri/client'
 import { confirmDialog } from '../components/confirm-dialog'
 import { locale } from '../locales'
@@ -27,7 +40,7 @@ import {
 import { pasteNativeClipboard, readClipboard } from '../utils/clipboard'
 import { pasteInto, replaceSelection, selectAll, selectSurface } from '../utils/editable'
 import { externalUrl, selectedUrl } from '../utils/url'
-import { redoShortcutLabel, shortcutLabel } from './context-menu.utils'
+import { redoShortcutHint, redoShortcutLabel, shortcutHint, shortcutLabel } from './context-menu.utils'
 import { officialAction } from './locate'
 import { officialSelect } from './official-menu'
 
@@ -53,7 +66,7 @@ export function buildSessionMenu(
       if (outcome.ok)
         composer.toast(locale.text(pinned ? 'sessionUnpinned' : 'sessionPinned'))
       return outcome
-    })
+    }, { icon: pinned ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} /> })
   }
 
   composer.add(locale.text('renameSession'), async () => {
@@ -71,29 +84,8 @@ export function buildSessionMenu(
     if (outcome.ok)
       composer.toast(locale.text('sessionRenamed'))
     return outcome
-  })
+  }, { icon: <IconEditOutlineRegular size={14} />, shortcut: shortcutHint('G', ['alt', 'primary']) })
 
-  composer.add(locale.text('archiveSession'), async () => {
-    if (officialAction(row))
-      return officialSelect(row, ARCHIVE_SESSION_LABELS, locale.text('officialArchiveUnavailable'), composer.delegate(false))
-    if (!current)
-      throw new Error(locale.text('sessionUnknown'))
-    const outcome = await archiveSession({ workspaces: composer.workspaces, sessionId: current.id })
-    if (outcome.ok)
-      composer.toast(locale.text('sessionArchived'))
-    return outcome
-  })
-
-  const cwd = current?.cwd || sessionWorkspace?.workspace.path
-  if (cwd) {
-    composer.split()
-    composer.add(locale.text('openInExplorer'), () => openInExplorer({ path: cwd }))
-    composer.add(locale.text('copyWorkingDirectory'), () => composer.copyText(cwd, locale.text('copiedWorkingDirectory')))
-  }
-  if (current)
-    composer.add(locale.text('copySessionId'), () => composer.copyText(current.id, locale.text('copiedSessionId')))
-
-  composer.split()
   composer.add(locale.text('forkSession'), async () => {
     if (!current)
       throw new Error(locale.text('sessionUnknown'))
@@ -117,7 +109,23 @@ export function buildSessionMenu(
       }
     }
     return byService()
-  })
+  }, { icon: <IconBranchOutlineRegular size={14} />, shortcut: shortcutHint('F', ['alt', 'primary']) })
+
+  const cwd = current?.cwd || sessionWorkspace?.workspace.path
+  composer.split()
+  if (current)
+    composer.add(locale.text('copySessionId'), () => composer.copyText(current.id, locale.text('copiedSessionId')), { icon: <IconCopyOutlineRegular size={14} /> })
+  if (cwd) {
+    composer.add(locale.text('openInExplorer'), () => openInExplorer({ path: cwd }), { icon: <IconFolderOpenOutlineRegular size={14} /> })
+    composer.add(locale.text('copyWorkingDirectory'), () => composer.copyText(cwd, locale.text('copiedWorkingDirectory')), { icon: <IconCopyOutlineRegular size={14} /> })
+  }
+
+  if (current && 'dshDesktop' in globalThis) {
+    composer.split()
+    composer.add(locale.text('openInNewWindow'), () => invoke<void>('create_app_window', {
+      sessionId: current.id,
+    }), { icon: <IconRightUpOutlineRegular size={14} /> })
+  }
 
   const visible = current
     ? extensions.filter(entry => entry.visible?.({ session: current, row }) !== false)
@@ -136,12 +144,16 @@ export function buildSessionMenu(
   }
 
   composer.split()
-  if (current && 'dshDesktop' in globalThis) {
-    composer.add(locale.text('openInNewWindow'), () => invoke<void>('create_app_window', {
-      sessionId: current.id,
-    }))
-  }
-  composer.add(locale.text('refresh'), reload, shortcutLabel('R'))
+  composer.add(locale.text('archiveSession'), async () => {
+    if (officialAction(row))
+      return officialSelect(row, ARCHIVE_SESSION_LABELS, locale.text('officialArchiveUnavailable'), composer.delegate(false))
+    if (!current)
+      throw new Error(locale.text('sessionUnknown'))
+    const outcome = await archiveSession({ workspaces: composer.workspaces, sessionId: current.id })
+    if (outcome.ok)
+      composer.toast(locale.text('sessionArchived'))
+    return outcome
+  }, { icon: <IconArchiveOutlineRegular size={14} />, shortcut: shortcutHint('A', ['shift', 'primary']) })
 }
 
 export function buildUngroupedMenu(composer: MenuComposer): void {
@@ -158,9 +170,9 @@ export function buildUngroupedMenu(composer: MenuComposer): void {
     })
     if (ok)
       await archiveAll(composer, sessionIds)
-  })
+  }, { icon: <IconArchiveOutlineRegular size={14} /> })
   composer.split()
-  composer.add(locale.text('refresh'), reload, shortcutLabel('R'))
+  composer.add(locale.text('refresh'), reload, { icon: <IconRefreshOutlineRegular size={14} />, shortcut: shortcutHint('R') })
 }
 
 export function buildWorkspaceMenu(
@@ -172,8 +184,8 @@ export function buildWorkspaceMenu(
   composer.add(locale.text('newSession'), () => startWorkspaceSession({
     workspaces: composer.workspaces,
     workspaceId: workspace.workspaceId as unknown as WorkspaceId,
-  }))
-  composer.add(locale.text('openInExplorer'), () => openInExplorer({ path: workspace.path }))
+  }), { icon: <IconPlusOutlineRegular size={14} /> })
+  composer.add(locale.text('openInExplorer'), () => openInExplorer({ path: workspace.path }), { icon: <IconFolderOpenOutlineRegular size={14} /> })
 
   composer.split()
   composer.add(locale.text('renameWorkspace'), () => officialSelect(
@@ -181,8 +193,8 @@ export function buildWorkspaceMenu(
     RENAME_LABELS,
     locale.text('officialWorkspaceRenameUnavailable'),
     composer.delegate(true),
-  ))
-  composer.add(locale.text('copyWorkspacePath'), () => composer.copyText(workspace.path, locale.text('copiedWorkspacePath')))
+  ), { icon: <IconEditOutlineRegular size={14} /> })
+  composer.add(locale.text('copyWorkspacePath'), () => composer.copyText(workspace.path, locale.text('copiedWorkspacePath')), { icon: <IconCopyOutlineRegular size={14} /> })
 
   composer.split()
   composer.add(locale.text('archiveWorkspaceSessions'), async () => {
@@ -198,7 +210,7 @@ export function buildWorkspaceMenu(
     })
     if (ok)
       await archiveAll(composer, sessionIds)
-  })
+  }, { icon: <IconArchiveOutlineRegular size={14} /> })
   composer.add(locale.text('deleteWorkspace'), async () => {
     const ok = await confirmDialog({
       title: locale.text('deleteWorkspaceTitle'),
@@ -211,10 +223,7 @@ export function buildWorkspaceMenu(
     if (outcome.ok)
       composer.toast(locale.text('workspaceDeleted'))
     return outcome
-  }, '', true)
-
-  composer.split()
-  composer.add(locale.text('refresh'), reload, shortcutLabel('R'))
+  }, { icon: <IconTrashOutlineRegular size={14} />, danger: true })
 }
 
 export function buildEditableMenu(composer: MenuComposer, editable: HTMLElement, selection: string): void {
@@ -222,12 +231,12 @@ export function buildEditableMenu(composer: MenuComposer, editable: HTMLElement,
     editable.focus()
     if (!document.execCommand('undo'))
       throw new Error(locale.text('useUndoShortcut', { key: shortcutLabel('Z') }))
-  }, shortcutLabel('Z'))
+  }, { shortcut: shortcutHint('Z') })
   composer.add(locale.text('redo'), () => {
     editable.focus()
     if (!document.execCommand('redo'))
       throw new Error(locale.text('useRedoShortcut', { key: redoShortcutLabel() }))
-  }, redoShortcutLabel())
+  }, { shortcut: redoShortcutHint() })
 
   composer.split()
   composer.add(locale.text('cut'), async () => {
@@ -235,8 +244,11 @@ export function buildEditableMenu(composer: MenuComposer, editable: HTMLElement,
       await composer.copyText(selection, locale.text('cutDone'))
     if (!replaceSelection(editable, ''))
       throw new Error(locale.text('editPositionUnknown'))
-  }, shortcutLabel('X'))
-  composer.add(locale.text('copy'), () => composer.copyText(selection, locale.text('copied')), shortcutLabel('C'))
+  }, { shortcut: shortcutHint('X') })
+  composer.add(locale.text('copy'), () => composer.copyText(selection, locale.text('copied')), {
+    icon: <IconCopyOutlineRegular size={14} />,
+    shortcut: shortcutHint('C'),
+  })
   composer.add(locale.text('paste'), async () => {
     const clipboard = await readClipboard()
     if (clipboard === null) {
@@ -247,13 +259,13 @@ export function buildEditableMenu(composer: MenuComposer, editable: HTMLElement,
     }
     if (!pasteInto(editable, clipboard))
       throw new Error(locale.text('editPositionUnknown'))
-  }, shortcutLabel('V'))
+  }, { shortcut: shortcutHint('V') })
 
   composer.split()
-  composer.add(locale.text('selectAll'), () => selectAll(editable), shortcutLabel('A'))
+  composer.add(locale.text('selectAll'), () => selectAll(editable), { shortcut: shortcutHint('A') })
 
   composer.split()
-  composer.add(locale.text('refresh'), reload, shortcutLabel('R'))
+  composer.add(locale.text('refresh'), reload, { icon: <IconRefreshOutlineRegular size={14} />, shortcut: shortcutHint('R') })
 }
 
 export function buildSelectionMenu(
@@ -262,26 +274,30 @@ export function buildSelectionMenu(
   link: HTMLAnchorElement | null,
   surface: HTMLElement | null,
 ): void {
-  if (selection)
-    composer.add(locale.text('copySelectedText'), () => composer.copyText(selection, locale.text('copied')), shortcutLabel('C'))
+  if (selection) {
+    composer.add(locale.text('copySelectedText'), () => composer.copyText(selection, locale.text('copied')), {
+      icon: <IconCopyOutlineRegular size={14} />,
+      shortcut: shortcutHint('C'),
+    })
+  }
 
   const url = externalUrl(link?.href || '') || selectedUrl(selection)
   if (url) {
     if (selection)
       composer.split()
-    composer.add(locale.text('openInDefaultBrowser'), () => openExternalUrl({ url }))
-    composer.add(locale.text('copyLink'), () => composer.copyText(url, locale.text('linkCopied')))
+    composer.add(locale.text('openInDefaultBrowser'), () => openExternalUrl({ url }), { icon: <IconRightUpOutlineRegular size={14} /> })
+    composer.add(locale.text('copyLink'), () => composer.copyText(url, locale.text('linkCopied')), { icon: <IconCopyOutlineRegular size={14} /> })
   }
 
   const surfaceNode = surface
   if (surfaceNode) {
     if (selection || url)
       composer.split()
-    composer.add(locale.text('selectCurrentContent'), () => selectSurface(surfaceNode), shortcutLabel('A'))
+    composer.add(locale.text('selectCurrentContent'), () => selectSurface(surfaceNode), { shortcut: shortcutHint('A') })
   }
 
   composer.split()
-  composer.add(locale.text('refresh'), reload, shortcutLabel('R'))
+  composer.add(locale.text('refresh'), reload, { icon: <IconRefreshOutlineRegular size={14} />, shortcut: shortcutHint('R') })
 }
 
 // --- internal ---

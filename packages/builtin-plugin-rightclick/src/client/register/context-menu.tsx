@@ -1,8 +1,7 @@
-import type { MenuEntry } from 'dsh-tauri-ui/client'
+import type { MenuEntry, MenuItem } from 'dsh-tauri-ui/client'
 import type { ClientContext } from 'dsh-tauri/client'
-import type { ReactNode } from 'react'
 import type { ActionOutcome, SessionsRuntimeLike, WorkspacesRuntimeLike } from '../types'
-import type { MenuComposer, OfficialSelectOptions } from './context-menu.types'
+import type { MenuComposer, MenuItemOptions, OfficialSelectOptions } from './context-menu.types'
 import { Menu, Toast } from 'dsh-tauri-ui/client'
 import { defineRegister, detectMobileDevice } from 'dsh-tauri/client'
 import { createRoot } from 'react-dom/client'
@@ -28,18 +27,6 @@ import {
   workspaceForSession,
   workspaceFrom,
 } from './locate'
-
-/** 带快捷键提示的官方菜单项文案：官方 `Menu` 只吃 ReactNode，提示与标签同行两端对齐。 */
-function menuLabel(label: string, shortcut: string): ReactNode {
-  if (shortcut === '')
-    return label
-  return (
-    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, width: '100%' }}>
-      <span>{label}</span>
-      <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 }}>{shortcut}</span>
-    </span>
-  )
-}
 
 /**
  * 右键菜单特性：解析右键目标 → 组装菜单 → 动作经 `service/` 收口。
@@ -104,12 +91,12 @@ export const contextMenuFeature = defineRegister<ClientContext>((controller, _ct
     const add = (
       label: string,
       action: () => Promise<ActionOutcome | void> | void,
-      shortcut = '',
-      danger = false,
+      options: MenuItemOptions = {},
     ): void => {
       const id = `item:${seq++}`
       actions.set(id, action)
-      entries.push({ id, label: menuLabel(label, shortcut), danger })
+      const item: MenuItem = { id, label, ...options }
+      entries.push(item)
     }
 
     const split = (): void => {
@@ -215,8 +202,9 @@ export const contextMenuFeature = defineRegister<ClientContext>((controller, _ct
     current.render(
       <Menu
         open
-        autoFocus
         portal
+        autoFocus
+        contextual
         align="start"
         items={entries}
         anchor={<span />}
