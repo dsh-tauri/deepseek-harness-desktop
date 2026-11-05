@@ -226,7 +226,7 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
   return (
     <div
       className={cn(
-        'relative flex h-11 w-full flex-none select-none items-center gap-0.5 bg-panel pointer-events-auto',
+        'relative flex h-11 w-full flex-none select-none items-center gap-0.5 bg-panel pointer-events-auto app-region-none',
         {
           'hidden': IS_MACOS && isFullscreen,
           'pl-24 pr-1.5': IS_MACOS && !isFullscreen,

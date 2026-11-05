@@ -21,8 +21,8 @@ import { defineStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
-import { isHostedDocument } from '@/utils/window-presentation'
 import { toast } from '@/utils/toast'
+import { isHostedDocument } from '@/utils/window-presentation'
 import { harnessUpdater } from '../harness-updater'
 import { parseBlockedRefusal } from '../plugins'
 import { preinstall } from '../preinstall'
@@ -336,6 +336,18 @@ export const harness = defineStore({
     markWebviewLeaving() {
       this.webviewAliveKey = null
       this.webviewLoaded = false
+    },
+
+    /**
+     * 文档即 DSH：本 webview 本身就是服务产物，启动流程被跳过，这里把运行时状态
+     * 直接推进到「已就绪」，否则 `status` / `serviceHealthy` 会停在初值，
+     * 依赖它们的导航栏控件（侧栏开关、远程/本地切换）全部不渲染。
+     */
+    markHostedReady() {
+      this.serviceHealthy = true
+      this.serviceRunning = true
+      this.status = 'ready'
+      this.errorMsg = ''
     },
 
     markWebviewBootReady() {

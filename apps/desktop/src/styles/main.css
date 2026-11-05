@@ -19,6 +19,15 @@
   -webkit-app-region: drag;
 }
 
+/* 壳层导航栏与 DSH 的 Windows 标题拖拽带几何重叠。Electron 的 app-region 按几何
+   合成而非命中测试，重叠起来就会把整条导航栏算成拖拽区——鼠标按得下、抬不起来，
+   click 永不触发（拖拽区吞掉 mouseup）。导航栏整体先声明 no-drag 把自己从那条带
+   里减掉，内部 `[data-tauri-drag-region]` 拖拽块再自己加回来。 */
+@utility app-region-none {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
 @theme inline {
   --radius-xl: calc(var(--radius) * 1.25);
   --radius-2xl: calc(var(--radius) * 1.5);

@@ -1,6 +1,6 @@
 import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
 import { useOverlay } from '@overlastic/react'
-import { useWatch } from '@reause/core'
+import { useMount, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -52,12 +52,20 @@ export function Shell() {
   const activeTunnelUrl = remoteView.url
   const borderTint = remoteView.tint
   const remoteMode = activeTunnelUrl !== ''
-  const live = status === 'ready' && (remoteMode || serviceHealthy)
+  // 文档即 DSH 时启动流程被跳过，`serviceHealthy` 停在初值 false；此时页面本身就是
+  // 服务产物，直接视为可用，否则导航栏的切换/远程控件全部不渲染。
+  const live = status === 'ready' && (remoteMode || serviceHealthy || isHostedServiceDocument())
   const notificationSource = activeTunnelUrl || webviewSrc
   const notifications = useNativeNotifications(notificationSource)
 
   useNotificationAction(notifications.handleAction)
   useNotificationClicked(notifications.handleClick)
+  // 文档即 DSH 时 `App` 里的 startup() 被跳过，runtime 状态会停在初值，内容分支永远
+  // 进不到 ready；这里在渲染前把就绪态补齐。
+  useMount(() => {
+    if (isHostedServiceDocument())
+      store.harness.markHostedReady()
+  })
   useListen<Parameters<typeof setDshStyle>[0]>('dsh://style', ({ payload }) => setDshStyle(payload))
   useListen('dsh://desktop-settings:open', () => {
     void openConfigDialog()
