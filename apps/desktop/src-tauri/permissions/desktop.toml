@@ -102,6 +102,8 @@ commands.allow = [
   "write_clipboard_text",
   "create_app_window",
   "sync_view_menu",
+  "toast_view_show",
+  "toast_view_hide",
   "quit_app",
   "toggle_devtools",
   "log_frontend",

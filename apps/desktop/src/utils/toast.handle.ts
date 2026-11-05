@@ -2,7 +2,6 @@ import type { ToastContentValue } from '@heroui/react/toast'
 import type { ToastVariants } from '@heroui/styles'
 import type { ReactNode } from 'react'
 import { ToastQueue } from '@heroui/react'
-import { hooks } from '@/config/hooks'
 
 /** toast 关闭来源：库侧 close 不携带原因，只能由本模块预记或按超时配置反推 */
 export type ToastCloseReason = 'closed' | 'evicted' | 'dismissed'
@@ -106,8 +105,7 @@ function takeCloseReason(key: string, autoClose: boolean): ToastCloseReason {
 /**
  * 统一 toast API：直接调用创建，toast.update/close/clear/isActive 通过 key 管理。
  * HeroUI 默认气泡直接读队列条目的 content，而 HeroUI ToastQueue 没有 update 方法：
- * 这里原地改写条目 content 并通知 react-stately 队列重渲染，同时触发
- * `hooks['toast.updated']`（见 config/hooks）供桌宠窗口的自定义气泡消费。
+ * 这里原地改写条目 content 并通知 react-stately 队列重渲染。
  */
 export const toast = Object.assign(
   (message: string | ReactNode, options?: ToastOptions) => {
@@ -155,7 +153,6 @@ export const toast = Object.assign(
         entry.content = { ...entry.content, ...options }
         queue.updateVisibleToasts('update')
       }
-      void hooks['toast.updated'].trigger({ key, options })
     },
 
     /** 该 key 是否仍是活着的 toast：被限额淘汰后 update/close 都会静默失效 */

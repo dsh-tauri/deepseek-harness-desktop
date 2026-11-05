@@ -1,16 +1,16 @@
+import type { ToastViewContent } from '@/components/toast-provider'
 import type { ToastRecord } from '@/utils/toast'
-import { Toast } from '@heroui/react'
+import type { Placement } from '@/utils/toast.handle'
+import { ToastQueue } from '@heroui/react'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo } from '@tauri-apps/api/event'
 import { useEffect, useRef, useState } from 'react'
-import { If } from 'react-if-lite'
+import { ToastProvider } from '@/components/toast-provider'
 import { useListen } from '@/hooks/use-listen'
-import { placements, queues } from './queues'
+import { placements } from '@/utils/toast.handle'
 
 const SHELL_WINDOW = 'main'
-/**
- * 壳层 → 本窗口的事件名（与 `utils/toast` 逐字一致）。
- */
+/** 壳层 → 本窗口的事件名（与 `utils/toast` 逐字一致）。 */
 const SHOW = 'dsh://toast:show'
 const CLOSE = 'dsh://toast:close'
 const CLEAR = 'dsh://toast:clear'
@@ -18,18 +18,36 @@ const SYNC = 'dsh://toast:sync'
 const ACTION = 'dsh://toast:action'
 const ROOT_TESTID = 'dsh-toast-root'
 
+/** 上限与壳层 `toast.handle` 的 MAX_VISIBLE_TOASTS 一致；超出部分壳层已先行淘汰。 */
+const MAX_VISIBLE_TOASTS = 3
+
+const queues = Object.fromEntries(placements.map(placement => [
+  placement,
+  new ToastQueue({ maxVisibleToasts: MAX_VISIBLE_TOASTS }),
+])) as Record<Placement, ToastQueue>
+
 interface ToastSync {
   records: ToastRecord[]
 }
 
+function contentOf(record: ToastRecord): ToastViewContent {
+  return {
+    title: record.title,
+    description: record.description,
+    variant: record.variant,
+    isLoading: record.isLoading,
+    action: record.action ? { id: record.action.id, label: record.action.label } : undefined,
+  }
+}
+
 /**
- * 透明 toast 窗口：把壳层推来的可序列化描述渲染成 HeroUI 气泡。
+ * 透明 toast 窗口：把壳层推来的可序列化记录渲染成 HeroUI 气泡。
  *
- * 窗口只包住卡片本身（由 Rust 按右下角贴合），因此这里没有逐像素穿透逻辑：
- * 卡片以外的区域不属于这个窗口，点击自然落到下方的 Harness 页面。
+ * 窗口只包住卡片本身（由 Rust 按右下角贴合），所以没有逐像素穿透逻辑：
+ * 卡片以外不属于这个窗口，点击自然落到下方的 Harness 页面。
  *
- * 高度随卡片实际尺寸回落给 Rust 重设窗口，避免固定高度在只有一条提示时
- * 留下一大块可点击的透明区。
+ * 高度随卡片实际尺寸回填给 Rust 重设窗口，避免固定高度在只有一条提示时留下一大块
+ * 可点击的透明区。
  */
 export function App() {
   const recordsRef = useRef(new Map<string, ToastRecord>())
@@ -53,20 +71,13 @@ export function App() {
     if (previous !== undefined && previous.placement !== record.placement)
       queues[previous.placement].close(record.key)
     recordsRef.current.set(record.key, record)
-    const content = {
-      title: record.title,
-      description: record.description,
-      variant: record.variant,
-      isLoading: record.isLoading,
-      actionProps: record.action ? { children: record.action.label } : undefined,
-    }
-    const queue = queues[record.placement]
     // `autoClose: false` 的常驻气泡交给壳层关闭，这里不能再设超时。
     const timeout = record.autoClose ? undefined : 0
+    const queue = queues[record.placement]
     if (previous !== undefined)
-      queue.update(record.key, content as never, { timeout })
+      queue.update(record.key, contentOf(record) as never, { timeout })
     else
-      queue.add(content as never, { timeout })
+      queue.add(contentOf(record) as never, { timeout })
     setRevision(value => value + 1)
     requestAnimationFrame(syncHeight)
   }
@@ -94,46 +105,20 @@ export function App() {
     for (const record of payload.records ?? []) render(record)
   })
   // keep:effect 就绪握手必须在监听注册之后发：窗口创建晚于首条提示时，
-  // 壳层早在页面挂载前就已经推过一次，只能靠这次回放补上。
+  // 壳层早在页面挂载前就已推过一次，只能靠这次回放补上。
   useEffect(() => {
     void emitTo({ kind: 'Window', label: SHELL_WINDOW }, ACTION, { kind: 'ready' }).catch(() => {})
   }, [])
 
   return (
-    <div ref={rootRef} data-testid={ROOT_TESTID} className="relative h-full w-full">
-      {placements.map(placement => (
-        <Toast.Provider key={placement} placement={placement} queue={queues[placement]}>
-          {({ toast: item }) => {
-            const record = recordsRef.current.get(item.key)
-            return (
-              <Toast toast={item} variant={record?.variant} data-revision={revision}>
-                <Toast.Content className="overflow-hidden">
-                  <If cond={record?.title !== undefined}>
-                    <Toast.Title>{record?.title}</Toast.Title>
-                  </If>
-                  <If cond={record?.description !== undefined}>
-                    <Toast.Description>{record?.description}</Toast.Description>
-                  </If>
-                  <If cond={record?.action !== undefined}>
-                    <button
-                      type="button"
-                      className="button button--sm mt-2"
-                      onClick={() => {
-                        void emitTo({ kind: 'Window', label: SHELL_WINDOW }, ACTION, {
-                          kind: 'press',
-                          id: record!.action!.id,
-                        }).catch(error => console.warn('[toast] action forward failed:', error))
-                      }}
-                    >
-                      {record?.action?.label}
-                    </button>
-                  </If>
-                </Toast.Content>
-              </Toast>
-            )
-          }}
-        </Toast.Provider>
-      ))}
+    <div ref={rootRef} data-testid={ROOT_TESTID} data-revision={revision} className="relative h-full w-full">
+      <ToastProvider
+        queues={queues}
+        onAction={(id) => {
+          void emitTo({ kind: 'Window', label: SHELL_WINDOW }, ACTION, { kind: 'press', id })
+            .catch(error => console.warn('[toast] action forward failed:', error))
+        }}
+      />
     </div>
   )
 }
