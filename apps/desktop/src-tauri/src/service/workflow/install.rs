@@ -56,10 +56,9 @@ pub async fn install(
     let dsh_missing = !download::Dsh.check_installed(app_handle);
     if dsh_latest.is_none() && dsh_missing {
         for attempt in 0..3 {
-            let metadata = match config::recommended_dsh_version(app_handle) {
-                Some(version) => download::fetch_dsh_pkg_version(app_handle, &version).await,
-                None => download::fetch_latest_dsh_pkg_info(app_handle).await,
-            };
+            // 安装目标跟随最新稳定发行版（推荐版本策略已废弃）：否则「提示有稳定版更新」
+            // 与「安装后仍是旧推荐版」会互相打脸。
+            let metadata = download::fetch_latest_dsh_pkg_info(app_handle).await;
             match metadata {
                 Ok(info) => {
                     dsh_latest = Some(info);

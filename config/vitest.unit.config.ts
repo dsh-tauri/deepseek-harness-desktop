@@ -13,7 +13,7 @@ const alias = {
 
 export default defineProject({
   root: source('..'),
-  define: { __REMOTE_DSH_RECOMMEND__: JSON.stringify('0.2.2-rc.1'), __REMOTE_DSH_MINIMUM__: JSON.stringify('0.2.1-rc.1') },
+  define: { __REMOTE_DSH_MINIMUM__: JSON.stringify('0.2.1-rc.1') },
   resolve: { alias },
   test: {
     name: 'unit',

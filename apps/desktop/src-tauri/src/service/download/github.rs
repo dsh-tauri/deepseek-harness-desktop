@@ -371,23 +371,6 @@ pub async fn fetch_latest_dsh_pkg_info(
     })
 }
 
-/// 按指定 SemVer 查找并返回 Harness 发行版，供推荐版本策略使用。
-///
-/// 推荐版本可能是 pre-release，不能使用 GitHub 的 `/releases/latest`；该端点会
-/// 排除标记为 pre-release 的发行版。先从完整 release 列表按解析后的 SemVer 精确匹配
-/// tag，再复用固定 tag 的资产与摘要查询，确保下载内容与校验摘要属于同一发布。
-pub async fn fetch_dsh_pkg_version(
-    app_handle: &crate::AppHandle,
-    version: &str,
-) -> Result<LatestDshPkg, String> {
-    let release = fetch_dsh_pkg_releases(app_handle)
-        .await?
-        .into_iter()
-        .find(|release| parse_version_from_tag(&release.tag).as_deref() == Some(version))
-        .ok_or_else(|| format!("DSH_RECOMMENDED_NOT_FOUND: no release found for {version}"))?;
-    fetch_dsh_pkg_asset(app_handle, &release.tag).await
-}
-
 /// 最新非预览版 release：仅当最新 release 是预览版时由 [`fetch_latest_dsh_pkg_info`] 调用。
 ///
 /// 从完整 release 列表（[`fetch_dsh_pkg_releases`]，最新在前，含 Pre-release label）

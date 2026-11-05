@@ -1,7 +1,10 @@
 use std::time::Duration;
 
-/// 捆绑的 Node.js 运行时版本（满足当前 DSH 的 v22.19.0+ 或 v24+ 要求）
-pub const NODE_VERSION: &str = "v22.22.0";
+/// 捆绑的 Node.js 运行时版本。
+///
+/// 必须满足最新稳定版 DSH 核心的 `engines.node`（当前为 >=24.9.0），否则离线包随包
+/// 内核一升级就无法在新 Node 上启动——随包内核跟随最新稳定版，随包 Node 也必须跟上。
+pub const NODE_VERSION: &str = "v24.22.2";
 
 /// Node.js 官方下载地址
 pub const NODE_BASE_URL: &str = "https://nodejs.org/dist/";

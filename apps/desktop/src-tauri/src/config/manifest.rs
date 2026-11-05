@@ -35,8 +35,6 @@ pub struct Engines {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct DshEngine {
-    /// 推荐核心版本（更新提示与「高于推荐版本」标记用）
-    pub recommend: String,
     /// 最低支持核心版本（低于它的核心不参与本地优先）
     pub minimum: String,
 }
@@ -423,34 +421,12 @@ pub fn parse(raw: &str) -> Result<Manifest, String> {
     serde_json::from_str(&stripped).map_err(|error| error.to_string())
 }
 
-/// 清单中的推荐 DSH 核心版本
-pub fn recommended_dsh_version<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
-    let version = with_manifest(app, |manifest| {
-        manifest.engines.dsh.recommend.trim().to_string()
-    })?;
-    (!version.is_empty() && semver::Version::parse(&version).is_ok()).then_some(version)
-}
-
 /// 清单中的最低支持 DSH 核心版本
 pub fn minimum_dsh_version<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     let version = with_manifest(app, |manifest| {
         manifest.engines.dsh.minimum.trim().to_string()
     })?;
     (!version.is_empty()).then_some(version)
-}
-
-/// 版本是否高于推荐版本；任一版本无法解析时返回 false
-pub fn is_above_recommended<R: Runtime>(app: &AppHandle<R>, version: &str) -> bool {
-    let Some(recommended) = recommended_dsh_version(app) else {
-        return false;
-    };
-    match (
-        semver::Version::parse(version),
-        semver::Version::parse(&recommended),
-    ) {
-        (Ok(actual), Ok(recommended)) => actual > recommended,
-        _ => false,
-    }
 }
 
 /// 位置令牌解析（依赖可位于任意位置：AppData 托管、安装目录捆绑、或用户指定的其它盘符）：
@@ -686,7 +662,7 @@ mod tests {
         let raw = r#"
         {
           // 行注释
-          "engines": { "dsh": { "recommend": "1.2.3", "minimum": "1.0.0" } },
+          "engines": { "dsh": { "minimum": "1.0.0" } },
           /* 块注释
              跨行 */
           "dependencies": {
@@ -695,7 +671,7 @@ mod tests {
         }
         "#;
         let manifest = parse(raw).expect("jsonc should parse");
-        assert_eq!(manifest.engines.dsh.recommend, "1.2.3");
+        assert_eq!(manifest.engines.dsh.minimum, "1.0.0");
         assert_eq!(
             manifest.dependencies["node"].entry,
             EntrySpec::Platform(BTreeMap::from([(

@@ -1,7 +1,8 @@
 {
   "engines": {
     "dsh": {
-      "recommend": "0.2.2-rc.1",
+      // 离线包随包内核、下载目标与更新提示都跟随 pkg 仓库的最新稳定发行版；
+      // 清单不再声明「推荐版本」，也没有固定的随包版本。
       "minimum": "0.2.1-rc.1"
     },
     "node": {
@@ -43,7 +44,6 @@
     },
     "dsh": {
       "engine": {
-        "recommend": "0.2.2-rc.1",
         "minimum": "0.2.1-rc.1"
       },
       "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",

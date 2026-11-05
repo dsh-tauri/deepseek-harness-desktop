@@ -23,6 +23,19 @@ fn active_dsh_version(app_handle: &AppHandle) -> Option<String> {
     core::active_version(app_handle).or_else(|| config::get_dsh_version(app_handle))
 }
 
+/// 托管安装目录里实际落盘的核心版本。
+///
+/// 自动更新替换的是这个目录，而不是当前选中的核心：本地核心生效时
+/// `active_dsh_version` 给出的是用户自己包管理器那份，拿它判断「是否高于最新稳定版」
+/// 会把托管目录里更高的版本（用户手动下载的预览版）覆盖成更旧的稳定版。
+fn installed_dsh_version(app_handle: &AppHandle) -> Option<String> {
+    core::app_core_version(
+        &config::get_dsh_install_path(app_handle),
+        config::get_dsh_pkg_tag(app_handle).as_deref(),
+    )
+    .or_else(|| config::get_dsh_version(app_handle))
+}
+
 /// 比较两个版本的先后（`candidate` 相对 `baseline`）。
 ///
 /// 两者都须能解析为语义化版本，否则返回 None——无从比较就不下结论，各调用点
@@ -146,28 +159,30 @@ pub async fn install_dependencies(
         return Ok(false);
     }
 
-    // 安装目标遵循应用资源中的推荐版本，而不是 GitHub 的 latest。
-    // latest 可能是 alpha/beta 等超出推荐范围的预览版；并且 `/releases/latest`
-    // 不保证与推荐版本的摘要属于同一 release。按推荐 SemVer 反查固定 tag，后续
-    // 资产 URL 与 digest 都从该 tag 获取。
-    let recommended_version = config::recommended_dsh_version(&app_handle);
+    // 安装目标一律跟随 pkg 仓库的最新稳定发行版（推荐版本策略已废弃）。
+    // `fetch_latest_dsh_pkg_info` 内部已排除预览版（Pre-release label 或 tag 命名），
+    // 并保证资产 URL 与摘要来自同一个 tag。
     let installed_version = dsh_files_ok
-        .then(|| active_dsh_version(&app_handle))
+        .then(|| installed_dsh_version(&app_handle))
         .flatten();
+    let dsh_latest = download::fetch_latest_dsh_pkg_info(&app_handle).await;
+    // 已装核心高于最新稳定版（用户主动装了预览版/更高版本）时保持本地安装：
+    // 自动流程不做降级，用户想要更低的版本请自己到核心面板切换。
+    let latest_version = dsh_latest
+        .as_ref()
+        .ok()
+        .and_then(|latest| download::parse_version_from_tag(&latest.tag));
     let preserve_installed =
-        version_order(installed_version.as_deref(), recommended_version.as_deref())
+        version_order(installed_version.as_deref(), latest_version.as_deref())
             == Some(std::cmp::Ordering::Greater);
     let dsh_latest = if preserve_installed {
         log::info!(
-            "Keeping installed dsh version above recommendation: {}",
+            "Keeping installed dsh version above the latest stable release: {}",
             installed_version.as_deref().unwrap_or_default()
         );
         None
     } else {
-        Some(match recommended_version {
-            Some(version) => download::fetch_dsh_pkg_version(&app_handle, &version).await,
-            None => download::fetch_latest_dsh_pkg_info(&app_handle).await,
-        })
+        Some(dsh_latest)
     };
 
     // 已安装文件在盘时，用 resolve_update 甄别「记录滞后」与「真更新」：
@@ -259,9 +274,8 @@ pub async fn install_dependencies(
     workflow::status::set_status(workflow::status::Status::Installing);
     workflow::status::emit_status(&app_handle);
     // 返回 dsh 是否真正落盘更新：仅重装 Node/pnpm 或全部任务被跳过（例如
-    // 版本相同仅记录滞后）时为 false，前端据此决定是否重启页面/保留更新提示
-    // 高于推荐版本的核心没有 release 元数据，因此仅补装 Node/pnpm 时不会被
-    // workflow 当作过期并下载较旧核心。
+    // 版本相同仅记录滞后）时为 false，前端据此决定是否重启页面/保留更新提示。
+    // 已装核心高于最新稳定版时上面已把安装目标清空，workflow 不会把它当过期降级。
     let install_target = dsh_latest.and_then(Result::ok);
     let updated = match workflow::install(&app_handle, install_target).await {
         Ok(updated) => updated,
@@ -314,7 +328,7 @@ pub async fn check_dsh_update(
 
     let latest = download::fetch_latest_dsh_pkg_info(&app_handle).await?;
 
-    // 关键修复1：最新 release 的版本号已经在已装核心列表里（含 active 和非 active
+    // 最新 release 的版本号已经在已装核心列表里（含 active 和非 active
     // 槽位），就不提示更新。避免「老版本激活 + 新版已下载但未切换」场景下白点一次
     // 「立即更新」做整包重下——版本号（用户视角的版本）已经在那了，没必要再拉一遍。
     if let Some(version) = download::parse_version_from_tag(&latest.tag) {
@@ -327,21 +341,7 @@ pub async fn check_dsh_update(
         }
     }
 
-    // 关键修复2：最新 release 高于推荐版本时（通常是 alpha/beta/preview 序号
-    // 大于稳定 RC）不自动推。stable 用户不该被打扰去装 alpha 测试版；用户想追
-    // preview 自行去核心面板下载。这条规则先于「installed 比 latest 低」检查，
-    // 否则装了 0.1.1-rc.1 的用户会被弹 0.1.3-alpha.1 更新。
-    if let Some(version) = download::parse_version_from_tag(&latest.tag) {
-        if config::is_dsh_version_above_recommended(&app_handle, &version) {
-            log::info!(
-                "Suppressing dsh update toast because latest is above recommended (preview/alpha): {}",
-                version
-            );
-            return Ok(None);
-        }
-    }
-
-    // 关键修复3：latest 不高于当前运行核心时不提示。pkg 仓库的「Current latest」
+    // latest 不高于当前运行核心时不提示。pkg 仓库的「Current latest」
     // 可能被指向更旧的 release（dsh-0.1.7-rc.2），而用户运行的核心已是更高的
     // 0.2.0-rc.1；此时提示会把用户引向降级，且「立即更新」也会因保留更高版本
     // 而实际什么都没做，最终只弹一个「更新校验失败」。
@@ -513,9 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn newer_installed_dsh_is_preserved_from_recommended_downgrade() {
-        let preserve = |installed: &str, recommended: &str| {
-            version_order(Some(installed), Some(recommended)) == Some(Ordering::Greater)
+    fn newer_installed_dsh_is_preserved_from_stable_downgrade() {
+        let preserve = |installed: &str, latest: &str| {
+            version_order(Some(installed), Some(latest)) == Some(Ordering::Greater)
         };
         assert!(preserve("0.1.1-rc.3", "0.1.1-rc.2"));
         assert!(!preserve("0.1.1-rc.2", "0.1.1-rc.2"));
