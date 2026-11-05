@@ -11,9 +11,7 @@
     "dsh-tauri-notification": "workspace:*",
     "dsh-tauri-pet": "workspace:*",
     "dsh-tauri-remote": "workspace:*",
-    "dsh-tauri-rightclick": "workspace:*",
     "dsh-tauri-scheduler": "workspace:*",
-    "dsh-tauri-ui": "workspace:*",
-    "dsh-tauri-worktree": "workspace:*"
+    "dsh-tauri-ui": "workspace:*"
   }
 }

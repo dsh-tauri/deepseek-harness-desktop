@@ -39,7 +39,7 @@ Electron 侧不是瓶颈：`node-addon-require-builtin` 的原生包内嵌白名
 | 6 | `session` 暴露 `SessionStore.remove` | `dsh-session` | 删除，删除逻辑下放到 `dsh-tauri-archive` |
 | 7 | `llm_session` OpenCode 会话头 | `dsh-llm-pi-ai` | 迁到 pkg 仓库 |
 | 8 | `pi_ai_thinking` `<thinking>` 改道 | `@earendil-works/pi-ai` | 删除，只服务 gpt 优化，优先级低 |
-| 9 | `workspace` 工作树会话关联 | `dsh-workspace` | 迁到 pkg 仓库 |
+| 9 | `workspace` 工作树会话关联 | `dsh-workspace` | 删除，工作树改用官方实现 |
 | 10 | `workspace_view` 旧视图状态容错 | `dsh-client-ui-workspace` | 删除，不再做兼容层 |
 | 11 | `plugin_visibility` 隐藏 `dsh-tauri-*` | `dsh-client-ui-plugin-manager` | 官方插件页那半迁到 pkg 仓库 |
 | 12 | `permission_settings` 保存错误 | `dsh-client-ui-permission-presets` | 删除 |
@@ -58,6 +58,9 @@ Electron 侧不是瓶颈：`node-addon-require-builtin` 的原生包内嵌白名
   是 private，没有任何按 id 移除的原语；上游也没有计划暴露。改为由
   `dsh-tauri-archive` 自己停止会话活动（`agents.cancel({ kind: 'disposed' })` +
   `whenIdle()`）后删除落盘数据，能力从此不依赖宿主补丁。
+- **workspace**：`dsh-workspace` 的公开面只有工作区成员关系，而官方
+  `dsh-experimental-worktree` 切目录用的是 `ctx.workingDirectory.set()`，从不碰成员
+  关系。桌面端删掉自研工作树后，这个补丁没有任何消费者。
 - **workspace_view**：桌面端不再为「更新核心写下的视图状态」做容错层。
 - **permission_settings**：上游保存失败只 `fail()` 不写 `saveError`；这项属于官方
   设置页的提示缺陷，桌面端不再代偿。
@@ -67,8 +70,8 @@ Electron 侧不是瓶颈：`node-addon-require-builtin` 的原生包内嵌白名
 
 ### 迁移项
 
-`renderer` / `llm_session` / `workspace` / `plugin_visibility`（官方插件页部分）四项
-在 pkg 仓库（`dsh-tauri/deepseek-harness-pkg`）以 pnpm patch 形式固化，随 asar 分发。
+`renderer` / `llm_session` / `plugin_visibility`（官方插件页部分）三项在 pkg 仓库
+（`dsh-tauri/deepseek-harness-pkg`）以 pnpm patch 形式固化，随 asar 分发。
 `llm_session` 在 `0.2.2-rc.1` 上换过实现：适配器的 `requestHeaders` 已重构成
 `(configured, options, baseURL, prepare)` 形态，并额外暴露
 `llm-pi-ai/request-headers` waterfall，补丁改为锚定新接口。
@@ -82,6 +85,13 @@ Electron 侧不是瓶颈：`node-addon-require-builtin` 的原生包内嵌白名
   `0.2.2-rc.1` 的行为为前提，基线不抬就谈不上「交还官方」。
 - **删除 `dsh-tauri-mobile-ui`**：官方客户端自带移动端适配，这个插件不再有存在
   理由。它被加进 `manifest.jsonc` 的 `plugins.depercated`，启动时自动退役。
+- **退役 `dsh-tauri-worktree`**：官方 `@deepseek-ai/dsh-experimental-tool-worktree`
+  随内核分发，桌面端把它加进 `plugins.depercated`，并在 `DESKTOP_DEFAULT_BUNDLES`
+  里对新建与既有档案固定登记，等于默认启用官方工作树。自研实现整体删除。
+- **退役 `dsh-tauri-rightclick`**：官方 `dsh-client-ui-context-menu` 已提供
+  `ctx.contextMenus.register` 协议，会话与工作区的置顶、重命名、分叉、归档、复制 ID
+  都在官方侧。桌面端只在 `dsh-tauri-ui` 补一个「在新窗口打开」的会话项；可编辑区、
+  选中文本与链接那几类菜单随插件一起取消。
 - **目录型内核**：除本地（npm 全局安装）外不再识别目录型内核；用户若仍有旧的目录
   槽位，按「本地已废弃的 pkg」标记为 orphaned，由用户自行清理。
 

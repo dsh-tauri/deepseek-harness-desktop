@@ -66,7 +66,9 @@
       "dsh-tauri-bridge",
       "dsh-tauri-running-changes",
       "dsh-tauri-kernel",
-      "dsh-tauri-mobile-ui"
+      "dsh-tauri-mobile-ui",
+      "dsh-tauri-worktree",
+      "dsh-tauri-rightclick"
     ],
     "built-in": [
       {
@@ -86,12 +88,6 @@
         "spec": "dsh-tauri-ui",
         "name": "DSH Tauri UI",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-ui"
-      },
-      {
-        "id": "dsh-tauri-worktree",
-        "spec": "dsh-tauri-worktree",
-        "name": "DSH Tauri Worktree",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-worktree"
       },
       {
         "id": "dsh-tauri-extension",
@@ -116,12 +112,6 @@
         "spec": "dsh-tauri-pet",
         "name": "DSH Tauri Pet",
         "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-pet"
-      },
-      {
-        "id": "dsh-tauri-rightclick",
-        "spec": "dsh-tauri-rightclick",
-        "name": "DSH Tauri Rightclick Menu",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-rightclick"
       },
       {
         "id": "dsh-tauri-model",

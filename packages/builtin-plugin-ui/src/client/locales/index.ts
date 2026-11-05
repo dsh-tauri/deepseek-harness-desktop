@@ -22,6 +22,8 @@ export const locale = defineLocale(PLUGIN_ID, {
     folderErrorTitle: '无法打开文件夹',
     folderErrorRetry: '重新选择',
     apply: '保存',
+    openInNewWindow: '在新窗口打开',
+    openInNewWindowFailed: '无法在新窗口打开该会话',
   },
   en: {
     back: 'Back to app',
@@ -43,5 +45,7 @@ export const locale = defineLocale(PLUGIN_ID, {
     folderErrorTitle: 'Couldn’t open folder',
     folderErrorRetry: 'Choose again',
     apply: 'Apply',
+    openInNewWindow: 'Open in new window',
+    openInNewWindowFailed: 'Could not open this session in a new window',
   },
 })

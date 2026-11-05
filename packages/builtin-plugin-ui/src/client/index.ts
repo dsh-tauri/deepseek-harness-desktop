@@ -1,9 +1,10 @@
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { ClientContext } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../shared/constants'
-import { HERO_WORKSPACE_EFFECT, LOCALE_EFFECT, NEW_SESSION_EFFECT, OBSTRUCTIONS_EFFECT, SECTIONS_EFFECT, SETTINGS_EFFECT, SETTINGS_OPEN_EFFECT, STYLES_EFFECT, UNGROUPED_NEW_SESSION_EFFECT } from './constants'
+import { CONTEXT_MENU_EFFECT, HERO_WORKSPACE_EFFECT, LOCALE_EFFECT, NEW_SESSION_EFFECT, OBSTRUCTIONS_EFFECT, SECTIONS_EFFECT, SETTINGS_EFFECT, SETTINGS_OPEN_EFFECT, STYLES_EFFECT, UNGROUPED_NEW_SESSION_EFFECT } from './constants'
 import { locale } from './locales'
 import { composerResumeFeature } from './register/composer-resume'
+import { registerSessionContextMenu } from './register/context-menu'
 import { registerContinueNotice } from './register/continue-notice'
 import { registerDesktopSettings } from './register/desktop-settings'
 import { heroWorkspaceFeature } from './register/hero-workspace'
@@ -47,4 +48,5 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(composerResumeFeature, COMPOSER_RESUME_EFFECT)
   ctx.effect(registerContinueNotice, CONTINUE_NOTICE_EFFECT)
   ctx.effect(registerDesktopSettings, `${PLUGIN_ID}: desktop settings`)
+  ctx.effect(() => registerSessionContextMenu(ctx), CONTEXT_MENU_EFFECT)
 }

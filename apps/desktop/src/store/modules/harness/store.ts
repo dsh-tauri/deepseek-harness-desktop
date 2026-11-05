@@ -385,7 +385,7 @@ export const harness = defineStore({
         : i18next.t('errors.client_boot_failed')
       const error = await attachStartupDiagnostics(new Error(message))
       // 失败页文本是最直接的证据，优先作为日志行参与插件定位（pending 行正则
-      // 可命中 `dsh-tauri-rightclick: pending (waiting for service: remote.session)`）
+      // 可命中 `dsh-tauri-archive: pending (waiting for service: webServer)`）
       const reported = detail ? detail.split(/\n/).filter(line => line.trim() !== '') : []
       const lines = [...reported, ...(error.logLines ?? error.logs ?? [])]
       await recovery.reviewStartupRecovery(lines, current)
