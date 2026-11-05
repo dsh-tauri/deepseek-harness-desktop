@@ -7,7 +7,7 @@ import { ESLint } from 'eslint'
 
 const root = '../../'
 const eslint = new ESLint({ cwd: fileURLToPath(new URL(root, import.meta.url)), fix: true })
-const plugins = ['extension', 'scheduler', 'archive', 'model', 'ui', 'notification', 'remote']
+const plugins = ['extension', 'scheduler', 'rightclick', 'archive', 'model', 'ui', 'notification', 'remote']
 
 export default defineConfig({
   preset: pipeline((options) => {

@@ -31,7 +31,6 @@ export const SETTINGS_OPEN_EFFECT = `${PLUGIN_ID}: settings deep-link`
 export const HERO_WORKSPACE_EFFECT = `${PLUGIN_ID}: hero workspace picker`
 export const NEW_SESSION_EFFECT = `${PLUGIN_ID}: sidebar new session`
 export const UNGROUPED_NEW_SESSION_EFFECT = `${PLUGIN_ID}: sidebar ungrouped new session`
-export const CONTEXT_MENU_EFFECT = `${PLUGIN_ID}: session context menu`
 
 export const TURN_NAVIGATION_LABEL_ZH = '轮次导航'
 export const TURN_NAVIGATION_LABEL_EN = 'Turn navigation'

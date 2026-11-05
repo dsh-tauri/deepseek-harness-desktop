@@ -1041,6 +1041,9 @@ importers:
       dsh-tauri-remote:
         specifier: workspace:*
         version: link:../builtin-plugin-remote
+      dsh-tauri-rightclick:
+        specifier: workspace:*
+        version: link:../builtin-plugin-rightclick
       dsh-tauri-scheduler:
         specifier: workspace:*
         version: link:../builtin-plugin-scheduler
@@ -1283,6 +1286,34 @@ importers:
       typescript:
         specifier: catalog:cli
         version: 5.8.3
+
+  packages/builtin-plugin-rightclick:
+    dependencies:
+      dsh-h3:
+        specifier: 'catalog:'
+        version: 0.2.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-host-webserver@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@genapi/shared@4.1.4)(typescript@5.8.3)
+      dsh-tauri:
+        specifier: workspace:*
+        version: link:../builtin-plugin-tauri
+      h3:
+        specifier: 'catalog:'
+        version: 2.0.1
+      lodash-es:
+        specifier: catalog:utils
+        version: 4.18.1
+    devDependencies:
+      '@types/lodash-es':
+        specifier: catalog:types
+        version: 4.17.12
+      dsh-tauri-config:
+        specifier: workspace:*
+        version: link:../builtin-plugin-config
+      dsh-tauri-ui:
+        specifier: workspace:*
+        version: link:../builtin-plugin-ui
+      tsdown:
+        specifier: catalog:cli
+        version: 0.17.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(publint@0.3.25)(synckit@0.11.13)(typescript@5.8.3)
 
   packages/builtin-plugin-scheduler:
     dependencies:

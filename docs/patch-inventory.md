@@ -88,10 +88,6 @@ Electron 侧不是瓶颈：`node-addon-require-builtin` 的原生包内嵌白名
 - **退役 `dsh-tauri-worktree`**：官方 `@deepseek-ai/dsh-experimental-tool-worktree`
   随内核分发，桌面端把它加进 `plugins.depercated`，并在 `DESKTOP_DEFAULT_BUNDLES`
   里对新建与既有档案固定登记，等于默认启用官方工作树。自研实现整体删除。
-- **退役 `dsh-tauri-rightclick`**：官方 `dsh-client-ui-context-menu` 已提供
-  `ctx.contextMenus.register` 协议，会话与工作区的置顶、重命名、分叉、归档、复制 ID
-  都在官方侧。桌面端只在 `dsh-tauri-ui` 补一个「在新窗口打开」的会话项；可编辑区、
-  选中文本与链接那几类菜单随插件一起取消。
 - **目录型内核**：除本地（npm 全局安装）外不再识别目录型内核；用户若仍有旧的目录
   槽位，按「本地已废弃的 pkg」标记为 orphaned，由用户自行清理。
 
