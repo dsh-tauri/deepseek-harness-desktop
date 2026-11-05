@@ -4,16 +4,19 @@ import { PLUGIN_ID } from '../../shared/constants'
 export { PLUGIN_ID } from '../../shared/constants'
 
 export const CONVERSATION_INPUT_LEFT_SLOT = 'conversation.input.left'
-export const PANEL_ID = PLUGIN_ID
-export const PANEL_ACTION_ORDER = 20
-export const PLUGINS_MORE_HEADER_SELECTOR = '[data-dsh-extension-plugins] [data-plugin-panel] > header:has(> button:first-child + h1)'
+export const SETTINGS_SECTION_SLOT = 'settings.section'
+export const SKILLS_SECTION_ID = `${PLUGIN_ID}-skills`
+export const MCP_SECTION_ID = `${PLUGIN_ID}-mcp`
+export const SKILLS_SECTION_ORDER = 11
+export const MCP_SECTION_ORDER = 12
 export const INPUT_PREFILL_ID = `${PLUGIN_ID}.skill-prefill`
 export const INPUT_PREFILL_ORDER = 40
 export const INPUT_PREFILL_PRIORITY = 0
 
 export const LOCALE_EFFECT = `${PLUGIN_ID}: locale`
 export const SKILL_CREATOR_PREFILL_EFFECT = `${PLUGIN_ID}: skill creator prefill`
-export const EXTENSION_PANEL_EFFECT = `${PLUGIN_ID}: extension panel`
+export const SKILLS_SECTION_EFFECT = `${PLUGIN_ID}: skills section`
+export const MCP_SECTION_EFFECT = `${PLUGIN_ID}: mcp section`
 
 export const SKILL_CREATOR_DRAFT = '/skill-creator '
 export const SKILL_REFRESH_INTERVAL_MS = 300

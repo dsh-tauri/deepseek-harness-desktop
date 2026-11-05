@@ -65,7 +65,13 @@ pub fn escape_path_cmd(path: &Path) -> String {
 /// 以退出码 1 结束。依次尝试：用户目录下的 `%APPDATA%`/`%LOCALAPPDATA%`/
 /// `%USERPROFILE%` 令牌、Windows 8.3 短名；都拿不到纯 ASCII 时才保留原字面量，
 /// 由 write.rs 的按代码页编码兜底。
+///
+/// 入口处的 `\\?\` verbatim 前缀先剥掉：cmd.exe 无法按该形式启动程序（直接执行会
+/// 以退出码 3 报「系统找不到指定的路径」），而这里正是把可执行文件路径烘焙成
+/// `"%NODE%" ...` 的那一步。
 pub fn portable_path_cmd(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let path = Path::new(raw.strip_prefix(r"\\?\").unwrap_or(&raw));
     let text = path.to_string_lossy();
     if text.is_ascii() {
         return escape_path_cmd(path);
@@ -268,6 +274,21 @@ mod tests {
         assert_eq!(
             portable_path_cmd(Path::new(r"C:\tools\100%\pnpm.cjs")),
             r"C:\tools\100%%\pnpm.cjs"
+        );
+    }
+
+    /// `fs::canonicalize` 带出的 `\\?\` 前缀会让 cmd 启动失败，烘焙前必须剥掉。
+    #[test]
+    fn portable_path_cmd_strips_verbatim_prefix() {
+        assert_eq!(
+            portable_path_cmd(Path::new(
+                r"\\?\G:\Deepseek Harness Desktop\runtime\win32-x64\DSH Tauri.exe"
+            )),
+            r"G:\Deepseek Harness Desktop\runtime\win32-x64\DSH Tauri.exe"
+        );
+        assert_eq!(
+            portable_path_cmd(Path::new(r"\\?\C:\tools\100%\node.exe")),
+            r"C:\tools\100%%\node.exe"
         );
     }
 }
