@@ -76,7 +76,12 @@ function start(): void {
   }
   ensureHostRoot()
   const shadow = document.querySelector(`[${HOST_ATTRIBUTE}]`)?.shadowRoot
-  const mount = shadow?.getElementById(MOUNT_ID) ?? document.getElementById('root')
+  // 文档即 DSH 时只渲染进注入的 Shadow host：落到 DSH 自己的 `#root` 会把壳层塞进
+  // DSH 容器并遮住整页。没有注入样式才视为壳层页，用 `#root` 兜底。
+  const hosted = (globalThis as ShellEnv).__DSH_SHELL_CSS__ !== undefined
+  const mount = hosted
+    ? shadow?.getElementById(MOUNT_ID)
+    : document.getElementById('root')
   if (mount === null || mount === undefined)
     return
   createRoot(mount).render(createElement(ShellRoot))

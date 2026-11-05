@@ -30,7 +30,6 @@ export const APP_TITLE = 'DeepSeek Harness'
 
 export const SHELL_ROOT = '[data-testid="dsh-shell-root"]'
 export const SHELL_WEBVIEW = '[data-testid="dsh-shell-webview"]'
-export const HARNESS_WEBVIEW = '[data-testid="dsh-harness-webview"]'
 export const NAVBAR_MENU_CONFIG = '[data-testid="dsh-navbar-menu-config"]'
 export const NAVBAR_MENU_POPOVER = '[data-testid="dsh-navbar-menu-popover"]'
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'

@@ -2,7 +2,7 @@ import type { Page } from 'playwright'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, HARNESS_WEBVIEW, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 interface RuntimeInfo {
   app_version: string
@@ -95,7 +95,7 @@ describe('desktop boot and profile lifecycle', () => {
     }), '无宿主路径的文件必须回落为空串，而不是抛错').toBe('')
   })
 
-  it.runIf(process.platform !== 'darwin')('preserves the native Harness backdrop for Windows/Linux shell popovers without reloading', async () => {
+  it.runIf(process.platform !== 'darwin')('keeps the hosted DSH document intact while shell popovers open and close', async () => {
     const shell = app.get()
     const main = shell.window.page
     await installErrorCollector(main)
@@ -117,46 +117,18 @@ describe('desktop boot and profile lifecycle', () => {
     }, nonce)
     expect(viewport.width, '原生页面必须具有真实视口宽度').toBeGreaterThan(100)
     expect(viewport.height, '原生页面必须具有真实视口高度').toBeGreaterThan(100)
-    const backdrop = main.locator(HARNESS_WEBVIEW).locator('img')
-    expect(await backdrop.count(), '菜单打开前不应残留截图背景').toBe(0)
+    await expect.poll(() => main.locator(NAVBAR_MENU_CONFIG).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '壳层菜单必须可见' }).toBe(true)
 
     try {
       await main.locator(NAVBAR_MENU_CONFIG).click({ timeout: WINDOW_TIMEOUT_MS })
       await expect.poll(() => main.locator(NAVBAR_MENU_POPOVER).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '必须打开真实的壳层菜单' }).toBe(true)
-      await expect.poll(() => backdrop.count(), { timeout: WINDOW_TIMEOUT_MS, message: '菜单打开后必须显示原生页面截图' }).toBe(1)
-      await expect.poll(() => backdrop.evaluate(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0), { timeout: WINDOW_TIMEOUT_MS, message: '截图必须完成图片解码' }).toBe(true)
-      const capture = await backdrop.evaluate((element) => {
-        const image = element as HTMLImageElement
-        const canvas = document.createElement('canvas')
-        canvas.width = 64
-        canvas.height = 64
-        const context = canvas.getContext('2d')!
-        context.drawImage(image, 0, 0, canvas.width, canvas.height)
-        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-        const colors = new Set<string>()
-        let nonWhitePixels = 0
-        for (let index = 0; index < pixels.length; index += 4) {
-          if (pixels[index + 3] === 0)
-            continue
-          colors.add(`${pixels[index]},${pixels[index + 1]},${pixels[index + 2]}`)
-          if (Math.min(pixels[index], pixels[index + 1], pixels[index + 2]) < 250)
-            nonWhitePixels++
-        }
-        return { width: image.naturalWidth, height: image.naturalHeight, colors: colors.size, nonWhitePixels }
-      })
-      expect(capture.width / viewport.width, '截图宽度必须覆盖真实视口，不能是 1×1 占位图').toBeGreaterThanOrEqual(0.9)
-      expect(capture.height / viewport.height, '截图高度必须覆盖真实视口，不能是 1×1 占位图').toBeGreaterThanOrEqual(0.9)
-      expect(capture.width / viewport.width, '截图宽度必须符合视口与显示缩放范围').toBeLessThanOrEqual(Math.max(1, viewport.scale) * 1.1)
-      expect(capture.height / viewport.height, '截图高度必须符合视口与显示缩放范围').toBeLessThanOrEqual(Math.max(1, viewport.scale) * 1.1)
-      expect(Math.abs(capture.width / capture.height - viewport.width / viewport.height), '截图宽高比必须与原生视口一致').toBeLessThan(0.05)
-      expect(capture.nonWhitePixels, '截图不能是全白或全透明背景').toBeGreaterThan(0)
-      expect(capture.colors, '截图必须包含真实页面的多种颜色').toBeGreaterThan(4)
+      // 文档即 DSH：菜单与 DSH 同处一棵 DOM 树，打开弹层不隐藏、不截图、不冻结页面。
+      expect(main.url(), '打开壳层菜单不得把主窗口导航走').toStartWith(origin)
     }
     finally {
       await main.keyboard.press('Escape')
     }
     await expect.poll(() => main.locator(NAVBAR_MENU_POPOVER).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: 'Escape 必须关闭壳层菜单' }).toBe(false)
-    await expect.poll(() => backdrop.count(), { timeout: WINDOW_TIMEOUT_MS, message: '关闭菜单后必须移除截图并恢复原生页面' }).toBe(0)
     expect(native.url(), '菜单开关不得导航原生页面').toBe(url)
     const preservedNonce = await native.evaluate(() => {
       const host = window as Window & { __dshE2eMenuNonce?: string }
@@ -165,7 +137,7 @@ describe('desktop boot and profile lifecycle', () => {
       return value
     })
     expect(preservedNonce, '菜单开关不得重载或替换原生页面').toBe(nonce)
-    expect(await pageErrors(main), '菜单截图切换不应产生壳层页面异常').toEqual([])
+    expect(await pageErrors(main), '菜单开关不应产生壳层页面异常').toEqual([])
   })
 
   it('reuses same-profile cores and isolates cloned-profile windows', async () => {
