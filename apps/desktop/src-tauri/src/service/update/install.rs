@@ -317,6 +317,66 @@ async fn download_installer(
 ) -> Result<(), String> {
     static DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _download = DOWNLOAD_LOCK.lock().await;
+    let parent = path
+        .parent()
+        .ok_or("UPDATE_FILE: installer has no parent directory")?;
+    let download_lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(parent.join(".installer-download.lock"))
+        .map_err(|e| format!("UPDATE_LOCK: {e}"))?;
+    loop {
+        match download_lock.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(format!("UPDATE_LOCK: {error}"));
+            }
+        }
+    }
+    match std::fs::read_dir(parent) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        log::warn!("Failed to inspect installer cache entry: {error}");
+                        continue;
+                    }
+                };
+                let name = entry.file_name();
+                if !name
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(".installer-") && name.ends_with(".part"))
+                {
+                    continue;
+                }
+                match entry.file_type() {
+                    Ok(kind) if kind.is_file() => {
+                        if let Err(error) = std::fs::remove_file(entry.path()) {
+                            log::warn!(
+                                "Failed to remove stale installer part {}: {error}",
+                                entry.path().display()
+                            );
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => log::warn!(
+                        "Failed to inspect installer cache entry {}: {error}",
+                        entry.path().display()
+                    ),
+                }
+            }
+        }
+        Err(error) => log::warn!(
+            "Failed to read installer cache {}: {error}",
+            parent.display()
+        ),
+    }
     if path.exists() {
         return Ok(());
     }
@@ -330,9 +390,6 @@ async fn download_installer(
             release.asset_name
         );
     }
-    let parent = path
-        .parent()
-        .ok_or("UPDATE_FILE: installer has no parent directory")?;
     let tmp = tempfile::Builder::new()
         .prefix(".installer-")
         .suffix(".part")
@@ -821,6 +878,8 @@ async fn release_appimage_instance<R: tauri::Runtime>(
 mod tests {
     use super::*;
 
+    static TEST_DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     fn local_release(url: String) -> LatestRelease {
         LatestRelease {
             version: "99.0.0".into(),
@@ -832,8 +891,250 @@ mod tests {
         }
     }
 
+    fn download_cache_files(dir: &std::path::Path) -> Vec<PathBuf> {
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| entry.file_name() != ".installer-download.lock")
+            .map(|entry| entry.path())
+            .collect();
+        files.sort();
+        files
+    }
+
+    #[tokio::test]
+    async fn download_removes_stale_parts_without_touching_other_entries() {
+        let _download = TEST_DOWNLOAD_LOCK.lock().await;
+        tokio::time::timeout(Duration::from_secs(15), async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("installer.AppImage");
+            let stale = dir.path().join(".installer-stale.part");
+            std::fs::write(&stale, b"orphan").unwrap();
+            for name in ["other.part", ".installer-notes.txt", "notes.txt"] {
+                std::fs::write(dir.path().join(name), b"keep").unwrap();
+            }
+            let directory = dir.path().join(".installer-directory.part");
+            std::fs::create_dir(&directory).unwrap();
+            std::fs::write(directory.join("nested"), b"keep").unwrap();
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("notes.txt", dir.path().join(".installer-link.part"))
+                    .unwrap();
+            }
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let release = local_release(format!(
+                "http://{}/installer",
+                listener.local_addr().unwrap()
+            ));
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                socket.read(&mut request).await.unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
+                    )
+                    .await
+                    .unwrap();
+            });
+            let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+            download_installer(&client, &release, &path, |_| {})
+                .await
+                .unwrap();
+            server.await.unwrap();
+
+            assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+            assert!(!stale.exists());
+            for name in [
+                "other.part",
+                ".installer-notes.txt",
+                "notes.txt",
+                ".installer-directory.part/nested",
+            ] {
+                assert_eq!(
+                    std::fs::read(dir.path().join(name)).unwrap(),
+                    b"keep",
+                    "{name}"
+                );
+            }
+            #[cfg(unix)]
+            assert_eq!(
+                std::fs::read_link(dir.path().join(".installer-link.part")).unwrap(),
+                std::path::Path::new("notes.txt")
+            );
+        })
+        .await
+        .expect("stale installer cleanup regression timed out");
+    }
+
+    #[tokio::test]
+    async fn download_waits_for_another_process_and_recovers_its_crash_leftover() {
+        let _download = TEST_DOWNLOAD_LOCK.lock().await;
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+        const CHILD: &str = "DSH_TEST_INSTALLER_DOWNLOAD_CHILD";
+        const URL: &str = "DSH_TEST_INSTALLER_DOWNLOAD_URL";
+        const READY: &str = "INSTALLER_DOWNLOAD_PARTIAL_READY";
+        if let Some(directory) = std::env::var_os(CHILD) {
+            let path = PathBuf::from(directory).join("child.AppImage");
+            let release = local_release(std::env::var(URL).unwrap());
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(20))
+                .build()
+                .unwrap();
+            download_installer(&client, &release, &path, |_| {
+                use std::io::Write;
+                println!("{READY}");
+                std::io::stdout().flush().unwrap();
+            })
+            .await
+            .unwrap();
+            return;
+        }
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("installer.AppImage");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/installer", listener.local_addr().unwrap());
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", "service::update::install::tests::download_waits_for_another_process_and_recovers_its_crash_leftover", "--nocapture", "--test-threads=1"])
+                .env(CHILD, dir.path())
+                .env(URL, &url)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true);
+            #[cfg(windows)]
+            command.creation_flags(0x08000000);
+            let mut child = command.spawn().unwrap();
+            let (mut first_socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            first_socket.read(&mut request).await.unwrap();
+            first_socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabc").await.unwrap();
+            let mut output = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+            loop {
+                let line = output.next_line().await.unwrap().expect("child exited before writing partial installer");
+                if line.contains(READY) {
+                    break;
+                }
+            }
+            let probe = std::fs::OpenOptions::new().read(true).write(true)
+                .open(dir.path().join(".installer-download.lock")).unwrap();
+            assert!(matches!(probe.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+            drop(probe);
+            let partials = download_cache_files(dir.path());
+            assert_eq!(partials.len(), 1);
+            let partial = &partials[0];
+            assert_eq!(std::fs::read(partial).unwrap(), b"abc");
+
+            let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+            let release = local_release(url);
+            let (polled, ready) = tokio::sync::oneshot::channel();
+            let next = tokio::spawn({
+                let path = path.clone();
+                async move {
+                    use std::future::Future;
+                    let future = download_installer(&client, &release, &path, |_| {});
+                    tokio::pin!(future);
+                    let mut polled = Some(polled);
+                    std::future::poll_fn(|cx| {
+                        let result = future.as_mut().poll(cx);
+                        if let Some(polled) = polled.take() {
+                            let _ = polled.send(());
+                        }
+                        result
+                    }).await
+                }
+            });
+            ready.await.unwrap();
+            assert!(tokio::time::timeout(Duration::from_millis(200), listener.accept()).await.is_err());
+            assert_eq!(std::fs::read(partial).unwrap(), b"abc");
+            child.kill().await.unwrap();
+            assert!(!child.wait().await.unwrap().success());
+            drop(first_socket);
+
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.read(&mut request).await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nxyz").await.unwrap();
+            next.await.unwrap().unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"xyz");
+            assert!(!partial.exists());
+            assert!(!dir.path().join("child.AppImage").exists());
+            assert_eq!(download_cache_files(dir.path()), vec![path]);
+        }).await.expect("cross-process installer regression timed out");
+    }
+
+    #[tokio::test]
+    async fn cancelled_lock_waiter_leaves_cache_untouched() {
+        use std::future::Future;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let _download = TEST_DOWNLOAD_LOCK.lock().await;
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("installer.AppImage");
+            let stale = dir.path().join(".installer-stale.part");
+            std::fs::write(&stale, b"orphan").unwrap();
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(dir.path().join(".installer-download.lock"))
+                .unwrap();
+            lock.try_lock().unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let release = local_release(format!(
+                "http://{}/installer",
+                listener.local_addr().unwrap()
+            ));
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap();
+            let mut waiting = Box::pin(download_installer(&client, &release, &path, |_| {}));
+            std::future::poll_fn(|cx| {
+                assert!(waiting.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            assert_eq!(download_cache_files(dir.path()), vec![stale.clone()]);
+            drop(waiting);
+            drop(lock);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&stale).unwrap(), b"orphan");
+            assert_eq!(download_cache_files(dir.path()), vec![stale.clone()]);
+
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                socket.read(&mut request).await.unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
+                    )
+                    .await
+                    .unwrap();
+            });
+            download_installer(&client, &release, &path, |_| {})
+                .await
+                .unwrap();
+            server.await.unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+            assert_eq!(download_cache_files(dir.path()), vec![path]);
+        })
+        .await
+        .expect("cancelled installer lock wait regression timed out");
+    }
+
     #[tokio::test]
     async fn concurrent_downloads_publish_one_complete_installer() {
+        let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let dir = tempfile::tempdir().unwrap();
@@ -903,7 +1204,7 @@ mod tests {
             first.await.unwrap().unwrap();
             second.await.unwrap().unwrap();
             assert_eq!(std::fs::read(&path).unwrap(), b"abcdef");
-            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+            assert_eq!(download_cache_files(dir.path()), vec![path]);
         })
         .await
         .expect("installer regression timed out");
@@ -911,6 +1212,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_download_removes_partial_file() {
+        let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let dir = tempfile::tempdir().unwrap();
@@ -945,7 +1247,7 @@ mod tests {
             task.abort();
             assert!(task.await.unwrap_err().is_cancelled());
             assert!(!path.exists());
-            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+            assert!(download_cache_files(dir.path()).is_empty());
             std::fs::write(&path, b"complete").unwrap();
             let client = reqwest::Client::builder()
                 .no_proxy()
@@ -968,6 +1270,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_integrity_check_never_publishes_an_installer() {
+        let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let dir = tempfile::tempdir().unwrap();
@@ -998,7 +1301,7 @@ mod tests {
             server.await.unwrap();
             assert!(result.unwrap_err().contains("INTEGRITY_CHECK_FAILED:"));
             assert!(!path.exists());
-            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+            assert!(download_cache_files(dir.path()).is_empty());
         })
         .await
         .expect("installer regression timed out");
