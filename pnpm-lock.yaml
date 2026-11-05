@@ -1029,9 +1029,6 @@ importers:
       dsh-tauri-extension:
         specifier: workspace:*
         version: link:../builtin-plugin-extension
-      dsh-tauri-mobile-ui:
-        specifier: workspace:*
-        version: link:../builtin-plugin-mobile-ui
       dsh-tauri-model:
         specifier: workspace:*
         version: link:../builtin-plugin-model
@@ -1132,28 +1129,6 @@ importers:
       smol-toml:
         specifier: catalog:utils
         version: 1.9.1
-      tsdown:
-        specifier: catalog:cli
-        version: 0.17.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(publint@0.3.25)(synckit@0.11.13)(typescript@5.8.3)
-
-  packages/builtin-plugin-mobile-ui:
-    dependencies:
-      dsh-tauri:
-        specifier: workspace:*
-        version: link:../builtin-plugin-tauri
-      dsh-tauri-ui:
-        specifier: workspace:*
-        version: link:../builtin-plugin-ui
-    devDependencies:
-      dsh-tauri-config:
-        specifier: workspace:*
-        version: link:../builtin-plugin-config
-      react:
-        specifier: catalog:runtime
-        version: 19.3.1
-      react-dom:
-        specifier: catalog:runtime
-        version: 19.3.1(react@19.3.1)
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(publint@0.3.25)(synckit@0.11.13)(typescript@5.8.3)

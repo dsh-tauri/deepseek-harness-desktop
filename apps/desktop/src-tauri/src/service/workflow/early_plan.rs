@@ -1,5 +1,5 @@
 use crate::config::{self, dependencies as deps, manifest};
-use crate::service::{cli, core, patch, plugin, profile as profiles};
+use crate::service::{cli, core, plugin, profile as profiles};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -248,42 +248,6 @@ pub(super) fn prepare(
     if let Err(error) = super::win_inspector::apply_at(&profile_root) {
         log::warn!("win32 legacy patch cleanup failed: {error}");
     }
-    for (label, apply) in [
-        (
-            "renderer SlotOutlet patch",
-            patch::renderer::apply_at as fn(&Path) -> Result<(), String>,
-        ),
-        ("composer workspace-less patch", patch::composer::apply_at),
-        (
-            "scroll follow reduced-motion patch",
-            patch::scroll_follow::apply_at,
-        ),
-        ("mobile composer patch", patch::mobile_composer::apply_at),
-        ("mobile sidebar patch", patch::mobile_sidebar::apply_at),
-        ("SessionStore.remove patch", patch::session::apply_at),
-        ("pi-ai session header patch", patch::llm_session::apply_at),
-        (
-            "pi-ai thinking-as-text patch",
-            patch::pi_ai_thinking::apply_at,
-        ),
-        (
-            "workspace worktree membership patch",
-            patch::workspace::apply_at,
-        ),
-        (
-            "workspace view state patch",
-            patch::workspace_view::apply_at,
-        ),
-        (
-            "plugin visibility patch",
-            patch::plugin_visibility::apply_at,
-        ),
-    ] {
-        if let Err(error) = apply(&core_dir) {
-            log::warn!("{label} failed: {error}");
-        }
-    }
-    patch::mcp_startup::apply_at(&core_dir)?;
     if let Err(error) = plugin::ensure_npmrc_at(&profile_root.join(".npmrc")) {
         log::warn!("ensure profile .npmrc failed: {error}");
         return Ok(None);
@@ -302,9 +266,6 @@ pub(super) fn prepare(
             log::warn!("ensure internal plugins failed: {error}");
             return Ok(None);
         }
-    }
-    if let Err(error) = patch::plugin_visibility::apply_at(&core_dir) {
-        log::warn!("plugin visibility patch after plugin self-healing failed: {error}");
     }
     let presets = plugin::presets_from_manifest(&inputs.manifest, Some(resources));
     let required: Vec<_> = presets

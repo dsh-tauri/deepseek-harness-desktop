@@ -19,13 +19,6 @@ export const heroWorkspaceFeature = defineRegister<ClientContext>((controller, c
   }
 
   controller.add(ctx.slots.inject(HERO_WORKSPACE_SLOT as never, () => {
-    if (!adapter.has('composer.workspace-less')) {
-      console.warn(
-        `[${PLUGIN_ID}] 「未分组」新建会话不可用：缺少桌面壳 composer 补丁（composer.workspace-less），保留官方工作区选择器。`,
-      )
-      return () => {}
-    }
-
     return ctx.slots.register(
       {
         name: HERO_WORKSPACE_SLOT,

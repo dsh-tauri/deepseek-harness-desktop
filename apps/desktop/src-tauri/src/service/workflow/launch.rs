@@ -674,62 +674,6 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     if let Err(e) = win_inspector::apply(&app_handle) {
         log::warn!("win32 legacy patch cleanup failed: {e}");
     }
-    // renderer 的 SlotOutlet 一行导出补丁（dsh-tauri-ui 设置侧边栏依赖）：只补
-    // 活动核心的 dsh-client-ui-renderer lib/client.js，已含导出即跳过（幂等；核心
-    // 换版本后自动重打，上游官方导出后自动退休）。最佳努力：失败只告警，不阻断
-    // 启动——未打补丁时插件侧降级，官方设置 dialog 照常工作，绝不白屏。
-    if let Err(e) = crate::service::patch::renderer::apply(&app_handle) {
-        log::warn!("renderer SlotOutlet patch failed: {e}");
-    }
-    // composer 可用性：官方 ConversationRoot 对「不属于任何工作区的空白会话」把
-    // composer 换成「选择工作区」触发器（`inert` 只看 chipTitle，而 chipTitle 只来自
-    // 工作区），于是 dsh-tauri-ui 的「未分组」新会话无法输入。补丁放宽该判定（会话已有
-    // cwd 即不算 inert）并写入 `data-dsh-composer-cwd` 能力标记；标记缺失时插件侧按
-    // 退级策略禁用「未分组」入口并告警。最佳努力且幂等：锚点缺失安全跳过。
-    if let Err(e) = crate::service::patch::composer::apply(&app_handle) {
-        log::warn!("composer workspace-less patch failed: {e}");
-    }
-    if let Err(e) = crate::service::patch::permission_settings::apply(&app_handle) {
-        log::warn!("permission settings error patch failed: {e}");
-    }
-    if let Err(e) = crate::service::patch::scroll_follow::apply(&app_handle) {
-        log::warn!("Scroll follow reduced-motion patch skipped: {e}");
-    }
-    if let Err(e) = crate::service::patch::mobile_composer::apply(&app_handle) {
-        log::warn!("mobile composer patch failed: {e}");
-    }
-    if let Err(e) = crate::service::patch::mobile_sidebar::apply(&app_handle) {
-        log::warn!("mobile sidebar patch failed: {e}");
-    }
-    // Expose an id-based SessionStore.remove facade so plugins can perform a
-    // real in-memory teardown instead of leaving deleted sessions ungrouped.
-    if let Err(e) = crate::service::patch::session::apply(&app_handle) {
-        log::warn!("SessionStore.remove patch failed: {e}");
-    }
-    // OpenCode Go 需要稳定的会话 ID 头，否则返回 400 MissingSessionID；上游 pi-ai
-    // 适配器把 sessionId 只透传给 SDK、不落成请求头，这里补上原生会话头，并限定到
-    // OpenCode 路由（provider id 前缀或生效 baseUrl 主机为 opencode.ai），其它 provider
-    // 的请求头保持不变。最佳努力且幂等：目标已含标记或锚点缺失时 patch_dsh 安全跳过。
-    if let Err(e) = crate::service::patch::llm_session::apply(&app_handle) {
-        log::warn!("pi-ai session header patch failed: {e}");
-    }
-    // Codex 系端点把思维链写在正文里（`<thinking>…</thinking>`），pi-ai 的
-    // openai-completions 适配器只认识结构化推理字段，思考便混进回答正文。补丁在
-    // 消息开头的围栏处把这段文本改道到 thinking 事件，harness 侧按 reasoning 块落库。
-    // 最佳努力且幂等：目标已含标记或锚点缺失时 patch_dsh 安全跳过。
-    if let Err(e) = crate::service::patch::pi_ai_thinking::apply(&app_handle) {
-        log::warn!("pi-ai thinking-as-text patch failed: {e}");
-    }
-    if let Err(e) = crate::service::patch::workspace::apply(&app_handle) {
-        log::warn!("workspace worktree membership patch failed: {e}");
-    }
-    if let Err(e) = crate::service::patch::workspace_view::apply(&app_handle) {
-        log::warn!("workspace view state patch failed: {e}");
-    }
-    // 内置插件（dsh-tauri-*）只在壳的插件弹窗里可见：官方侧边栏 Plugins 页与插件市场
-    // 都按各自的硬编码内置/inbox 名单判断 bundle 归属，上游没有可配置开关，因此对这两个
-    crate::service::patch::mcp_startup::apply(&app_handle)?;
-    // （ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY），表现为插件更新失败。
     // 启动时确保 profile 的 .npmrc 写入 confirmModulesPurge=false（幂等、保留
     // 已有配置）。最佳努力：失败只告警，不阻断启动。
     if let Err(e) = crate::service::plugin::ensure_profile_npmrc(&app_handle) {
@@ -761,11 +705,6 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         return Err(e);
     }
     mark_phase("ensure_preset_plugins", &mut phase_started);
-    // 插件自愈（内置插件重装 / 预装插件完整性自检）可能刚把插件市场装进档案，而上一轮补丁
-    // 执行时它还不存在、已被安全跳过；自愈完成后按需重打一次（逐名字判定，已登记则跳过）。
-    if let Err(e) = crate::service::patch::plugin_visibility::apply(&app_handle) {
-        log::warn!("plugin visibility patch after plugin self-healing failed: {e}");
-    }
     // 预打包核心运行时自愈：把 app 内置插件与 profile 插件入口链接进活动核心的
     // node_modules（dsh 的 loader 以核心根为裸包解析根），并核验/修复 sharp/koffi
     // 原生可选依赖。只作用于 CoreSource::App，本地核心由用户自行管理。dsh 在缺失
@@ -965,7 +904,6 @@ pub(super) async fn launch_prepared(
     // 0.2.2-rc.1 起官方 schedule 支持新建会话，自研定时任务默认关闭。
     if let Some(version) = core_version.as_deref() {
         envs.insert("DSH_TAURI_CORE_VERSION".to_string(), version.to_string());
-        // 同一基线也覆盖了官方移动端适配，自研移动端插件随之默认关闭。
         if crate::service::core::retires_bundled_adapters(version) {
             envs.insert("DSH_TAURI_OFFICIAL_ADAPTERS".to_string(), "1".to_string());
         }

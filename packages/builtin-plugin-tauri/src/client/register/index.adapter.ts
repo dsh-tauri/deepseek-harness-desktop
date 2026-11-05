@@ -29,7 +29,6 @@ import { clickIfPresent } from '../utils/browser'
 export type * from '../types/adapter'
 
 const ADD_WORKSPACE_SELECTOR = 'button[aria-label="添加工作区"],button[aria-label="Add workspace"]'
-const COMPOSER_CWD_ATTRIBUTE = 'data-dsh-composer-cwd'
 type AdapterWarn = (message: string, error?: unknown) => void
 
 const defaultWarn: AdapterWarn = (message, error) => {
@@ -495,9 +494,6 @@ export function defineAdapter(ctx: unknown, options: DefineAdapterOptions = {}):
     'navigation.startSession': () => surfaceStartSession(surface) !== undefined,
     'navigation.openSession': () => surfaceOpenSession(surface) !== undefined,
     'navigation.addWorkspace': () => surfaceAddWorkspace(surface) !== undefined,
-    'composer.workspace-less': () =>
-      typeof document !== 'undefined'
-      && document.documentElement.getAttribute(COMPOSER_CWD_ATTRIBUTE) === '1',
     'dom.newSession': () => typeof document !== 'undefined' && document.querySelector(NEW_SESSION_SELECTOR) !== null,
     'dom.addWorkspace': () => typeof document !== 'undefined' && document.querySelector(ADD_WORKSPACE_SELECTOR) !== null,
   }

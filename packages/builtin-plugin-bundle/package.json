@@ -7,7 +7,6 @@
     "dsh-tauri": "workspace:*",
     "dsh-tauri-archive": "workspace:*",
     "dsh-tauri-extension": "workspace:*",
-    "dsh-tauri-mobile-ui": "workspace:*",
     "dsh-tauri-model": "workspace:*",
     "dsh-tauri-notification": "workspace:*",
     "dsh-tauri-pet": "workspace:*",

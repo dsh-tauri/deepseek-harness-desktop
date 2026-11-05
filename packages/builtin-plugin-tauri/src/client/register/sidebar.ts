@@ -9,11 +9,6 @@ const EVENT_SIDEBAR_COLLAPSED = 'dsh://sidebar:collapsed'
 
 const SIDEBAR_FRAME_SELECTOR = '[data-shell-overlay]'
 const SIDEBAR_COLLAPSED_ATTRIBUTE = 'data-sidebar-collapsed'
-const MOBILE_SIDEBAR_ATTRIBUTE = 'data-dsh-mobile-sidebar'
-
-function isMobileSidebarOwned(): boolean {
-  return document.documentElement.hasAttribute(MOBILE_SIDEBAR_ATTRIBUTE)
-}
 
 const SIDEBAR_TRACK_MAX_TRIES = 30
 const SIDEBAR_TRACK_INTERVAL_MS = 500
@@ -26,8 +21,6 @@ function findFrame(): HTMLElement | null {
 }
 
 function reportCollapsed(): void {
-  if (isMobileSidebarOwned())
-    return
   void emit(EVENT_SIDEBAR_COLLAPSED, {
     collapsed: findFrame()?.hasAttribute(SIDEBAR_COLLAPSED_ATTRIBUTE) === true,
   })
@@ -35,8 +28,6 @@ function reportCollapsed(): void {
 
 export const sidebarFeature = defineRegister<ClientContext>((controller, ctx) => {
   controller.listenEvent(CMD_TOGGLE, () => {
-    if (isMobileSidebarOwned())
-      return
     try {
       ctx.layout.toggleSidebar()
     }
@@ -47,7 +38,7 @@ export const sidebarFeature = defineRegister<ClientContext>((controller, ctx) =>
 
   controller.observe(document.documentElement, reportCollapsed, {
     attributes: true,
-    attributeFilter: [SIDEBAR_COLLAPSED_ATTRIBUTE, MOBILE_SIDEBAR_ATTRIBUTE],
+    attributeFilter: [SIDEBAR_COLLAPSED_ATTRIBUTE],
     subtree: true,
   })
 
