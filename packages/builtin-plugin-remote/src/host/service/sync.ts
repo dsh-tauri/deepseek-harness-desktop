@@ -17,8 +17,17 @@ export const sync = defineService({
   async apply(machineId: MachineId, plugins: readonly SyncPluginRef[], skills: readonly SyncSkillRef[]): Promise<SyncApplyResult> {
     const deps = syncRuntimeDeps()
     const items: SyncItemResult[] = []
-    const uniquePlugins = dedupeBy(plugins, ref => ref.spec)
+    const uniquePlugins = dedupeBy(plugins, ref => JSON.stringify([ref.name, ref.spec]))
     const uniqueSkills = dedupeBy(skills, ref => `${ref.root}:${ref.name}`)
+    const names = new Set<string>()
+    for (const skill of uniqueSkills) {
+      if (skill.name === '' || skill.name === '.' || skill.name === '..' || /[/\\\0]/u.test(skill.name))
+        throw new Error(`invalid skill name: ${JSON.stringify(skill.name)}`)
+      const destination = skill.name.normalize('NFC').toLowerCase()
+      if (names.has(destination))
+        throw new Error(`skill "${skill.name}" conflicts with another selected name; select only one skill root or rename the conflicting skill before syncing`)
+      names.add(destination)
+    }
     if (uniquePlugins.length === 0 && uniqueSkills.length === 0)
       return { items }
     await machine.syncProfiles()
@@ -155,7 +164,7 @@ async function applySkills(
       progress.settled += transferable.length
       continue
     }
-    const result = await session.exec(skillExtractCommand(), {
+    const result = await session.exec(skillExtractCommand(transferable.map(skill => skill.name)), {
       stdinData: tar,
       ...deps.commandTimeoutMs === undefined ? {} : { timeoutMs: deps.commandTimeoutMs },
     })

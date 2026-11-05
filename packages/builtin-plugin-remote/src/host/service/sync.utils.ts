@@ -53,8 +53,56 @@ export function pluginAddCommand(dshEntry: string, target: string, profileName: 
   return `PATH="${layoutBinDir()}:$PATH" ${layoutNodeBinary()} ${shQuote(dshEntry)} plugin --profile ${shQuote(profileName)} add ${shQuote(target)}`
 }
 
-export function skillExtractCommand(): string {
-  return `mkdir -p "$HOME/.dsh/skills" && tar -xf - -C "$HOME/.dsh/skills"`
+export function skillExtractCommand(names: readonly string[]): string {
+  return [
+    'set -eu',
+    'dest="$HOME/.dsh/skills"',
+    'lock="$HOME/.dsh/.skills-sync.lock"',
+    'mkdir -p "$dest"',
+    'if ! mkdir "$lock" 2>/dev/null; then',
+    '  printf "Another skill sync is active, or the sync lock is unavailable: %s\\n" "$lock" >&2',
+    '  exit 1',
+    'fi',
+    'stage=',
+    'current=',
+    'backup=',
+    'cleanup() {',
+    '  status=$?',
+    '  trap - EXIT HUP INT TERM',
+    '  if [ -n "$backup" ] && { [ -e "$backup" ] || [ -L "$backup" ]; }; then',
+    '    if [ -e "$current" ] || [ -L "$current" ] || ! mv "$backup" "$current"; then',
+    '      printf "Skill replacement failed; previous files remain at %s\\n" "$backup" >&2',
+    '      rmdir "$lock"',
+    '      exit 1',
+    '    fi',
+    '  fi',
+    '  if [ -n "$stage" ] && ! rm -rf "$stage"; then status=1; fi',
+    '  if ! rmdir "$lock"; then status=1; fi',
+    '  exit "$status"',
+    '}',
+    'trap cleanup EXIT',
+    'trap \'exit 129\' HUP',
+    'trap \'exit 130\' INT',
+    'trap \'exit 143\' TERM',
+    'stage=$(mktemp -d "$dest/.dsh-sync.XXXXXX")',
+    'mkdir "$stage/incoming" "$stage/previous"',
+    'tar -xf - -C "$stage/incoming"',
+    `set -- ${names.map(shQuote).join(' ')}`,
+    'for name do',
+    '  if [ ! -d "$stage/incoming/$name" ] || [ -L "$stage/incoming/$name" ] || [ ! -f "$stage/incoming/$name/SKILL.md" ]; then',
+    '    printf "Missing skill directory in archive: %s\\n" "$name" >&2',
+    '    exit 1',
+    '  fi',
+    'done',
+    'for name do',
+    '  current="$dest/$name"',
+    '  backup="$stage/previous/$name"',
+    '  if [ -e "$current" ] || [ -L "$current" ]; then mv "$current" "$backup"; fi',
+    '  mv "$stage/incoming/$name" "$current"',
+    '  current=',
+    '  backup=',
+    'done',
+  ].join('\n')
 }
 
 export function describeFailure(code: number | null, stdout: string, stderr: string): string {
