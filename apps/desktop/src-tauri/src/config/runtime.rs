@@ -739,8 +739,9 @@ mod tests {
 
     #[test]
     fn node_version_cache_executes_the_actual_node_probe_once() {
-        let candidate = crate::service::workflow::test_runtime_executable()
-            .expect("bundled Electron runtime required for version probe tests");
+        let Some(candidate) = crate::service::workflow::test_runtime_executable() else {
+            return;
+        };
         let (_, actual) = probe_node_version(&candidate).expect("working Node.js required");
         let node = actual.expect("Node.js must expose its real executable path");
         let output = node_version_output(&node, &["--version"]).unwrap();

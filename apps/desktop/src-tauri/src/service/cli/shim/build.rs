@@ -1735,11 +1735,12 @@ mod tests {
         {
             let content = build_sh_shim(&sample_shim_paths(), &sample_dsh_home());
             let dsh_node_at = content.find("$DSH_NODE").unwrap();
-            let local_at = content.find("command -v node").unwrap();
+            let baked_at = content.find("").unwrap();
             assert!(
-                dsh_node_at < local_at,
-                "DSH_NODE must be checked before the local node search"
+                dsh_node_at < baked_at,
+                "DSH_NODE must be checked before the baked runtime"
             );
+            assert!(content.contains("export ELECTRON_RUN_AS_NODE=1"));
         }
     }
 

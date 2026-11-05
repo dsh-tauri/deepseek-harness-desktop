@@ -2107,7 +2107,9 @@ mod tests {
         let script = cwd.join("dsh-native-probe-test.mjs");
         std::fs::write(&script, NATIVE_PROBE_SCRIPT).unwrap();
         let mut command = Command::new(node);
+        // 运行时是 Electron：不进 Node 模式就会当 GUI 启动（无 X server 时直接失败）。
         command
+            .env("ELECTRON_RUN_AS_NODE", "1")
             .arg(&script)
             .current_dir(cwd)
             .stdout(Stdio::piped())

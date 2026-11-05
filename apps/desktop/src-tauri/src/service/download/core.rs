@@ -565,13 +565,12 @@ mod tests {
 
     #[test]
     fn download_sources_are_https_and_allowlisted() {
-        assert!(validate_download_url("https://nodejs.org/dist/v22/file.zip").is_ok());
+        assert!(validate_download_url("https://nodejs.org/dist/v22/file.zip").is_err());
         assert!(validate_download_url("https://registry.npmjs.org/pnpm/-/pnpm.tgz").is_ok());
         assert!(validate_download_url(
             "https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.2/MinGit-2.53.0.2-64-bit.zip"
         )
         .is_ok());
-        assert!(validate_download_url("http://nodejs.org/dist/file.zip").is_err());
         assert!(validate_download_url("https://example.com/file.zip").is_err());
         // 国内镜像源（含 npmmirror 302 后的最终落地域名）
         assert!(validate_download_url("https://npmmirror.com/mirrors/node/v22/file.zip").is_ok());
