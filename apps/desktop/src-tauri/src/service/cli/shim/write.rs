@@ -12,8 +12,9 @@ use tauri::{ Runtime};
 use super::build::build_sh_shim;
 #[allow(unused_imports)] // 构建函数在 debug 构建/异平台下由 cfg 裁剪，测试仍引用
 use super::build::{
-    build_cmd_shim, build_npm_cmd_shim, build_npx_cmd_shim,
-    build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim, build_ps1_shim, ShimPaths,
+    build_cmd_shim, build_node_cmd_shim, build_node_sh_shim, build_npm_cmd_shim,
+    build_npx_cmd_shim, build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim,
+    build_ps1_shim, ShimPaths,
 };
 #[cfg(windows)]
 use super::build::{build_npm_ps1_shim, build_npx_ps1_shim};
@@ -21,11 +22,11 @@ use super::build::{build_npm_ps1_shim, build_npx_ps1_shim};
 use super::SHIM_PS1_NAME;
 #[cfg(windows)]
 use super::{
-    NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME, NPX_SHIM_PS1_NAME, PNPM_SHIM_CMD_NAME,
-    PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME,
+    NODE_SHIM_CMD_NAME, NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME,
+    NPX_SHIM_PS1_NAME, PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME,
 };
 #[cfg(not(windows))]
-use super::{PNPM_SHIM_SH_NAME, SHIM_SH_NAME};
+use super::{NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME, SHIM_SH_NAME};
 
 /// 生成的 shim 自带的可识别标记（首行注释）。用于区分"本应用生成的 shim"
 /// 与"用户自行放置的同名文件"。读文件只读该标记行，避免误删用户自有文件。
@@ -153,13 +154,15 @@ pub fn user_dsh_preserved(bin_dir: &Path) -> bool {
 
 /// shim 生成时烘焙的依赖路径：按依赖映射表解析，可能指向 AppData 之外的任意
 /// 位置（如安装目录的 `resources/*` 捆绑副本）。
-pub fn shim_paths<R: Runtime>(app_handle: &AppHandle<R>) -> ShimPaths {
-    ShimPaths {
-        node_bin: config::dependencies::binary_path(app_handle, config::dependencies::DEP_NODE),
+pub fn shim_paths<R: Runtime>(app_handle: &AppHandle<R>) -> Result<ShimPaths, String> {
+    Ok(ShimPaths {
+        // 运行时只有一个：随包 Electron（Node 模式）。若取不到就整体失败——
+        // 烘焙一个不存在的路径只会让 shim 在用户终端里静默失效。
+        node_bin: config::node_executable(app_handle)?,
         dsh_bin: config::get_dsh_binary_path(app_handle),
         pnpm_bin: config::get_pnpm_binary_path(app_handle),
         bundled_git_dir: bundled_git_dir(app_handle),
-    }
+    })
 }
 
 /// 捆绑 MinGit 的 `cmd` 目录（系统 Git 缺 HTTPS helper 时由 shim 注入 PATH）。
@@ -182,8 +185,19 @@ fn bundled_git_dir<R: Runtime>(_app_handle: &AppHandle<R>) -> Option<PathBuf> {
 /// 覆盖式仅针对本应用生成的 shim（自愈时内容与当前安装一致）；用户手动放置的
 /// 同名 `dsh`/`pnpm` 一律保留不动，避免覆盖用户自己的安装与配置。
 pub fn write_shims<R: Runtime>(app_handle: &AppHandle<R>, bin_dir: &Path) -> Result<(), String> {
-    let paths = shim_paths(app_handle);
-    let dsh_home = config::get_dsh_data_path(app_handle);
+    let paths = shim_paths(app_handle)?;
+    write_shims_at(bin_dir, &paths, &config::get_dsh_data_path(app_handle))
+}
+
+/// [`write_shims`] 的可注入版本：路径由调用方给定。
+///
+/// 生产入口从 `ElectronClient` 解析运行时，而单元测试没有该状态；测试需要验证
+/// 「落盘编排是否接线」，因此把路径解析与落盘拆开。
+pub fn write_shims_at(
+    bin_dir: &Path,
+    paths: &ShimPaths,
+    dsh_home: &Path,
+) -> Result<(), String> {
     fs::create_dir_all(bin_dir)
         .map_err(|e| format!("SHIM_MKDIR_FAILED: create bin dir failed: {e}"))?;
 
@@ -203,40 +217,45 @@ pub fn write_shims<R: Runtime>(app_handle: &AppHandle<R>, bin_dir: &Path) -> Res
     {
         #[cfg(windows)]
         {
-            write_if_ours!(SHIM_CMD_NAME, build_cmd_shim(&paths, &dsh_home));
-            write_if_ours!(SHIM_PS1_NAME, build_ps1_shim(&paths, &dsh_home));
+            write_if_ours!(SHIM_CMD_NAME, build_cmd_shim(paths, dsh_home));
+            write_if_ours!(SHIM_PS1_NAME, build_ps1_shim(paths, dsh_home));
         }
         #[cfg(not(windows))]
         {
-            write_if_ours!(SHIM_SH_NAME, build_sh_shim(&paths, &dsh_home));
+            write_if_ours!(SHIM_SH_NAME, build_sh_shim(paths, dsh_home));
         }
     }
     #[cfg(debug_assertions)]
     {
-        let _ = &dsh_home;
+        let _ = dsh_home;
         log::debug!("debug build: skip dsh shim write (shared user state kept for release)");
     }
 
-    // pnpm/npx/npm shim 不烘焙 $DSH_HOME（仅绑定 bundle 目录与“用户命令优先”
+    // node/pnpm/npx/npm shim 不烘焙 $DSH_HOME（仅绑定运行时与“用户命令优先”
     // 逻辑），内容与生产完全一致，开发构建也可写入——dsh plugin 子进程经 PATH
     // 解析这些命令依赖它，写它不污染任何共享数据。
+    //
+    // `node` 是关键一项：没有独立 Node 运行时后，包脚本与第三方代码仍会按名字
+    // spawn `node`，必须能解析到这个转发到 Electron 的启动器。
     #[cfg(windows)]
     {
-        write_if_ours!(PNPM_SHIM_CMD_NAME, build_pnpm_cmd_shim(&paths));
-        write_if_ours!(PNPM_SHIM_PS1_NAME, build_pnpm_ps1_shim(&paths));
-        write_if_ours!(NPX_SHIM_CMD_NAME, build_npx_cmd_shim(&paths));
-        write_if_ours!(NPX_SHIM_PS1_NAME, build_npx_ps1_shim(&paths));
-        write_if_ours!(NPM_SHIM_CMD_NAME, build_npm_cmd_shim(&paths));
-        write_if_ours!(NPM_SHIM_PS1_NAME, build_npm_ps1_shim(&paths));
+        write_if_ours!(NODE_SHIM_CMD_NAME, build_node_cmd_shim(paths));
+        write_if_ours!(PNPM_SHIM_CMD_NAME, build_pnpm_cmd_shim(paths));
+        write_if_ours!(PNPM_SHIM_PS1_NAME, build_pnpm_ps1_shim(paths));
+        write_if_ours!(NPX_SHIM_CMD_NAME, build_npx_cmd_shim(paths));
+        write_if_ours!(NPX_SHIM_PS1_NAME, build_npx_ps1_shim(paths));
+        write_if_ours!(NPM_SHIM_CMD_NAME, build_npm_cmd_shim(paths));
+        write_if_ours!(NPM_SHIM_PS1_NAME, build_npm_ps1_shim(paths));
     }
     #[cfg(not(windows))]
     {
-        write_if_ours!(PNPM_SHIM_SH_NAME, build_pnpm_sh_shim(&paths));
+        write_if_ours!(NODE_SHIM_SH_NAME, build_node_sh_shim(paths));
+        write_if_ours!(PNPM_SHIM_SH_NAME, build_pnpm_sh_shim(paths));
         // 仅对本应用生成/覆盖过的 shim 设置可执行位；保留的用户文件不动
         let chmod_names: &[&str] = if cfg!(debug_assertions) {
-            &[PNPM_SHIM_SH_NAME]
+            &[NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME]
         } else {
-            &[SHIM_SH_NAME, PNPM_SHIM_SH_NAME]
+            &[SHIM_SH_NAME, NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME]
         };
         for name in chmod_names {
             let path = bin_dir.join(name);
@@ -254,13 +273,10 @@ pub fn write_shims<R: Runtime>(app_handle: &AppHandle<R>, bin_dir: &Path) -> Res
 mod tests {
     use super::super::test_util::{sample_dsh_home, sample_shim_paths, shim_paths_for};
     use super::*;
-    #[cfg(windows)]
-    use tauri::test::{mock_builder, mock_context, noop_assets};
 
     #[test]
     fn foreign_file_detection() {
         let dir = std::env::temp_dir().join(format!("dsh-shim-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
         // 用户手动放置的 dsh 脚本 -> 视为 foreign，不应被覆盖
@@ -532,15 +548,12 @@ mod tests {
     #[cfg(windows)]
     fn write_shims_writes_npx_and_npm_shims() {
         let dir = temp_dir("write-npx-npm");
+        let _ = std::fs::remove_dir_all(&dir);
         let bin_dir = dir.join("bin");
-        let mut context = mock_context(noop_assets());
-        context.config_mut().identifier = "dsh-tauri".into();
-        let app = mock_builder().build(context).unwrap();
-
-        write_shims(app.handle(), &bin_dir).unwrap();
+        write_shims_at(&bin_dir, &sample_shim_paths(), &sample_dsh_home()).unwrap();
 
         for name in [
-            "pnpm.cmd", "pnpm.ps1", "npx.cmd", "npx.ps1", "npm.cmd", "npm.ps1",
+            "node.cmd", "pnpm.cmd", "pnpm.ps1", "npx.cmd", "npx.ps1", "npm.cmd", "npm.ps1",
         ] {
             let path = bin_dir.join(name);
             assert!(path.is_file(), "{name} was not written");

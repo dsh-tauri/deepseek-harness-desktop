@@ -305,6 +305,11 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
         toast(t('update.up_to_date'), {})
     }
     catch (err) {
+      // 媒介不支持就地替换是确定结论，不能报成「检查失败，请检查网络」（issue #1410）
+      if (String(err).includes('UPDATE_MEDIA_UNSUPPORTED')) {
+        toast(t('update.media_unsupported'), { variant: 'danger' })
+        return
+      }
       console.warn('[Navbar] check update failed:', err)
       toast(t('update.check_failed'), { variant: 'danger' })
     }

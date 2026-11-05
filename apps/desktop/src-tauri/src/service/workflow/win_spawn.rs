@@ -81,6 +81,7 @@ impl ProcessJob {
         Ok(Self { handle })
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // 仅 early 启动路径与测试使用
     pub(crate) fn terminate(&self) -> io::Result<()> {
         if unsafe { TerminateJobObject(self.handle.as_raw_handle(), 1) } == 0 {
             return Err(io::Error::last_os_error());
@@ -135,6 +136,7 @@ pub(crate) fn spawn_with_hidden_console_in_job(
     spawn_with_hidden_console_inner(program, args, current_dir, envs, Some(job), None, &[])
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // 探针仅在 early 启动路径与测试中使用
 pub(crate) fn probe_in_job(
     program: &Path,
     args: &[OsString],
@@ -259,6 +261,7 @@ pub(crate) fn probe_in_job(
     })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn drain_probe_pipe(pipe: &mut File, output: &mut Vec<u8>) -> io::Result<bool> {
     let mut available = 0;
     if unsafe {

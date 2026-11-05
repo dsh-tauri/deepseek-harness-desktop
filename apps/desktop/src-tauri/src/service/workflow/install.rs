@@ -172,9 +172,6 @@ pub async fn install(
         let buffer = download::download_file_from_sources(&tracker, urls).await?;
         log::info!("Download completed, file size: {} bytes", buffer.len());
         let expected_digest = match kind {
-            download::InstallKind::Node => {
-                download::fetch_node_sha256(app_handle, task.get_download_url()?.as_str()).await?
-            }
             download::InstallKind::Dsh => {
                 // 元数据已在安装任务开始前获取，确保下载地址与摘要来自同一 release。
                 dsh_latest

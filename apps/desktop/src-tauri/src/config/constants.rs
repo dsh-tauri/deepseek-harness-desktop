@@ -1,16 +1,10 @@
 use std::time::Duration;
 
-/// 捆绑的 Node.js 运行时版本。
+/// 旧版独立 Node 运行时的托管目录名（`$AppData/runtime`）。
 ///
-/// 必须满足最新稳定版 DSH 核心的 `engines.node`（当前为 >=24.9.0），否则离线包随包
-/// 内核一升级就无法在新 Node 上启动——随包内核跟随最新稳定版，随包 Node 也必须跟上。
-pub const NODE_VERSION: &str = "v24.22.2";
-
-/// Node.js 官方下载地址
-pub const NODE_BASE_URL: &str = "https://nodejs.org/dist/";
-
-/// Node.js 镜像下载地址（npmmirror，302 重定向至 cdn.npmmirror.com）
-pub const NODE_MIRROR_BASE_URL: &str = "https://npmmirror.com/mirrors/node/";
+/// 仅用于启动时清理历史安装：dsh 与 pnpm 现在一律以随包 Electron 的 Node 模式
+/// 运行，不再下载、安装或解析独立 Node。
+pub const LEGACY_NODE_ROOT_DIR: &str = "runtime";
 
 /// 打包的 DeepSeek Harness 发行版下载地址（GitHub Release，默认首选源）
 pub const DSH_CORE_URL: &str =

@@ -3,7 +3,7 @@
 //! 当备份数量超过 `backup_retention_count` 时，删除最旧的备份（文件 + 清单条目）。
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use crate::AppHandle;
 
 use crate::service::backup;
@@ -18,15 +18,14 @@ pub fn prune_backups_in_dir(
     if retention_count == 0 {
         return Ok(());
     }
-    // 读取清单
     let manifest_path = backup_dir.join(".manifest.json");
-    let content = fs::read_to_string(&manifest_path).unwrap_or_default();
-    let mut manifest: serde_json::Value = if content.trim().is_empty() {
-        serde_json::json!({ "backups": [] })
-    } else {
-        serde_json::from_str(&content)
-            .map_err(|e| format!("BACKUP_PRUNE_MANIFEST: {e}"))?
+    let content = match fs::read_to_string(&manifest_path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("BACKUP_PRUNE_MANIFEST_READ: {e}")),
     };
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("BACKUP_PRUNE_MANIFEST: {e}"))?;
     let backups = manifest["backups"]
         .as_array_mut()
         .ok_or_else(|| "BACKUP_PRUNE_MANIFEST_INVALID: backups is not an array".to_string())?;
@@ -34,6 +33,8 @@ pub fn prune_backups_in_dir(
     if backups.len() <= retention_count as usize {
         return Ok(());
     }
+    let canonical_dir =
+        fs::canonicalize(backup_dir).map_err(|e| format!("BACKUP_PRUNE_DIR: {e}"))?;
 
     // 按时间戳升序，保留最新的 retention_count 份
     backups.sort_by(|a, b| {
@@ -56,34 +57,34 @@ pub fn prune_backups_in_dir(
     fs::rename(&tmp, manifest_path)
         .map_err(|e| format!("BACKUP_PRUNE_RENAME: {e}"))?;
 
-    // 删除文件：使用清单中存储的 path 字段（而非自行拼文件名）。
-    // 清单可被改写，只有确实位于本目录下的路径才允许删除。
-    let canonical_dir =
-        fs::canonicalize(backup_dir).map_err(|e| format!("BACKUP_PRUNE_DIR: {e}"))?;
     for entry in &to_remove {
-        if let Some(path_str) = entry["path"].as_str() {
-            let file = Path::new(path_str);
-            if !is_direct_child_of(&canonical_dir, file) {
-                log::warn!("[backup] 跳过清单中的越界备份路径: {path_str}");
-                continue;
-            }
-            if file.exists() {
-                if let Err(e) = fs::remove_file(file) {
-                    // 文件删除失败不阻断整体裁剪，仅记录警告
-                    log::warn!("[backup] 删除旧备份失败: {e} ({path_str})");
-                }
+        let Some(file) = current_archive_path(&canonical_dir, entry) else {
+            log::warn!("BACKUP_PRUNE_PATH_INVALID: {}", entry["path"]);
+            continue;
+        };
+        if let Err(e) = fs::remove_file(&file) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[backup] 删除旧备份失败: {e} ({})", file.display());
             }
         }
     }
     Ok(())
 }
 
-/// 路径的父目录（跟随链接解析后）是否就是 `dir`。
-fn is_direct_child_of(dir: &Path, candidate: &Path) -> bool {
-    match candidate.parent() {
-        Some(parent) => matches!(fs::canonicalize(parent), Ok(resolved) if resolved == dir),
-        None => false,
+fn current_archive_path(dir: &Path, entry: &serde_json::Value) -> Option<PathBuf> {
+    let profile = entry["profile"].as_str()?;
+    let timestamp = entry["timestamp"].as_str()?;
+    for id in [profile, timestamp] {
+        if id.trim() != id || crate::service::fs_guard::validate_id(id).is_err() {
+            return None;
+        }
     }
+    let filename = backup::archive_filename(profile, timestamp);
+    let recorded = Path::new(entry["path"].as_str()?);
+    if recorded.file_name()? != std::ffi::OsStr::new(&filename) {
+        return None;
+    }
+    Some(dir.join(filename))
 }
 
 /// 按保留份数裁剪当前 $DSH_HOME/.backups/ 下的旧备份。
@@ -148,6 +149,64 @@ mod tests {
             .iter()
             .filter_map(|v| v["timestamp"].as_str().map(String::from))
             .collect()
+    }
+
+    #[test]
+    fn prunes_migrated_archives_without_touching_the_old_home() {
+        let source = setup_fake_backups(3);
+        let target = tempfile::tempdir().unwrap();
+        let migrated = target.path().join(".backups");
+        fs::rename(&source, &migrated).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        let old_archive = source.join("web-20260000000000.tar.zst");
+        fs::write(&old_archive, b"old home sentinel").unwrap();
+
+        prune_backups_in_dir(&migrated, 1).unwrap();
+
+        assert_eq!(read_manifest_backups(&migrated), ["20260000000002"]);
+        assert!(!migrated.join("web-20260000000000.tar.zst").exists());
+        assert!(!migrated.join("web-20260000000001.tar.zst").exists());
+        assert_eq!(fs::read(old_archive).unwrap(), b"old home sentinel");
+        assert_eq!(
+            fs::read(migrated.join("web-20260000000002.tar.zst")).unwrap(),
+            b"dummy"
+        );
+        fs::remove_dir_all(source).unwrap();
+    }
+
+    #[test]
+    fn refuses_unreadable_or_empty_manifest_without_replacing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join(".manifest.json");
+        for bytes in [b"".as_slice(), &[0xff, 0xfe]] {
+            fs::write(&manifest, bytes).unwrap();
+            assert!(prune_backups_in_dir(dir.path(), 1).is_err());
+            assert_eq!(fs::read(&manifest).unwrap(), bytes);
+        }
+        fs::remove_file(&manifest).unwrap();
+        fs::create_dir(&manifest).unwrap();
+        assert!(prune_backups_in_dir(dir.path(), 1).is_err());
+        assert!(manifest.is_dir());
+    }
+
+    #[test]
+    fn refuses_to_prune_an_unrelated_filename_inside_the_backup_directory() {
+        let dir = setup_fake_backups(2);
+        let latest = dir.join("web-20260000000001.tar.zst");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join(".manifest.json")).unwrap()).unwrap();
+        manifest["backups"][0]["path"] = serde_json::json!(latest);
+        fs::write(
+            dir.join(".manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        prune_backups_in_dir(&dir, 1).unwrap();
+
+        assert_eq!(fs::read(&latest).unwrap(), b"dummy");
+        assert_eq!(read_manifest_backups(&dir), ["20260000000001"]);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

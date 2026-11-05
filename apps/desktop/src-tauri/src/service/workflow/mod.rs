@@ -20,14 +20,12 @@ pub(crate) mod win_inspector;
 pub(crate) mod win_spawn;
 
 pub(crate) mod auth;
-pub(crate) mod early;
-#[cfg(any(windows, test))]
-mod early_plan;
 mod health;
 mod heap;
 mod install;
 mod launch;
 mod process;
+mod runtime;
 mod startup;
 mod sweep;
 
@@ -35,6 +33,9 @@ pub use health::{proxy_health_check, recheck_ownership, HealthCheck};
 pub(crate) use heap::effective_heap_limit_mb;
 pub use install::install;
 pub use launch::{launch, restart, start};
+pub(crate) use runtime::electron_executable;
+#[cfg(test)]
+pub(crate) use runtime::test_runtime_executable;
 pub use process::{
     acquire_core_transition, core_dir_holders, has_owned_process, owned_process_pid, stop, stop_for_installer,
     stop_on_exit, terminate_stale_harness_processes,
