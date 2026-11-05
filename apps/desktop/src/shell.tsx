@@ -53,7 +53,7 @@ function ensureHostRoot(): void {
   mount.style.cssText = 'pointer-events:none'
   const portal = document.createElement('div')
   portal.id = PORTAL_ID
-  portal.style.cssText = 'pointer-events:none'
+  portal.style.cssText = 'pointer-events:auto'
   shadow.append(style, mount, portal)
   root.append(host)
   new MutationObserver(() => {

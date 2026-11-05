@@ -3,6 +3,12 @@
   "identifier": "default",
   "description": "Capability for the main shell, pet window, and local auxiliary windows.",
   "local": true,
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*"
+    ]
+  },
   "windows": [
     "main",
     "pet",
@@ -15,6 +21,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:event:allow-emit",
+    "core:event:allow-emit-to",
     "core:app:allow-version",
     "core:app:allow-default-window-icon",
     "core:window:default",

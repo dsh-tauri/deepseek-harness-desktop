@@ -3,6 +3,9 @@ export type FrameMode = '' | 'border' | 'flat'
 
 export const IS_MACOS = typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
 
+/** 壳层导航栏高度，DSH 文档需要为它让出顶部空间。 */
+export const SHELL_NAVBAR_HEIGHT = 44
+
 /** 当前进程是否跑在原生窗口里（非浏览器预览）。 */
 export function hasNativeWindow(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -29,4 +32,22 @@ export function applyFrameMode(maximized: boolean, fullscreen = false): void {
     document.documentElement.dataset.dshFrame = mode
   else
     delete document.documentElement.dataset.dshFrame
+}
+
+/**
+ * 让 DSH 文档为壳层导航栏让出顶部空间。
+ *
+ * DSH 用 `data-windows-titlebar` 声明「顶部有一条自绘标题条」，并按其高度给主框架加
+ * padding-top。文档即 DSH 时顶部那条就是壳层导航栏，因此复用同一套让位逻辑。全屏时导航栏
+ * 自身隐藏，标记一并撤掉。
+ */
+export function applyHostedTitlebar(hosted: boolean, hidden: boolean): void {
+  const root = document.documentElement
+  if (!hosted || hidden) {
+    delete root.dataset.windowsTitlebar
+    root.style.removeProperty('--dsh-windows-titlebar-height')
+    return
+  }
+  root.dataset.windowsTitlebar = ''
+  root.style.setProperty('--dsh-windows-titlebar-height', `${SHELL_NAVBAR_HEIGHT}px`)
 }

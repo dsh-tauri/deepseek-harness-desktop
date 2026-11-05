@@ -2,7 +2,8 @@ import type { PointerEvent } from 'react'
 import { useWatch } from '@reause/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
-import { applyFrameMode, hasNativeWindow, IS_MACOS, isFramedWindow } from '@/utils/window-frame'
+import { applyFrameMode, applyHostedTitlebar, hasNativeWindow, IS_MACOS, isFramedWindow } from '@/utils/window-frame'
+import { isHostedDocument } from '@/utils/window-presentation'
 
 /** 订阅窗口布尔状态（最大化 / 全屏）：随窗口尺寸变化重读。 */
 function useWindowFlag(enabled: boolean, read: () => Promise<boolean>, label: string): boolean | undefined {
@@ -75,6 +76,9 @@ export function useFrameChrome(): void {
     if (maximized === undefined || fullscreen === undefined)
       return
     applyFrameMode(maximized, fullscreen)
+  }, { immediate: true })
+  useWatch([fullscreen], () => {
+    applyHostedTitlebar(isHostedDocument(), IS_MACOS && Boolean(fullscreen))
   }, { immediate: true })
 }
 
