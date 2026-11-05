@@ -80,7 +80,10 @@ class AppImageTest(unittest.TestCase):
                 dist = self.fixture(root, arch)
                 original = {p.relative_to(dist): p.read_bytes() for p in dist.iterdir()}
                 host_libraries = []
-                for name in ('libmount.so.1', 'libpcre2-8.so.0', 'libselinux.so.1', 'libsystemd.so.0', 'libdbus-1.so.3'):
+                for name in ('libmount.so.1', 'libpcre2-8.so.0', 'libselinux.so.1', 'libsystemd.so.0', 'libdbus-1.so.3',
+                             'libnss3.so', 'libnssutil3.so', 'libsmime3.so', 'libnspr4.so', 'libplc4.so', 'libplds4.so',
+                             'libssl.so.3', 'libcrypto.so.3', 'libkrb5.so.3', 'libk5crypto.so.3',
+                             'libkrb5support.so.0', 'libgssapi_krb5.so.2', 'libkeyutils.so.1'):
                     library = root / 'usr/lib' / f'{name}.0.0'
                     library.write_bytes(b'old-host-library')
                     soname = library.with_name(name)

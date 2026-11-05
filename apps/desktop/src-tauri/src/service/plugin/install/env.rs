@@ -130,6 +130,19 @@ pub(crate) fn build_plugin_envs(
     // git 传输会落进 SSH 而硬失败；按需隔离子进程 git 配置强制 HTTPS
     // （见 [`git_https_isolation_env`]，未命中改写规则时返回空 map，零影响）。
     envs.extend(git_https_isolation_env(app_handle));
+    // AppImage 的 `$APPDIR` 库目录经 `LD_LIBRARY_PATH` 置顶后会随环境泄漏给子进程，
+    // 宿主 git-remote-https / libcurl 于是绑定到镜像内缺少 `OPENSSL_3.5.0` 等版本符号
+    // 的旧 OpenSSL，git 托管插件安装报 `ERR_PNPM_GIT_RESOLVE_FAILED`（#1299/#1407）。
+    #[cfg(target_os = "linux")]
+    if let Some(library_path) = crate::utils::child_library_path(
+        std::env::var_os("APPDIR").as_deref(),
+        std::env::var_os("LD_LIBRARY_PATH").as_deref(),
+    ) {
+        envs.insert(
+            "LD_LIBRARY_PATH".to_string(),
+            library_path.to_string_lossy().into_owned(),
+        );
+    }
     envs
 }
 
