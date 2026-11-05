@@ -70,12 +70,14 @@ mod tests {
 
   #[test]
   fn injection_marks_the_document_as_hosted() {
-    assert!(ShellInjection::new(Theme::Light).source().contains("__DSH_HOSTED__ = true"));
+    let injection = ShellInjection::new(Theme::Light);
+    assert!(injection.source().contains("__DSH_HOSTED__ = true"));
   }
 
   #[test]
   fn injection_hands_css_and_theme_to_the_runtime() {
-    let source = ShellInjection::new(Theme::Dark).source();
+    let injection = ShellInjection::new(Theme::Dark);
+    let source = injection.source();
     assert!(source.contains("__DSH_SHELL_CSS__"));
     assert!(source.contains("__DSH_SHELL_THEME__"));
     assert!(source.contains("\"dark\""));
@@ -83,7 +85,8 @@ mod tests {
 
   #[test]
   fn injection_appends_the_shell_module() {
-    let source = ShellInjection::new(Theme::Light).source();
+    let injection = ShellInjection::new(Theme::Light);
+    let source = injection.source();
     assert!(source.contains("URL.createObjectURL"));
     assert!(source.contains("import(url)"));
     assert!(source.contains("__DSH_SHELL_LOADED__"));
