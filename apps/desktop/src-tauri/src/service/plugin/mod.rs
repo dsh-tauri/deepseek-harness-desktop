@@ -67,7 +67,6 @@ pub use install::{
     allow_policy_versions, allow_version_exemptions, inspect_specs, install, install_specs,
     remove_many, update_many, IncompatibleVersion, PolicyBlockedVersion,
 };
-#[cfg(any(windows, test))]
 pub(crate) use installed::{
     declared_packages, ensure_profile_npmrc, installed_name, profile_dir, ProfilePackageJson,
 };
