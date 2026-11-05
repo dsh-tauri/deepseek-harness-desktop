@@ -867,6 +867,12 @@ pub(super) async fn launch_prepared(
         "DSH_NODE".to_string(),
         node_abs.to_string_lossy().into_owned(),
     );
+    // 服务进程的可执行文件就是 Electron：不进 Node 模式会以 Chromium 启动，
+    // 派生 zygote/gpu/renderer 子进程而根本不执行 dsh（前端只看到端口没人监听）。
+    envs.insert(
+        "ELECTRON_RUN_AS_NODE".to_string(),
+        "1".to_string(),
+    );
 
     // 扩展 PATH，让 dsh 及其子进程能找到 node 与桌面端自动配置的 Git；Windows
     // 上再注入 Git Bash 的 bin 目录：persistent bash（--noprofile --norc）不执行
