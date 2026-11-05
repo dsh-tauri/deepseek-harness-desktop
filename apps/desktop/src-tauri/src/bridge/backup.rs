@@ -13,17 +13,12 @@ pub async fn export_recovery_backup(
 ) -> Result<backup::BackupInfo, String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile.clone(), async move {
-        let transition = crate::service::workflow::acquire_core_transition().await?;
-        let operation = crate::service::plugin::acquire_operation_lock().await;
+        let mutation = crate::service::profile::mutation::acquire().await?;
         crate::service::workflow::stop(app_handle.clone()).await?;
         let source = crate::config::get_dsh_data_path(&app_handle);
         let app_data = crate::config::get_base_dir(&app_handle);
-        tauri::async_runtime::spawn_blocking(move || {
-            instances::scope_sync(profile, || {
-                let _transition = transition;
-                let _operation = operation;
-                backup::recovery::export(&source, &app_data, include_credentials)
-            })
+        mutation.spawn_blocking(profile, move || {
+            backup::recovery::export(&source, &app_data, include_credentials)
         })
         .await
         .map_err(|e| format!("RECOVERY_TASK: {e}"))?
@@ -37,16 +32,15 @@ pub async fn backup_profile(
     window: Window,
     include_credentials: bool,
 ) -> Result<backup::BackupInfo, String> {
+    let mutation = crate::service::profile::mutation::acquire().await?;
     let profile = instances::window_profile(&app_handle, window.label());
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        instances::scope_sync(profile, || {
-            backup::create_backup(
-                &app_handle,
-                backup::BackupOptions {
-                    include_credentials,
-                },
-            )
-        })
+    let result = mutation.spawn_blocking(profile, move || {
+        backup::create_backup(
+            &app_handle,
+            backup::BackupOptions {
+                include_credentials,
+            },
+        )
     })
     .await
     .map_err(|e| format!("BACKUP_TASK: {e}"))?;
@@ -68,7 +62,7 @@ pub async fn restore_profile(
     timestamp: String,
     as_new: bool,
 ) -> Result<(), String> {
-    let transition = crate::service::workflow::acquire_core_transition().await?;
+    let mutation = crate::service::profile::mutation::acquire().await?;
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile.clone(), async move {
         let mode = if as_new {
@@ -80,11 +74,8 @@ pub async fn restore_profile(
             crate::service::workflow::stop(app_handle.clone()).await?;
             backup::RestoreMode::Overwrite
         };
-        tauri::async_runtime::spawn_blocking(move || {
-            instances::scope_sync(profile, || {
-                let _transition = transition;
-                backup::restore_backup(&app_handle, &timestamp, mode)
-            })
+        mutation.spawn_blocking(profile, move || {
+            backup::restore_backup(&app_handle, &timestamp, mode)
         })
         .await
         .map_err(|e| format!("RESTORE_TASK: {e}"))?

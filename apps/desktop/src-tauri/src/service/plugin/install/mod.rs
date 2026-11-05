@@ -156,9 +156,10 @@ pub(crate) async fn install_internal(
     ids: &[String],
     cancel: tokio::sync::watch::Receiver<bool>,
     owner: ProcessOwner,
+    operation: &tokio::sync::OwnedMutexGuard<()>,
 ) -> Result<(), String> {
     let targets = preset_targets(app_handle, ids)?;
-    install_with_cancel(app_handle, &targets, Some(cancel), owner).await
+    install_with_guard(app_handle, &targets, Some(cancel), owner, operation).await
 }
 
 /// 按原始 spec 安装（插件市场 / 手动输入）：与预装路径共用同一套编排，只是目标
@@ -346,6 +347,17 @@ async fn install_with_cancel(
     targets: &[InstallTarget],
     cancel: Option<tokio::sync::watch::Receiver<bool>>,
     owner: ProcessOwner,
+) -> Result<(), String> {
+    let operation = acquire_operation_lock().await?;
+    install_with_guard(app_handle, targets, cancel, owner, &operation).await
+}
+
+async fn install_with_guard(
+    app_handle: &AppHandle,
+    targets: &[InstallTarget],
+    cancel: Option<tokio::sync::watch::Receiver<bool>>,
+    owner: ProcessOwner,
+    _operation: &tokio::sync::OwnedMutexGuard<()>,
 ) -> Result<(), String> {
     if targets.is_empty() {
         return Err("PREINSTALL_EMPTY: no plugins selected".to_string());
@@ -656,6 +668,7 @@ pub async fn allow_version_exemptions(
     if versions.is_empty() {
         return Err("PLUGIN_EXEMPTION_EMPTY: no plugin version exemption to grant".to_string());
     }
+    let _operation = acquire_operation_lock().await?;
     let window = crate::utils::operation_window(app_handle)
         .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
     let node = config::get_node_binary_path(app_handle);
@@ -718,11 +731,12 @@ pub async fn allow_version_exemptions(
     }
 }
 
-pub fn allow_policy_versions(
+pub async fn allow_policy_versions(
     app_handle: &AppHandle,
     versions: &[PolicyBlockedVersion],
     expected_profile: Option<&str>,
 ) -> Result<(), String> {
+    let _operation = acquire_operation_lock().await?;
     let entries: Vec<String> = versions
         .iter()
         .map(|entry| format!("{}@{}", entry.name, entry.version))
@@ -748,7 +762,6 @@ async fn run_plugin_with_allow_build_retry(
     cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     owner: ProcessOwner,
 ) -> Result<(i32, String, String), String> {
-    let _operation_guard = acquire_operation_lock().await;
     // 上一次被强杀的安装（取消 / 刷新 / 退出）会在 profile 里留下 dsh 的孤儿写锁，
     // 之后每次安装都要静默等到 deadline。dsh 侧不做恢复，这里按 PID 存活代劳。
     super::process::clear_orphan_plugin_writer_lock(&super::installed::profile_dir(app_handle));

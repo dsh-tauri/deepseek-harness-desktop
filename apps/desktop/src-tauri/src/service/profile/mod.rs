@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub mod migrate;
+pub(crate) mod mutation;
 
 /// 桌面端默认档案（内置，不可删除，首装默认选中）
 pub const DEFAULT_PROFILE: &str = "desktop";

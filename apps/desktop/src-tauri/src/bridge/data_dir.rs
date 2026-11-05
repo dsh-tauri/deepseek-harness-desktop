@@ -106,9 +106,8 @@ pub async fn migrate_data_dir(
 ) -> Result<data_dir::MigrationOutcome, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(profile, async move {
-        let transition = crate::service::workflow::acquire_core_transition().await?;
+        let mutation = crate::service::profile::mutation::acquire().await?;
         crate::service::workflow::instances::require_exclusive_profile()?;
-        let operation = crate::service::plugin::acquire_operation_lock().await;
         // 标记要在 `stop()` 之前读：停成功时它会顺手删掉标记，删掉之后就再也查不出
         // 「崩溃残留、不在 owned 注册表里的 Harness」是否还在写这个目录。
         let recorded =
@@ -117,10 +116,7 @@ pub async fn migrate_data_dir(
         crate::service::workflow::stop(app_handle.clone()).await?;
         confirm_harness_stopped(recorded)?;
         let app = app_handle.clone();
-        let result = data_dir::migrate(app, PathBuf::from(parent), leaf).await;
-        drop(transition);
-        drop(operation);
-        result
+        data_dir::migrate(app, PathBuf::from(parent), leaf, mutation).await
     })
     .await
 }
@@ -134,19 +130,15 @@ pub async fn rollback_data_dir(
 ) -> Result<data_dir::MigrationOutcome, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(profile, async move {
-        let transition = crate::service::workflow::acquire_core_transition().await?;
+        let mutation = crate::service::profile::mutation::acquire().await?;
         crate::service::workflow::instances::require_exclusive_profile()?;
-        let operation = crate::service::plugin::acquire_operation_lock().await;
         let recorded =
             data_dir::all_harness_markers(&crate::config::get_dsh_data_path(&app_handle));
         reject_unreadable_markers(recorded.clone())?;
         crate::service::workflow::stop(app_handle.clone()).await?;
         confirm_harness_stopped(recorded)?;
         let app = app_handle.clone();
-        let result = data_dir::rollback(app, backup.map(PathBuf::from)).await;
-        drop(transition);
-        drop(operation);
-        result
+        data_dir::rollback(app, backup.map(PathBuf::from), mutation).await
     })
     .await
 }

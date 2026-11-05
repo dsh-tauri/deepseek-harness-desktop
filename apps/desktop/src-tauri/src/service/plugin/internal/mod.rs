@@ -871,29 +871,51 @@ fn prepare_early_plugins_from(
     Ok(EarlyPluginState::Ready)
 }
 
+async fn prepare_internal_plugins_for_install(
+    resolve_paths: impl FnOnce() -> (PathBuf, PathBuf),
+    internal: &[&PreinstallPluginInfo],
+    cancel: &tokio::sync::watch::Receiver<bool>,
+    resolve_bundle: impl Fn(&str) -> Option<PathBuf>,
+) -> Result<
+    (
+        tokio::sync::OwnedMutexGuard<()>,
+        PathBuf,
+        InternalPluginCheck,
+    ),
+    String,
+> {
+    let operation = super::process::acquire_operation_lock().await?;
+    if *cancel.borrow() {
+        return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
+    }
+    let (profile, dsh_home) = resolve_paths();
+    let check = prepare_internal_plugins(&profile, &dsh_home, internal, true, resolve_bundle)?;
+    Ok((operation, profile, check))
+}
+
 async fn ensure_inner(
     app_handle: &AppHandle,
     internal: &[&PreinstallPluginInfo],
     cancel: tokio::sync::watch::Receiver<bool>,
     owner: ProcessOwner,
 ) -> Result<(), String> {
-    let profile = profile_dir(app_handle);
     if *cancel.borrow() {
         return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
     }
+    let (operation, profile, check) = prepare_internal_plugins_for_install(
+        || (profile_dir(app_handle), config::get_dsh_data_path(app_handle)),
+        internal,
+        &cancel,
+        |id| bundled_plugin_dir(app_handle, id),
+    )
+    .await?;
     let manifest_path = profile.join("package.json");
     let InternalPluginCheck {
         mut manifest,
         need,
         orphans,
         ..
-    } = prepare_internal_plugins(
-        &profile,
-        &config::get_dsh_data_path(app_handle),
-        internal,
-        true,
-        |id| bundled_plugin_dir(app_handle, id),
-    )?;
+    } = check;
     if !orphans.is_empty() {
         log::info!("Uninstalling orphaned internal preset plugins: {orphans:?}");
         for name in &orphans {
@@ -978,7 +1000,8 @@ async fn ensure_inner(
     }
     // 复用常规安装编排（环境准备/补齐 pnpm/`dsh plugin add file:<dir>`）；
     // 启动阶段无持有进程，install 内部不会停服务。失败同样交给调用方告警。
-    let install_result = install_internal(app_handle, &ids, cancel, owner).await;
+    let install_result = install_internal(app_handle, &ids, cancel, owner, &operation).await;
+    let _process = super::process::acquire_process_lock().await?;
     if let Err(e) = install_result {
         // 即使 pnpm 失败也清掉旧 fallback，下一次重试必须从干净入口开始。
         remove_legacy_profile_module_fallback_best_effort(&profile);
@@ -1334,6 +1357,127 @@ fn is_legacy_profile_fallback_target(target: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn profile_reset_waits_for_internal_preparation_and_finalization() {
+        use std::time::Duration;
+
+        let _test_guard = super::super::process::TEST_PROCESS_LOCK.lock().await;
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().to_path_buf();
+        let profile = root.join("profile");
+        let source = root.join("source");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("package.json"), br#"{"name":"builtin"}"#).unwrap();
+        let manifest_path = profile.join("package.json");
+        std::fs::write(
+            &manifest_path,
+            br#"{"dependencies":{"builtin":"1.0.0"},"dsh":{"profile":{"bundles":["builtin","builtin"]}}}"#,
+        )
+        .unwrap();
+        let marker = profile.join("plugin-state");
+        std::fs::write(&marker, "installed").unwrap();
+        let (_cancel_tx, cancel) = tokio::sync::watch::channel(false);
+        let (entered_tx, mut entered) = tokio::sync::mpsc::unbounded_channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let runtime = tokio::runtime::Handle::current();
+        let preparation_root = root.clone();
+        let preparation = tokio::task::spawn_blocking(move || {
+            let preset = builtin("builtin");
+            runtime.block_on(prepare_internal_plugins_for_install(
+                || (profile, preparation_root),
+                &[&preset],
+                &cancel,
+                |_| {
+                    entered_tx.send(()).unwrap();
+                    wait.recv_timeout(Duration::from_secs(10)).unwrap();
+                    Some(source.clone())
+                },
+            ))
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let prepared: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        assert_eq!(
+            prepared["dsh"]["profile"]["bundles"],
+            serde_json::json!(["builtin"])
+        );
+        let mut reset = Box::pin(async {
+            let mutation = crate::service::profile::mutation::acquire().await.unwrap();
+            mutation
+                .spawn_blocking("profile".into(), move || {
+                    crate::service::profile::reset_with_root(&root, "profile")
+                })
+                .await
+                .unwrap()
+                .unwrap();
+        });
+        assert!(tokio::time::timeout(Duration::from_millis(30), &mut reset)
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "installed");
+        release.send(()).unwrap();
+        let (operation, _, check) = tokio::time::timeout(Duration::from_secs(5), preparation)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(check.need.len(), 1);
+        assert!(tokio::time::timeout(Duration::from_millis(30), &mut reset)
+            .await
+            .is_err());
+        drop(operation);
+        tokio::time::timeout(Duration::from_secs(5), reset)
+            .await
+            .unwrap();
+        assert!(!marker.exists());
+    }
+
+    #[tokio::test]
+    async fn cancelled_internal_preparation_does_not_repair_after_waiting_for_operation() {
+        use std::time::Duration;
+
+        let _test_guard = super::super::process::TEST_PROCESS_LOCK.lock().await;
+        let scratch = tempfile::tempdir().unwrap();
+        let profile = scratch.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let manifest = br#"{"dsh":{"profile":{"bundles":["builtin","builtin"]}}}"#;
+        std::fs::write(profile.join("package.json"), manifest).unwrap();
+        let operation = super::super::process::acquire_operation_lock()
+            .await
+            .unwrap();
+        let (cancel_tx, cancel) = tokio::sync::watch::channel(false);
+        let preset = builtin("builtin");
+        let presets = [&preset];
+        let mut preparation = Box::pin(prepare_internal_plugins_for_install(
+            || (profile.clone(), scratch.path().to_path_buf()),
+            &presets,
+            &cancel,
+            |_| None,
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut preparation)
+                .await
+                .is_err()
+        );
+        cancel_tx.send(true).unwrap();
+        drop(operation);
+        let result = tokio::time::timeout(Duration::from_secs(5), preparation)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.err().unwrap(),
+            "INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled"
+        );
+        assert_eq!(
+            std::fs::read(profile.join("package.json")).unwrap(),
+            manifest
+        );
+    }
+
     fn builtin(id: &str) -> PreinstallPluginInfo {
         PreinstallPluginInfo {
             id: id.into(),

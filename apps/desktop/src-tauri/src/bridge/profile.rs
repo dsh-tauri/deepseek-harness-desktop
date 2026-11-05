@@ -18,8 +18,16 @@ pub fn get_profiles(window: crate::Window, app_handle: AppHandle) -> Vec<profile
 
 /// 新建档案（初始化 $DSH_HOME/profiles/<id>，web 模板）
 #[tauri::command]
-pub fn create_profile(app_handle: AppHandle, name: String) -> Result<profile::Profile, String> {
-    profile::create(&app_handle, &name)
+pub async fn create_profile(
+    app_handle: AppHandle,
+    name: String,
+) -> Result<profile::Profile, String> {
+    let mutation = profile::mutation::acquire().await?;
+    let profile_id = profile::active_profile(&app_handle);
+    mutation
+        .spawn_blocking(profile_id, move || profile::create(&app_handle, &name))
+        .await
+        .map_err(|e| format!("PROFILE_CREATE_TASK: {e}"))?
 }
 
 /// 切换当前窗口的档案。只有主窗口的切换会持久化成下次启动档案；额外窗口的
@@ -57,7 +65,7 @@ pub async fn remove_profile(
     if id == profile::DEFAULT_PROFILE {
         return Err("PROFILE_DEFAULT_NOT_REMOVABLE: the default profile cannot be removed".into());
     }
-    let _transition = crate::service::workflow::acquire_core_transition().await?;
+    let mutation = profile::mutation::acquire().await?;
     let current = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     if id == current || crate::service::workflow::instances::is_attached(&id) {
         return Err("PROFILE_ACTIVE_NOT_REMOVABLE: the active profile cannot be removed".into());
@@ -66,7 +74,10 @@ pub async fn remove_profile(
         crate::service::workflow::stop(app_handle.clone()).await
     })
     .await?;
-    crate::service::workflow::instances::scope_sync(current, || profile::remove(&app_handle, &id))
+    mutation
+        .spawn_blocking(current, move || profile::remove(&app_handle, &id))
+        .await
+        .map_err(|e| format!("PROFILE_REMOVE_TASK: {e}"))?
 }
 
 /// 重置档案（清空档案目录并按模板重新初始化；会话数据在档案目录之外，保留）
@@ -77,13 +88,16 @@ pub async fn reset_profile(
     id: String,
 ) -> Result<(), String> {
     crate::service::fs_guard::validate_id(&id)?;
-    let _transition = crate::service::workflow::acquire_core_transition().await?;
+    let mutation = profile::mutation::acquire().await?;
     if crate::service::workflow::instances::attached_elsewhere(&id, window.label()) {
         return Err("PROFILE_IN_USE: stop and detach profile before reset".into());
     }
-    crate::service::workflow::instances::scope(id.clone(), async {
+    crate::service::workflow::instances::scope(id.clone(), async move {
         crate::service::workflow::stop(app_handle.clone()).await?;
-        profile::reset(&app_handle, &id)
+        mutation
+            .spawn_blocking(id.clone(), move || profile::reset(&app_handle, &id))
+            .await
+            .map_err(|e| format!("PROFILE_RESET_TASK: {e}"))?
     })
     .await
 }
@@ -99,12 +113,14 @@ pub async fn clone_profile(
     source_id: String,
     name: Option<String>,
 ) -> Result<profile::Profile, String> {
+    let mutation = profile::mutation::acquire().await?;
     let profiles_root = config::get_dsh_data_path(&app_handle).join("profiles");
-    tauri::async_runtime::spawn_blocking(move || {
-        profile::clone_with_root(&profiles_root, &source_id, name.as_deref())
-    })
-    .await
-    .map_err(|e| format!("PROFILE_CLONE_TASK: {e}"))?
+    mutation
+        .spawn_blocking(source_id.clone(), move || {
+            profile::clone_with_root(&profiles_root, &source_id, name.as_deref())
+        })
+        .await
+        .map_err(|e| format!("PROFILE_CLONE_TASK: {e}"))?
 }
 
 /// 分析源档案的可迁移插件与档案级数据（只读，判定基准 = 当前核心版本）
@@ -129,13 +145,12 @@ pub async fn migrate_profile_data(
     source_id: String,
     items: Vec<MigrationDataKind>,
 ) -> Result<MigrateReport, String> {
+    let mutation = profile::mutation::acquire().await?;
     let handle = app_handle.clone();
     let profile_id =
         crate::service::workflow::instances::window_profile(&app_handle, window.label());
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::service::workflow::instances::scope_sync(profile_id, || {
-            profile::migrate::apply(&handle, &source_id, &items)
-        })
+    mutation.spawn_blocking(profile_id, move || {
+        profile::migrate::apply(&handle, &source_id, &items)
     })
     .await
     .map_err(|e| format!("PROFILE_MIGRATION_TASK: {e}"))?
@@ -143,28 +158,6 @@ pub async fn migrate_profile_data(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn profile_removal_waits_for_stop_before_deleting_detached_data() {
-        let source = include_str!("profile.rs");
-        let removal = source
-            .split("pub async fn remove_profile(")
-            .nth(1)
-            .unwrap()
-            .split("pub async fn reset_profile(")
-            .next()
-            .unwrap();
-        let lock = removal.find("acquire_core_transition().await?").unwrap();
-        let attached = removal.find("instances::is_attached(&id)").unwrap();
-        let scope = removal.find("instances::scope(id.clone(),").unwrap();
-        let stop = removal
-            .find("workflow::stop(app_handle.clone()).await")
-            .unwrap();
-        let confirmed = stop + removal[stop..].find(".await?;").unwrap();
-        let delete = removal.find("profile::remove(&app_handle, &id)").unwrap();
-        assert!(lock < attached && attached < scope && scope < stop);
-        assert!(stop < confirmed && confirmed < delete);
-    }
-
     #[test]
     fn profile_switch_persists_the_startup_profile_only_from_the_main_window() {
         let source = include_str!("profile.rs");

@@ -94,7 +94,8 @@ pub(crate) use preset::{
     remove_legacy_bundled_plugins,
 };
 pub(crate) use process::{
-    acquire_operation_lock, is_internal_plugin_startup_failure, is_process_cleanup_failure,
+    acquire_operation_lock, acquire_process_lock, is_internal_plugin_startup_failure,
+    is_process_cleanup_failure,
 };
 pub(crate) use retire::uninstall as retire_deprecated_plugins;
 pub use recovery::{

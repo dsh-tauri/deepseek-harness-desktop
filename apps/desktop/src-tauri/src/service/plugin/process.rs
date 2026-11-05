@@ -394,12 +394,15 @@ pub(crate) async fn acquire_process_lock() -> Result<tokio::sync::OwnedMutexGuar
     }
 }
 
-pub(crate) async fn acquire_operation_lock() -> tokio::sync::OwnedMutexGuard<()> {
-    PLUGIN_OPERATION_LOCK
+pub(crate) async fn acquire_operation_lock() -> Result<tokio::sync::OwnedMutexGuard<()>, String> {
+    let operation = PLUGIN_OPERATION_LOCK
         .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
         .clone()
         .lock_owned()
-        .await
+        .await;
+    // 取消调用方后，阻塞线程仍可能持有正在写档案的子进程。
+    drop(acquire_process_lock().await?);
+    Ok(operation)
 }
 
 /// 记录/清除当前安装进程 PID（guard-drop 模式，作用域结束自动复位）。
@@ -627,6 +630,152 @@ fn spawn_line_emitter<R: Read + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn operation_preparation_waits_for_a_cancelled_process_to_exit() {
+        let _test_guard = TEST_PROCESS_LOCK.lock().await;
+        let scratch = tempfile::tempdir().unwrap();
+        let manifest = scratch.path().join("package.json");
+        std::fs::write(&manifest, "original").unwrap();
+        let process = acquire_process_lock().await.unwrap();
+        let mut preparation = Box::pin(async {
+            let _operation = acquire_operation_lock().await.unwrap();
+            std::fs::write(&manifest, "prepared").unwrap();
+        });
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut preparation)
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&manifest).unwrap(), "original");
+        drop(process);
+        tokio::time::timeout(Duration::from_secs(5), preparation)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&manifest).unwrap(), "prepared");
+    }
+
+    #[tokio::test]
+    async fn profile_reset_waits_for_plugin_postverification_after_process_exit() {
+        let _test_guard = TEST_PROCESS_LOCK.lock().await;
+        let scratch = tempfile::tempdir().unwrap();
+        let profile = scratch.path().join("profile");
+        std::fs::create_dir(&profile).unwrap();
+        let marker = profile.join("plugin-state");
+        std::fs::write(&marker, "installed").unwrap();
+        let operation = acquire_operation_lock().await.unwrap();
+        let process = acquire_process_lock().await.unwrap();
+        drop(process);
+        let mut reset = Box::pin(async {
+            let mutation = crate::service::profile::mutation::acquire().await.unwrap();
+            let root = scratch.path().to_path_buf();
+            mutation
+                .spawn_blocking("profile".into(), move || {
+                    crate::service::profile::reset_with_root(&root, "profile")
+                })
+                .await
+                .unwrap()
+                .unwrap();
+        });
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut reset)
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "installed");
+        std::fs::write(&marker, "verified").unwrap();
+        drop(operation);
+        tokio::time::timeout(Duration::from_secs(5), reset)
+            .await
+            .unwrap();
+        assert!(!marker.exists());
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(profile.join("package.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["name"], "dsh-profile-profile");
+    }
+
+    #[tokio::test]
+    async fn cancelled_profile_mutation_keeps_locks_until_blocking_work_finishes() {
+        let _test_guard = TEST_PROCESS_LOCK.lock().await;
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().to_path_buf();
+        let marker = root.join("profile/plugin-state");
+        std::fs::create_dir(root.join("profile")).unwrap();
+        std::fs::write(&marker, "installed").unwrap();
+        let mutation = crate::service::profile::mutation::acquire().await.unwrap();
+        let (started, entered) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let (finished, completed) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            mutation
+                .spawn_blocking("profile".into(), move || {
+                    started.send(()).unwrap();
+                    wait.recv_timeout(Duration::from_secs(10)).unwrap();
+                    crate::service::profile::reset_with_root(&root, "profile").unwrap();
+                    finished.send(()).unwrap();
+                })
+                .await
+                .unwrap();
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), acquire_operation_lock())
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), acquire_process_lock())
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(30),
+                crate::service::workflow::acquire_core_transition(),
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "installed");
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), completed)
+            .await
+            .unwrap()
+            .unwrap();
+        let operation = tokio::time::timeout(Duration::from_secs(5), acquire_operation_lock())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(operation);
+        assert!(!marker.exists());
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_process_cleanup_refuses_profile_mutation_without_writing() {
+        let _test_guard = TEST_PROCESS_LOCK.lock().await;
+        let scratch = tempfile::tempdir().unwrap();
+        let marker = scratch.path().join("profile/plugin-state");
+        std::fs::create_dir(scratch.path().join("profile")).unwrap();
+        std::fs::write(&marker, "installed").unwrap();
+        let owner = new_process_owner();
+        let reason = "PLUGIN_PROCESS_CLEANUP_FAILED: test process is still active";
+        mark_process_cleanup_failed(owner, reason.into());
+        let result = crate::service::profile::mutation::acquire().await;
+        clear_process_cleanup_failed(owner);
+        match result {
+            Err(error) => assert_eq!(error, reason),
+            Ok(_) => panic!("profile mutation must refuse unconfirmed process cleanup"),
+        }
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "installed");
+    }
 
     #[tokio::test]
     async fn blocking_plugin_task_retains_captured_profile() {

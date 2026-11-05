@@ -324,7 +324,7 @@ impl Startup {
                             return Ok(false);
                         }
                         let guard = super::process::LaunchGuard(flag);
-                        let _operation = crate::service::plugin::acquire_operation_lock().await;
+                        let _operation = crate::service::plugin::acquire_operation_lock().await?;
                         if super::early_plan::entry(&app_data, &resources).as_ref() != Some(&entry)
                         {
                             return Ok(false);

@@ -43,6 +43,7 @@ use crate::service::profile::profile_release_age_excluded;
 /// 逐项核验的结果汇总成一条错误消息（见 [`update_failure_payload`]）：两个阶段各自的结算都
 /// 保留下来，前一段装上的目标不会被后一段的一般错误抹掉（见 [`UpdateFailure`]）。
 pub async fn update_many(app_handle: &AppHandle, specs: &[String]) -> Result<(), String> {
+    let _operation = super::acquire_operation_lock().await?;
     let mut requested: Vec<(String, Option<String>)> =
         specs.iter().map(|spec| split_upgrade_spec(spec)).collect();
     if requested.iter().any(|(_, version)| version.is_none()) {
@@ -490,7 +491,9 @@ fn installed_package_version(profile: &Path, id: &str) -> Option<String> {
 /// 批量卸载：单次 `dsh plugin remove <id1> <id2> ...`，随后逐项核验 profile 清单，
 /// 仍被引用时走离线卸载兜底（第三方可卸载插件），最后级联清理各自的单插件快照。
 pub async fn remove_many(app_handle: &AppHandle, ids: &[String]) -> Result<(), String> {
+    let _operation = super::acquire_operation_lock().await?;
     let command_result = run_plugin_command(app_handle, ids, "remove", ids).await;
+    let _process = super::acquire_process_lock().await?;
     let mut failures = Vec::new();
     for id in ids {
         // `dsh plugin remove` 以子进程退出码为准，可能出现「命令成功但插件仍在」的
