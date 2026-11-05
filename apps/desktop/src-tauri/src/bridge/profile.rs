@@ -22,8 +22,8 @@ pub async fn create_profile(
     app_handle: AppHandle,
     name: String,
 ) -> Result<profile::Profile, String> {
-    let mutation = profile::mutation::acquire().await?;
     let profile_id = profile::active_profile(&app_handle);
+    let mutation = profile::mutation::acquire().await?;
     mutation
         .spawn_blocking(profile_id, move || profile::create(&app_handle, &name))
         .await
@@ -145,10 +145,10 @@ pub async fn migrate_profile_data(
     source_id: String,
     items: Vec<MigrationDataKind>,
 ) -> Result<MigrateReport, String> {
-    let mutation = profile::mutation::acquire().await?;
     let handle = app_handle.clone();
     let profile_id =
         crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    let mutation = profile::mutation::acquire().await?;
     mutation.spawn_blocking(profile_id, move || {
         profile::migrate::apply(&handle, &source_id, &items)
     })

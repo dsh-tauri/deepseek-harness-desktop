@@ -285,8 +285,8 @@ pub async fn recover_plugin(
     window: Window,
     id: String,
 ) -> Result<(), String> {
-    let mutation = crate::service::profile::mutation::acquire().await?;
     let profile = instances::window_profile(&app_handle, window.label());
+    let mutation = crate::service::profile::mutation::acquire().await?;
     mutation.spawn_blocking(profile, move || {
         plugin::uninstall_recovery(&app_handle, &id)?;
         plugin::watch::force_emit(&app_handle);
@@ -330,8 +330,8 @@ pub async fn snapshot_plugin(
     window: Window,
     id: String,
 ) -> Result<plugin::snapshot::SnapshotInfo, String> {
-    let operation = plugin::acquire_operation_lock().await?;
     let profile = instances::window_profile(&app_handle, window.label());
+    let operation = plugin::acquire_operation_lock().await?;
     tauri::async_runtime::spawn_blocking(move || {
         let _operation = operation;
         instances::scope_sync(profile, || plugin::snapshot::create(&app_handle, &id))
@@ -346,8 +346,8 @@ pub async fn snapshot_plugins(
     window: Window,
     ids: Vec<String>,
 ) -> Result<Vec<plugin::snapshot::SnapshotResult>, String> {
-    let operation = plugin::acquire_operation_lock().await?;
     let profile = instances::window_profile(&app_handle, window.label());
+    let operation = plugin::acquire_operation_lock().await?;
     tauri::async_runtime::spawn_blocking(move || {
         let _operation = operation;
         instances::scope_sync(profile, || plugin::snapshot::create_many(&app_handle, &ids))
@@ -423,8 +423,8 @@ pub async fn delete_plugin_backup(
     window: Window,
     id: String,
 ) -> Result<(), String> {
-    let operation = plugin::acquire_operation_lock().await?;
     let profile = instances::window_profile(&app_handle, window.label());
+    let operation = plugin::acquire_operation_lock().await?;
     tauri::async_runtime::spawn_blocking(move || {
         let _operation = operation;
         instances::scope_sync(profile, || plugin::snapshot::delete(&app_handle, &id))

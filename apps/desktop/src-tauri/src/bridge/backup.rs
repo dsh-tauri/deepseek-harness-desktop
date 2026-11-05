@@ -32,8 +32,8 @@ pub async fn backup_profile(
     window: Window,
     include_credentials: bool,
 ) -> Result<backup::BackupInfo, String> {
-    let mutation = crate::service::profile::mutation::acquire().await?;
     let profile = instances::window_profile(&app_handle, window.label());
+    let mutation = crate::service::profile::mutation::acquire().await?;
     let result = mutation.spawn_blocking(profile, move || {
         backup::create_backup(
             &app_handle,
@@ -62,8 +62,8 @@ pub async fn restore_profile(
     timestamp: String,
     as_new: bool,
 ) -> Result<(), String> {
-    let mutation = crate::service::profile::mutation::acquire().await?;
     let profile = instances::window_profile(&app_handle, window.label());
+    let mutation = crate::service::profile::mutation::acquire().await?;
     instances::scope(profile.clone(), async move {
         let mode = if as_new {
             backup::RestoreMode::AsNew
