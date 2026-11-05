@@ -331,6 +331,9 @@ catalogs:
     react:
       specifier: ^19.2.8
       version: 19.3.1
+    react-aria:
+      specifier: ^3.53.1
+      version: 3.53.1
     react-dom:
       specifier: ^19.2.8
       version: 19.3.1
@@ -786,6 +789,9 @@ importers:
       react:
         specifier: catalog:runtime
         version: 19.3.1
+      react-aria:
+        specifier: catalog:runtime
+        version: 3.53.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react-dom:
         specifier: catalog:runtime
         version: 19.3.1(react@19.3.1)
