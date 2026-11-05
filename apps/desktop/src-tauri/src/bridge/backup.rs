@@ -93,7 +93,10 @@ pub async fn restore_profile(
 }
 
 #[tauri::command]
-pub fn list_backups(app_handle: AppHandle, window: Window) -> Vec<backup::BackupInfo> {
+pub fn list_backups(
+    app_handle: AppHandle,
+    window: Window,
+) -> Result<Vec<backup::BackupInfo>, String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope_sync(profile, || backup::list_backups(&app_handle))
 }

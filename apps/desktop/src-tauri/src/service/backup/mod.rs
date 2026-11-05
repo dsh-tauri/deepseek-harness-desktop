@@ -74,13 +74,14 @@ fn archive_filename(profile: &str, timestamp: &str) -> String {
 /// 清单读取错误。
 #[derive(Debug)]
 enum ManifestError {
-    /// 清单文件存在但无法解析（损坏），已另存为 .corrupt 以便人工恢复。
+    ReadError(std::io::Error),
     ParseError(String),
 }
 
 impl std::fmt::Display for ManifestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ManifestError::ReadError(e) => write!(f, "manifest read error: {e}"),
             ManifestError::ParseError(e) => write!(f, "manifest parse error: {e}"),
         }
     }
@@ -88,17 +89,14 @@ impl std::fmt::Display for ManifestError {
 
 impl std::error::Error for ManifestError {}
 
-/// 读取备份清单。
-///
-/// - 清单不存在 → 返回空（首次备份的合法空状态）。
-/// - 清单存在但损坏 → 另存为 `.corrupt` 以便人工恢复，并返回错误，避免
-///   `create_backup` / `delete_backup` 用空清单覆盖导致既有索引丢失。
 fn read_manifest(backup_dir: &Path) -> Result<BackupManifest, ManifestError> {
     let path = backup_dir.join(".manifest.json");
     let content = match fs::read_to_string(&path) {
         Ok(c) => c,
-        // 清单不存在 → 首次备份的合法空状态，返回空清单
-        Err(_) => return Ok(BackupManifest { backups: vec![] }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BackupManifest { backups: vec![] });
+        }
+        Err(e) => return Err(ManifestError::ReadError(e)),
     };
     if content.trim().is_empty() {
         return Err(ManifestError::ParseError("empty manifest".into()));
@@ -107,7 +105,6 @@ fn read_manifest(backup_dir: &Path) -> Result<BackupManifest, ManifestError> {
         Ok(manifest) => Ok(manifest),
         Err(e) => {
             log::error!("BACKUP_MANIFEST_PARSE: {} {e}", path.display());
-            let _ = fs::rename(&path, path.with_extension("corrupt"));
             Err(ManifestError::ParseError(e.to_string()))
         }
     }
@@ -205,6 +202,8 @@ pub fn create_backup(app_handle: &AppHandle, options: BackupOptions) -> Result<B
         .lock()
         .map_err(|e| format!("BACKUP_LOCK: {e}"))?;
     let backup_dir = get_backup_dir(app_handle);
+    let mut manifest =
+        read_manifest(&backup_dir).map_err(|e| format!("BACKUP_MANIFEST_CORRUPT: {e}"))?;
     // 只备份当前激活的 profile 目录（其他 profile 不参与备份）
     let active = crate::service::profile::active_profile(app_handle);
     let source = crate::service::profile::profile_dir_of(app_handle, &active);
@@ -229,9 +228,6 @@ pub fn create_backup(app_handle: &AppHandle, options: BackupOptions) -> Result<B
         include_credentials: options.include_credentials,
     };
 
-    // 更新清单：清单损坏时中止写入，避免用空清单覆盖导致既有索引丢失
-    let mut manifest = read_manifest(&backup_dir)
-        .map_err(|e| format!("BACKUP_MANIFEST_CORRUPT: {e}"))?;
     manifest.backups.push(ManifestEntry {
         timestamp: info.timestamp.clone(),
         profile: active.clone(),
@@ -248,18 +244,12 @@ pub fn create_backup(app_handle: &AppHandle, options: BackupOptions) -> Result<B
 }
 
 /// 列出当前激活 profile 的备份（按时间戳升序）。
-pub fn list_backups(app_handle: &AppHandle) -> Vec<BackupInfo> {
+pub fn list_backups(app_handle: &AppHandle) -> Result<Vec<BackupInfo>, String> {
     let backup_dir = get_backup_dir(app_handle);
-    // 清单损坏时返回空列表（不抛错），避免影响页面其余部分；写入路径会另行中止
-    let manifest = match read_manifest(&backup_dir) {
-        Ok(m) => m,
-        Err(e) => {
-            log::error!("[backup] list_backups: manifest unreadable: {e}");
-            return vec![]
-        }
-    };
+    let manifest =
+        read_manifest(&backup_dir).map_err(|e| format!("BACKUP_MANIFEST_CORRUPT: {e}"))?;
     let active = crate::service::profile::active_profile(app_handle);
-    manifest
+    Ok(manifest
         .backups
         .into_iter()
         .filter(|e| e.profile == active)
@@ -269,7 +259,7 @@ pub fn list_backups(app_handle: &AppHandle) -> Vec<BackupInfo> {
             size: e.size,
             include_credentials: e.include_credentials,
         })
-        .collect()
+        .collect())
 }
 
 /// 删除指定备份（文件 + 清单条目）。
@@ -281,17 +271,14 @@ pub fn delete_backup(app_handle: &AppHandle, timestamp: &str) -> Result<(), Stri
         .lock()
         .map_err(|e| format!("BACKUP_LOCK: {e}"))?;
     let backup_dir = get_backup_dir(app_handle);
+    let mut manifest =
+        read_manifest(&backup_dir).map_err(|e| format!("BACKUP_MANIFEST_CORRUPT: {e}"))?;
     let active = crate::service::profile::active_profile(app_handle);
     let filename = archive_filename(&active, timestamp);
     let file = backup_dir.join(&filename);
     if file.exists() {
         fs::remove_file(&file).map_err(|e| format!("BACKUP_DELETE_FILE: {e}"))?;
     }
-    // 清单损坏时中止写入，避免用空清单覆盖导致既有索引丢失
-    let mut manifest = match read_manifest(&backup_dir) {
-        Ok(m) => m,
-        Err(e) => return Err(format!("BACKUP_MANIFEST_CORRUPT: {e}")),
-    };
     // 同时匹配 profile 和 timestamp，避免误删其他 profile 的同时间戳备份
     manifest.backups.retain(|e| !(e.profile == active && e.timestamp == timestamp));
     write_manifest(&backup_dir, &manifest)?;
@@ -403,6 +390,30 @@ fn prune_if_needed(app_handle: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn malformed_manifest_remains_an_error_across_repeated_reads() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".manifest.json");
+        let contents = b"{\"backups\":[";
+        fs::write(&path, contents).unwrap();
+        assert!(read_manifest(root.path()).is_err());
+        assert!(read_manifest(root.path()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), contents);
+        assert!(!root.path().join(".manifest.corrupt").exists());
+    }
+
+    #[test]
+    fn manifest_read_errors_are_not_treated_as_an_empty_backup_list() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".manifest.json");
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert!(read_manifest(root.path()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), [0xff, 0xfe]);
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(read_manifest(root.path()).is_err());
+    }
 
     #[test]
     fn timestamp_format_is_valid() {

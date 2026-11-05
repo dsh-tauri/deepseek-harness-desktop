@@ -218,22 +218,32 @@ fn has_link_parent(dest: &Path, relative: &Path) -> bool {
     let mut current = dest.to_path_buf();
     for component in parent.components() {
         current.push(component);
-        let Ok(metadata) = current.symlink_metadata() else {
-            continue;
-        };
-        let file_type = metadata.file_type();
-        #[cfg(windows)]
-        let is_link = {
-            use std::os::windows::fs::FileTypeExt;
-            file_type.is_symlink() || file_type.is_symlink_dir()
-        };
-        #[cfg(not(windows))]
-        let is_link = file_type.is_symlink();
-        if is_link {
+        if is_link(&current) {
             return true;
         }
     }
     false
+}
+
+fn is_link(path: &Path) -> bool {
+    let Ok(metadata) = path.symlink_metadata() else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(unix)]
+fn entry_mode(header: &tar::Header) -> Result<u32, String> {
+    header
+        .mode()
+        .map(|mode| mode & 0o777)
+        .map_err(|e| format!("BACKUP_EXTRACT_MODE: {e}"))
 }
 
 /// 从 tar 归档安全解压所有条目到 `dest`（压缩格式无关）。
@@ -245,6 +255,9 @@ fn has_link_parent(dest: &Path, relative: &Path) -> bool {
 fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> Result<(), String> {
     // 禁用 ownership 保留：归档里 uid/gid 可能是 root（uid=0），非 root 用户无法 chown
     archive.set_preserve_ownerships(false);
+
+    #[cfg(unix)]
+    let mut directory_modes = Vec::new();
 
     // 单次遍历：避免重复调用 archive.entries() 导致 decoder 状态错乱
     for entry in archive
@@ -274,7 +287,7 @@ fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> R
 
         // 不剥离 profiles/<id>/ 前缀——新格式备份不再含此前缀
         // 旧格式备份需用户手动处理（先在 /tmp 解压再 rsync）
-        let stripped: std::path::PathBuf = path.clone();
+        let stripped: std::path::PathBuf = path.components().collect();
 
         let dest_path = dest.join(&stripped);
 
@@ -303,9 +316,16 @@ fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> R
         // 根据 entry type 分支处理（替代 entry.unpack 避免 macOS tar bug）
         let entry_type = entry.header().entry_type();
         if entry_type.is_dir() {
-            // 目录：直接创建
+            if is_link(&dest_path) {
+                return Err(format!(
+                    "BACKUP_EXTRACT_LINK_PARENT: entry {:?} is a linked directory",
+                    path
+                ));
+            }
             fs::create_dir_all(&dest_path)
                 .map_err(|e| format!("BACKUP_EXTRACT_MKDIR: {e} (path={})", path.display()))?;
+            #[cfg(unix)]
+            directory_modes.push((stripped, entry_mode(entry.header())?));
         } else if entry_type.is_symlink() {
             // 符号链接：读取 target 并创建链接
             let target = entry
@@ -346,16 +366,63 @@ fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> R
                     .as_nanos()
             );
             let tmp_path = dest_path.with_file_name(tmp_name);
-            fs::write(&tmp_path, &content).map_err(|e| {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&tmp_path).map_err(|e| {
                 format!("BACKUP_EXTRACT_WRITE_TMP: {e} (tmp={})", tmp_path.display())
             })?;
-            // 原子 rename 替换目标文件（macOS 上 rename 不要求目标文件关闭）
-            fs::rename(&tmp_path, &dest_path).map_err(|e| {
-                format!(
-                    "BACKUP_EXTRACT_RENAME: {e} (tmp={}, dest={})",
-                    tmp_path.display(),
-                    dest_path.display()
-                )
+            let result = (|| -> Result<(), String> {
+                file.write_all(&content).map_err(|e| {
+                    format!("BACKUP_EXTRACT_WRITE_TMP: {e} (tmp={})", tmp_path.display())
+                })?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    file.set_permissions(fs::Permissions::from_mode(entry_mode(entry.header())?))
+                        .map_err(|e| {
+                            format!("BACKUP_EXTRACT_PERMISSIONS: {e} (path={})", path.display())
+                        })?;
+                }
+                drop(file);
+                fs::rename(&tmp_path, &dest_path).map_err(|e| {
+                    format!(
+                        "BACKUP_EXTRACT_RENAME: {e} (tmp={}, dest={})",
+                        tmp_path.display(),
+                        dest_path.display()
+                    )
+                })
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(&tmp_path);
+            }
+            result?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        directory_modes.sort_by_key(|(path, _)| {
+            std::cmp::Reverse(
+                path.components()
+                    .filter(|component| matches!(component, std::path::Component::Normal(_)))
+                    .count(),
+            )
+        });
+        for (path, mode) in directory_modes {
+            let target = dest.join(&path);
+            if has_link_parent(dest, &path) || is_link(&target) {
+                return Err(format!(
+                    "BACKUP_EXTRACT_LINK_PARENT: entry {:?} is a linked directory",
+                    path
+                ));
+            }
+            fs::set_permissions(&target, fs::Permissions::from_mode(mode)).map_err(|e| {
+                format!("BACKUP_EXTRACT_PERMISSIONS: {e} (path={})", path.display())
             })?;
         }
     }
@@ -384,6 +451,146 @@ fn list_archive_entries(archive: &Path) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_preserves_file_modes_and_finishes_children_before_readonly_directory_modes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir_all(source.join("private/readonly")).unwrap();
+        for (name, mode) in [("run.sh", 0o751), ("private/readonly/secret", 0o600)] {
+            let path = source.join(name);
+            fs::write(&path, b"saved content").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        }
+        fs::set_permissions(source.join("private"), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(
+            source.join("private/readonly"),
+            fs::Permissions::from_mode(0o500),
+        )
+        .unwrap();
+        let archive = root.path().join("backup.tar.zst");
+        create_archive(&source, &archive, true).unwrap();
+        let target = root.path().join("target");
+        extract_archive(&archive, &target).unwrap();
+        let observed: Vec<_> = [
+            "run.sh",
+            "private",
+            "private/readonly",
+            "private/readonly/secret",
+        ]
+        .iter()
+        .map(|name| {
+            fs::metadata(target.join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777
+        })
+        .collect();
+        let content = fs::read(target.join("private/readonly/secret")).unwrap();
+        for home in [&source, &target] {
+            fs::set_permissions(
+                home.join("private/readonly"),
+                fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        assert_eq!(content, b"saved content");
+        assert_eq!(observed, [0o751, 0o700, 0o500, 0o600]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_applies_mixed_prefix_directory_modes_deepest_first() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut bytes = Vec::new();
+        for (name, mode) in [("./a/", 0o400), ("a/b/", 0o700)] {
+            let mut header = tar::Header::new_gnu();
+            header.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(mode);
+            header.set_cksum();
+            bytes.extend_from_slice(header.as_bytes());
+        }
+        bytes.extend_from_slice(&[0_u8; 1024]);
+        let mut archive = tar::Archive::new(&bytes[..]);
+
+        let result = extract_tar_entries(&mut archive, root.path());
+
+        let parent_mode = fs::metadata(root.path().join("a"))
+            .unwrap()
+            .permissions()
+            .mode() & 0o777;
+        fs::set_permissions(root.path().join("a"), fs::Permissions::from_mode(0o700)).unwrap();
+        let child_mode = fs::metadata(root.path().join("a/b"))
+            .unwrap()
+            .permissions()
+            .mode() & 0o777;
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!((parent_mode, child_mode), (0o400, 0o700));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_strips_special_permission_bits_from_archive_entries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(1);
+        header.set_mode(0o6751);
+        header.set_cksum();
+        builder.append_data(&mut header, "run", &b"x"[..]).unwrap();
+        let bytes = builder.into_inner().unwrap();
+        let mut archive = tar::Archive::new(&bytes[..]);
+        extract_tar_entries(&mut archive, root.path()).unwrap();
+        assert_eq!(
+            fs::metadata(root.path().join("run"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o751
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_rejects_directory_symlink_before_applying_directory_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("outside");
+        let target = root.path().join("target");
+        fs::create_dir(&outside).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&outside, target.join("linked")).unwrap();
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(0);
+        header.set_mode(0o777);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "linked/", std::io::empty())
+            .unwrap();
+        let bytes = builder.into_inner().unwrap();
+        let mut archive = tar::Archive::new(&bytes[..]);
+        let error = extract_tar_entries(&mut archive, &target).unwrap_err();
+        assert!(error.starts_with("BACKUP_EXTRACT_LINK_PARENT:"), "{error}");
+        assert_eq!(
+            fs::metadata(&outside).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
 
     /// 全局递增计数器，保证并行测试使用互不冲突的临时目录。
     fn unique_suffix() -> String {
