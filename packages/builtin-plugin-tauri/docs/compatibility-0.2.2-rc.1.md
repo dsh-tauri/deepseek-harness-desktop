@@ -12,10 +12,14 @@
 
 ## 默认启停
 
-自研定时任务在核心 `0.2.2-rc.1` 起默认停用：插件自带的 bundle patch 用 `!!js` 读取宿主下发的 `DSH_TAURI_CORE_VERSION`，命中基线即给 `dsh-tauri-scheduler` 条目写 `disabled: true`，官方 `schedule`/`ui-schedule` 两行随之放开。用户显式 `disabled: false` 的补丁层仍然优先；宿主未下发版本时保持原默认（启用）。
+两个已被官方取代的自研适配插件在核心 `0.2.2-rc.1` 起默认停用：定时任务（官方 schedule 已在同版支持新建会话形式）与移动端界面（官方客户端自带移动端适配）。
+
+判定只在宿主做一次：`service::core::retires_bundled_adapters` 比较活动核心版本，达标即在核心进程环境里下发 `DSH_TAURI_OFFICIAL_ADAPTERS=1`；两个插件自带的 bundle patch 都只读这一个开关，版本知识不再散落在各插件的 `!!js` 表达式里。定时任务停用时，官方 `schedule`/`ui-schedule` 两行随之放开。
+
+用户显式写下的 `disabled: false` 补丁层仍然优先；宿主未下发版本或版本无法解析时保持原默认（启用）。
 
 ## 验证范围
 
-本地执行：`pnpm typecheck`、`pnpm lint`、`pnpm exec tsc --noEmit`、`vitest --project unit tests/scheduler-bundle.test.ts`（16 项，含 `0.2.1-rc.5`/`0.2.2-alpha.3` 启用与 `0.2.2-rc.1`/更高版本停用的分界）、`packages/builtin-plugin-extension/src/client/styles/plugins.cssr.test.ts`，以及 `cargo test --lib service::workflow::`（129 项）。`cargo check --lib` 通过。
+本地执行：`pnpm typecheck`、`pnpm lint`、`pnpm exec tsc --noEmit`、`vitest --project unit tests/scheduler-bundle.test.ts tests/mobile-ui-bundle.test.ts`（开关命中与未命中两侧）、`packages/builtin-plugin-extension/src/client/styles/plugins.cssr.test.ts`，以及 `cargo test --lib`（`service::workflow::` 129 项、`service::core::source::` 8 项，含停用基线的版本分界）。`cargo check --lib` 通过。
 
 未执行插件 Build；未验证真实模型请求、发布包压缩锚点与完整桌面浏览器交互，不能把源码对照等同于这些运行验证。

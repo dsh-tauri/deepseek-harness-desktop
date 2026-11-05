@@ -52,7 +52,7 @@ Copyright 2026 MichengAI contributors
 - Reference revision: `66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`
 - Support policy: recommended core `0.2.2-rc.1`, minimum core `0.2.1-rc.1`; earlier cores are unsupported. See the [current compatibility record](<../builtin-plugin-tauri/docs/compatibility-0.2.2-rc.1.md>) for verification scope; this does not imply a fresh refork or source equality.
 - Catalog pin: `dsh:` → `0.2.2-rc.1` ([`pnpm-workspace.yaml`](<../../pnpm-workspace.yaml>))
-- Retirement: the plugin's own bundle patch disables `dsh-tauri-scheduler` by default once the running core is `0.2.2-rc.1` or newer (the official schedule rows then create sessions themselves); the host passes the active core version as `DSH_TAURI_CORE_VERSION`, and an explicit user `disabled: false` still wins.
+- Retirement: the plugin's own bundle patch disables `dsh-tauri-scheduler` by default once the running core is `0.2.2-rc.1` or newer (the official schedule rows then create sessions themselves); the host decides that baseline once and exports `DSH_TAURI_OFFICIAL_ADAPTERS=1`, and an explicit user `disabled: false` still wins.
 - License: MIT — Copyright (c) 2026 DeepSeek
 
 Reforked contracts and local destinations:

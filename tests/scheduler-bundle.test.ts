@@ -12,7 +12,7 @@ const yaml = createRequire(import.meta.resolve('@deepseek-ai/cordis-plugin-inclu
 
 const IDS = ['schedule', 'ui-schedule', 'dsh-tauri-scheduler']
 
-async function activate(patch: string, env: string | undefined): Promise<{ disabled: boolean[], active: number[] | null }> {
+async function activate(patch: string, retired: boolean | undefined): Promise<{ disabled: boolean[], active: number[] | null }> {
   const source = readFileSync(new URL('../packages/builtin-plugin-scheduler/cordis.patch.yml', import.meta.url), 'utf8')
   const ctx = new Context()
   onTestFinished(() => ctx.fiber.dispose())
@@ -33,10 +33,10 @@ async function activate(patch: string, env: string | undefined): Promise<{ disab
   }
   ctx.loader.builtins['dsh-taiwind'] = { apply() {} }
 
-  const previous = process.env.DSH_TAURI_CORE_VERSION
-  if (env === undefined)
-    delete process.env.DSH_TAURI_CORE_VERSION
-  else process.env.DSH_TAURI_CORE_VERSION = env
+  const previous = process.env.DSH_TAURI_OFFICIAL_ADAPTERS
+  if (retired === undefined)
+    delete process.env.DSH_TAURI_OFFICIAL_ADAPTERS
+  else process.env.DSH_TAURI_OFFICIAL_ADAPTERS = retired ? '1' : '0'
   try {
     const entries = applyEntryPatches([
       { id: 'schedule', name: 'cordis:schedule' },
@@ -48,8 +48,8 @@ async function activate(patch: string, env: string | undefined): Promise<{ disab
   }
   finally {
     if (previous === undefined)
-      delete process.env.DSH_TAURI_CORE_VERSION
-    else process.env.DSH_TAURI_CORE_VERSION = previous
+      delete process.env.DSH_TAURI_OFFICIAL_ADAPTERS
+    else process.env.DSH_TAURI_OFFICIAL_ADAPTERS = previous
   }
 }
 
@@ -99,20 +99,15 @@ it.each([
 })
 
 it.each([
-  { version: undefined, expected: [0, 0, 1] },
-  { version: '0.2.1-rc.5', expected: [0, 0, 1] },
-  { version: '0.2.2-alpha.3', expected: [0, 0, 1] },
-  { version: '0.2.2-rc.1', expected: [1, 1, 0] },
-  { version: '0.2.2-rc.2', expected: [1, 1, 0] },
-  { version: '0.2.2', expected: [1, 1, 0] },
-  { version: '0.3.0-rc.1', expected: [1, 1, 0] },
-])('scheduler bundle defaults to disabled from core 0.2.2-rc.1 on ($version)', async ({ version, expected }) => {
-  const result = await activate('[]', version)
+  { state: 'host did not retire the official adapters', retired: undefined, expected: [0, 0, 1] },
+  { state: 'host retired the official adapters', retired: true, expected: [1, 1, 0] },
+])('scheduler bundle follows the retirement flag when $state', async ({ retired, expected }) => {
+  const result = await activate('[]', retired)
   expect(result.disabled).toEqual(expected.map(count => count === 0))
   expect(result.active).toEqual(expected)
 })
 
-it('still honours an explicit user disable below the retirement baseline', async () => {
-  const result = await activate('- id: dsh-tauri-scheduler\n  disabled: true', '0.2.1-rc.5')
+it('still honours an explicit user disable while the official adapters are absent', async () => {
+  const result = await activate('- id: dsh-tauri-scheduler\n  disabled: true', false)
   expect(result.active).toEqual([1, 1, 0])
 })
