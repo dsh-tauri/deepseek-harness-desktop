@@ -557,11 +557,7 @@ mod tests {
         ] {
             let path = bin_dir.join(name);
             assert!(path.is_file(), "{name} was not written");
-            assert!(
-                !is_foreign_file(&path),
-                "{name} must be a generated shim (bytes={:?})",
-                std::fs::read(&path).map(|b| b[..60.min(b.len())].to_vec())
-            );
+            assert!(!is_foreign_file(&path), "{name} must be a generated shim");
         }
 
         let npx = std::fs::read_to_string(bin_dir.join("npx.cmd")).unwrap();
