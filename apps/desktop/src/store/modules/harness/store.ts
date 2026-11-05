@@ -21,6 +21,7 @@ import { defineStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
+import { isHostedDocument } from '@/layout/components/window-presentation'
 import { toast } from '@/utils/toast'
 import { harnessUpdater } from '../harness-updater'
 import { parseBlockedRefusal } from '../plugins'
@@ -966,6 +967,10 @@ export const harness = defineStore({
 
 let webviewWatch: { key: number, loaded: boolean, timer: ReturnType<typeof setTimeout> } | null = null
 harness.$subscribe(() => {
+  // 主窗口文档即 DSH 时没有原生子视图，`harness-webview-state` 不会回来；看门狗在这种
+  // 形态下必然误判，把已经正常显示的页面切成错误页（issue #1426 的反复闪烁）。
+  if (isHostedDocument())
+    return
   const { status, serviceHealthy, webviewKey, webviewLoaded, webviewError } = harness.$state
   const watching = status === 'ready' && serviceHealthy && !harness.webviewAlive && !webviewError
   const context = {

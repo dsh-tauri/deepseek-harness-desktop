@@ -21,27 +21,6 @@ interface HarnessWebviewReservation {
   label: string
 }
 
-const BLOCKING_OVERLAY_SELECTOR = [
-  '[data-testid="dsh-full-sidebar-cover"]',
-  '[data-slot="modal-backdrop"]',
-  '[role="dialog"]',
-  '[role="alertdialog"]:not([data-slot="toast"])',
-  '[role="menu"]',
-  '[role="listbox"]',
-  '[data-slot$="-popover"]',
-].join(',')
-
-function visibleBlockingOverlay(): boolean {
-  for (const element of document.body.querySelectorAll<HTMLElement>(BLOCKING_OVERLAY_SELECTOR)) {
-    const style = getComputedStyle(element)
-    if (element.getAttribute('aria-hidden') !== 'true' && style.display !== 'none'
-      && style.visibility !== 'hidden' && element.getClientRects().length > 0) {
-      return true
-    }
-  }
-  return false
-}
-
 export interface HarnessWebviewProps {
   srcOverride?: string | null
   borderTint?: string | null
@@ -128,8 +107,6 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     let disposed = false
     let requested = ''
     let revision = 0
-    let appliedGeometry = ''
-    let backdrop: HTMLImageElement | undefined
     let cancelPending: (() => void) | undefined
     function sync(): void {
       if (disposed)
@@ -138,10 +115,9 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
       if (![rect.left, rect.top, rect.width, rect.height].every(Number.isFinite))
         return
       const available = (remoteMode || !layoutRef.current.showError) && rect.width > 0 && rect.height > 0
-      const blocked = available && readyLabelRef.current === guest!.label && visibleBlockingOverlay()
       const devicePixelRatio = window.devicePixelRatio
       const zoomFactor = layoutRef.current.zoom
-      const request = JSON.stringify([rect.left, rect.top, rect.width, rect.height, available, blocked, devicePixelRatio, zoomFactor])
+      const request = JSON.stringify([rect.left, rect.top, rect.width, rect.height, available, devicePixelRatio, zoomFactor])
       if (requested === request)
         return
       requested = request
@@ -169,46 +145,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
           if (!Number.isFinite(ratio) || ratio <= 0)
             return
           const bounds = { label: guest!.label, x: rect.left * ratio, y: rect.top * ratio, width: Math.max(1, rect.width * ratio), height: Math.max(1, rect.height * ratio), zoomFactor }
-          const geometry = JSON.stringify(bounds)
-          if (blocked && !backdrop) {
-            if (appliedGeometry !== geometry) {
-              await invoke('update_harness_webview', { ...bounds, visible: true })
-              appliedGeometry = geometry
-              if (!current())
-                return
-            }
-            const image = new Image()
-            const capture = await Promise.race([invoke<string>('capture_harness_webview', { label: guest!.label }), cancelled])
-            if (!current())
-              return
-            if (!capture?.startsWith('data:image/png;base64,'))
-              throw new Error('Invalid native view capture')
-            image.src = capture
-            image.alt = ''
-            image.setAttribute('aria-hidden', 'true')
-            image.className = 'pointer-events-none absolute inset-0 size-full'
-            await Promise.race([image.decode(), cancelled])
-            if (!current())
-              return
-            backdrop = image
-            host!.append(image)
-          }
-          if (blocked) {
-            // ponytail: static backdrop while shell overlays are open; use a native overlay surface if live rendering is needed.
-            await Promise.race([new Promise<void>((resolve) => {
-              frame = requestAnimationFrame(() => {
-                frame = requestAnimationFrame(() => resolve())
-              })
-            }), cancelled])
-            if (!current())
-              return
-          }
-          await invoke('update_harness_webview', { ...bounds, visible: available && !blocked })
-          appliedGeometry = available && !blocked ? geometry : ''
-          if (current() && !blocked) {
-            backdrop?.remove()
-            backdrop = undefined
-          }
+          await invoke('update_harness_webview', { ...bounds, visible: available })
         }
         finally {
           if (cancelPending === cancel)
@@ -231,7 +168,6 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     return () => {
       disposed = true
       cancelPending?.()
-      backdrop?.remove()
       syncRef.current = undefined
       resizeObserver?.disconnect()
       mutationObserver.disconnect()

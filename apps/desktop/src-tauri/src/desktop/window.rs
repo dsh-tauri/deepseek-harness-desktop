@@ -92,7 +92,13 @@ pub(super) fn require_shell(webview: &Webview) -> Result<(), String> {
             .dev_url
             .as_ref()
             .is_some_and(|dev| dev.origin() == url.origin());
-    if webview.label() != webview.window().label() || !(packaged || dev) {
+    // 主窗口文档即 DSH 后，主 webview 的 URL 是本机服务地址；只对主窗口放行该 origin，
+    // 其它窗口仍必须停在壳层页。
+    let hosted = webview.label() == webview.window().label()
+        && matches!(url.scheme(), "http" | "https")
+        && crate::service::workflow::instances::dsh_service_origin(webview)
+            .is_some_and(|service| service.origin() == url.origin());
+    if webview.label() != webview.window().label() || !(packaged || dev || hosted) {
         return Err("HARNESS_WEBVIEW_SHELL_REQUIRED".into());
     }
     Ok(())
@@ -160,6 +166,39 @@ pub(super) fn forget_harness_documents(app: &AppHandle, owner: &str) {
     }
 }
 
+/// 主窗口「文档即 DSH」：把承载壳层的 DSH 页面导航进当前 webview。
+///
+/// 壳层由建窗时的初始化脚本注入（见 [`crate::desktop::shell_injection`]），这里的
+/// 导航随后发生，页面首帧即带壳层。远程 Harness 需要目标机令牌，该入口只服务本机。
+#[tauri::command]
+pub async fn host_harness_document(
+    app: AppHandle,
+    webview: Webview,
+    url: String,
+) -> Result<(), String> {
+    require_shell(&webview)?;
+    let url = harness_guest_url(&url)?;
+    let profile =
+        crate::service::workflow::instances::window_profile(&app, webview.window().label());
+    let port = crate::service::workflow::instances::scope_sync(profile.clone(), || {
+        crate::service::workflow::instances::port(&app)
+    });
+    let expected = Url::parse(&config::get_dsh_service_url(port)).map_err(|error| error.to_string())?;
+    if url.origin() != expected.origin() {
+        return Err("HARNESS_DOCUMENT_ORIGIN_MISMATCH".into());
+    }
+    let log_path = config::service_log_path_from(&config::get_base_dir(&app), Some(&profile));
+    match crate::service::workflow::auth::session_cookie(port, &log_path).await {
+        Ok(cookie) => {
+            if let Err(error) = crate::service::workflow::auth::inject(&webview, cookie) {
+                log::warn!("[Webview] {error}");
+            }
+        }
+        Err(error) => log::warn!("[Webview] session cookie unavailable: {error}"),
+    }
+    webview.navigate(url).map_err(|error| error.to_string())
+}
+
 fn track_harness_document(app: &AppHandle, guest: &Webview, owner: &str, url: &Url) -> Result<(), String> {
     app.manage(HarnessDocuments::default());
     let document = Arc::new(Mutex::new(HarnessDocument {
@@ -199,23 +238,6 @@ fn track_harness_document(app: &AppHandle, guest: &Webview, owner: &str, url: &U
         }
     })
     .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn capture_harness_webview(
-    app: AppHandle,
-    webview: Webview,
-    label: String,
-) -> Result<String, String> {
-    require_shell(&webview)?;
-    if !label.starts_with("harness-") {
-        return Err("HARNESS_WEBVIEW_INVALID_LABEL".into());
-    }
-    let guest = app.get_webview(&label).ok_or("HARNESS_WEBVIEW_NOT_FOUND")?;
-    if guest.window().label() != webview.window().label() {
-        return Err("HARNESS_WEBVIEW_WINDOW_MISMATCH".into());
-    }
-    tauri_runtime_electron::capture_webview(&guest).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -495,7 +517,7 @@ fn application_capabilities_separate_shell_and_harness_commands() {
     };
     let guest = Origin::Remote { url };
     let wrong_origin = Origin::Remote { url: Url::parse("http://127.0.0.1:3081/").unwrap() };
-    for command in ["get_dsh_theme", "get_runtime_info", "read_service_logs", "quit_app", "update_app_config", "prepare_harness_webview", "update_harness_webview", "capture_harness_webview", "release_harness_webview"] {
+    for command in ["host_harness_document", "get_dsh_theme", "get_runtime_info", "read_service_logs", "quit_app", "update_app_config", "prepare_harness_webview", "update_harness_webview", "release_harness_webview"] {
         assert!(allowed(command, "main", &Origin::Local), "{command}");
         assert!(!allowed(command, "harness-1", &guest), "{command}");
     }

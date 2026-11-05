@@ -4,9 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 
 /**
- * lib 模式把壳层打成单份 IIFE + 单份 CSS：
- * - sandbox preload 只能执行经典脚本，故用 `iife` 而非 ESM；
- * - Rust 侧 `include_str!` 直接内嵌这两份产物。
+ * 壳层独立构建：产出单份 ESM（`shell.mjs`）+ 单份 CSS（`shell.css`）。
+ *
+ * 用 ESM 而非 IIFE：壳层依赖（`tauri-runtime-electron/api`）含顶层 await，IIFE 不支持。
+ * 注入侧以 Blob URL 动态 `import()`，因此不需要打包成自执行脚本。
  */
 function shadowScopedCss(): Plugin {
   const themes = ['light', 'dark']
@@ -35,15 +36,21 @@ function shadowScopedCss(): Plugin {
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   publicDir: false,
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   plugins: [tailwindcss(), shadowScopedCss()],
+  // 壳层在主世界执行，那里没有 Node 的 `process`；只替换依赖里的环境判断。
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+  },
   build: {
     outDir: 'dist.shell',
     emptyOutDir: true,
+    // 注入侧只有一个 Blob URL，无法解析相对导入；依赖的动态 import 必须内联成一个文件。
+    rollupOptions: { output: { inlineDynamicImports: true } },
     lib: {
-      entry: fileURLToPath(new URL('./src/shell.ts', import.meta.url)),
-      formats: ['iife'],
-      name: '__DSH_SHELL__',
-      fileName: () => 'shell.iife.js',
+      entry: fileURLToPath(new URL('./src/shell.tsx', import.meta.url)),
+      formats: ['es'],
+      fileName: () => 'shell.mjs',
       cssFileName: 'shell',
     },
   },

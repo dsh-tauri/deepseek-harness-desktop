@@ -64,7 +64,7 @@ beforeEach(() => {
   mocks.decode.mockResolvedValue(undefined)
   Object.defineProperty(HTMLImageElement.prototype, 'decode', { configurable: true, value: mocks.decode })
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0))
-  mocks.invoke.mockImplementation(async command => command === 'prepare_harness_webview' ? 'guest-local' : command === 'capture_harness_webview' ? 'data:image/png;base64,cGl4ZWw=' : undefined)
+  mocks.invoke.mockImplementation(async command => command === 'prepare_harness_webview' ? 'guest-local' : undefined)
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => mocks.rect)
   vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(function (this: HTMLElement) {
     return (this.hidden || this.closest('[hidden]') || this.style.display === 'none' ? [] : [mocks.rect]) as unknown as DOMRectList
@@ -189,179 +189,6 @@ it('sends CSS bounds and zoom once, resyncing changed offsets and sizes without 
   await waitFor(() => expect(updates().at(-1)).toMatchObject({ zoomFactor: 1.5 }))
 })
 
-it.each(['dialog', 'alertdialog', 'menu', 'listbox', 'dropdown-popover', 'dsh-full-sidebar-cover'])('preserves the page behind %s without reloading until the overlay is removed', async (marker) => {
-  render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  state()
-  const overlay = document.createElement('div')
-  if (marker === 'dsh-full-sidebar-cover')
-    overlay.dataset.testid = marker
-  else if (marker.endsWith('-popover'))
-    overlay.dataset.slot = marker
-  else
-    overlay.setAttribute('role', marker)
-  document.body.append(overlay)
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-  const backing = screen.getByTitle('Harness').querySelector('img')!
-  expect(backing?.src).toBe('data:image/png;base64,cGl4ZWw=')
-  expect(backing.getAttribute('aria-hidden')).toBe('true')
-  expect(mocks.decode).toHaveBeenCalledOnce()
-  expect(mocks.invoke.mock.calls.filter(([command]) => command === 'prepare_harness_webview')).toHaveLength(1)
-  expect(mocks.harness.markWebviewLeaving).not.toHaveBeenCalled()
-  overlay.remove()
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: true }))
-  expect(backing.isConnected).toBe(false)
-})
-
-it.each(['capture', 'decode', 'paint'] as const)('cancels a pending %s when a menu closes or the guest unmounts', async (phase) => {
-  const invoke = mocks.invoke.getMockImplementation()!
-  let finish!: () => void
-  const pending = new Promise<void>((resolve) => {
-    finish = resolve
-  })
-  const paint = vi.fn<FrameRequestCallback>()
-  if (phase === 'capture')
-    mocks.invoke.mockImplementation((command, args) => command === 'capture_harness_webview' ? pending.then(() => 'data:image/png;base64,cGl4ZWw=') : invoke(command, args))
-  if (phase === 'decode')
-    mocks.decode.mockReturnValue(pending)
-  if (phase === 'paint') {
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      paint.mockImplementation(callback)
-      return 42
-    })
-  }
-  const view = render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  state()
-  const menu = document.createElement('div')
-  menu.setAttribute('role', 'menu')
-  document.body.append(menu)
-  await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('capture_harness_webview', { label: 'guest-local' }))
-  if (phase === 'decode')
-    await waitFor(() => expect(mocks.decode).toHaveBeenCalledOnce())
-  if (phase === 'paint')
-    await waitFor(() => expect(screen.getByTitle('Harness').querySelector('img')).not.toBeNull())
-  menu.remove()
-  await waitFor(() => expect(updates()).toHaveLength(2))
-  expect(updates().every(update => update.visible === true)).toBe(true)
-  await act(async () => finish())
-  expect(screen.getByTitle('Harness').querySelector('img')).toBeNull()
-  document.body.append(menu)
-  if (phase === 'paint')
-    await waitFor(() => expect(screen.getByTitle('Harness').querySelector('img')).not.toBeNull())
-  else
-    await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-  view.unmount()
-  await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith('release_harness_webview', { label: 'guest-local' }))
-})
-
-it.each(['capture', 'decode'] as const)('releases the old guest without waiting for a pending %s', async (phase) => {
-  const invoke = mocks.invoke.getMockImplementation()!
-  let finish!: () => void
-  const pending = new Promise<void>((resolve) => {
-    finish = resolve
-  })
-  if (phase === 'capture')
-    mocks.invoke.mockImplementation((command, args) => command === 'capture_harness_webview' ? pending.then(() => 'data:image/png;base64,cGl4ZWw=') : invoke(command, args))
-  else
-    mocks.decode.mockReturnValue(pending)
-  const view = render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  state()
-  const menu = document.createElement('div')
-  menu.setAttribute('role', 'menu')
-  document.body.append(menu)
-  await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('capture_harness_webview', { label: 'guest-local' }))
-  if (phase === 'decode')
-    await waitFor(() => expect(mocks.decode).toHaveBeenCalledOnce())
-  view.unmount()
-  await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith('release_harness_webview', { label: 'guest-local' }))
-  await act(async () => finish())
-  expect(updates().every(update => update.visible === true)).toBe(true)
-  expect(document.querySelector('img')).toBeNull()
-})
-
-it.each(['capture', 'decode'] as const)('keeps the live page visible on %s failure and retries on the next menu opening', async (phase) => {
-  const invoke = mocks.invoke.getMockImplementation()!
-  const error = new Error('capture unavailable')
-  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-  if (phase === 'capture')
-    mocks.invoke.mockImplementation((command, args) => command === 'capture_harness_webview' ? Promise.reject(error) : invoke(command, args))
-  else
-    mocks.decode.mockRejectedValue(error)
-  render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  state()
-  const menu = document.createElement('div')
-  menu.setAttribute('role', 'menu')
-  document.body.append(menu)
-  await waitFor(() => expect(log).toHaveBeenCalledWith('[Webview] failed to update native view:', error))
-  expect(updates().every(update => update.visible === true)).toBe(true)
-  expect(screen.getByTitle('Harness').querySelector('img')).toBeNull()
-  menu.remove()
-  await act(async () => {})
-  mocks.invoke.mockImplementation(invoke)
-  mocks.decode.mockResolvedValue(undefined)
-  document.body.append(menu)
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-})
-
-it('shares one decoded backing across overlays and keeps it until native show succeeds', async () => {
-  const invoke = mocks.invoke.getMockImplementation()!
-  render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  state()
-  const menu = document.createElement('div')
-  menu.setAttribute('role', 'menu')
-  const dialog = document.createElement('div')
-  dialog.setAttribute('role', 'dialog')
-  document.body.append(menu)
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-  const backing = screen.getByTitle('Harness').querySelector('img')!
-  document.body.append(dialog)
-  menu.remove()
-  await act(async () => {})
-  expect(mocks.invoke.mock.calls.filter(([command]) => command === 'capture_harness_webview')).toHaveLength(1)
-  expect(backing.isConnected).toBe(true)
-  let finish!: () => void
-  mocks.invoke.mockImplementation((command, args) => command === 'update_harness_webview' && args.visible === true
-    ? new Promise<void>((resolve) => { finish = resolve })
-    : invoke(command, args))
-  dialog.remove()
-  await waitFor(() => expect(finish).toBeDefined())
-  expect(backing.isConnected).toBe(true)
-  await act(async () => finish())
-  expect(backing.isConnected).toBe(false)
-  expect(mocks.harness.refreshWebview).not.toHaveBeenCalled()
-})
-
-it.each(['success', 'capture failure', 'decode failure'] as const)('initializes a new page before snapshotting an already-open menu: %s', async (scenario) => {
-  const invoke = mocks.invoke.getMockImplementation()!
-  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-  if (scenario === 'capture failure')
-    mocks.invoke.mockImplementation((command, args) => command === 'capture_harness_webview' ? Promise.reject(new Error('capture unavailable')) : invoke(command, args))
-  if (scenario === 'decode failure')
-    mocks.decode.mockRejectedValue(new Error('decode unavailable'))
-  const menu = document.createElement('div')
-  menu.setAttribute('role', 'menu')
-  document.body.append(menu)
-  render(<HarnessWebview />)
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ width: 960, height: 600, visible: true }))
-  expect(mocks.invoke.mock.calls.some(([command]) => command === 'capture_harness_webview')).toBe(false)
-  state()
-  if (scenario === 'success') {
-    await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-    expect(screen.getByTitle('Harness').querySelector('img')).not.toBeNull()
-  }
-  else {
-    await waitFor(() => expect(log).toHaveBeenCalled())
-    expect(updates().at(-1)).toMatchObject({ visible: true })
-    expect(screen.getByTitle('Harness').querySelector('img')).toBeNull()
-  }
-  const calls = mocks.invoke.mock.calls
-  expect(calls.findIndex(([command]) => command === 'update_harness_webview')).toBeLessThan(calls.findIndex(([command]) => command === 'capture_harness_webview'))
-})
-
 it('ignores hidden shell overlays and tooltips, and hides a zero-size native view safely', async () => {
   render(<HarnessWebview />)
   await screen.findByTitle('Harness')
@@ -379,25 +206,6 @@ it('ignores hidden shell overlays and tooltips, and hides a zero-size native vie
   await waitFor(() => expect(updates().at(-1)).toMatchObject({ width: 1, visible: false }))
   overlay.remove()
   tooltip.remove()
-})
-
-it('keeps the page behind a shell toast clickable, unlike a real alert dialog', async () => {
-  render(<HarnessWebview />)
-  await screen.findByTitle('Harness')
-  state()
-  const toastItem = document.createElement('div')
-  toastItem.setAttribute('role', 'alertdialog')
-  toastItem.dataset.slot = 'toast'
-  document.body.append(toastItem)
-  await act(async () => {})
-  expect(updates().at(-1)).toMatchObject({ visible: true })
-  expect(screen.getByTitle('Harness').querySelector('img')).toBeNull()
-  const alert = document.createElement('div')
-  alert.setAttribute('role', 'alertdialog')
-  document.body.append(alert)
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
-  alert.remove()
-  toastItem.remove()
 })
 
 it('subscribes to window-targeted native state, keeping boot readiness separate', async () => {
@@ -462,13 +270,11 @@ it('never mutates local health or hides a remote guest because of local errors',
   await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: true }))
 })
 
-it('serializes pending native updates before hiding overlays and releasing the view', async () => {
+it('serializes pending native updates before releasing the view', async () => {
   let finish!: () => void
   mocks.invoke.mockImplementation((command) => {
     if (command === 'prepare_harness_webview')
       return Promise.resolve('guest-local')
-    if (command === 'capture_harness_webview')
-      return Promise.resolve('data:image/png;base64,cGl4ZWw=')
     if (command === 'update_harness_webview' && !finish)
       return new Promise<void>((resolve) => { finish = resolve })
     return Promise.resolve()
@@ -482,7 +288,7 @@ it('serializes pending native updates before hiding overlays and releasing the v
   expect(updates()).toHaveLength(1)
   state()
   await act(async () => finish())
-  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
+  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: true }))
   view.unmount()
   await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith('release_harness_webview', { label: 'guest-local' }))
   overlay.remove()

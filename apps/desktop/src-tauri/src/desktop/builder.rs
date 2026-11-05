@@ -814,6 +814,20 @@ fn with_shell_chrome<'a>(
     Ok(builder)
 }
 
+/// 主窗口壳层注入的初始主题：显式偏好直接取；跟随系统时按窗口拿到的系统外观折算。
+fn main_shell_theme(
+    app: &crate::AppHandle<ElectronRuntime>,
+    system: Option<tauri::Theme>,
+) -> crate::desktop::shell_injection::Theme {
+    use crate::desktop::shell_injection::Theme;
+    match crate::config::get_dsh_theme(app) {
+        crate::config::DshTheme::Light => Theme::Light,
+        crate::config::DshTheme::Dark => Theme::Dark,
+        crate::config::DshTheme::System if system == Some(tauri::Theme::Dark) => Theme::Dark,
+        crate::config::DshTheme::System => Theme::Light,
+    }
+}
+
 pub fn build_main_window(
     app: &crate::AppHandle<ElectronRuntime>,
 ) -> tauri::Result<crate::WebviewWindow<ElectronRuntime>> {
@@ -823,7 +837,22 @@ pub fn build_main_window(
 
     let webview_builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
-            .title(crate::desktop::product_name(app));
+            .title(crate::desktop::product_name(app))
+            .initialization_script(
+                crate::desktop::shell_injection::ShellInjection::new(main_shell_theme(app, None))
+                    .source()
+                    .to_owned(),
+            )
+            .initialization_script_for_all_frames(format!(
+                "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
+                serde_json::to_string(&crate::config::get_dsh_service_url(
+                    crate::service::workflow::instances::scope_sync(
+                        crate::service::workflow::instances::window_profile(app, MAIN_WINDOW_LABEL),
+                        || crate::service::workflow::instances::port(app),
+                    )
+                ))
+                .unwrap_or_default()
+            ));
 
     #[cfg(windows)]
     let webview_builder = webview_builder.visible(false);
@@ -1208,10 +1237,10 @@ mod macos_bundle_tests {
 
 pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'static {
     let handler: fn(Invoke<ElectronRuntime>) -> bool = tauri::generate_handler![
+        crate::desktop::window::host_harness_document,
         crate::desktop::window::prepare_harness_webview,
         crate::desktop::window::release_harness_webview,
         crate::desktop::window::update_harness_webview,
-        crate::desktop::window::capture_harness_webview,
         crate::desktop::window::acquire_browser_guest,
         crate::desktop::window::release_browser_guest,
         crate::bridge::install_dependencies,
@@ -1405,6 +1434,7 @@ fn guest_command_scope_preserves_plugin_actions_and_blocks_shell_control() {
     assert!(guest_command_allowed("write_clipboard_text"));
     assert!(guest_command_allowed("report_plugin_error"));
     for command in [
+        "host_harness_document",
         "prepare_harness_webview",
         "release_harness_webview",
         "update_harness_webview",

@@ -205,6 +205,18 @@ pub fn port<R: tauri::Runtime>(app: &crate::AppHandle<R>) -> u16 {
         .unwrap_or_else(|| crate::config::get_store_dat_setting(app).port)
 }
 
+/// 主窗口文档即 DSH 时，本机服务在 origin 层面的地址；其它窗口返回 `None`。
+pub fn dsh_service_origin(webview: &crate::Webview) -> Option<tauri::Url> {
+    use tauri::Manager;
+    if webview.label() != webview.window().label() {
+        return None;
+    }
+    let app = webview.app_handle();
+    let profile = window_profile(app, webview.window().label());
+    let port = scope_sync(profile, || port(app));
+    tauri::Url::parse(&crate::config::get_dsh_service_url(port)).ok()
+}
+
 pub fn set_port(port: u16) {
     *instance()
         .port

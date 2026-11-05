@@ -1,15 +1,17 @@
 //! 主窗口壳层注入。
 //!
-//! 与 DSH 官方一致：主窗口 webContents 直接加载 DSH 页面，壳层 UI 由 preload 注入。
+//! 与 DSH 官方一致：主窗口 webContents 直接加载 DSH 页面，壳层 UI 注入其上。
 //! 注入必须走 Shadow DOM——壳层 Tailwind 预检实测会把 DSH 的 body 字号、button/input
 //! 排版改掉；Shadow root 双向隔离，壳层样式不外泄、DSH 样式不侵入。
+//!
+//! 壳层需要 Tauri IPC，而 `__TAURI_INTERNALS__` 由 contextBridge 暴露在主世界，故注入
+//! 必须经 `initialization_script`（主世界）而非 `preload_script`（隔离世界）。
 
 use serde_json::json;
 
-// 编译期直接内嵌 dist.shell 产物：不拷贝进 rust 目录，也不依赖运行时的磁盘路径
-// （CARGO_MANIFEST_DIR 是构建机绝对路径，打包后不存在）。
+// 编译期直接内嵌 dist.shell 产物：不拷贝进 rust 目录，也不依赖运行时的磁盘路径。
 const SHELL_CSS: &str = include_str!("../../../dist.shell/shell.css");
-const SHELL_JS: &str = include_str!("../../../dist.shell/shell.iife.js");
+const SHELL_JS: &str = include_str!("../../../dist.shell/shell.mjs");
 
 pub const SHELL_HOST_ATTRIBUTE: &str = "data-dsh-shell-host";
 
@@ -28,7 +30,10 @@ impl Theme {
   }
 }
 
-/// 构造 preload 注入脚本：写入样式与主题，再执行壳层 IIFE 由 `src/shell.ts` 装配。
+/// 构造主窗口初始化脚本：标注文档即 DSH、写入样式与主题，再以 Blob URL 动态 import 壳层。
+///
+/// 壳层产物是 ESM（依赖含顶层 await），不能用自执行脚本注入；Blob URL 在页面源下执行，
+/// 继承主世界，因此 `__TAURI_INTERNALS__` 与 Shadow DOM 都可用。注入幂等：同一文档只执行一次。
 pub struct ShellInjection {
   source: String,
 }
@@ -36,10 +41,20 @@ pub struct ShellInjection {
 impl ShellInjection {
   pub fn new(theme: Theme) -> Self {
     let source = format!(
-      "(() => {{\n  globalThis.__DSH_SHELL_CSS__ = {css};\n  globalThis.__DSH_SHELL_THEME__ = {theme};\n}})();\n{js}",
+      r#"(() => {{
+  globalThis.__DSH_HOSTED__ = true;
+  globalThis.__DSH_SHELL_CSS__ = {css};
+  globalThis.__DSH_SHELL_THEME__ = {theme};
+  // 壳层在主世界执行，那里没有 Node 的 process；依赖会用 process.env 做环境判断。
+  globalThis.process ??= {{ env: {{ NODE_ENV: 'production' }}, emit() {{ return false }}, platform: 'browser', versions: {{}} }};
+  if (globalThis.__DSH_SHELL_LOADED__) return;
+  globalThis.__DSH_SHELL_LOADED__ = true;
+  const url = URL.createObjectURL(new Blob([{js}], {{ type: 'text/javascript' }}));
+  import(url).catch((error) => console.error('[shell] bootstrap failed', error));
+}})();"#,
       css = json!(SHELL_CSS),
       theme = json!(theme.as_str()),
-      js = SHELL_JS,
+      js = json!(SHELL_JS),
     );
     Self { source }
   }
@@ -54,6 +69,11 @@ mod tests {
   use super::*;
 
   #[test]
+  fn injection_marks_the_document_as_hosted() {
+    assert!(ShellInjection::new(Theme::Light).source().contains("__DSH_HOSTED__ = true"));
+  }
+
+  #[test]
   fn injection_hands_css_and_theme_to_the_runtime() {
     let source = ShellInjection::new(Theme::Dark).source();
     assert!(source.contains("__DSH_SHELL_CSS__"));
@@ -62,8 +82,11 @@ mod tests {
   }
 
   #[test]
-  fn injection_appends_the_shell_iife() {
-    assert!(ShellInjection::new(Theme::Light).source().contains("__DSH_SHELL__"));
+  fn injection_appends_the_shell_module() {
+    let source = ShellInjection::new(Theme::Light).source();
+    assert!(source.contains("URL.createObjectURL"));
+    assert!(source.contains("import(url)"));
+    assert!(source.contains("__DSH_SHELL_LOADED__"));
   }
 
   #[test]

@@ -21,10 +21,11 @@ import { ConfigDialog } from '@/ui/dialog/config'
 import { Recovery } from '@/ui/plugin/recovery'
 import { FullSidebarNavbar } from './full-sidebar-navbar'
 import { HarnessWebview } from './harness-webview'
+import { HostedHarness } from './hosted-harness'
 import { Navbar } from './navbar'
 import { Setup } from './setup'
 import { PreinstallSetup } from './setup-preinstall'
-import { isFullSidebarWindow } from './window-presentation'
+import { isFullSidebarWindow, isHostedDocument, isHostedServiceDocument } from './window-presentation'
 
 const REMOTE_SECTION = 'dsh-tauri-remote'
 const REMOTE_TAB_MACHINES = 'machines'
@@ -66,6 +67,16 @@ export function Webview() {
   const remoteMode = activeTunnelUrl !== ''
   const live = status === 'ready' && (remoteMode || serviceHealthy)
   const appearanceCss = useAppearance()
+
+  // keep:effect 主窗口文档即 DSH：本机服务就绪后把当前 webview 导航到 DSH 页面。
+  useEffect(() => {
+    if (isHostedServiceDocument() || !isHostedDocument() || remoteMode)
+      return
+    if (status !== 'ready' || !serviceHealthy || !webviewSrc)
+      return
+    void invoke('host_harness_document', { url: webviewSrc })
+      .catch(error => console.error('[Webview] host document failed:', error))
+  }, [status, serviceHealthy, webviewSrc, remoteMode])
 
   useWatch([activeTunnelUrl, webviewSrc], () => {
     const src = activeTunnelUrl || webviewSrc
@@ -289,12 +300,14 @@ export function Webview() {
       case 'preinstall':
         return <PreinstallSetup />
       case 'ready':
-        return (
-          <HarnessWebview
-            srcOverride={remoteMode ? activeTunnelUrl : null}
-            borderTint={borderTint}
-          />
-        )
+        return isHostedDocument()
+          ? <HostedHarness />
+          : (
+              <HarnessWebview
+                srcOverride={remoteMode ? activeTunnelUrl : null}
+                borderTint={borderTint}
+              />
+            )
       default:
         return <Setup />
     }

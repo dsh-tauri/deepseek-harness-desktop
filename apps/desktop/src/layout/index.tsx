@@ -15,6 +15,7 @@ import { store } from '../store'
 import { Recovery } from '../ui/plugin/recovery'
 import { Webview } from './components/webview'
 import { useFrameChrome } from './components/window-chrome'
+import { isHostedServiceDocument } from './components/window-presentation'
 import '../i18n'
 
 const DESKTOP_UPDATE_POLL_INTERVAL = 10 * 60_000
@@ -66,7 +67,10 @@ export function App() {
     }
   })
 
-  useMount(() => store.harness.startup())
+  useMount(() => {
+    if (!isHostedServiceDocument())
+      store.harness.startup()
+  })
 
   const autoCheckUpdate = settingReady && autoUpdate
   function checkDesktopUpdate() {

@@ -2,10 +2,10 @@
 identifier = "allow-shell-commands"
 description = "Desktop shell commands."
 commands.allow = [
+  "host_harness_document",
   "prepare_harness_webview",
   "release_harness_webview",
   "update_harness_webview",
-  "capture_harness_webview",
   "install_dependencies",
   "check_dsh_update",
   "launch_harness",
