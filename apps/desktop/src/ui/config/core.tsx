@@ -101,7 +101,8 @@ export function ConfigCore() {
   // 版本"（预览版不参与更新判定；本地版本已是最新时不再展示更新入口，避免
   // "已最新仍提示更新"）。
   const localVersion = localCore?.version ?? ''
-  const latestVersion = cores.find(c => c.source === 'app' && !c.preview && !c.aboveRecommended)?.version ?? ''
+  // 随包内核永远是最新候选的首行，但它是安装包自带的那份，不代表远程已有更新。
+  const latestVersion = cores.find(c => c.source === 'app' && !c.bundled && !c.preview)?.version ?? ''
   const hasLocalUpdate = !!(localCore?.present && localVersion && latestVersion && compareVersions(localVersion, latestVersion) < 0)
 
   /** 包裹行内操作：全局单例守卫 + 该行 busy 标记 */
@@ -131,18 +132,12 @@ export function ConfigCore() {
       return
     }
     try {
-      const isRiskyVersion = core.recommendedVersion !== null
-        && (core.aboveRecommended || compareVersions(core.version, core.recommendedVersion) > 0)
       await openDialog({
-        status: isRiskyVersion ? 'danger' : 'warning',
-        title: isRiskyVersion ? t('core.recommended_warning_title') : t('core.switch_confirm_title'),
+        status: 'warning',
+        title: t('core.switch_confirm_title'),
         description: (
           <p>
-            <If
-              cond={isRiskyVersion}
-              then={t('core.recommended_warning_desc', { version: core.recommendedVersion ?? '' })}
-              else={t('core.switch_confirm_desc', { version: displayVersion(core) })}
-            />
+            {t('core.switch_confirm_desc', { version: displayVersion(core) })}
           </p>
         ),
       })
@@ -290,6 +285,10 @@ export function ConfigCore() {
       const message = err instanceof Error ? err.message : String(err)
       if (message === 'CORE_LOCAL_UPDATE_REQUIRES_APP' || message.startsWith('CORE_LOCAL_UPDATE_REQUIRES_APP:')) {
         showLocalUpdateWarning()
+        return
+      }
+      if (message.startsWith('CORE_UPDATE_TARGET_OLDER:')) {
+        toast(t('core.update_local_downgrade'), { variant: 'warning', timeout: 10_000 })
         return
       }
       console.error('[ConfigCore] update local core failed:', err)

@@ -2,6 +2,7 @@ import type { SkillInput, SkillSourceEntry, SkillSourceView } from './skills.typ
 import { lstatSync } from 'node:fs'
 import { isEmpty } from 'lodash-es'
 import { dirname, resolve } from 'pathe'
+import { isMap, parseDocument } from 'yaml'
 import { SKILL_NAME_RE, SKILLS_DATA_DIR } from '../config/constants'
 import { directoryExists } from '../utils/filesystem.utils'
 import { materialDirFor } from '../utils/paths.utils'
@@ -69,34 +70,50 @@ export function validateSkillInput(input: SkillInput): string | null {
 }
 
 export function rewriteSkillContent(text: string, input: SkillInput): string {
-  const { newline, lines } = frontmatterOf(text)
-  const kept = lines.filter(line => !/^(?:name|description|whenToUse|disable-model-invocation|user-invocable):/.test(line))
-  const head = [`name: ${input.name}`, `description: ${JSON.stringify(input.description)}`]
+  const { newline, document } = frontmatterOf(text)
+  document.set('name', input.name)
+  document.set('description', input.description)
   if (!isEmpty(input.whenToUse))
-    head.push(`whenToUse: ${JSON.stringify(input.whenToUse)}`)
-  if (!input.modelInvocable)
-    kept.push('disable-model-invocation: true')
-  if (!input.userInvocable)
-    kept.push('user-invocable: false')
-  const body = input.content.replace(/\r\n/g, '\n').trim()
-  return `---${newline}${[...head, ...kept].join(newline)}${newline}---${newline}${newline}${body}${newline}`
+    document.set('whenToUse', input.whenToUse)
+  else
+    document.delete('whenToUse')
+  if (input.modelInvocable)
+    document.delete('disable-model-invocation')
+  else
+    document.set('disable-model-invocation', true)
+  if (input.userInvocable)
+    document.delete('user-invocable')
+  else
+    document.set('user-invocable', false)
+  const body = input.content.trim().replace(/\r?\n/g, newline)
+  return `---${newline}${document.toString({ lineWidth: 0 }).replace(/\n/g, newline)}---${newline}${newline}${body}${newline}`
 }
 
 export function rewriteSkillPolicy(text: string, enabled: boolean): string {
-  const { newline, lines, body } = frontmatterOf(text)
-  const kept = lines.filter(line => !/^(?:disable-model-invocation|user-invocable):/.test(line))
-  if (!enabled)
-    kept.push('disable-model-invocation: true', 'user-invocable: false')
-  return `---${newline}${kept.join(newline)}${newline}---${body}`
+  const { newline, document, body } = frontmatterOf(text)
+  if (enabled) {
+    document.delete('disable-model-invocation')
+    document.delete('user-invocable')
+  }
+  else {
+    document.set('disable-model-invocation', true)
+    document.set('user-invocable', false)
+  }
+  return `---${newline}${document.toString({ lineWidth: 0 }).replace(/\n/g, newline)}---${body}`
 }
 
-function frontmatterOf(text: string): { newline: string, lines: string[], body: string } {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
+function frontmatterOf(text: string) {
+  const match = /^---(\r?\n)([\s\S]*?)\r?\n---(?=\r?\n|$)/.exec(text)
   if (match === null)
     throw new Error('skill file has no frontmatter block')
+  const document = parseDocument(match[2])
+  if (document.errors.length > 0)
+    throw new Error(`invalid skill frontmatter: ${document.errors[0].message}`)
+  if (!isMap(document.contents))
+    throw new Error('skill frontmatter must be a mapping')
   return {
-    newline: text.includes('\r\n---') ? '\r\n' : '\n',
-    lines: match[1].split(/\r?\n/),
+    newline: match[1],
+    document,
     body: text.slice(match[0].length),
   }
 }

@@ -46,58 +46,60 @@ pub const MAIN_WINDOW_LABEL: &str = "main";
 static EXTRA_WINDOW_SEQ: AtomicU64 = AtomicU64::new(0);
 
 pub fn setup(app_handle: crate::AppHandle) {
-    crate::service::workflow::early::setup(move |prepared| {
-        if !prepared {
-            if let Err(e) = crate::service::plugin::remove_legacy_bundled_plugins(&app_handle) {
-                log::warn!("legacy bundled plugins cleanup skipped: {e}");
-            }
+    if let Err(e) = crate::service::plugin::remove_legacy_bundled_plugins(&app_handle) {
+        log::warn!("legacy bundled plugins cleanup skipped: {e}");
+    }
 
-            crate::service::workflow::sweep_orphan_harness(&app_handle);
+    crate::service::workflow::sweep_orphan_harness(&app_handle);
 
-            let dsh_home = crate::config::get_dsh_data_path(&app_handle);
-            if let Err(e) = crate::service::migrate::heal_stale_pnpm_metadata(&dsh_home) {
-                log::warn!("pnpm modules metadata self-heal skipped: {e}");
-            }
+    // 独立 Node 运行时已废弃：清掉历史安装留下的 `$AppData/runtime`，避免它以
+    // 陈旧文件继续被诊断信息或用户误认为有效运行时。
+    if let Err(e) = crate::service::migrate::remove_legacy_node_runtime(&app_handle) {
+        log::warn!("legacy node runtime cleanup skipped: {e}");
+    }
 
-            crate::service::profile::ensure_desktop_profile(&app_handle);
+    let dsh_home = crate::config::get_dsh_data_path(&app_handle);
+    if let Err(e) = crate::service::migrate::heal_stale_pnpm_metadata(&dsh_home) {
+        log::warn!("pnpm modules metadata self-heal skipped: {e}");
+    }
+
+    crate::service::profile::ensure_desktop_profile(&app_handle);
+
+    crate::service::workflow::instances::window_profile(&app_handle, MAIN_WINDOW_LABEL);
+    crate::service::scheduler::start(&app_handle);
+
+    #[cfg(not(debug_assertions))]
+    crate::desktop::deep_link::init(&app_handle);
+
+    let app_for_start = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let setting = crate::config::get_store_dat_setting(&app_for_start);
+        if !setting.auto_start {
+            log::debug!("auto_start disabled, skipping startup");
+            return;
         }
+        let profile = crate::service::workflow::instances::window_profile(
+            &app_for_start,
+            MAIN_WINDOW_LABEL,
+        );
+        if let Err(e) = crate::service::workflow::instances::scope(
+            profile,
+            crate::service::workflow::start(app_for_start),
+        )
+        .await
+        {
+            log::error!("start failed: {}", e);
+        }
+    });
 
-        crate::service::workflow::instances::window_profile(&app_handle, MAIN_WINDOW_LABEL);
-        crate::service::scheduler::start(&app_handle);
-
-        #[cfg(not(debug_assertions))]
-        crate::desktop::deep_link::init(&app_handle);
-
-        let app_for_start = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            let setting = crate::config::get_store_dat_setting(&app_for_start);
-            if !setting.auto_start {
-                log::debug!("auto_start disabled, skipping startup");
-                return;
-            }
-            let profile = crate::service::workflow::instances::window_profile(
-                &app_for_start,
-                MAIN_WINDOW_LABEL,
-            );
-            if let Err(e) = crate::service::workflow::instances::scope(
-                profile,
-                crate::service::workflow::start(app_for_start),
-            )
-            .await
-            {
-                log::error!("start failed: {}", e);
-            }
-        });
-
-        tauri::async_runtime::spawn(async move {
-            let setting = crate::config::get_store_dat_setting(&app_handle);
-            if !setting.installed || !setting.cli_link_enabled {
-                return;
-            }
-            if let Err(e) = crate::service::cli::ensure(&app_handle) {
-                log::warn!("cli link self-heal failed: {e}");
-            }
-        });
+    tauri::async_runtime::spawn(async move {
+        let setting = crate::config::get_store_dat_setting(&app_handle);
+        if !setting.installed || !setting.cli_link_enabled {
+            return;
+        }
+        if let Err(e) = crate::service::cli::ensure(&app_handle) {
+            log::warn!("cli link self-heal failed: {e}");
+        }
     });
 }
 

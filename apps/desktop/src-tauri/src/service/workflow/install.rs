@@ -56,10 +56,9 @@ pub async fn install(
     let dsh_missing = !download::Dsh.check_installed(app_handle);
     if dsh_latest.is_none() && dsh_missing {
         for attempt in 0..3 {
-            let metadata = match config::recommended_dsh_version(app_handle) {
-                Some(version) => download::fetch_dsh_pkg_version(app_handle, &version).await,
-                None => download::fetch_latest_dsh_pkg_info(app_handle).await,
-            };
+            // 安装目标跟随最新稳定发行版（推荐版本策略已废弃）：否则「提示有稳定版更新」
+            // 与「安装后仍是旧推荐版」会互相打脸。
+            let metadata = download::fetch_latest_dsh_pkg_info(app_handle).await;
             match metadata {
                 Ok(info) => {
                     dsh_latest = Some(info);
@@ -173,9 +172,6 @@ pub async fn install(
         let buffer = download::download_file_from_sources(&tracker, urls).await?;
         log::info!("Download completed, file size: {} bytes", buffer.len());
         let expected_digest = match kind {
-            download::InstallKind::Node => {
-                download::fetch_node_sha256(app_handle, task.get_download_url()?.as_str()).await?
-            }
             download::InstallKind::Dsh => {
                 // 元数据已在安装任务开始前获取，确保下载地址与摘要来自同一 release。
                 dsh_latest

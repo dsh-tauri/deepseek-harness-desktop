@@ -67,15 +67,11 @@ pub struct HarnessCore {
     /// `download::is_preview_tag`）：预览版不参与自动更新提示，但可在核心列表
     /// 手动下载安装，并以「预览版」标签展示。
     pub preview: bool,
-    /// 当前版本是否高于资源清单中的推荐版本。
-    pub above_recommended: bool,
     /// 本地存在但远程 pkg 仓库已不再提供的历史槽位。
     pub orphaned: bool,
     /// 是否随安装包分发（离线包把内核托管到 `$Resources/dsh`）：核心面板把它置顶并
     /// 标记「本地」，且不提供卸载——它是内网/离线环境唯一的兜底内核。
     pub bundled: bool,
-    /// 资源清单中的推荐版本，用于切换前风险提示。
-    pub recommended_version: Option<String>,
     pub error: Option<String>,
 }
 

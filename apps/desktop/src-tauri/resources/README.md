@@ -2,9 +2,11 @@
 
 This directory is bundled into the installer as `resources/**`.
 
-The current recommended Harness core is `0.2.2-rc.1`; the minimum supported core
-is `0.2.1-rc.1`. Earlier core versions are unsupported. Legacy data-location notes
-below describe migration history, not support for earlier Harness versions.
+Both the bundled offline installer and update checks follow the newest stable
+release in the package repository — the manifest declares no pinned "recommended"
+core any more. The minimum supported core is `0.2.1-rc.1`; earlier core versions
+are unsupported. Legacy data-location notes below describe migration history, not
+support for earlier Harness versions.
 
 At runtime, the application downloads everything it needs into the OS user-data
 directory (the Tauri app-data dir for identifier `dsh-tauri`, e.g.
@@ -50,7 +52,7 @@ mapping entry**.
 
 ```jsonc
 {
-  "engines": { "dsh": { "recommend": "0.2.2-rc.1", "minimum": "0.2.1-rc.1" } },
+  "engines": { "dsh": { "minimum": "0.2.1-rc.1" } },
   "dependencies": {
     "node": {
       "engine": ">=22.22.0",
@@ -78,7 +80,6 @@ relative path).
 
 | Section | Purpose |
 | ------- | ------- |
-| `engines.dsh.recommend` | Recommended core version (update hints, "above recommended" marks) |
 | `engines.dsh.minimum` | Lowest supported core (`0.2.1-rc.1`); earlier cores are unsupported |
 | `dependencies` | Dependency mapping spec: entry path per platform, default managed root, whether arbitrary overrides are allowed |
 | `plugins.preset` | Community preset list shown by the first-run wizard / sidebar |
@@ -129,8 +130,9 @@ so the install screen is never entered for a download that cannot succeed.
 Every asset is SHA-256 verified before unpacking (Node against the official
 `SHASUMS256.txt`, the core against its GitHub release digest, pnpm/MinGit against the
 pins in `src-tauri/src/config/constants.rs`). Versions and download prefixes are read from
-that same file, and the core version from this manifest's `engines.dsh.recommend`, so the
-bundle never drifts from what the app would otherwise download.
+that same file, and the core version is resolved from the newest stable release in
+the package repository, so the bundle never drifts from what the app would
+otherwise download.
 
 The step then rewrites **this file** so every bundled dependency resolves through the
 installer's own resources:

@@ -208,6 +208,15 @@ fn append_package_tree(
     dir: &Path,
     prefix: &Path,
 ) -> Result<(), String> {
+    let metadata = fs::metadata(dir).map_err(|e| format!("SNAPSHOT_METADATA: {e}"))?;
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Directory);
+    header.set_mode(snapshot_mode(&metadata));
+    header.set_size(0);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, prefix, std::io::empty())
+        .map_err(|e| format!("SNAPSHOT_APPEND_DIR: {e}"))?;
     for entry in fs::read_dir(dir).map_err(|e| format!("SNAPSHOT_READDIR: {e}"))? {
         let entry = entry.map_err(|e| format!("SNAPSHOT_ENTRY: {e}"))?;
         let path = entry.path();
@@ -218,20 +227,12 @@ fn append_package_tree(
         }
         let rel = prefix.join(entry.file_name());
         if meta.is_dir() {
-            let mut header = tar::Header::new_gnu();
-            header.set_entry_type(tar::EntryType::Directory);
-            header.set_mode(0o755);
-            header.set_size(0);
-            header.set_cksum();
-            builder
-                .append_data(&mut header, &rel, std::io::empty())
-                .map_err(|e| format!("SNAPSHOT_APPEND_DIR: {e}"))?;
             append_package_tree(builder, &path, &rel)?;
         } else {
             let file = fs::File::open(&path).map_err(|e| format!("SNAPSHOT_OPEN: {e}"))?;
             let mut header = tar::Header::new_gnu();
             header.set_size(meta.len());
-            header.set_mode(0o644);
+            header.set_mode(snapshot_mode(&meta));
             header.set_cksum();
             builder
                 .append_data(&mut header, &rel, file)
@@ -239,6 +240,16 @@ fn append_package_tree(
         }
     }
     Ok(())
+}
+
+fn snapshot_mode(metadata: &fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o777
+    }
+    #[cfg(not(unix))]
+    if metadata.is_dir() { 0o755 } else { 0o644 }
 }
 
 /// 创建快照归档：写入临时文件 → fsync → rename 到目标（同盘原子替换）。
@@ -746,6 +757,53 @@ pub async fn restore(app_handle: &AppHandle, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_round_trip_preserves_executable_and_private_file_modes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("source");
+        fs::create_dir_all(package.join("private")).unwrap();
+        for (name, mode) in [("helper", 0o751), ("private/config", 0o600)] {
+            let path = package.join(name);
+            fs::write(&path, b"original").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        }
+        fs::set_permissions(&package, fs::Permissions::from_mode(0o750)).unwrap();
+        fs::set_permissions(package.join("private"), fs::Permissions::from_mode(0o700)).unwrap();
+        let archive = root.path().join("snapshot.tgz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(encoder);
+        append_package_tree(&mut builder, &package, Path::new("package")).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        let target = root.path().join("restored");
+        crate::service::backup::archive::extract_archive_gzip(&archive, &target).unwrap();
+        for (name, expected) in [("helper", 0o751), ("private/config", 0o600)] {
+            let restored = target.join("package").join(name);
+            assert_eq!(fs::read(&restored).unwrap(), b"original");
+            assert_eq!(
+                fs::metadata(restored).unwrap().permissions().mode() & 0o7777,
+                expected,
+                "{name}"
+            );
+        }
+        for (name, expected) in [("package", 0o750), ("package/private", 0o700)] {
+            assert_eq!(
+                fs::metadata(target.join(name))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                expected,
+                "{name}"
+            );
+        }
+    }
 
     /// 构造临时 node_modules 下插件包目录（真实目录形态，非 pnpm 链接）。
     fn setup_package(root: &Path, name: &str) {

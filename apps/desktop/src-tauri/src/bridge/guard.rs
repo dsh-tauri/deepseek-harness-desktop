@@ -25,7 +25,6 @@ pub fn allowed_roots(app_handle: &AppHandle) -> Vec<PathBuf> {
     // 依赖映射表解析出的安装根：依赖可被映射到任意位置（含 `resources/*` 捆绑
     // 副本），核心/环境面板的「打开目录」必须能打开它们。
     for key in [
-        crate::config::dependencies::DEP_NODE,
         crate::config::dependencies::DEP_PNPM,
         crate::config::dependencies::DEP_DSH,
     ] {
