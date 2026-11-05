@@ -5,18 +5,18 @@
 //! 防止第三方镜像投毒未被察觉；官方 GitHub 直连在摘要缺失时仍可按旧行为下载，
 //! 下载后若有摘要则强制校验。
 
-use crate::{AppHandle};
+use crate::AppHandle;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use tauri::{ Emitter, Manager};
+use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::config;
 use crate::service::workflow;
 
-use super::meta::{fetch_latest_release, LatestRelease};
+use super::meta::{LatestRelease, fetch_latest_release};
 use super::version::current_version;
 use super::{DOWNLOAD_TIMEOUT_SECS, UPDATES_DIR};
 
@@ -161,7 +161,7 @@ async fn download_from_source(
     client: &reqwest::Client,
     url: &str,
     tmp: &std::path::Path,
-    app_handle: &AppHandle,
+    emit: &impl Fn(DesktopDownloadProgress),
 ) -> Result<(), String> {
     log::info!("Downloading desktop installer from {}", url);
     let res = client
@@ -187,15 +187,12 @@ async fn download_from_source(
         } else {
             0.0
         };
-        let _ = app_handle.emit(
-            "desktop-update-progress",
-            DesktopDownloadProgress {
-                percentage: pct,
-                downloaded,
-                total,
-                message: None,
-            },
-        );
+        emit(DesktopDownloadProgress {
+            percentage: pct,
+            downloaded,
+            total,
+            message: None,
+        });
     }
     drop(file);
     Ok(())
@@ -292,30 +289,56 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
         .await?
         .ok_or_else(|| "UPDATE_NONE".to_string())?;
     let path = installer_path(app_handle, &release.asset_name)?;
-
-    if path.exists() {
-        log::info!("Installer already downloaded: {}", path.display());
-        // 已落盘的安装包同样登记为「待安装」：覆盖「上一轮下载后 store 标记丢失」
-        // （store 被手工清理/旧版本尚无此标记）的场景，保证退出时仍会自动更新。
-        super::pending::set(app_handle, Some((path.as_path(), &release.version)));
-        return check(app_handle)
-            .await?
-            .ok_or_else(|| "UPDATE_NONE".to_string());
+    if !path.exists() {
+        let client = download_client(app_handle)?;
+        download_installer(&client, &release, &path, |progress| {
+            let _ = app_handle.emit("desktop-update-progress", progress);
+        })
+        .await?;
     }
+    super::pending::set(app_handle, Some((path.as_path(), &release.version)));
+    Ok(DesktopUpdateInfo {
+        version: release.version,
+        current_version: current_version(),
+        tag: release.tag,
+        published_at: release.published_at,
+        url: release.url,
+        asset_name: release.asset_name,
+        path: path.to_string_lossy().into_owned(),
+        downloaded: true,
+    })
+}
 
-    let client = download_client(app_handle)?;
-
+async fn download_installer(
+    client: &reqwest::Client,
+    release: &LatestRelease,
+    path: &std::path::Path,
+    emit: impl Fn(DesktopDownloadProgress),
+) -> Result<(), String> {
+    static DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _download = DOWNLOAD_LOCK.lock().await;
+    if path.exists() {
+        return Ok(());
+    }
     // 官方直连 → （可选）多个 GitHub 代理镜像兜底。安装包无 SHA-256 元数据，切换源时
     // 丢弃上一源的部分字节从头下载，避免混用两个源的字节流。
     // 安全策略：镜像兜底要求已有可信摘要，否则不提供镜像（宁可失败）。
-    let urls = download_sources(&release);
+    let urls = download_sources(release);
     if urls.len() == 1 {
         log::warn!(
             "No SHA-256 digest available for {}, mirror fallback disabled",
             release.asset_name
         );
     }
-    let tmp = path.with_extension("part");
+    let parent = path
+        .parent()
+        .ok_or("UPDATE_FILE: installer has no parent directory")?;
+    let tmp = tempfile::Builder::new()
+        .prefix(".installer-")
+        .suffix(".part")
+        .tempfile_in(parent)
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?
+        .into_temp_path();
     let mut last_err = String::new();
     for (index, url) in urls.iter().enumerate() {
         if index > 0 {
@@ -328,19 +351,14 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
                 "Primary desktop update source failed, switching to fallback: {}",
                 url
             );
-            let _ = app_handle.emit(
-                "desktop-update-progress",
-                DesktopDownloadProgress {
-                    percentage: 0.0,
-                    downloaded: 0,
-                    total: 0,
-                    message: Some(format!("主下载源不可用，已切换镜像源重试（{host}）")),
-                },
-            );
+            emit(DesktopDownloadProgress {
+                percentage: 0.0,
+                downloaded: 0,
+                total: 0,
+                message: Some(format!("主下载源不可用，已切换镜像源重试（{host}）")),
+            });
         }
-        // 先写临时文件再原子改名，避免下载中断残留半成品被误判为「已下载」
-        let _ = std::fs::remove_file(&tmp);
-        match download_from_source(&client, url, &tmp, app_handle).await {
+        match download_from_source(client, url, &tmp, &emit).await {
             Ok(()) => {
                 last_err.clear();
                 break;
@@ -358,26 +376,16 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
     // 完整性校验：摘要存在（镜像路径必有）则强制校验，校验失败即拒绝，
     // 不保留为可安装文件，也不能被 open_installer 打开。流式校验避免整块读入内存。
     if let Some(digest) = &release.digest {
-        if let Err(e) = verify_installer_sha256(&tmp, digest) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("UPDATE_DOWNLOAD: {e}"));
-        }
+        verify_installer_sha256(&tmp, digest).map_err(|e| format!("UPDATE_DOWNLOAD: {e}"))?;
         log::info!("Installer SHA-256 verified for {}", release.asset_name);
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| format!("UPDATE_FILE: {e}"))?;
-
-    // Linux 下为安装包补充可执行位（AppImage 需要），否则会「下载成功但无法打开」
     #[cfg(unix)]
-    ensure_installer_executable(&path)?;
+    ensure_installer_executable(&tmp)?;
+    tmp.persist_noclobber(path)
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
 
-    // 登记「待安装」：用户若没在对话框里立刻安装，关闭桌面端时会自动打开安装器
-    // （见 pending::launch_pending_installer）；真正打开安装包后清除该标记。
-    super::pending::set(app_handle, Some((path.as_path(), &release.version)));
-
-    check(app_handle)
-        .await?
-        .ok_or_else(|| "UPDATE_NONE".to_string())
+    Ok(())
 }
 
 /// 校验已规范化的安装包路径确实位于 updates 目录内（防 `..`、符号链接、路径穿越）。
@@ -813,6 +821,189 @@ async fn release_appimage_instance<R: tauri::Runtime>(
 mod tests {
     use super::*;
 
+    fn local_release(url: String) -> LatestRelease {
+        LatestRelease {
+            version: "99.0.0".into(),
+            tag: "v99.0.0".into(),
+            published_at: "2026-11-05T00:00:00Z".into(),
+            url,
+            asset_name: "installer.AppImage".into(),
+            digest: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_downloads_publish_one_complete_installer() {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("installer.AppImage");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let release = local_release(format!(
+                "http://{}/installer",
+                listener.local_addr().unwrap()
+            ));
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap();
+            let started = std::sync::Arc::new(tokio::sync::Notify::new());
+            let first = tokio::spawn({
+                let (client, release, path, started) = (
+                    client.clone(),
+                    release.clone(),
+                    path.clone(),
+                    started.clone(),
+                );
+                async move {
+                    download_installer(&client, &release, &path, |_| started.notify_one()).await
+                }
+            });
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabc")
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(5), started.notified())
+                .await
+                .unwrap();
+            let (polled, second_polled) = tokio::sync::oneshot::channel();
+            let second = tokio::spawn({
+                let path = path.clone();
+                async move {
+                    use std::future::Future;
+                    let future = download_installer(&client, &release, &path, |_| {});
+                    tokio::pin!(future);
+                    let mut polled = Some(polled);
+                    std::future::poll_fn(|cx| {
+                        let result = future.as_mut().poll(cx);
+                        if let Some(polled) = polled.take() {
+                            let _ = polled.send(());
+                        }
+                        result
+                    })
+                    .await
+                }
+            });
+            second_polled.await.unwrap();
+            let duplicate =
+                tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+            if duplicate.is_ok() {
+                first.abort();
+                second.abort();
+            }
+            assert!(
+                duplicate.is_err(),
+                "a second caller must reuse the in-flight installer download"
+            );
+            socket.write_all(b"def").await.unwrap();
+            first.await.unwrap().unwrap();
+            second.await.unwrap().unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"abcdef");
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        })
+        .await
+        .expect("installer regression timed out");
+    }
+
+    #[tokio::test]
+    async fn cancelled_download_removes_partial_file() {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("installer.AppImage");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let release = local_release(format!(
+                "http://{}/installer",
+                listener.local_addr().unwrap()
+            ));
+            let started = std::sync::Arc::new(tokio::sync::Notify::new());
+            let task = tokio::spawn({
+                let (path, started) = (path.clone(), started.clone());
+                async move {
+                    let client = reqwest::Client::builder()
+                        .no_proxy()
+                        .timeout(Duration::from_secs(5))
+                        .build()
+                        .unwrap();
+                    download_installer(&client, &release, &path, |_| started.notify_one()).await
+                }
+            });
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabc")
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(5), started.notified())
+                .await
+                .unwrap();
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            assert!(!path.exists());
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+            std::fs::write(&path, b"complete").unwrap();
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap();
+            let release = local_release("http://127.0.0.1:1/unneeded".into());
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                download_installer(&client, &release, &path, |_| {}),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(std::fs::read(path).unwrap(), b"complete");
+        })
+        .await
+        .expect("installer regression timed out");
+    }
+
+    #[tokio::test]
+    async fn failed_integrity_check_never_publishes_an_installer() {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("installer.AppImage");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut release = local_release(format!(
+                "http://{}/installer",
+                listener.local_addr().unwrap()
+            ));
+            release.digest = Some("0".repeat(64));
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                socket.read(&mut request).await.unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
+                    )
+                    .await
+                    .unwrap();
+            });
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap();
+            let result = download_installer(&client, &release, &path, |_| {}).await;
+            server.await.unwrap();
+            assert!(result.unwrap_err().contains("INTEGRITY_CHECK_FAILED:"));
+            assert!(!path.exists());
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        })
+        .await
+        .expect("installer regression timed out");
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn appimage_instance_release_from_async_command_allows_a_new_instance() {
@@ -1030,10 +1221,12 @@ mod tests {
         }
         prune_installers_in_dir(dir.path(), &[]).unwrap();
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
-        assert!(std::fs::symlink_metadata(link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata(link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 6);
     }
 
