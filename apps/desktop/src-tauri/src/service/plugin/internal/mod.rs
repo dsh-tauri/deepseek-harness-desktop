@@ -1532,20 +1532,12 @@ mod tests {
                     assert_eq!(std::fs::read(&path).unwrap(), bytes);
                 }
 
-                let recovery_profile = if home_layer {
-                    let safe = home.join("profiles/safe");
-                    std::fs::create_dir_all(&safe).unwrap();
-                    safe
-                } else {
-                    profile
-                };
-                let report =
-                    super::super::patch_guard::quarantine_patch_layers_in(&recovery_profile, home);
+                let report = super::super::patch_guard::quarantine_patch_layers_in(&profile, home);
                 assert!(!report.has_failures(), "{report:?}");
                 assert_eq!(report.quarantined.len(), 1);
                 assert_eq!(std::fs::read(&report.quarantined[0].backup).unwrap(), bytes);
                 assert_eq!(
-                    repair_loader_state(&recovery_profile, home, &[], &mut None, true),
+                    repair_loader_state(&profile, home, &[], &mut None, true),
                     Ok(false)
                 );
             }

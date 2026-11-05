@@ -1,4 +1,4 @@
-import { CircleExclamation, ShieldCheck } from '@gravity-ui/icons'
+import { CircleExclamation } from '@gravity-ui/icons'
 import { Button, Chip, Description, Spinner } from '@heroui/react'
 import { useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
@@ -160,12 +160,6 @@ export function Recovery({ fullScreen = false }: { fullScreen?: boolean }) {
             </Button>
             <Button variant="tertiary" onPress={() => store.harness.restart()}>
               {t('recovery.restart')}
-            </Button>
-            <Button variant="ghost" onPress={() => store.harness.enterSafeMode()}>
-              <span className="flex items-center gap-1">
-                <ShieldCheck className="size-4" />
-                {t('buttons.safe_mode')}
-              </span>
             </Button>
             <Button variant="ghost" onPress={() => store.recovery.dismissRecovery()}>
               {t('recovery.dismiss')}

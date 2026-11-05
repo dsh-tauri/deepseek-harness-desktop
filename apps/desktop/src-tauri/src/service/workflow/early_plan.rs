@@ -405,7 +405,6 @@ mod tests {
             ("language", json!(null)),
             ("active_core", json!(null)),
             ("active_core", json!("local")),
-            ("active_profile", json!("safe")),
             ("active_profile", json!("tauri")),
             ("active_profile", json!("custom")),
             ("active_profile", json!("web")),

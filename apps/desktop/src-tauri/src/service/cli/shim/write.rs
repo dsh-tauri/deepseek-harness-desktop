@@ -76,8 +76,8 @@ pub fn is_generated_shim(path: &Path) -> bool {
 /// 带 BOM 的 UTF-8 `.ps1`。此前一律写 UTF-8：一旦烘焙进内容的绝对路径含非 ASCII
 /// （用户名 `小蔡`、含中文的安装目录），`if exist "%PNPM_BIN%"` 判定就落空，shim
 /// 走 `:no_pnpm` 以退出码 1 结束，`dsh plugin add` 随之失败并让 Harness 启动停在
-/// `INTERNAL_PLUGIN_INSTALL_FAILED: PREINSTALL_FAILED`（重试/安全模式都走同一条
-/// preinstall，因此永远无法恢复）。纯 ASCII 内容保持原字节，行为完全不变。
+/// `INTERNAL_PLUGIN_INSTALL_FAILED: PREINSTALL_FAILED`（重试走同一条 preinstall，
+/// 因此永远无法恢复）。纯 ASCII 内容保持原字节，行为完全不变。
 fn encode_shim(target: &Path, content: &str) -> Vec<u8> {
     #[cfg(not(windows))]
     let _ = target;

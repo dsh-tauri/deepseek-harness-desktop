@@ -61,9 +61,8 @@ const STARTUP_STATUS_KEYS: Record<StartupPhase, string> = {
 
 /** 补丁层修复动作的失败日志前缀（保留各入口原有的可检索文案） */
 const PATCH_REPAIR_LOG: Record<PatchRepairAction, string> = {
-  'safe-mode': '[Harness] enter safe mode failed:',
-  'quarantine': '[Harness] quarantine broken patch layers failed:',
-  'strip': '[Harness] strip unresolved patch entries failed:',
+  quarantine: '[Harness] quarantine broken patch layers failed:',
+  strip: '[Harness] strip unresolved patch entries failed:',
 }
 
 const initialInstaller: InstallerState = {
@@ -858,22 +857,6 @@ export const harness = defineStore({
     },
 
     /**
-     * 进入安全模式：切到 safe 档案（仅核心 bundles、无用户插件）并重启服务。
-     * 启动失败的插件（如 pending waiting for service）被隔离，应用先恢复可用；
-     * 用户在档案列表切回原档案即退出安全模式。
-     *
-     * 后端同时会隔离「解析不了的补丁层」（安全档案层 + home 层，见
-     * `service::plugin::patch_guard`）：home 层作用于所有档案，不隔离的话一处
-     * 手写笔误会让安全模式也起不来（issue #525）。结果用 toast 告知备份路径。
-     */
-    async enterSafeMode() {
-      await this.runPatchRepair('safe-mode', async () => {
-        const report = await invoke<PatchQuarantineReport>('enter_safe_mode')
-        notifyPatchQuarantine(report)
-      })
-    },
-
-    /**
      * 隔离解析不了的补丁层（当前档案层 + home 层）并重启：错误页在补丁层语法
      * 错误时的专用恢复入口，让用户留在自己的档案里恢复，不切档案、不动插件。
      * 补丁文件只改名保存为 `.broken-<时间戳>` 备份，修好语法后改回原名即可恢复。
@@ -931,10 +914,7 @@ export const harness = defineStore({
       finally {
         this.busyAction = null
       }
-      if (action === 'safe-mode')
-        await this.start()
-      else
-        await this.restart()
+      await this.restart()
     },
 
     /** 停止服务并回到停止态界面 */
@@ -964,19 +944,6 @@ export const harness = defineStore({
       this.patchLayerHint = ''
       this.heapOomHint = ''
       recovery.reset()
-    },
-
-    /** 服务未运行时点击"重试"：重新拉起服务并等待健康检查 */
-    async start() {
-      if (this.busyAction)
-        return
-      this.busyAction = 'start'
-      try {
-        await this.boot()
-      }
-      finally {
-        this.busyAction = null
-      }
     },
 
     /** 在系统浏览器中打开服务地址 */

@@ -11,7 +11,6 @@ commands.allow = [
   "launch_harness",
   "shutdown_harness",
   "restart_harness",
-  "enter_safe_mode",
   "quarantine_broken_patch_layers",
   "strip_unresolved_patch_entries",
   "get_dsh_status",
