@@ -1742,7 +1742,9 @@ fn run_command(
     cwd: &Path,
 ) -> Result<std::process::Output, String> {
     let mut command = Command::new(program);
+    // 可执行文件是 Electron：不进 Node 模式会当 GUI 启动（无显示器时直接失败）。
     command
+        .env("ELECTRON_RUN_AS_NODE", "1")
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())
@@ -1765,7 +1767,9 @@ fn run_process_with_timeout(
     label: &str,
 ) -> Result<std::process::Output, String> {
     let mut command = Command::new(program);
+    // 可执行文件是 Electron：不进 Node 模式会当 GUI 启动（无显示器时直接失败）。
     command
+        .env("ELECTRON_RUN_AS_NODE", "1")
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())

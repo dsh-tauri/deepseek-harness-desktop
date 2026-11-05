@@ -35,6 +35,9 @@ pub(crate) fn build_plugin_envs(
         ),
         ("DSH_TELEMETRY_DISABLED".to_string(), "1".to_string()),
         ("NO_COLOR".to_string(), "1".to_string()),
+        // 子进程的可执行文件就是 Electron：不进 Node 模式会当 GUI 启动并立刻退出
+        // （表现为 `dsh plugin exited with code -1`）。
+        ("ELECTRON_RUN_AS_NODE".to_string(), "1".to_string()),
         // pnpm 在非 TTY 子进程里拒绝「清空 node_modules 重建」，直接
         // `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 退出 1；pnpm 11 起也不再读
         // profile `.npmrc` 的 `confirmModulesPurge`，于是 `dsh plugin install` 每次
