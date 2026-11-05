@@ -786,7 +786,13 @@ async fn prepare_internal_plugins_for_install(
     ),
     String,
 > {
-    let operation = super::process::acquire_operation_lock().await?;
+    let mut cancel_wait = cancel.clone();
+    let operation = tokio::select! {
+        operation = super::process::acquire_operation_lock() => operation?,
+        _ = cancel_wait.wait_for(|cancelled| *cancelled) => {
+            return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
+        }
+    };
     if *cancel.borrow() {
         return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
     }
@@ -1366,7 +1372,6 @@ mod tests {
                 .is_err()
         );
         cancel_tx.send(true).unwrap();
-        drop(operation);
         let result = tokio::time::timeout(Duration::from_secs(5), preparation)
             .await
             .unwrap();
@@ -1378,6 +1383,7 @@ mod tests {
             std::fs::read(profile.join("package.json")).unwrap(),
             manifest
         );
+        drop(operation);
     }
 
     fn builtin(id: &str) -> PreinstallPluginInfo {
