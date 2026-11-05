@@ -61,6 +61,7 @@
   "update.up_to_date": "최신 버전입니다.",
   "update.distro_managed": "이 앱은 시스템 패키지 관리자가 관리합니다. 패키지 관리자로 업데이트하세요.",
   "update.check_failed": "업데이트를 확인하지 못했습니다. 네트워크를 확인하고 나중에 다시 시도하십시오.",
+  "update.media_unsupported": "이 설치 방식은 앱 안에서 교체할 수 없습니다. 원래 설치한 경로(시스템 패키지 관리자)로 업데이트하세요.",
   "update.verify_failed": "지금은 업데이트할 수 없습니다. GitHub 요청 제한으로 새 빌드를 검증하지 못했습니다. 나중에 다시 시도하세요",
   "update.desktop_title": "새 버전 사용 가능",
   "update.new_version_label": "새 버전",

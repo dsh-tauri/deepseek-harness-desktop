@@ -61,6 +61,7 @@
   "update.up_to_date": "You're up to date",
   "update.distro_managed": "This app is managed by your system package manager. Please update it with your package manager.",
   "update.check_failed": "Failed to check for updates — check your network and try again later",
+  "update.media_unsupported": "This installation can't be replaced in place. Update it through the channel you installed it from (your system package manager).",
   "update.verify_failed": "Couldn't update right now: GitHub is rate-limited, so the new build couldn't be verified. Please try again later",
   "update.desktop_title": "New version available",
   "update.new_version_label": "New version",

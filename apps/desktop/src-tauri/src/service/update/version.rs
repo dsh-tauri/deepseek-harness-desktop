@@ -141,6 +141,33 @@ fn linux_package_family() -> &'static str {
     }
 }
 
+/// 当前进程若由 AppImage 镜像直接拉起，返回该镜像文件本身的路径。
+///
+/// `APPIMAGE` 由 AppRun 注入，指向用户实际保存的镜像（而非 `/tmp/.mount_*` 挂载点），
+/// 因此可以直接用来覆盖本体；没有该变量但可执行文件名带 `.AppImage` 后缀，同样按
+/// 便携镜像处理。纯函数：两个输入都由调用方给出，任意 CI 平台都能断言。
+#[cfg(target_os = "linux")]
+fn running_appimage_from(
+    appimage: Option<&str>,
+    exe: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    match appimage.filter(|path| !path.is_empty()) {
+        Some(path) => Some(std::path::PathBuf::from(path)),
+        None => exe
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
+            .then(|| exe.to_path_buf()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn running_appimage() -> Option<std::path::PathBuf> {
+    running_appimage_from(
+        std::env::var("APPIMAGE").ok().as_deref(),
+        &std::env::current_exe().unwrap_or_default(),
+    )
+}
+
 /// 当前这份安装是怎么跑起来的：`"appimage"` 为便携镜像直接运行，`"package"` 为已
 /// 落到系统目录、由桌面条目/命令名拉起（deb、rpm、AUR 或手工解包都算这类）。
 ///
@@ -148,11 +175,7 @@ fn linux_package_family() -> &'static str {
 /// CI 平台上构造断言（同 [`arch_rank_for`]）。
 #[cfg(target_os = "linux")]
 fn linux_install_media_for(appimage: Option<&str>, exe: &std::path::Path) -> &'static str {
-    if appimage.is_some_and(|path| !path.is_empty())
-        || exe
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
-    {
+    if running_appimage_from(appimage, exe).is_some() {
         "appimage"
     } else {
         "package"
@@ -181,18 +204,63 @@ fn linux_prefs(family: &str, media: &str) -> &'static [&'static str] {
 
 /// 下载的安装包能否就地替换当前安装（纯函数，判定见 [`linux_install_media_for`]）。
 ///
-/// 系统包安装 + 包管理家族无法判定（pacman/AUR、tar 解包）时，deb/rpm 没有可执行的
-/// 包管理器，AppImage 只会「另跑一份」：桌面条目仍指向旧版本，用户点完「立即更新」
-/// 版本没变，且旧版本继续被当成最新。
+/// 两种无法就地替换的情形都必须提前拒绝，否则用户点完「立即更新」版本号不变：
+/// - 系统包安装 + 包管理家族无法判定（pacman/AUR、tar 解包）：没有能装 deb/rpm 的
+///   包管理器，AppImage 只会「另跑一份」，桌面条目仍指向旧版本。
+/// - 系统包安装，但当前运行的二进制不属于该家族的包（Ubuntu 上从用户目录跑的
+///   手工解包程序）：安装 .deb 只写系统目录，用户的原启动入口依旧是旧版本。
 #[cfg(target_os = "linux")]
-fn self_updatable_for(media: &str, family: &str) -> bool {
-    media == "appimage" || family != "unknown"
+fn self_updatable_for(media: &str, family: &str, packaged: bool) -> bool {
+    media == "appimage" || (family != "unknown" && packaged)
+}
+
+/// 运行中的可执行文件是否由该家族的包管理器登记在案（`dpkg -S` / `rpm -qf`）。
+///
+/// 符号链接入口（`/usr/bin/x` → `/usr/lib/x/y`）只有一端出现在包的文件列表里，
+/// 所以原路径与真实路径都查一次。包管理器优先用绝对路径：桌面会话的 `PATH` 未必
+/// 含 `/usr/bin`（`fix-path-env` 就是为此存在的），找不到 dpkg 会被误判成「不归包管
+/// 理」，进而把能正常更新的 deb 用户挡在门外。
+#[cfg(target_os = "linux")]
+fn exe_owned_by_package_for(family: &str, exe: &std::path::Path) -> bool {
+    let (program, flag) = match family {
+        "deb" => ("/usr/bin/dpkg", "-S"),
+        "rpm" => ("/usr/bin/rpm", "-qf"),
+        _ => return false,
+    };
+    let program = match std::path::Path::new(program).exists() {
+        true => program,
+        false => program.rsplit('/').next().unwrap_or(program),
+    };
+    let mut paths = vec![exe.to_path_buf()];
+    if let Ok(real) = std::fs::canonicalize(exe) {
+        if real != exe {
+            paths.push(real);
+        }
+    }
+    paths.iter().any(|path| {
+        std::process::Command::new(program)
+            .arg(flag)
+            .arg(path)
+            .output()
+            .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
+    })
 }
 
 /// 当前运行环境是否具备可就地替换的安装媒介（Linux 专有判定）。
+///
+/// 包归属查询要 spawn `dpkg`/`rpm`，而轮询检查每十分钟一次、`download` 结束还会
+/// 再调一次，结果缓存。
 #[cfg(target_os = "linux")]
 pub(super) fn self_updatable() -> bool {
-    self_updatable_for(linux_install_media(), linux_package_family())
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let media = linux_install_media();
+        let family = linux_package_family();
+        let packaged = media != "appimage"
+            && family != "unknown"
+            && exe_owned_by_package_for(family, &std::env::current_exe().unwrap_or_default());
+        self_updatable_for(media, family, packaged)
+    })
 }
 
 /// 选择当前平台对应的安装包资产文件名。
@@ -443,17 +511,44 @@ mod tests {
         );
     }
 
-    /// 只有「系统包安装 + 包管理家族未知」这一组合无法就地替换；AppImage 安装任何
-    /// 宿主都能自我替换，deb/rpm 系则用原生包。
+    /// 就地替换的目标必须是用户保存的那个镜像文件，而不是 `/tmp/.mount_*` 挂载点。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn running_appimage_prefers_the_appimage_variable() {
+        let mount = std::path::Path::new("/tmp/.mount_DSHuQmxq/usr/bin/deepseek-harness");
+        assert_eq!(
+            running_appimage_from(Some("/home/u/Apps/DSH.AppImage"), mount),
+            Some(std::path::PathBuf::from("/home/u/Apps/DSH.AppImage"))
+        );
+        assert_eq!(
+            running_appimage_from(None, std::path::Path::new("/opt/DSH-x64.AppImage")),
+            Some(std::path::PathBuf::from("/opt/DSH-x64.AppImage"))
+        );
+        assert_eq!(running_appimage_from(Some(""), mount), None);
+        assert_eq!(
+            running_appimage_from(
+                None,
+                std::path::Path::new("/usr/lib/DSH Tauri/runtime/linux-x64/DSH Tauri")
+            ),
+            None
+        );
+    }
+
+    /// 只有「系统包安装 + 家族未知」与「系统包安装 + 当前二进制不属于该家族的包」
+    /// 无法就地替换；AppImage 安装任何宿主都能自我替换，被包管理器登记的原生安装则用
+    /// 原生包。
     #[cfg(target_os = "linux")]
     #[test]
     fn self_updatable_only_fails_for_package_media_on_unknown_family() {
-        assert!(self_updatable_for("appimage", "deb"));
-        assert!(self_updatable_for("appimage", "rpm"));
-        assert!(self_updatable_for("appimage", "unknown"));
-        assert!(self_updatable_for("package", "deb"));
-        assert!(self_updatable_for("package", "rpm"));
-        assert!(!self_updatable_for("package", "unknown"));
+        assert!(self_updatable_for("appimage", "deb", false));
+        assert!(self_updatable_for("appimage", "rpm", false));
+        assert!(self_updatable_for("appimage", "unknown", false));
+        assert!(self_updatable_for("package", "deb", true));
+        assert!(self_updatable_for("package", "rpm", true));
+        assert!(!self_updatable_for("package", "deb", false));
+        assert!(!self_updatable_for("package", "rpm", false));
+        assert!(!self_updatable_for("package", "unknown", true));
+        assert!(!self_updatable_for("package", "unknown", false));
     }
 
     /// macOS 上 aarch64 二进制不可能跑在 Intel Mac 上 ⇒ 宿主判定必为 Apple Silicon，
