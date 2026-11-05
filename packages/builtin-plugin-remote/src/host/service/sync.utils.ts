@@ -53,7 +53,7 @@ export function pluginAddCommand(dshEntry: string, target: string, profileName: 
   return `PATH="${layoutBinDir()}:$PATH" ${layoutNodeBinary()} ${shQuote(dshEntry)} plugin --profile ${shQuote(profileName)} add ${shQuote(target)}`
 }
 
-export function skillExtractCommand(names: readonly string[]): string {
+export function skillExtractCommand(name: string): string {
   return [
     'set -eu',
     'dest="$HOME/.dsh/skills"',
@@ -87,21 +87,17 @@ export function skillExtractCommand(names: readonly string[]): string {
     'stage=$(mktemp -d "$dest/.dsh-sync.XXXXXX")',
     'mkdir "$stage/incoming" "$stage/previous"',
     'tar -xf - -C "$stage/incoming"',
-    `set -- ${names.map(shQuote).join(' ')}`,
-    'for name do',
-    '  if [ ! -d "$stage/incoming/$name" ] || [ -L "$stage/incoming/$name" ] || [ ! -f "$stage/incoming/$name/SKILL.md" ]; then',
-    '    printf "Missing skill directory in archive: %s\\n" "$name" >&2',
-    '    exit 1',
-    '  fi',
-    'done',
-    'for name do',
-    '  current="$dest/$name"',
-    '  backup="$stage/previous/$name"',
-    '  if [ -e "$current" ] || [ -L "$current" ]; then mv "$current" "$backup"; fi',
-    '  mv "$stage/incoming/$name" "$current"',
-    '  current=',
-    '  backup=',
-    'done',
+    `name=${shQuote(name)}`,
+    'if [ ! -d "$stage/incoming/$name" ] || [ -L "$stage/incoming/$name" ] || [ ! -f "$stage/incoming/$name/SKILL.md" ]; then',
+    '  printf "Missing skill directory in archive: %s\\n" "$name" >&2',
+    '  exit 1',
+    'fi',
+    'current="$dest/$name"',
+    'backup="$stage/previous/$name"',
+    'if [ -e "$current" ] || [ -L "$current" ]; then mv "$current" "$backup"; fi',
+    'mv "$stage/incoming/$name" "$current"',
+    'current=',
+    'backup=',
   ].join('\n')
 }
 

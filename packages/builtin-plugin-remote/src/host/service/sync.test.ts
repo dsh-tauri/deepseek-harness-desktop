@@ -194,6 +194,41 @@ describe('remote selection sync', () => {
     expect(existsSync(join(home, '.dsh', '.skills-sync.lock'))).toBe(false)
   })
 
+  it('reports each skill outcome when a later publication fails', async () => {
+    const local = join(home, 'local-skills')
+    const target = join(home, '.dsh', 'skills')
+    const names = ['first', 'second', 'third']
+    for (const name of names) {
+      write(join(local, name, 'SKILL.md'), `new ${name}`)
+      write(join(target, name, 'SKILL.md'), `old ${name}`)
+      write(join(target, name, 'obsolete.txt'), `old ${name} resource`)
+    }
+    deps.scanSkills = () => [{ root: 'dsh', dir: local, names }]
+    vi.mocked(session.exec).mockImplementation(async (command, options) => {
+      const rejectSecond = 'mv() { case "$1" in */incoming/second) return 1 ;; *) command mv "$@" ;; esac; }\n'
+      return exec(rejectSecond + command, options)
+    })
+
+    const result = await sync.apply(machineId, [], names.map(name => ({ root: 'dsh' as const, name })))
+
+    expect(result.items).toEqual([
+      { kind: 'skill', root: 'dsh', name: 'first', ok: true },
+      expect.objectContaining({ kind: 'skill', root: 'dsh', name: 'second', ok: false }),
+      { kind: 'skill', root: 'dsh', name: 'third', ok: true },
+    ])
+    expect(readFileSync(join(target, 'first', 'SKILL.md'), 'utf8')).toBe('new first')
+    expect(readFileSync(join(target, 'second', 'SKILL.md'), 'utf8')).toBe('old second')
+    expect(readFileSync(join(target, 'third', 'SKILL.md'), 'utf8')).toBe('new third')
+    expect(existsSync(join(target, 'first', 'obsolete.txt'))).toBe(false)
+    expect(readFileSync(join(target, 'second', 'obsolete.txt'), 'utf8')).toBe('old second resource')
+    expect(existsSync(join(target, 'third', 'obsolete.txt'))).toBe(false)
+    expect(readdirSync(target).sort()).toEqual(names)
+    expect(existsSync(join(home, '.dsh', '.skills-sync.lock'))).toBe(false)
+    expect(machine.openSession).toHaveBeenCalledOnce()
+    expect(session.exec).toHaveBeenCalledTimes(3)
+    expect(session.close).toHaveBeenCalledOnce()
+  })
+
   it('rejects a concurrent skill sync without releasing its lock or changing existing files', async () => {
     const local = join(home, 'local-skills')
     const target = join(home, '.dsh', 'skills', 'example')
