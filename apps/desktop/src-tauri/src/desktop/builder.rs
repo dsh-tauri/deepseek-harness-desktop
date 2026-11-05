@@ -1552,12 +1552,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                 api.prevent_close();
                 // 主窗口收起后不能把更新提示留在桌面上（覆盖窗口是置顶的，会一直挂在
                 // 其它应用之上）。
-                if let Some(overlay) = window
-                    .app_handle()
-                    .get_window(crate::desktop::toast_overlay::TOAST_OVERLAY_WINDOW_LABEL)
-                {
-                    let _ = overlay.hide();
-                }
+                crate::desktop::toast_overlay::hide_overlay(window.app_handle());
                 #[cfg(target_os = "macos")]
                 {
                     crate::desktop::activation::on_window_hidden(window, &close_action);

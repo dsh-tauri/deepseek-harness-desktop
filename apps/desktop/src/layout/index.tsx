@@ -1,5 +1,5 @@
 import type { DshPlugin } from '@/types'
-import { useEventListener, useIntervalFn, useMount, useWatch } from '@reause/core'
+import { useDocumentVisibility, useEventListener, useIntervalFn, useMount, useWatch } from '@reause/core'
 import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useRef } from 'react'
@@ -127,6 +127,18 @@ export function App() {
   })
   useListen('dsh://toast-overlay:dismissed', () => {
     store.harnessUpdater.dismissUpdate()
+  })
+
+  // 隐藏/最小化时收起置顶覆盖窗口——否则提示会一直压在其它应用之上；恢复时补回。
+  // Electron 的窗口事件不携带最小化，只有 Page Visibility 能同时反映最小化与隐藏。
+  const visibility = useDocumentVisibility()
+  useWatch(visibility, (state) => {
+    if (state === 'hidden') {
+      store.harnessUpdater.hideToast()
+      return
+    }
+    if (store.harnessUpdater.updateInfo && !store.harnessUpdater.updating)
+      store.harnessUpdater.showToast(() => store.harnessUpdater.handleUpdate())
   })
 
   return (

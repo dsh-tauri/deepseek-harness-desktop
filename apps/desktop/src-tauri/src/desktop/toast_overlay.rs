@@ -123,6 +123,15 @@ pub async fn show_toast_overlay(
     Ok(())
 }
 
+/// 隐藏覆盖窗口（主窗口最小化或收起时调用）。窗口不存在或本就隐藏时静默成功。
+pub(crate) fn hide_overlay<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(overlay) = app.get_window(TOAST_OVERLAY_WINDOW_LABEL) {
+        if let Err(error) = overlay.hide() {
+            log::warn!("[toast-overlay] hide failed: {error}");
+        }
+    }
+}
+
 /// 覆盖窗口可见时重新贴合主窗口右下角（主窗口移动/缩放时调用）。
 ///
 /// 只在可见时动作：隐藏的覆盖窗口不必跟随，省掉一次 set_position/set_size 往返。
@@ -138,11 +147,25 @@ pub(crate) fn reposition_if_visible<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// 隐藏覆盖窗口（更新提示消失时调用）。窗口不存在时静默成功。
+///
+/// 只有发起这条提示的窗口才能收起它：多开壳层窗口时，新窗口的 `updateInfo` 初始为
+/// `null`，它的 watcher 会立刻调用本命令，若无条件隐藏就会把主窗口正在显示的提示也
+/// 抹掉。
 #[tauri::command]
-pub async fn hide_toast_overlay(app: AppHandle, webview: Webview) -> Result<(), String> {
+pub async fn hide_toast_overlay(
+    app: AppHandle,
+    webview: Webview,
+    state: tauri::State<'_, ToastOverlayState>,
+) -> Result<(), String> {
     crate::desktop::window::require_shell(&webview)?;
-    if let Some(overlay) = app.get_window(TOAST_OVERLAY_WINDOW_LABEL) {
-        overlay.hide().map_err(|error| error.to_string())?;
+    let owned = state
+        .0
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|content| content.source == webview.label());
+    if owned {
+        hide_overlay(&app);
     }
     Ok(())
 }
@@ -174,10 +197,9 @@ pub fn toast_overlay_request_update(app: AppHandle, window: Window) -> Result<()
                 .map(|content| content.source.clone())
         })
         .unwrap_or_else(|| crate::desktop::builder::MAIN_WINDOW_LABEL.to_string());
-    if let Some(overlay) = app.get_window(TOAST_OVERLAY_WINDOW_LABEL) {
-        let _ = overlay.hide();
-    }
-    let _ = app.emit_to(source.as_str(), "dsh://toast-overlay:update", ());
+    app.emit_to(source.as_str(), "dsh://toast-overlay:update", ())
+        .map_err(|error| format!("TOAST_OVERLAY_EVENT_EMIT_FAILED: {error}"))?;
+    hide_overlay(&app);
     Ok(())
 }
 
@@ -202,10 +224,9 @@ pub fn toast_overlay_dismiss(app: AppHandle, window: Window) -> Result<(), Strin
         .as_ref()
         .map(|content| content.source.clone())
         .unwrap_or_else(|| crate::desktop::builder::MAIN_WINDOW_LABEL.to_string());
-    if let Some(overlay) = app.get_window(TOAST_OVERLAY_WINDOW_LABEL) {
-        let _ = overlay.hide();
-    }
-    let _ = app.emit_to(source.as_str(), "dsh://toast-overlay:dismissed", ());
+    app.emit_to(source.as_str(), "dsh://toast-overlay:dismissed", ())
+        .map_err(|error| format!("TOAST_OVERLAY_EVENT_EMIT_FAILED: {error}"))?;
+    hide_overlay(&app);
     Ok(())
 }
 
