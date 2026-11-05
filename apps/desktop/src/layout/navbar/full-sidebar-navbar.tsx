@@ -10,8 +10,9 @@ import { LayoutHeader } from '@gravity-ui/icons'
 import { If } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
 import { useDshStyle } from '@/hooks/use-dsh-style'
-import { WindowControls } from './navbar'
-import { IS_MACOS, onDragRegionPointerDown, useMacOSFullscreen } from './window-chrome'
+import { onDragRegionPointerDown, useMacOSFullscreen } from '@/hooks/use-window-chrome'
+import { IS_MACOS } from '@/utils/window-frame'
+import { WindowControls } from './window-controls'
 
 export function FullSidebarNavbar() {
   const isFullscreen = useMacOSFullscreen()

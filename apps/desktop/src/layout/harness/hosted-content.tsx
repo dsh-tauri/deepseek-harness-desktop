@@ -2,16 +2,14 @@ import { useMount, useWatch } from '@reause/core'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { store } from '@/store'
-import { isHostedDocument } from './window-presentation'
 
 /**
- * 主窗口「文档即 DSH」时的内容占位。
+ * 「文档即 DSH」时的内容占位。
  *
- * 新架构下 DSH 就是本 webview 的文档，不需要原生子视图；这里只负责把壳层状态从
- * 「启动中」推进到「已就绪」，并在服务异常时让壳层覆盖错误页。DSH 页面本身由
- * 主窗口 webContents 直接渲染，与壳层共享同一棵 DOM 树。
+ * DSH 已是本 webview 的文档，不需要原生子视图；这里只把壳层状态推进到就绪，
+ * 并在服务异常时铺一层底色让错误页可读。
  */
-export function HostedHostedHarness() {
+export function HostedContent() {
   const harness = useStore(store.harness)
 
   useMount(() => {
@@ -32,11 +30,4 @@ export function HostedHostedHarness() {
       </If>
     </div>
   )
-}
-
-/** 仅在「文档即 DSH」时渲染占位，其余窗口形态仍走原生子视图。 */
-export function HostedHarness() {
-  if (!isHostedDocument())
-    return null
-  return <HostedHostedHarness />
 }

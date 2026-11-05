@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { applyFrameMode, frameMode, useFullscreen, useMaximized } from './window-chrome'
+import { applyFrameMode, frameMode } from '@/utils/window-frame'
+import { useFullscreen, useMaximized } from './use-window-chrome'
 
 const mocks = vi.hoisted(() => ({
   isFullscreen: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock('@tauri-apps/api/window', () => ({
   }),
 }))
 
-const frameCss = readFileSync(resolve(import.meta.dirname, '../../styles/main.css'), 'utf8')
+const frameCss = readFileSync(resolve(import.meta.dirname, '../styles/main.css'), 'utf8')
 
 afterEach(() => {
   cleanup()

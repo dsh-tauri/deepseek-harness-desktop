@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import type { PreinstallPlugin } from '@/store/modules/preinstall'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PreinstallSetup } from './setup-preinstall'
+import { PreinstallSetup } from './preinstall'
 
 const { preinstall, manager } = vi.hoisted(() => ({
   preinstall: {

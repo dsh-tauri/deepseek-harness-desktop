@@ -5,8 +5,8 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
+import { Shell } from '@/layout/shell'
 import { Navbar } from './navbar'
-import { Webview } from './webview'
 
 const { store, userAgent, openOverlay, openUrl, toggleDevtools, emitEvent } = vi.hoisted(() => {
   const userAgent = navigator.userAgent
@@ -20,20 +20,24 @@ const { store, userAgent, openOverlay, openUrl, toggleDevtools, emitEvent } = vi
     store: {
       harness: { status: 'ready', serviceHealthy: true },
       recovery: { recovery: { required: false } },
-      desktopUpdater: { updateInfo: null },
+      desktopUpdater: { updateInfo: null, check: vi.fn().mockResolvedValue(null) },
       setting: { zoom: vi.fn() },
     },
   }
 })
 
 vi.mock('@/store', () => ({ store }))
-vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
+vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value, defineStore: (value: unknown) => value }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'macos' }))
-vi.mock('@tanstack/react-query', () => ({
-  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useQuery: () => ({ data: [] }),
-  useQueryClient: () => ({ ensureQueryData: () => Promise.resolve('dsh-tauri') }),
-}))
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>()
+  return {
+    ...actual,
+    useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+    useQuery: () => ({ data: [] }),
+    useQueryClient: () => ({ ensureQueryData: () => Promise.resolve('dsh-tauri') }),
+  }
+})
 vi.mock('@overlastic/react', () => ({ useOverlay: () => openOverlay }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [{}] }))
@@ -54,15 +58,15 @@ vi.mock('@/ui/dialog/update', () => ({ DesktopUpdateDialog: () => null }))
 vi.mock('@/utils/clipboard', () => ({ writeClipboardText: vi.fn() }))
 vi.mock('@/utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('@/ui/plugin/recovery', () => ({ Recovery: () => null }))
-vi.mock('./setup', () => ({ Setup: () => null }))
-vi.mock('./setup-preinstall', () => ({ PreinstallSetup: () => null }))
-const DshWebview = 'webview' as unknown as ComponentType<{ title: string, src: string }>
-vi.mock('./harness-webview', () => ({
-  HarnessWebview: ({ srcOverride }: { srcOverride?: string | null }) => (
-    <DshWebview title="Harness" src={srcOverride ?? 'http://127.0.0.1:3081'} />
+vi.mock('@/layout/startup/setup', () => ({ Setup: () => null }))
+vi.mock('@/layout/startup/preinstall', () => ({ PreinstallSetup: () => null }))
+const DshShell = 'webview' as unknown as ComponentType<{ title: string, src: string }>
+vi.mock('@/layout/harness/content', () => ({
+  HarnessContent: ({ srcOverride }: { srcOverride?: string | null }) => (
+    <DshShell title="Harness" src={srcOverride ?? 'http://127.0.0.1:3081'} />
   ),
 }))
-vi.mock('./remote-switcher', () => ({
+vi.mock('@/layout/remote/switcher', () => ({
   RemoteSwitcher: ({ onChange }: { onChange: (url: string, tint: string | null) => void }) => (
     <>
       <button onClick={() => onChange('http://127.0.0.1:4001', null)}>Remote alpha</button>
@@ -165,18 +169,18 @@ afterAll(() => {
 describe('shell remote share availability', () => {
   it.each(['starting', 'preinstall', 'error'])('hides remote sharing while the local service is %s', (status) => {
     store.harness.status = status
-    render(<Webview />)
+    render(<Shell />)
     expect(screen.queryByRole('button', { name: 'remote.share' })).toBeNull()
   })
 
   it('hides remote sharing when local health is lost and restores it after recovery', () => {
-    const view = render(<Webview />)
+    const view = render(<Shell />)
     expect(screen.getByRole('button', { name: 'remote.share' })).not.toBeNull()
     store.harness.serviceHealthy = false
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     expect(screen.queryByRole('button', { name: 'remote.share' })).toBeNull()
     store.harness.serviceHealthy = true
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     expect(screen.getByRole('button', { name: 'remote.share' })).not.toBeNull()
   })
 
@@ -188,7 +192,7 @@ describe('shell remote share availability', () => {
 
 describe('native View menu state', () => {
   it('closes only the window targeted by a native DSH event', async () => {
-    render(<Webview />)
+    render(<Shell />)
     await waitFor(() => expect([...listeners.values()].find(listener => listener.event === 'dsh://window:close')?.target).toEqual({ kind: 'Window', label: 'main' }))
     act(() => nativeEvent('dsh://window:close', undefined, 'other'))
     expect(closedWindows).toEqual([])
@@ -197,7 +201,7 @@ describe('native View menu state', () => {
   })
 
   it('restores enabled commands and hints after the language change rebuilds the native menu', async () => {
-    render(<Webview />)
+    render(<Shell />)
     reportShortcuts()
     await waitFor(() => expect(menuEntries[0]).toEqual({ id: 'desktop-toggle-sidebar', enabled: true, shortcut: '⌥ ⌘ B' }))
     menuEntries = menuEntries.map(entry => ({ ...entry, enabled: false, shortcut: null }))
@@ -207,35 +211,35 @@ describe('native View menu state', () => {
   })
 
   it('keeps the remote catalog and command bridge during a local service restart', async () => {
-    const view = render(<Webview />)
+    const view = render(<Shell />)
     fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
     reportShortcuts()
     const frame = webview()
     store.harness.serviceHealthy = false
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     act(() => nativeEvent('tauri://focus', null, 'main'))
     await waitFor(() => expect(menuEntries[0].enabled).toBe(true))
     act(() => nativeEvent('macos-menu-action', 'desktop-toggle-sidebar', 'main'))
     expect(emitEvent.mock.calls.filter(([event]) => event === 'dsh://view:command')).toEqual([['dsh://view:command', { command: 'sidebar.left.toggle' }]])
     expect(webview()).toBe(frame)
     store.harness.serviceHealthy = true
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     await waitFor(() => expect(menuEntries[0].enabled).toBe(true))
   })
 
   it('clears the local catalog when the local service becomes unavailable', async () => {
-    const view = render(<Webview />)
+    const view = render(<Shell />)
     reportShortcuts()
     store.harness.serviceHealthy = false
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     await waitFor(() => expect(menuEntries.map(entry => entry.enabled)).toEqual([false, false, false, false]))
     store.harness.serviceHealthy = true
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     expect(menuEntries[0]).toEqual({ id: 'desktop-toggle-sidebar', enabled: false, shortcut: null })
   })
 
   it.each(['Remote beta', 'Local'])('clears the previous remote catalog when switching to %s', async (destination) => {
-    render(<Webview />)
+    render(<Shell />)
     fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
     reportShortcuts()
     fireEvent.click(screen.getByRole('button', { name: destination }))
@@ -245,15 +249,15 @@ describe('native View menu state', () => {
   })
 
   it('clears the remote catalog when the shell removes the webview', async () => {
-    const view = render(<Webview />)
+    const view = render(<Shell />)
     fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
     reportShortcuts()
     store.harness.status = 'error'
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     expect(screen.queryByTitle('Harness')).toBeNull()
     await waitFor(() => expect(menuEntries[0].enabled).toBe(false))
     store.harness.status = 'ready'
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
     expect(menuEntries[0].shortcut).toBeNull()
   })
 })

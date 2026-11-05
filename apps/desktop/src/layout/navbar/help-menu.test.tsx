@@ -36,7 +36,8 @@ vi.mock('@/ui/dialog/config', () => ({ ConfigDialog: () => null }))
 vi.mock('@/ui/dialog/task-manager', () => ({ TaskManagerDialog: () => null }))
 vi.mock('@/ui/dialog/update', () => ({ DesktopUpdateDialog: () => null }))
 vi.mock('@/utils/toast', () => ({ toast }))
-vi.mock('./remote-switcher', () => ({ RemoteSwitcher: () => null }))
+vi.mock('@/layout/remote/switcher', () => ({ RemoteSwitcher: () => null }))
+vi.mock('@/layout/remote/share', () => ({ RemoteShare: () => null }))
 
 const HELP_DESTINATIONS = [
   ['documentation', 'https://dshtauri.mintlify.site'],

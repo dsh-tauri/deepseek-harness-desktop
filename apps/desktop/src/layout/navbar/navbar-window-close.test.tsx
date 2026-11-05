@@ -30,7 +30,8 @@ vi.mock('@/ui/dialog/config', () => ({ ConfigDialog: () => null }))
 vi.mock('@/ui/dialog/task-manager', () => ({ TaskManagerDialog: () => null }))
 vi.mock('@/ui/dialog/update', () => ({ DesktopUpdateDialog: () => null }))
 vi.mock('@/utils/toast', () => ({ toast: vi.fn<(title: string, options?: { description?: ReactNode }) => void>() }))
-vi.mock('./remote-switcher', () => ({ RemoteSwitcher: () => null }))
+vi.mock('@/layout/remote/switcher', () => ({ RemoteSwitcher: () => null }))
+vi.mock('@/layout/remote/share', () => ({ RemoteShare: () => null }))
 
 beforeEach(() => {
   vi.stubGlobal('CSS', { escape: (value: string) => value.replace(/[^\w-]/g, character => `\\${character}`) })

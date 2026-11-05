@@ -10,12 +10,12 @@ import { queryKeys } from '@/config/query-keys'
 import { useListen } from '@/hooks/use-listen'
 import { useThemeAdaptive } from '@/hooks/use-theme-adaptive'
 import { useWakelockRelease } from '@/hooks/use-wakelock-release'
+import { useFrameChrome } from '@/hooks/use-window-chrome'
 import { toast } from '@/utils/toast'
+import { isHostedServiceDocument } from '@/utils/window-presentation'
 import { store } from '../store'
 import { Recovery } from '../ui/plugin/recovery'
-import { Webview } from './components/webview'
-import { useFrameChrome } from './components/window-chrome'
-import { isHostedServiceDocument } from './components/window-presentation'
+import { Shell } from './shell'
 import '../i18n'
 
 const DESKTOP_UPDATE_POLL_INTERVAL = 10 * 60_000
@@ -124,7 +124,7 @@ export function App() {
 
   return (
     <div className="flex h-screen w-screen" data-testid="dsh-shell-root">
-      <Webview />
+      <Shell />
       {}
       <If cond={status === 'ready'}>
         <Recovery />

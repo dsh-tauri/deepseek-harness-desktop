@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { HarnessWebview } from './harness-webview'
+import { NativeWebview } from './native-webview'
 
 interface NativeState { label: string, loaded: boolean, alive: boolean, crashed: boolean }
 interface BootFailure { label: string, detail: string }
@@ -116,11 +116,11 @@ it('keeps one native registration through StrictMode and a reload during pending
         active.delete(url)
     }
   })
-  const view = render(<StrictMode><HarnessWebview /></StrictMode>)
+  const view = render(<StrictMode><NativeWebview /></StrictMode>)
   await waitFor(() => expect([...active.values()]).toEqual(['guest-1']))
   expect(duplicates).toBe(0)
   mocks.harness.webviewKey++
-  view.rerender(<StrictMode><HarnessWebview /></StrictMode>)
+  view.rerender(<StrictMode><NativeWebview /></StrictMode>)
   await act(async () => {})
   expect(duplicates).toBe(0)
   await act(async () => {
@@ -154,7 +154,7 @@ it('creates a native view before showing its placeholder and passes navigation',
   mocks.invoke.mockImplementation(command => command === 'prepare_harness_webview'
     ? new Promise((resolve) => { finish = resolve })
     : Promise.resolve())
-  const view = render(<HarnessWebview />)
+  const view = render(<NativeWebview />)
   expect(screen.queryByTitle('Harness')).toBeNull()
   await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('prepare_harness_webview', { url: 'http://127.0.0.1:3081', navigation }))
   await act(async () => finish('guest-created'))
@@ -166,13 +166,13 @@ it('creates a native view before showing its placeholder and passes navigation',
 
 it('keeps preparation failures visible without mounting a native placeholder', async () => {
   mocks.invoke.mockRejectedValueOnce(new Error('registration denied'))
-  render(<HarnessWebview />)
+  render(<NativeWebview />)
   expect(await screen.findByText('Error: registration denied')).not.toBeNull()
   expect(screen.queryByTitle('Harness')).toBeNull()
 })
 
 it('sends CSS bounds and zoom once, resyncing changed offsets and sizes without duplicate IPC', async () => {
-  const view = render(<HarnessWebview />)
+  const view = render(<NativeWebview />)
   await screen.findByTitle('Harness')
   expect(updates()).toEqual([{ label: 'guest-local', x: 24, y: 72, width: 960, height: 600, visible: true, zoomFactor: 1.25 }])
   fireEvent.resize(window)
@@ -185,12 +185,12 @@ it('sends CSS bounds and zoom once, resyncing changed offsets and sizes without 
   document.body.style.paddingLeft = '64px'
   await waitFor(() => expect(updates().at(-1)).toMatchObject({ x: 64 }))
   mocks.setting.zoom_factor = 1.5
-  view.rerender(<HarnessWebview />)
+  view.rerender(<NativeWebview />)
   await waitFor(() => expect(updates().at(-1)).toMatchObject({ zoomFactor: 1.5 }))
 })
 
 it('ignores hidden shell overlays and tooltips, and hides a zero-size native view safely', async () => {
-  render(<HarnessWebview />)
+  render(<NativeWebview />)
   await screen.findByTitle('Harness')
   const overlay = document.createElement('div')
   overlay.setAttribute('role', 'dialog')
@@ -209,7 +209,7 @@ it('ignores hidden shell overlays and tooltips, and hides a zero-size native vie
 })
 
 it('subscribes to window-targeted native state, keeping boot readiness separate', async () => {
-  render(<HarnessWebview />)
+  render(<NativeWebview />)
   await screen.findByTitle('Harness')
   expect(mocks.options.get('harness-webview-state')).toEqual({ target: { kind: 'Window', label: 'main' } })
   state()
@@ -224,7 +224,7 @@ it('subscribes to window-targeted native state, keeping boot readiness separate'
 
 it('fails the shell with the boot failure page reported by the current guest only', async () => {
   mocks.harness.handleWebviewBootFailure = vi.fn()
-  render(<HarnessWebview />)
+  render(<NativeWebview />)
   await screen.findByTitle('Harness')
   act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'other-guest', detail: 'Failed to load plugins' } }))
   expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
@@ -239,27 +239,27 @@ it('fails the shell with the boot failure page reported by the current guest onl
 
 it('ignores local boot failures for a remote guest', async () => {
   mocks.harness.handleWebviewBootFailure = vi.fn()
-  render(<HarnessWebview srcOverride="https://remote.test" />)
+  render(<NativeWebview srcOverride="https://remote.test" />)
   await screen.findByTitle('Harness')
   act(() => mocks.listeners.get('dsh://plugin-boot:failed')!({ payload: { label: 'guest-local', detail: 'Failed to load plugins' } }))
   expect(mocks.harness.handleWebviewBootFailure).not.toHaveBeenCalled()
 })
 
 it('rejects stale labels and old generations while reloading', async () => {
-  const view = render(<HarnessWebview />)
+  const view = render(<NativeWebview />)
   await screen.findByTitle('Harness')
   state({ label: 'other-guest' })
   expect(mocks.harness.markWebviewAlive).not.toHaveBeenCalled()
   mocks.harness.webviewKey++
   state()
   expect(mocks.harness.markWebviewLoaded).not.toHaveBeenCalled()
-  view.rerender(<HarnessWebview />)
+  view.rerender(<NativeWebview />)
   await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('release_harness_webview', { label: 'guest-local' }))
 })
 
 it('never mutates local health or hides a remote guest because of local errors', async () => {
   mocks.harness.showWebviewError = true
-  render(<HarnessWebview srcOverride="https://remote.test" />)
+  render(<NativeWebview srcOverride="https://remote.test" />)
   await screen.findByTitle('Harness')
   state()
   state({ loaded: false, alive: false, crashed: true })
@@ -279,7 +279,7 @@ it('serializes pending native updates before releasing the view', async () => {
       return new Promise<void>((resolve) => { finish = resolve })
     return Promise.resolve()
   })
-  const view = render(<HarnessWebview />)
+  const view = render(<NativeWebview />)
   await screen.findByTitle('Harness')
   const overlay = document.createElement('div')
   overlay.setAttribute('role', 'dialog')
@@ -299,9 +299,9 @@ it('releases a stale prepared URL before creating the selected remote URL', asyn
   mocks.invoke.mockImplementation((command, args) => command === 'prepare_harness_webview'
     ? new Promise((resolve) => { pending.set(String(args.url), resolve) })
     : Promise.resolve())
-  const view = render(<HarnessWebview srcOverride="https://alpha.test" />)
+  const view = render(<NativeWebview srcOverride="https://alpha.test" />)
   await waitFor(() => expect(pending.has('https://alpha.test')).toBe(true))
-  view.rerender(<HarnessWebview srcOverride="https://beta.test" />)
+  view.rerender(<NativeWebview srcOverride="https://beta.test" />)
   await act(async () => pending.get('https://alpha.test')!('old-guest'))
   expect(screen.queryByTitle('Harness')).toBeNull()
   expect(mocks.invoke).toHaveBeenCalledWith('release_harness_webview', { label: 'old-guest' })
@@ -313,10 +313,10 @@ it('releases a stale prepared URL before creating the selected remote URL', asyn
 it('converts actual shell zoom to DIP and rechecks DPI on resize independently of guest zoom', async () => {
   vi.stubGlobal('devicePixelRatio', 2.5)
   mocks.scaleFactor.mockResolvedValue(2)
-  const view = render(<HarnessWebview />)
+  const view = render(<NativeWebview />)
   await waitFor(() => expect(updates().at(-1)).toMatchObject({ x: 30, y: 90, width: 1200, height: 750, zoomFactor: 1.25 }))
   mocks.setting.zoom_factor = 1.5
-  view.rerender(<HarnessWebview />)
+  view.rerender(<NativeWebview />)
   await waitFor(() => expect(updates().at(-1)).toMatchObject({ x: 30, width: 1200, zoomFactor: 1.5 }))
   vi.stubGlobal('devicePixelRatio', 1.25)
   mocks.scaleFactor.mockResolvedValue(1)

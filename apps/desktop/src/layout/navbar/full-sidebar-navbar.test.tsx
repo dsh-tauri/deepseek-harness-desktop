@@ -3,8 +3,8 @@ import type { ReactNode } from 'react'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { isFullSidebarWindow } from '@/utils/window-presentation'
 import { FullSidebarNavbar } from './full-sidebar-navbar'
-import { isFullSidebarWindow } from './window-presentation'
 
 const { native } = vi.hoisted(() => ({ native: vi.fn<(command: string, args?: Record<string, unknown>) => unknown>() }))
 

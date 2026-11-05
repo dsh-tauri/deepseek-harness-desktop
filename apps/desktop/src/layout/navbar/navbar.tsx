@@ -3,16 +3,12 @@ import type { DshPlugin } from '@/types'
 import type { ConfigTab } from '@/ui/dialog/config'
 import {
   ArrowRotateRight,
-  Copy,
   LayoutSideContent,
   LayoutSideContentLeft,
-  Minus,
-  Square,
-  Xmark,
 } from '@gravity-ui/icons'
-import { Button, Chip, Description, Dropdown, Label, Separator } from '@heroui/react'
+import { Button, Chip, Dropdown, Label, Separator } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { getIdentifier } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -22,20 +18,21 @@ import { Else, If, Then } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
 import { useStore } from 'valtio-define'
 import { queryKeys } from '@/config/query-keys'
-import { DISTRO_MANAGED_QUERY } from '@/hooks/use-distro-managed'
 import { DSH_VIEW_COMMANDS, shortcutHint, useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { useDshStyle } from '@/hooks/use-dsh-style'
+import { useHelpActions } from '@/hooks/use-help-menu'
 import { useListen } from '@/hooks/use-listen'
+import { onDragRegionPointerDown, useMacOSFullscreen } from '@/hooks/use-window-chrome'
+import { RemoteShare } from '@/layout/remote/share'
+import { RemoteSwitcher } from '@/layout/remote/switcher'
 import { store } from '@/store'
-import { DesktopAboutDialog } from '@/ui/dialog/about'
 import { ConfigDialog } from '@/ui/dialog/config'
-import { TaskManagerDialog } from '@/ui/dialog/task-manager'
 import { DesktopUpdateDialog } from '@/ui/dialog/update'
-import { writeClipboardText } from '@/utils/clipboard'
-import { toast } from '@/utils/toast'
-import { RemoteShare } from './remote-share'
-import { RemoteSwitcher } from './remote-switcher'
-import { IS_MACOS, onDragRegionPointerDown, useMacOSFullscreen, useMaximized } from './window-chrome'
+import { handleWindowAction } from '@/utils/window-actions'
+import { IS_MACOS } from '@/utils/window-frame'
+import { HelpMenu } from './help-menu'
+import { ShortcutLabel } from './shortcut-label'
+import { WindowControls } from './window-controls'
 
 const TAURI_PLUGIN_ID = 'dsh-tauri'
 
@@ -45,15 +42,7 @@ const APP_IDENTIFIER_QUERY = {
   staleTime: Infinity,
 }
 
-const HELP_LINKS = {
-  'documentation': 'https://dshtauri.mintlify.site',
-  'desktop-feedback': 'https://github.com/dsh-tauri/deepseek-harness-desktop/issues',
-  'harness-feedback': 'https://trtgsjkv6r.feishu.cn/share/base/form/shrcnlCoGElW7MQznGy9r3YYXcg?hide_uid=1&hide_device_info=1&hide_harness_version=1',
-}
-
 type FileAction = 'new-window' | 'new-chat' | 'open-folder' | 'close' | 'quit'
-
-type HelpAction = 'toggle-devtools' | 'task-manager' | 'keyboard-shortcuts' | 'copy-run-logs' | 'check-update' | 'about' | keyof typeof HELP_LINKS
 
 const CONFIG_TABS = [
   { id: 'application', labelKey: 'config.application' },
@@ -63,82 +52,6 @@ const CONFIG_TABS = [
   { id: 'harness', labelKey: 'config.harness' },
   { id: 'dataDir', labelKey: 'config.dataDir' },
 ] as const
-
-function handleWindowAction(action: 'minimize' | 'maximize' | 'close') {
-  const appWindow = getCurrentWindow()
-  switch (action) {
-    case 'minimize':
-      void appWindow.minimize()
-      break
-    case 'maximize':
-      void appWindow.toggleMaximize()
-      break
-    case 'close':
-      if (appWindow.label === 'main')
-        void appWindow.hide()
-      else
-        void appWindow.close()
-      break
-  }
-}
-
-export function WindowControls() {
-  const { t } = useTranslation()
-  const isMaximized = useMaximized()
-  const isMainWindow = getCurrentWindow().label === 'main'
-
-  return (
-    <>
-      <Button
-        className="size-7"
-        isIconOnly
-        size="sm"
-        variant="ghost"
-        aria-label={t('nav.minimize')}
-        onPress={() => { handleWindowAction('minimize') }}
-      >
-        <Minus />
-      </Button>
-
-      <Button
-        className="size-7"
-        isIconOnly
-        size="sm"
-        variant="ghost"
-        aria-label={t(isMaximized ? 'nav.restore' : 'nav.maximize')}
-        onPress={() => { handleWindowAction('maximize') }}
-      >
-        <If
-          cond={isMaximized}
-          then={<Copy style={{ width: 14, height: 14 }} />}
-          else={<Square style={{ width: 14, height: 14 }} />}
-        />
-      </Button>
-
-      <Button
-        className="size-7 transition-colors enabled:hover:bg-danger/16 enabled:hover:text-danger"
-        isIconOnly
-        size="sm"
-        variant="ghost"
-        aria-label={t(isMainWindow ? 'nav.background' : 'nav.close')}
-        onPress={() => { handleWindowAction('close') }}
-      >
-        <Xmark />
-      </Button>
-    </>
-  )
-}
-
-function ShortcutLabel({ label, hint }: { label: string, hint?: string }) {
-  if (hint == null)
-    return <Label>{label}</Label>
-  return (
-    <span className="flex w-full items-center justify-between gap-6">
-      <Label>{label}</Label>
-      <span className="shrink-0 font-mono text-xs text-muted" data-testid="dsh-navbar-shortcut-hint">{hint.replaceAll(' ', '')}</span>
-    </span>
-  )
-}
 
 export interface NavbarProps {
   onRemoteChange: (url: string, tint: string | null) => void
@@ -163,7 +76,6 @@ export interface NavbarProps {
 
 export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onViewCommand, onOpenMachineManager, onOpenSyncToRemote, onOpenRemoteAccess }: NavbarProps) {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const isFullscreen = useMacOSFullscreen()
   const { data: appIdentifier } = useQuery(APP_IDENTIFIER_QUERY)
   const { data: plugins = [] } = useQuery({
@@ -176,30 +88,29 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
   const [runMenuOpen, setRunMenuOpen] = useState(false)
 
   const openConfigDialog = useOverlay(ConfigDialog)
-  const openTaskManager = useOverlay(TaskManagerDialog)
-  const openAboutDialog = useOverlay(DesktopAboutDialog)
   const openUpdateDialog = useOverlay(DesktopUpdateDialog)
 
   const tauriEnabled = plugins.some(plugin => plugin.id === TAURI_PLUGIN_ID)
   const isMainWindow = getCurrentWindow().label === 'main'
+  const helpActions = useHelpActions(t, {
+    openUpdateDialog: () => {
+      void openUpdateDialog().catch(() => {})
+    },
+  })
   const isNightly = appIdentifier === 'dsh-tauri-nightly'
   const showUpdateAvailable = appIdentifier != null && !isNightly && updateInfo != null
 
-  function onHelpAction(key: HelpAction) {
-    if (key === 'toggle-devtools')
-      void toggleDevtools()
-    else if (key === 'task-manager')
-      void openTaskManager().catch(() => {})
-    else if (key === 'check-update')
-      void handleCheckUpdate()
-    else if (key === 'about')
-      void openAboutDialog().catch(() => {})
-    else if (key === 'copy-run-logs')
-      void copyRunLogs()
-    else if (key === 'documentation' || key === 'desktop-feedback' || key === 'harness-feedback')
-      void openHelpLink(key)
-    else if (key === 'keyboard-shortcuts')
-      onOpenShortcuts?.()
+  function handleOpenConfig(tab?: ConfigTab) {
+    void openConfigDialog({ tab }).catch(() => {})
+  }
+
+  function handleOpenUpdateDialog() {
+    void openUpdateDialog().catch(() => {})
+  }
+
+  function handleQuickRestart() {
+    setRunMenuOpen(false)
+    void store.harness.restart()
   }
 
   function handleFileAction(key: FileAction) {
@@ -240,91 +151,6 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
     }
   }
 
-  async function toggleDevtools() {
-    try {
-      await invoke('toggle_devtools')
-    }
-    catch (error) {
-      console.error('[Navbar] failed to toggle devtools:', error)
-    }
-  }
-
-  async function openHelpLink(key: keyof typeof HELP_LINKS) {
-    try {
-      await invoke('open_external_url', { url: HELP_LINKS[key] })
-    }
-    catch (error) {
-      console.error(`[Navbar] failed to open ${key}:`, error)
-      toast(t('messages.open_link_failed'), {
-        variant: 'danger',
-        description: <span className="break-all">{HELP_LINKS[key]}</span>,
-        timeout: 10_000,
-        actionProps: {
-          children: t('buttons.copy_link'),
-          onPress: () => {
-            void writeClipboardText(HELP_LINKS[key], t('messages.copy_success'))
-              .catch(copyError => console.error('[Navbar] failed to copy help link:', copyError))
-          },
-        },
-      })
-    }
-  }
-
-  function handleOpenConfig(tab?: ConfigTab) {
-    void openConfigDialog({ tab }).catch(() => {})
-  }
-
-  function handleQuickRestart() {
-    setRunMenuOpen(false)
-    void store.harness.restart()
-  }
-
-  function handleOpenAbout() {
-    void openAboutDialog().catch(() => {})
-  }
-
-  function handleOpenUpdateDialog() {
-    void openUpdateDialog().catch(() => {})
-  }
-
-  async function handleCheckUpdate() {
-    try {
-      const identifier = await queryClient.ensureQueryData(APP_IDENTIFIER_QUERY)
-      if (identifier === 'dsh-tauri-nightly') {
-        await invoke('open_external_url', { url: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/nightly' })
-        return
-      }
-      if (await queryClient.ensureQueryData(DISTRO_MANAGED_QUERY)) {
-        toast(t('update.distro_managed'), {})
-        return
-      }
-      const info = await store.desktopUpdater.check()
-      if (info)
-        handleOpenUpdateDialog()
-      else
-        toast(t('update.up_to_date'), {})
-    }
-    catch (err) {
-      // 媒介不支持就地替换是确定结论，不能报成「检查失败，请检查网络」（issue #1410）
-      if (String(err).includes('UPDATE_MEDIA_UNSUPPORTED')) {
-        toast(t('update.media_unsupported'), { variant: 'danger' })
-        return
-      }
-      console.warn('[Navbar] check update failed:', err)
-      toast(t('update.check_failed'), { variant: 'danger' })
-    }
-  }
-
-  async function copyRunLogs() {
-    try {
-      const logs = await invoke<string>('read_run_logs')
-      await writeClipboardText(logs, t('messages.logs_copied'))
-    }
-    catch (err) {
-      console.error('[Navbar] failed to copy run logs:', err)
-    }
-  }
-
   useListen<string>('macos-menu-action', (event) => {
     if (!IS_MACOS)
       return
@@ -356,31 +182,31 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
         handleOpenConfig('harness')
         break
       case 'desktop-about':
-        handleOpenAbout()
+        helpActions.run('about')
         break
       case 'desktop-toggle-devtools':
-        void toggleDevtools()
+        helpActions.run('toggle-devtools')
         break
       case 'desktop-task-manager':
-        onHelpAction('task-manager')
+        helpActions.run('task-manager')
         break
       case 'desktop-copy-run-logs':
-        void copyRunLogs()
+        helpActions.run('copy-run-logs')
         break
       case 'desktop-check-update':
-        void handleCheckUpdate()
+        helpActions.run('check-update')
         break
       case 'desktop-restart':
         void store.harness.restart()
         break
       case 'desktop-documentation':
-        void openHelpLink('documentation')
+        helpActions.run('documentation')
         break
       case 'desktop-feedback':
-        void openHelpLink('desktop-feedback')
+        helpActions.run('desktop-feedback')
         break
       case 'desktop-harness-feedback':
-        void openHelpLink('harness-feedback')
+        helpActions.run('harness-feedback')
         break
       case 'desktop-keyboard-shortcuts':
         onOpenShortcuts?.()
@@ -585,102 +411,12 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
               </Dropdown.Menu>
             </Dropdown.Popover>
           </Dropdown>
-          <Dropdown>
-            <Button
-              className="h-6 text-[12.5px] px-1.5"
-              size="sm"
-              variant="ghost"
-              aria-label={t('app.help')}
-              data-testid="dsh-navbar-menu-help"
-            >
-              {t('app.help')}
-            </Button>
-            <Dropdown.Popover className="min-w-55" data-testid="dsh-navbar-menu-popover">
-              <Dropdown.Menu>
-                <Dropdown.Item
-                  id="documentation"
-                  data-testid="dsh-navbar-item-documentation"
-                  textValue={t('menu.documentation')}
-                  onAction={() => onHelpAction('documentation')}
-                >
-                  <Label>{t('menu.documentation')}</Label>
-                </Dropdown.Item>
-                <Dropdown.Item
-                  id="keyboard-shortcuts"
-                  data-testid="dsh-navbar-item-keyboard-shortcuts"
-                  isDisabled={onOpenShortcuts == null}
-                  textValue={t('menu.keyboard_shortcuts')}
-                  onAction={() => onHelpAction('keyboard-shortcuts')}
-                >
-                  <ShortcutLabel label={t('menu.keyboard_shortcuts')} hint={shortcutHint(shortcutRows, 'shortcuts.open')} />
-                </Dropdown.Item>
-                <Separator />
-                <Dropdown.Item
-                  id="desktop-feedback"
-                  data-testid="dsh-navbar-item-desktop-feedback"
-                  textValue={t('menu.desktop_feedback')}
-                  onAction={() => onHelpAction('desktop-feedback')}
-                >
-                  <Label>{t('menu.desktop_feedback')}</Label>
-                </Dropdown.Item>
-                <Dropdown.Item
-                  id="harness-feedback"
-                  data-testid="dsh-navbar-item-harness-feedback"
-                  textValue={t('menu.harness_feedback')}
-                  onAction={() => onHelpAction('harness-feedback')}
-                >
-                  <Label>{t('menu.harness_feedback')}</Label>
-                </Dropdown.Item>
-                <Separator />
-                <Dropdown.Item
-                  id="toggle-devtools"
-                  data-testid="dsh-navbar-item-toggle-devtools"
-                  textValue={t('menu.toggle_devtools')}
-                  onAction={() => onHelpAction('toggle-devtools')}
-                >
-                  <Label>{t('menu.toggle_devtools')}</Label>
-                </Dropdown.Item>
-                <Dropdown.Item
-                  id="task-manager"
-                  data-testid="dsh-navbar-item-task-manager"
-                  textValue={t('menu.task_manager')}
-                  onAction={() => onHelpAction('task-manager')}
-                >
-                  <Label>{t('menu.task_manager')}</Label>
-                </Dropdown.Item>
-                <Dropdown.Item
-                  id="copy-run-logs"
-                  data-testid="dsh-navbar-item-copy-run-logs"
-                  textValue={t('menu.run_logs')}
-                  onAction={() => onHelpAction('copy-run-logs')}
-                >
-                  <Label>{t('menu.run_logs')}</Label>
-                </Dropdown.Item>
-                <Separator />
-                <Dropdown.Item
-                  id="check-update"
-                  data-testid="dsh-navbar-item-check-update"
-                  textValue={t('menu.check_update')}
-                  onAction={() => onHelpAction('check-update')}
-                >
-                  <span className="flex w-full items-center justify-between gap-3">
-                    <Label>{t('menu.check_update')}</Label>
-                    <If cond={showUpdateAvailable}>
-                      <Description>{t('menu.new_version')}</Description>
-                    </If>
-                  </span>
-                </Dropdown.Item>
-                <Dropdown.Item
-                  id="about"
-                  data-testid="dsh-navbar-item-about"
-                  textValue={t('menu.about')}
-                  onAction={() => onHelpAction('about')}
-                >
-                  <Label>{t('menu.about')}</Label>
-                </Dropdown.Item>
-              </Dropdown.Menu>
-            </Dropdown.Popover>
-          </Dropdown>
+          <HelpMenu
+            onAction={key => helpActions.run(key, onOpenShortcuts)}
+            onOpenShortcuts={onOpenShortcuts}
+            shortcutRows={shortcutRows}
+            showUpdateAvailable={showUpdateAvailable}
+          />
         </div>
       </If>
 

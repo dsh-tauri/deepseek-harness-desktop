@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render as renderElement, screen, waitFor } fro
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import en from '@/i18n/locales/en-US.json'
 import zh from '@/i18n/locales/zh-CN.json'
-import { RemoteShare } from './remote-share'
+import { RemoteShare } from './share'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),

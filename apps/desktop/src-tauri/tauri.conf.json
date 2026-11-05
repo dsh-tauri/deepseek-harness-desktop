@@ -4,7 +4,7 @@
   "version": "0.30.4",
   "identifier": "dsh-tauri",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm build:shell && pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm -w build:plugins && pnpm build",
     "beforeBundleCommand": "node ../../crates/tauri-runtime-electron/tools/macos-sign/sign.mjs",
@@ -12,7 +12,10 @@
   },
   "app": {
     "security": {
-      "assetProtocol": { "enable": true, "scope": [] }
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
     }
   },
   "plugins": {

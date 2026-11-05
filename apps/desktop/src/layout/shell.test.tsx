@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import type { NavbarProps } from './navbar'
+import type { NavbarProps } from '@/layout/navbar/navbar'
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { Webview } from './webview'
+import { Shell } from './shell'
 
 const mocks = vi.hoisted(() => ({
   navbar: vi.fn<(props: NavbarProps) => void>(),
@@ -48,7 +48,7 @@ vi.mock('@/hooks/use-notification-clicked', () => ({ useNotificationClicked: (ha
   mocks.clicked = handler
 } }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'windows' }))
-vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
+vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value, defineStore: (value: unknown) => value }))
 vi.mock('@/store', () => ({ store: { harness: mocks.harness, recovery: mocks.recovery } }))
 vi.mock('@/hooks/use-appearance', () => ({ useAppearance: () => '' }))
 vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [mocks.dshStyle, mocks.setDshStyle] }))
@@ -63,25 +63,25 @@ vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (even
   mocks.listeners.set(event, handler)
 } }))
 vi.mock('@/ui/plugin/recovery', () => ({ Recovery: () => null }))
-vi.mock('./setup', () => ({ Setup: () => null }))
-vi.mock('./setup-preinstall', () => ({ PreinstallSetup: () => null }))
-vi.mock('./full-sidebar-navbar', () => ({ FullSidebarNavbar: () => <div data-testid="full-sidebar-navbar" /> }))
-vi.mock('./navbar', () => ({
+vi.mock('./startup/setup', () => ({ Setup: () => null }))
+vi.mock('./startup/preinstall', () => ({ PreinstallSetup: () => null }))
+vi.mock('./navbar/full-sidebar-navbar', () => ({ FullSidebarNavbar: () => <div data-testid="full-sidebar-navbar" /> }))
+vi.mock('./navbar/navbar', () => ({
   Navbar: (props: NavbarProps) => {
     mocks.navbar(props)
     return null
   },
 }))
-vi.mock('./harness-webview', () => ({
-  HarnessWebview: ({ srcOverride }: { srcOverride?: string | null }) => (
+vi.mock('./harness/content', () => ({
+  HarnessContent: ({ srcOverride }: { srcOverride?: string | null }) => (
     <div data-src={srcOverride ?? 'http://127.0.0.1:3081'} title="Harness" />
   ),
 }))
 
 it('logs the selected shell branch and deduplicates unrelated rerenders without exposing remote URLs', () => {
   window.location.hash = ''
-  const view = render(<Webview />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Webview] shell view', expect.objectContaining({
+  const view = render(<Shell />)
+  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({
     branch: 'webview',
     status: 'ready',
     remoteMode: false,
@@ -91,25 +91,51 @@ it('logs the selected shell branch and deduplicates unrelated rerenders without 
     webviewAlive: false,
     webviewError: false,
   }))
-  view.rerender(<Webview />)
+  view.rerender(<Shell />)
   expect(console.warn).toHaveBeenCalledTimes(1)
   mocks.harness.status = 'error'
-  view.rerender(<Webview />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Webview] shell view', expect.objectContaining({ branch: 'setup' }))
+  view.rerender(<Shell />)
+  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'setup' }))
   mocks.recovery.recovery.required = true
-  view.rerender(<Webview />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Webview] shell view', expect.objectContaining({ branch: 'recovery' }))
+  view.rerender(<Shell />)
+  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'recovery' }))
   mocks.harness.status = 'preinstall'
-  view.rerender(<Webview />)
-  expect(console.warn).toHaveBeenLastCalledWith('[Webview] shell view', expect.objectContaining({ branch: 'preinstall' }))
+  view.rerender(<Shell />)
+  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'preinstall' }))
   mocks.harness.status = 'ready'
   mocks.harness.serviceHealthy = false
-  view.rerender(<Webview />)
+  view.rerender(<Shell />)
   act(() => navbar().onRemoteChange('https://example.test/?token=secret', null))
-  expect(console.warn).toHaveBeenLastCalledWith('[Webview] shell view', expect.objectContaining({ branch: 'webview', remoteMode: true, serviceHealthy: false }))
+  expect(console.warn).toHaveBeenLastCalledWith('[Shell] shell view', expect.objectContaining({ branch: 'webview', remoteMode: true, serviceHealthy: false }))
   expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('secret')
   expect(console.warn).toHaveBeenCalledTimes(6)
 })
+
+function installLocalStorage() {
+  const items = new Map<string, string>()
+  const storage: Storage = {
+    get length() { return items.size },
+    clear: () => items.clear(),
+    getItem: (key: string) => items.get(key) ?? null,
+    key: (index: number) => Array.from(items.keys())[index] ?? null,
+    removeItem: (key: string) => void items.delete(key),
+    setItem: (key: string, value: string) => void items.set(key, String(value)),
+  }
+  Object.defineProperty(window, 'localStorage', { configurable: true, value: storage })
+}
+
+function resetNotificationSources() {
+  const storage = window.localStorage as Storage & { clear?: () => void }
+  if (typeof storage.clear === 'function') {
+    storage.clear()
+    return
+  }
+  for (let index = storage.length - 1; index >= 0; index--) {
+    const key = storage.key(index)
+    if (key !== null)
+      storage.removeItem(key)
+  }
+}
 
 function navbar() {
   return mocks.navbar.mock.lastCall![0]
@@ -119,7 +145,8 @@ beforeEach(() => {
   vi.useFakeTimers()
   mocks.window.label = 'window-2'
   window.location.hash = ''
-  window.localStorage.clear()
+  installLocalStorage()
+  resetNotificationSources()
   window.localStorage.setItem('dsh-notification-source:window-3', 'http://127.0.0.1:3081')
   window.localStorage.setItem('dsh-notification-source:window-1', 'http://127.0.0.1:3081')
   Object.assign(mocks.harness, { status: 'ready', serviceHealthy: true, webviewSrc: 'http://127.0.0.1:3081' })
@@ -146,7 +173,7 @@ afterEach(() => {
 
 it.each(['ready', 'timeout'])('mirrors frame and sidebar reports until the full-sidebar cover reveals on %s', (reveal) => {
   ;(globalThis as Record<string, unknown>).__DSH_NAVIGATION__ = { presentation: 'full-sidebar' }
-  const view = render(<Webview />)
+  const view = render(<Shell />)
   const cover = view.getByTestId('dsh-full-sidebar-cover')
   expect(cover.style.background).toBe('rgb(40, 50, 60)')
   expect(view.getByTestId('full-sidebar-navbar')).toBeTruthy()
@@ -164,7 +191,7 @@ it.each(['ready', 'timeout'])('mirrors frame and sidebar reports until the full-
 })
 
 it('sends sidebar and settings actions through the registered Tauri event contracts', () => {
-  render(<Webview />)
+  render(<Shell />)
   act(() => {
     navbar().onToggleSidebar?.()
     navbar().onOpenMachineManager?.()
@@ -176,7 +203,7 @@ it('sends sidebar and settings actions through the registered Tauri event contra
 })
 
 it('returns to local content before opening remote settings after plugin readiness', () => {
-  render(<Webview />)
+  render(<Shell />)
   act(() => navbar().onRemoteChange('https://remote.test', null))
   act(() => navbar().onOpenMachineManager?.())
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://settings:open', expect.anything())
@@ -185,7 +212,7 @@ it('returns to local content before opening remote settings after plugin readine
 })
 
 it('coalesces duplicate notification actions without losing the response text', async () => {
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.action!({ actionId: 'reply', inputValue: 'answer', extra: { tag: 'session-tag', sourceOrigin: 'http://127.0.0.1:3081' } })
     await mocks.action!({ actionId: 'reply', extra: { tag: 'session-tag', sourceOrigin: 'http://127.0.0.1:3081' } })
@@ -199,7 +226,7 @@ it('coalesces duplicate notification actions without losing the response text', 
 })
 
 it('keeps actions with a reused tag and different interaction identities separate', async () => {
-  render(<Webview />)
+  render(<Shell />)
   const extra = { tag: 'reused-tag', sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081', windowLabel: 'window-2' }
   await act(async () => {
     await mocks.action!({ actionId: 'reply', inputValue: 'old reply', extra: { ...extra, deliveryKey: 'interaction-old' } })
@@ -215,7 +242,7 @@ it('keeps actions with a reused tag and different interaction identities separat
 
 it('activates a minimized window before delivering a native notification click', async () => {
   mocks.window.isMinimized.mockResolvedValue(true)
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { tag: 'session-tag', sessionId: 'session-1', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
     expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
@@ -231,7 +258,7 @@ it('activates a minimized window before delivering a native notification click',
 })
 
 it('ignores native notification clicks and actions owned by another live window', async () => {
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { tag: 'session-tag', sessionId: 'session-1', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
     await mocks.action!({ actionId: 'approve', extra: { tag: 'session-tag', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
@@ -244,7 +271,7 @@ it('ignores native notification clicks and actions owned by another live window'
 
 it.each(['window-closed', undefined])('elects one live shell for notification owner %s', async (windowLabel) => {
   mocks.getAllWindows.mockResolvedValue([{ label: 'pet' }, { label: 'window-3' }, mocks.window])
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { tag: 'historical', sessionId: 'session-old', windowLabel, sourceOrigin: 'http://127.0.0.1:3081' } })
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
@@ -264,7 +291,7 @@ it.each(['window-closed', undefined])('elects one live shell for notification ow
 it.each(['click', 'action'])('waits for a live notification owner with unknown source before handling its cold %s once', async (kind) => {
   window.localStorage.setItem('dsh-notification-source:window-3', '')
   const metadata = { tag: 'owner-tag', deliveryKey: 'owner-interaction', sessionId: 'owner-session', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' }
-  const otherShell = render(<Webview />)
+  const otherShell = render(<Shell />)
   await act(async () => {
     if (kind === 'click')
       await mocks.clicked!({ data: metadata })
@@ -278,7 +305,7 @@ it.each(['click', 'action'])('waits for a live notification owner with unknown s
   otherShell.unmount()
   mocks.window.label = 'window-3'
   mocks.harness.webviewSrc = ''
-  const ownerShell = render(<Webview />)
+  const ownerShell = render(<Shell />)
   await act(async () => {
     if (kind === 'click')
       await mocks.clicked!({ data: metadata })
@@ -288,7 +315,7 @@ it.each(['click', 'action'])('waits for a live notification owner with unknown s
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
   await act(async () => {
     mocks.harness.webviewSrc = metadata.sourceOrigin
-    ownerShell.rerender(<Webview />)
+    ownerShell.rerender(<Shell />)
   })
   await act(async () => {
     await vi.advanceTimersByTimeAsync(250)
@@ -303,7 +330,7 @@ it.each(['click', 'action'])('waits for a live notification owner with unknown s
 })
 
 it.each(['http://127.0.0.1:4000', undefined])('rejects a notification from incompatible or unknown source %s even for its owner', async (sourceOrigin) => {
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { sessionId: 'wrong-host', windowLabel: 'window-2', sourceOrigin } })
     await mocks.action!({ actionId: 'approve', extra: { tag: 'wrong-host', windowLabel: 'window-2', sourceOrigin } })
@@ -319,7 +346,7 @@ it('takes over only matching origins when other profile and remote shells sort f
   window.localStorage.setItem('dsh-notification-source:main', 'http://127.0.0.1:4000')
   window.localStorage.setItem('dsh-notification-source:remote-1', 'https://remote.test')
   window.localStorage.setItem('dsh-notification-source:window-3', 'http://127.0.0.1:4000')
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { sessionId: 'same-profile', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
@@ -329,7 +356,7 @@ it('takes over only matching origins when other profile and remote shells sort f
 })
 
 it('retains queued local clicks while the owning shell displays a remote host', async () => {
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { sessionId: 'local-session', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
   })
@@ -354,7 +381,7 @@ it.each([
   ['action', 'https://other.test'],
 ])('buffers cold %s until the source becomes %s', async (kind, sourceOrigin) => {
   mocks.harness.webviewSrc = ''
-  const view = render(<Webview />)
+  const view = render(<Shell />)
   const metadata = { tag: 'cold-tag', deliveryKey: 'cold-interaction', sessionId: 'cold-session', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' }
   await act(async () => {
     if (kind === 'click')
@@ -367,7 +394,7 @@ it.each([
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
   await act(async () => {
     mocks.harness.webviewSrc = sourceOrigin
-    view.rerender(<Webview />)
+    view.rerender(<Shell />)
   })
   await act(async () => {
     await vi.advanceTimersByTimeAsync(250)
@@ -390,7 +417,7 @@ it.each([
 it('retains a notification when delivery fails and retries on the next ready event', async () => {
   const error = new Error('guest unavailable')
   vi.spyOn(console, 'error').mockImplementation(() => {})
-  render(<Webview />)
+  render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { sessionId: 'session-1', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
   })

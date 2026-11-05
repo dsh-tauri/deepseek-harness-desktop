@@ -5,9 +5,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from 'valtio-define'
 import { useListen } from '@/hooks/use-listen'
+import { Loadable } from '@/layout/startup/loadable'
 import { store } from '@/store'
 import { zoomActionFromShortcut } from '@/utils/zoom'
-import { Loadable } from './loadable'
 
 interface HarnessWebviewState {
   label: string
@@ -21,12 +21,12 @@ interface HarnessWebviewReservation {
   label: string
 }
 
-export interface HarnessWebviewProps {
+export interface NativeWebviewProps {
   srcOverride?: string | null
   borderTint?: string | null
 }
 
-export function HarnessWebview({ srcOverride = null, borderTint = null }: HarnessWebviewProps) {
+export function NativeWebview({ srcOverride = null, borderTint = null }: NativeWebviewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const lifecycleRef = useRef(Promise.resolve())
   const updatesRef = useRef(Promise.resolve())
