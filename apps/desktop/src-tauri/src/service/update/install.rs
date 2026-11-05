@@ -459,25 +459,34 @@ fn is_appimage(path: &std::path::Path) -> bool {
 /// 把下载好的新镜像覆盖到用户启动时使用的那个 AppImage 上（issue #1410）。
 ///
 /// 只 exec 下载目录里的副本时，桌面条目与命令名仍指向旧镜像，用户下次从原路径启动
-/// 还是旧版本。先复制到原文件同目录的临时名再 `rename` 覆盖：旧镜像已映射进当前
+/// 还是旧版本。先复制到原文件同目录的暂存文件再 `rename` 覆盖：旧镜像已映射进当前
 /// 进程，替换目录项不影响运行中的实例，且 `rename` 本身是原子的，中途失败不会留下
-/// 半截镜像。原目录不可写（例如放在 root 拥有的 `/opt`）时明确拒绝，不做「另跑一份」。
+/// 半截镜像。暂存名带进程号并用 `create_new` 独占创建——固定名会被残留文件或符号
+/// 链接接管，把新镜像写到别处、还会在失败清理时删掉别人的文件。原目录不可写
+/// （例如放在 root 拥有的 `/opt`）时明确拒绝，不做「另跑一份」。
 #[cfg(target_os = "linux")]
 fn replace_running_appimage(
     target: &std::path::Path,
     downloaded: &std::path::Path,
 ) -> Result<(), String> {
-    let staging = target.with_extension("AppImage.new");
-    if let Err(error) = std::fs::copy(downloaded, &staging) {
-        let _ = std::fs::remove_file(&staging);
-        return Err(format!(
-            "UPDATE_MEDIA_UNSUPPORTED: cannot write {}: {error}",
-            staging.display()
-        ));
-    }
-    if let Err(error) = ensure_installer_executable(&staging)
-        .and_then(|()| std::fs::rename(&staging, target).map_err(|e| format!("{e}")))
-    {
+    let staging = target.with_extension(format!("AppImage.{}.new", std::process::id()));
+    // 独占创建：名字已被占用（残留文件或符号链接）就放弃，不覆盖、也不认领别人的文件，
+    // 后面的清理因此只会删掉本次真正创建的那个。
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staging)
+        .map_err(|error| {
+            format!(
+                "UPDATE_MEDIA_UNSUPPORTED: cannot create {}: {error}",
+                staging.display()
+            )
+        })?;
+    let result = std::fs::copy(downloaded, &staging)
+        .map_err(|error| error.to_string())
+        .and_then(|_| ensure_installer_executable(&staging))
+        .and_then(|()| std::fs::rename(&staging, target).map_err(|error| error.to_string()));
+    if let Err(error) = result {
         let _ = std::fs::remove_file(&staging);
         return Err(format!(
             "UPDATE_MEDIA_UNSUPPORTED: cannot replace {}: {error}",
@@ -1129,7 +1138,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 便携镜像的就地替换：新镜像覆盖用户在用的那个文件，且不留临时文件。
+    /// 便携镜像的就地替换：新镜像覆盖用户在用的那个文件，且不留暂存文件。
     ///
     /// 旧行为只 exec 下载目录里的副本，桌面条目仍指向旧镜像（issue #1410）。
     #[cfg(target_os = "linux")]
@@ -1147,8 +1156,12 @@ mod tests {
         assert_eq!(std::fs::read(&running).unwrap(), b"new-image");
         let mode = std::fs::metadata(&running).unwrap().permissions().mode();
         assert_eq!(mode & 0o111, 0o111, "替换后的镜像必须可执行，mode={mode:o}");
-        assert!(!dir.path().join("DSH.AppImage.new").exists());
         assert_eq!(std::fs::read(&downloaded).unwrap(), b"new-image");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            2,
+            "暂存文件必须已被 rename 掉"
+        );
 
         // 原目录不可写（镜像放在 root 拥有的目录）时明确拒绝，不静默「另跑一份」
         let read_only = dir.path().join("readonly");
@@ -1163,6 +1176,25 @@ mod tests {
             assert!(result.is_err(), "只读目录必须拒绝替换");
         }
         assert_eq!(std::fs::read(&target).unwrap(), b"old-image");
+    }
+
+    /// 暂存文件独占创建：同名残留文件不会被覆盖，失败清理也不会删掉别人的文件。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn replace_running_appimage_never_reuses_a_stale_staging_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = dir.path().join("DSH.AppImage");
+        let downloaded = dir.path().join("DSH_0.30.5.AppImage");
+        std::fs::write(&running, b"old-image").unwrap();
+        std::fs::write(&downloaded, b"new-image").unwrap();
+        let stale = dir
+            .path()
+            .join(format!("DSH.AppImage.{}.new", std::process::id()));
+        std::fs::write(&stale, b"someone-else").unwrap();
+
+        assert!(replace_running_appimage(&running, &downloaded).is_err());
+        assert_eq!(std::fs::read(&running).unwrap(), b"old-image");
+        assert_eq!(std::fs::read(&stale).unwrap(), b"someone-else");
     }
 
     /// AppImage 识别按扩展名匹配且大小写不敏感；其它安装包格式不受影响。

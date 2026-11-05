@@ -143,27 +143,44 @@ fn linux_package_family() -> &'static str {
 
 /// 当前进程若由 AppImage 镜像直接拉起，返回该镜像文件本身的路径。
 ///
-/// `APPIMAGE` 由 AppRun 注入，指向用户实际保存的镜像（而非 `/tmp/.mount_*` 挂载点），
-/// 因此可以直接用来覆盖本体；没有该变量但可执行文件名带 `.AppImage` 后缀，同样按
-/// 便携镜像处理。纯函数：两个输入都由调用方给出，任意 CI 平台都能断言。
+/// 只认非空 `APPIMAGE` 不够：被别的 AppImage 环境继承或用户 shell 里残留该变量时，
+/// 会把不相干镜像当成「当前安装」，更新就会覆盖到那个文件上。AppImage 运行时同时
+/// 注入 `APPDIR`（本进程的挂载点），当前可执行文件必须落在其中才算数。没有这套环境
+/// 变量时退回可执行文件后缀判定（直接 exec 镜像的场景）。
+///
+/// 纯函数：三个输入都由调用方给出，任意 CI 平台都能构造断言。
 #[cfg(target_os = "linux")]
 fn running_appimage_from(
     appimage: Option<&str>,
+    appdir: Option<&str>,
     exe: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
-    match appimage.filter(|path| !path.is_empty()) {
-        Some(path) => Some(std::path::PathBuf::from(path)),
-        None => exe
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
-            .then(|| exe.to_path_buf()),
+    let image = appimage
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
+        });
+    if let Some(image) = image {
+        // `APPDIR` 是本进程的挂载点：能取到它时可执行文件必须落在其中，否则这个
+        // `APPIMAGE` 是从别的进程继承来的；取不到（老运行时）时只能信它。
+        let belongs = match appdir.filter(|dir| !dir.is_empty()) {
+            Some(dir) => !exe.as_os_str().is_empty() && exe.starts_with(dir),
+            None => true,
+        };
+        return belongs.then_some(image);
     }
+    exe.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
+        .then(|| exe.to_path_buf())
 }
 
 #[cfg(target_os = "linux")]
 pub(super) fn running_appimage() -> Option<std::path::PathBuf> {
     running_appimage_from(
         std::env::var("APPIMAGE").ok().as_deref(),
+        std::env::var("APPDIR").ok().as_deref(),
         &std::env::current_exe().unwrap_or_default(),
     )
 }
@@ -171,11 +188,15 @@ pub(super) fn running_appimage() -> Option<std::path::PathBuf> {
 /// 当前这份安装是怎么跑起来的：`"appimage"` 为便携镜像直接运行，`"package"` 为已
 /// 落到系统目录、由桌面条目/命令名拉起（deb、rpm、AUR 或手工解包都算这类）。
 ///
-/// 纯函数：`APPIMAGE` 由 AppRun 注入，`current_exe` 由调用方给出，两者都能在任意
-/// CI 平台上构造断言（同 [`arch_rank_for`]）。
+/// 纯函数：`APPIMAGE`/`APPDIR` 由 AppRun 注入，`current_exe` 由调用方给出，三者都能
+/// 在任意 CI 平台上构造断言（同 [`arch_rank_for`]）。
 #[cfg(target_os = "linux")]
-fn linux_install_media_for(appimage: Option<&str>, exe: &std::path::Path) -> &'static str {
-    if running_appimage_from(appimage, exe).is_some() {
+fn linux_install_media_for(
+    appimage: Option<&str>,
+    appdir: Option<&str>,
+    exe: &std::path::Path,
+) -> &'static str {
+    if running_appimage_from(appimage, appdir, exe).is_some() {
         "appimage"
     } else {
         "package"
@@ -185,7 +206,11 @@ fn linux_install_media_for(appimage: Option<&str>, exe: &std::path::Path) -> &'s
 #[cfg(target_os = "linux")]
 fn linux_install_media() -> &'static str {
     let exe = std::env::current_exe().unwrap_or_default();
-    linux_install_media_for(std::env::var("APPIMAGE").ok().as_deref(), &exe)
+    linux_install_media_for(
+        std::env::var("APPIMAGE").ok().as_deref(),
+        std::env::var("APPDIR").ok().as_deref(),
+        &exe,
+    )
 }
 
 /// 按包管理家族与安装媒介返回 Linux 资产扩展名优先级列表（纯函数，便于测试）。
@@ -488,47 +513,77 @@ mod tests {
     #[test]
     fn linux_install_media_for_detects_portable_image() {
         let mount = std::path::Path::new("/tmp/.mount_DSHuQmxq/usr/bin/deepseek-harness");
+        let appdir = "/tmp/.mount_DSHuQmxq";
         assert_eq!(
-            linux_install_media_for(Some("/opt/DSH.AppImage"), mount),
+            linux_install_media_for(Some("/opt/DSH.AppImage"), Some(appdir), mount),
             "appimage"
         );
         assert_eq!(
-            linux_install_media_for(None, std::path::Path::new("/opt/DSH-x64.AppImage")),
+            linux_install_media_for(None, None, std::path::Path::new("/opt/DSH-x64.AppImage")),
             "appimage"
         );
         // `APPIMAGE` 空串等同未设置；系统目录与无扩展名都归为 package
-        assert_eq!(linux_install_media_for(Some(""), mount), "package");
+        assert_eq!(
+            linux_install_media_for(Some(""), Some(appdir), mount),
+            "package"
+        );
         assert_eq!(
             linux_install_media_for(
+                None,
                 None,
                 std::path::Path::new("/usr/lib/DSH Tauri/runtime/linux-x64/DSH Tauri")
             ),
             "package"
         );
         assert_eq!(
-            linux_install_media_for(None, std::path::Path::new("")),
+            linux_install_media_for(None, None, std::path::Path::new("")),
+            "package"
+        );
+        // 继承来的 `APPIMAGE` 不属于本进程（可执行文件不在该 APPDIR 里）时不算便携镜像
+        assert_eq!(
+            linux_install_media_for(
+                Some("/opt/DSH.AppImage"),
+                Some(appdir),
+                std::path::Path::new("/usr/bin/deepseek-harness")
+            ),
             "package"
         );
     }
 
-    /// 就地替换的目标必须是用户保存的那个镜像文件，而不是 `/tmp/.mount_*` 挂载点。
+    /// 就地替换的目标必须是用户保存的那个镜像文件，而不是 `/tmp/.mount_*` 挂载点，
+    /// 也不能是环境里继承来的别的镜像。
     #[cfg(target_os = "linux")]
     #[test]
     fn running_appimage_prefers_the_appimage_variable() {
         let mount = std::path::Path::new("/tmp/.mount_DSHuQmxq/usr/bin/deepseek-harness");
+        let appdir = "/tmp/.mount_DSHuQmxq";
         assert_eq!(
-            running_appimage_from(Some("/home/u/Apps/DSH.AppImage"), mount),
+            running_appimage_from(Some("/home/u/Apps/DSH.AppImage"), Some(appdir), mount),
             Some(std::path::PathBuf::from("/home/u/Apps/DSH.AppImage"))
         );
         assert_eq!(
-            running_appimage_from(None, std::path::Path::new("/opt/DSH-x64.AppImage")),
+            running_appimage_from(None, None, std::path::Path::new("/opt/DSH-x64.AppImage")),
             Some(std::path::PathBuf::from("/opt/DSH-x64.AppImage"))
         );
-        assert_eq!(running_appimage_from(Some(""), mount), None);
+        assert_eq!(running_appimage_from(Some(""), Some(appdir), mount), None);
         assert_eq!(
             running_appimage_from(
                 None,
+                None,
                 std::path::Path::new("/usr/lib/DSH Tauri/runtime/linux-x64/DSH Tauri")
+            ),
+            None
+        );
+        // 变量指向的不是镜像文件，或可执行文件不在该 APPDIR 内 → 不认这个目标
+        assert_eq!(
+            running_appimage_from(Some("/home/u/notes.txt"), Some(appdir), mount),
+            None
+        );
+        assert_eq!(
+            running_appimage_from(
+                Some("/home/u/Apps/DSH.AppImage"),
+                Some(appdir),
+                std::path::Path::new("/usr/bin/deepseek-harness")
             ),
             None
         );
