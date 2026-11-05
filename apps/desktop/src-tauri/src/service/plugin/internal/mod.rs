@@ -546,7 +546,7 @@ async fn run_ensure_operation(
     internal: &[PreinstallPluginInfo],
     owner: ProcessOwner,
     cancel_tx: tokio::sync::watch::Sender<bool>,
-    mut cancel: tokio::sync::watch::Receiver<bool>,
+    cancel: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), String> {
     let total = internal.len();
     emit_phase(
@@ -565,6 +565,25 @@ async fn run_ensure_operation(
     );
     let refs: Vec<_> = internal.iter().collect();
     let operation = ensure_inner(app_handle, &refs, cancel.clone(), owner);
+    wait_for_ensure_operation(
+        operation,
+        total,
+        owner,
+        cancel_tx,
+        cancel,
+        |phase, detail, completed| emit_phase(app_handle, phase, detail, completed, total),
+    )
+    .await
+}
+
+async fn wait_for_ensure_operation(
+    operation: impl Future<Output = Result<(), String>>,
+    total: usize,
+    owner: ProcessOwner,
+    cancel_tx: tokio::sync::watch::Sender<bool>,
+    mut cancel: tokio::sync::watch::Receiver<bool>,
+    mut emit: impl FnMut(&'static str, InternalPluginPhaseDetail, usize),
+) -> Result<(), String> {
     tokio::pin!(operation);
     let deadline = tokio::time::sleep(ENSURE_ABSOLUTE_TIMEOUT);
     tokio::pin!(deadline);
@@ -574,7 +593,11 @@ async fn run_ensure_operation(
     loop {
         tokio::select! {
             outcome = &mut operation => {
-                emit_phase(app_handle, "done", InternalPluginPhaseDetail::Done, total, total);
+                if outcome.as_ref().is_err_and(|reason| reason.starts_with("INTERNAL_PLUGIN_INSTALL_CANCELLED:")) {
+                    emit("done", InternalPluginPhaseDetail::Cancelled, 0);
+                } else {
+                    emit("done", InternalPluginPhaseDetail::Done, total);
+                }
                 return outcome;
             }
             _ = &mut deadline => {
@@ -585,7 +608,7 @@ async fn run_ensure_operation(
                 if tokio::time::timeout(ENSURE_CLEANUP_TIMEOUT, &mut operation).await.is_err() {
                     log::error!("INTERNAL_PLUGIN_CLEANUP_TIMEOUT: plugin process did not exit after forced termination");
                 }
-                emit_phase(app_handle, "done", InternalPluginPhaseDetail::Timeout, 0, total);
+                emit("done", InternalPluginPhaseDetail::Timeout, 0);
                 return Err(reason.to_string());
             }
             changed = cancel.changed() => {
@@ -596,12 +619,12 @@ async fn run_ensure_operation(
                     if tokio::time::timeout(ENSURE_CLEANUP_TIMEOUT, &mut operation).await.is_err() {
                         log::error!("INTERNAL_PLUGIN_CLEANUP_TIMEOUT: plugin process did not exit after forced termination");
                     }
-                    emit_phase(app_handle, "done", InternalPluginPhaseDetail::Cancelled, 0, total);
+                    emit("done", InternalPluginPhaseDetail::Cancelled, 0);
                     return Err(reason.to_string());
                 }
             }
             _ = heartbeat.tick() => {
-                emit_phase(app_handle, "progress", InternalPluginPhaseDetail::Heartbeat, 0, total);
+                emit("progress", InternalPluginPhaseDetail::Heartbeat, 0);
             }
         }
     }
@@ -1372,12 +1395,44 @@ mod tests {
                 .is_err()
         );
         cancel_tx.send(true).unwrap();
-        let result = tokio::time::timeout(Duration::from_secs(5), preparation)
-            .await
-            .unwrap();
+        let mut seen_cancel = cancel.clone();
+        assert!(*seen_cancel.borrow_and_update());
+        let mut phases = Vec::new();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_ensure_operation(
+                async { preparation.await.map(|_| ()) },
+                presets.len(),
+                new_process_owner(),
+                cancel_tx,
+                seen_cancel,
+                |phase, detail, completed| {
+                    phases.push(
+                        serde_json::to_value(InternalPluginsPhase {
+                            phase,
+                            detail,
+                            completed,
+                            total: presets.len(),
+                        })
+                        .unwrap(),
+                    );
+                },
+            ),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             result.err().unwrap(),
             "INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled"
+        );
+        assert_eq!(
+            phases,
+            vec![serde_json::json!({
+                "phase": "done",
+                "detail": "cancelled",
+                "completed": 0,
+                "total": presets.len(),
+            })]
         );
         assert_eq!(
             std::fs::read(profile.join("package.json")).unwrap(),
