@@ -9,7 +9,6 @@ interface SessionTarget {
 interface MenuActionItem {
   id: string
   label: string
-  disabled?: boolean
   separatorBefore?: boolean
   failureLabel?: string
   run?: () => void | Promise<void>
@@ -18,32 +17,29 @@ interface MenuActionItem {
 interface ContextMenusLike {
   register: (contribution: {
     id: string
-    target: string
+    target: 'session'
     order: number
-    resolve: (target: unknown) => readonly MenuActionItem[]
+    resolve: (target: SessionTarget) => readonly MenuActionItem[]
   }) => () => void
 }
 
 export function registerSessionContextMenu(ctx: ClientContext): () => void {
-  const menus = (ctx as ClientContext & { contextMenus?: ContextMenusLike }).contextMenus
-  if (menus === undefined || detectMobileDevice() || !('dshDesktop' in globalThis))
+  const menus = ctx.get('contextMenus') as ContextMenusLike | undefined
+  if (typeof menus?.register !== 'function' || detectMobileDevice() || !('dshDesktop' in globalThis))
     return () => {}
 
   return menus.register({
     id: 'dsh-tauri.openInNewWindow',
     target: 'session',
     order: 700,
-    resolve: (target) => {
-      const { sessionId } = target as SessionTarget
-      if (!sessionId)
-        return []
-      return [{
-        id: 'openInNewWindow',
-        label: locale.text('openInNewWindow'),
-        separatorBefore: true,
-        failureLabel: locale.text('openInNewWindowFailed'),
-        run: () => invoke('create_app_window', { sessionId }),
-      }]
-    },
+    resolve: ({ sessionId }) => sessionId
+      ? [{
+          id: 'openInNewWindow',
+          label: locale.text('openInNewWindow'),
+          separatorBefore: true,
+          failureLabel: locale.text('openInNewWindowFailed'),
+          run: () => invoke('create_app_window', { sessionId }),
+        }]
+      : [],
   })
 }
