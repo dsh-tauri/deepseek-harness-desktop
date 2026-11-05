@@ -28,6 +28,7 @@ export const queryKeys = {
   profileMigration: (sourceId: string) => ['profile_migration', sourceId] as const,
   /** 当前档案的备份快照列表 */
   backups: ['backups'] as const,
+  profileBackups: (profileId: string) => ['backups', profileId] as const,
   /** 数据目录状态与旧目录备份（issue #871） */
   dataDir: ['data_dir'] as const,
   /** 数据目录下的一级子项体积（issue #871） */

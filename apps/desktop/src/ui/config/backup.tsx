@@ -10,11 +10,12 @@ import { Modal } from '@/components/modal'
 import { Panel } from '@/components/panel'
 import { useBackups } from '@/hooks/use-backup'
 import { store } from '@/store'
-import { waitForHarnessStopped } from '@/store/modules/harness'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
 export interface ConfigBackupProps {
+  profileId: string
+  active: boolean
   onBack: () => void
 }
 
@@ -23,9 +24,9 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}`
 }
 
-export function ConfigBackup({ onBack }: ConfigBackupProps) {
+export function ConfigBackup({ profileId, active, onBack }: ConfigBackupProps) {
   const { t } = useTranslation()
-  const { backups, loading, error, createBackup, restoreBackup, deleteBackup, busy, creating, restoring, deleting, exporting, recoveryBackup, exportRecoveryBackup } = useBackups()
+  const { backups, loading, error, createBackup, restoreBackup, deleteBackup, busy, creating, restoring, deleting, exporting, recoveryBackup, exportRecoveryBackup } = useBackups(profileId)
   const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
 
   const [includeCredentials, toggleIncludeCredentials] = useToggle()
@@ -90,18 +91,12 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
       silence(e, 'backup: dialog cancelled')
       return
     }
-    // 先停止 DSH 服务（释放 profile 目录的文件锁）
-    toast(t('backup.restored_stopped_toast'), { variant: 'accent' })
-    try {
-      await invoke('shutdown_harness')
-    }
-    catch (e) {
-      console.warn('[ConfigBackup] shutdown_harness failed (may already be stopped):', e)
-    }
-    // 无论 shutdown 成功与否，都验证服务已真正停止
-    await waitForHarnessStopped()
     try {
       await restoreBackup(timestamp, false)
+      if (!active) {
+        toast(t('backup.restored_toast'), { variant: 'accent', timeout: 5000 })
+        return
+      }
       // 还原后自动启动 DSH 服务（后台异步，不阻塞 UI）
       invoke('launch_harness').catch((e) => {
         console.warn('[ConfigBackup] launch_harness failed:', e)
@@ -185,7 +180,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
       </Button>
 
       {/* 手动备份 */}
-      <Panel.Header title={t('backup.manual_section')} description={t('backup.profile_scope')} />
+      <Panel.Header title={t('backup.manual_section')} description={t('backup.profile_scope', { profile: profileId })} />
       <div className="flex flex-col gap-3">
         <Button
           variant="primary"

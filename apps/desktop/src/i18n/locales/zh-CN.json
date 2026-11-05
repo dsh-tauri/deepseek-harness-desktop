@@ -612,7 +612,7 @@
   "recovery.reason.runtime.detail": "该插件运行期上报了错误。卸载它并继续可能解决问题。",
   "recovery.reason.unknown.title": "插件启动失败",
   "recovery.reason.unknown.detail": "Harness 在加载插件时发生错误，但暂时无法自动判断更具体的原因。",
-  "backup.profile_scope": "档案备份仅包含当前档案的配置，不包含会话或共享工作区数据，并存放在 DSH_HOME 内。",
+  "backup.profile_scope": "档案备份仅包含 {{profile}} 的配置，不包含会话或共享工作区数据，并存放在 DSH_HOME 内。",
   "backup.recovery_section": "恢复导出（包含会话）",
   "backup.recovery_desc": "手动将会话、共享存储及所有档案导出到 DSH_HOME 之外的桌面应用数据目录。依赖和已有备份归档不包含在内。遇到链接文件或目录时会报错，避免静默遗漏其数据。导出不会自动删除。即使不勾选凭据，其他配置文件也可能包含密钥。",
   "backup.export_recovery": "导出恢复归档",

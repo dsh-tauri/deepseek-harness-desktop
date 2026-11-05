@@ -612,7 +612,7 @@
   "recovery.reason.runtime.detail": "The plugin reported a runtime error. Removing it and continuing may resolve the issue.",
   "recovery.reason.unknown.title": "A plugin failed during startup",
   "recovery.reason.unknown.detail": "Harness reported an error while loading a plugin, but the exact cause could not be determined automatically.",
-  "backup.profile_scope": "Profile backups include only the active profile configuration. They do not include conversations or shared workspace data and are stored inside DSH_HOME.",
+  "backup.profile_scope": "Profile backups include only the configuration of {{profile}}. They do not include conversations or shared workspace data and are stored inside DSH_HOME.",
   "backup.recovery_section": "Recovery export (including conversations)",
   "backup.recovery_desc": "Manually export sessions, shared storage and all profiles outside DSH_HOME, under the desktop application data folder. Dependencies and existing backup archives are excluded. Linked files or folders cause the export to fail rather than silently omit their data. Exports are not automatically deleted. Other configuration files may contain secrets even when credentials are excluded.",
   "backup.export_recovery": "Export recovery archive",

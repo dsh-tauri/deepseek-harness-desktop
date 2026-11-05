@@ -37,12 +37,12 @@ export interface UseBackupsResult {
  * 备份设置存在桌面端 store，`update_app_config` 会触发 `setting_updated` 事件，
  * 这里监听该事件一并失效重拉，保证列表与后端一致。
  */
-export function useBackups(): UseBackupsResult {
+export function useBackups(profileId: string): UseBackupsResult {
   const queryClient = useQueryClient()
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: queryKeys.backups,
-    queryFn: () => invoke<BackupInfo[]>('list_backups'),
+    queryKey: queryKeys.profileBackups(profileId),
+    queryFn: () => invoke<BackupInfo[]>('list_backups', { profileId }),
   })
 
   // 后端设置变更（配置变化触发备份等）后刷新备份列表
@@ -54,16 +54,16 @@ export function useBackups(): UseBackupsResult {
 
   const create = useMutation({
     mutationFn: (includeCredentials: boolean) =>
-      invoke<BackupInfo>('backup_profile', { includeCredentials }),
+      invoke<BackupInfo>('backup_profile', { profileId, includeCredentials }),
     onSuccess: invalidate,
   })
   const restore = useMutation({
     mutationFn: ({ timestamp, asNew }: { timestamp: string, asNew: boolean }) =>
-      invoke<void>('restore_profile', { timestamp, asNew }),
+      invoke<void>('restore_profile', { profileId, timestamp, asNew }),
     onSuccess: invalidate,
   })
   const remove = useMutation({
-    mutationFn: (timestamp: string) => invoke<void>('delete_backup', { timestamp }),
+    mutationFn: (timestamp: string) => invoke<void>('delete_backup', { profileId, timestamp }),
     onSuccess: invalidate,
   })
   const recovery = useMutation({

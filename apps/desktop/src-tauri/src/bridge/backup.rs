@@ -1,9 +1,17 @@
 //! 备份 / 还原 Tauri 命令。
 
-
-
-use crate::{AppHandle, Window};
 use crate::service::{backup, workflow::instances};
+use crate::{AppHandle, Window};
+
+fn target_profile<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    current_profile: String,
+    profile_id: Option<String>,
+) -> Result<String, String> {
+    let profile = profile_id.unwrap_or(current_profile);
+    crate::service::profile::select(app_handle, &profile)?;
+    Ok(profile)
+}
 
 #[tauri::command]
 pub async fn export_recovery_backup(
@@ -35,9 +43,14 @@ pub async fn export_recovery_backup(
 pub async fn backup_profile(
     app_handle: AppHandle,
     window: Window,
+    profile_id: Option<String>,
     include_credentials: bool,
 ) -> Result<backup::BackupInfo, String> {
-    let profile = instances::window_profile(&app_handle, window.label());
+    let profile = target_profile(
+        &app_handle,
+        instances::window_profile(&app_handle, window.label()),
+        profile_id,
+    )?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         instances::scope_sync(profile, || {
             backup::create_backup(
@@ -65,11 +78,16 @@ pub async fn backup_profile(
 pub async fn restore_profile(
     app_handle: AppHandle,
     window: Window,
+    profile_id: Option<String>,
     timestamp: String,
     as_new: bool,
 ) -> Result<(), String> {
     let transition = crate::service::workflow::acquire_core_transition().await?;
-    let profile = instances::window_profile(&app_handle, window.label());
+    let profile = target_profile(
+        &app_handle,
+        instances::window_profile(&app_handle, window.label()),
+        profile_id,
+    )?;
     instances::scope(profile.clone(), async move {
         let mode = if as_new {
             backup::RestoreMode::AsNew
@@ -93,21 +111,106 @@ pub async fn restore_profile(
 }
 
 #[tauri::command]
-pub fn list_backups(app_handle: AppHandle, window: Window) -> Vec<backup::BackupInfo> {
-    let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || backup::list_backups(&app_handle))
+pub fn list_backups(
+    app_handle: AppHandle,
+    window: Window,
+    profile_id: Option<String>,
+) -> Result<Vec<backup::BackupInfo>, String> {
+    let profile = target_profile(
+        &app_handle,
+        instances::window_profile(&app_handle, window.label()),
+        profile_id,
+    )?;
+    Ok(instances::scope_sync(profile, || {
+        backup::list_backups(&app_handle)
+    }))
 }
 
 #[tauri::command]
 pub async fn delete_backup(
     app_handle: AppHandle,
     window: Window,
+    profile_id: Option<String>,
     timestamp: String,
 ) -> Result<(), String> {
-    let profile = instances::window_profile(&app_handle, window.label());
+    let profile = target_profile(
+        &app_handle,
+        instances::window_profile(&app_handle, window.label()),
+        profile_id,
+    )?;
     tauri::async_runtime::spawn_blocking(move || {
         instances::scope_sync(profile, || backup::delete_backup(&app_handle, &timestamp))
     })
     .await
     .map_err(|e| format!("BACKUP_DELETE_TASK: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn backup_target_is_validated_without_switching_the_active_profile() {
+        use crate::service::profile;
+        use tauri::utils::config::AppDirectoriesOverride;
+        const CHILD: &str = "DSH_TEST_BACKUP_TARGET";
+        if std::env::var_os(CHILD).is_none() {
+            let scratch = tempfile::tempdir().unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "bridge::backup::tests::backup_target_is_validated_without_switching_the_active_profile", "--nocapture"])
+                .env(CHILD, scratch.path())
+                .env("HOME", scratch.path())
+                .env("USERPROFILE", scratch.path())
+                .env("APPDATA", scratch.path().join("AppData/Roaming"))
+                .env("LOCALAPPDATA", scratch.path().join("AppData/Local"))
+                .env("XDG_DATA_HOME", scratch.path().join(".local/share"))
+                .env("DSH_HOME", scratch.path().join(".dsh"))
+                .env("DSH_E2E_HOME", scratch.path())
+                .env("TAURI_WEBDRIVER_PORT", "4445");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let root = std::path::PathBuf::from(std::env::var_os(CHILD).unwrap());
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Root(root.join("store")));
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(context)
+            .unwrap();
+        let app = app.handle();
+        for id in ["profile-a", "profile-b"] {
+            std::fs::create_dir_all(profile::profile_dir_of(app, id)).unwrap();
+        }
+        profile::set_active(app, "profile-a").unwrap();
+        assert_eq!(
+            super::target_profile(app, "profile-a".into(), Some("profile-b".into())).unwrap(),
+            "profile-b"
+        );
+        assert_eq!(
+            super::target_profile(app, "profile-a".into(), None).unwrap(),
+            "profile-a"
+        );
+        assert!(
+            super::target_profile(app, "profile-a".into(), Some("missing".into()))
+                .unwrap_err()
+                .starts_with("PROFILE_NOT_FOUND:")
+        );
+        assert!(
+            super::target_profile(app, "profile-a".into(), Some("../escape".into()))
+                .unwrap_err()
+                .starts_with("INVALID_ID:")
+        );
+        assert_eq!(profile::active_profile(app), "profile-a");
+    }
 }

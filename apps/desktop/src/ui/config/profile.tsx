@@ -358,7 +358,7 @@ export function ConfigProfile() {
   // 备份子视图：点击档案的「备份」芯片后进入
   if (activeView !== 'list') {
     return (
-      <ConfigBackup onBack={() => setActiveView('list')} />
+      <ConfigBackup profileId={activeView.profile} active={activeView.profile === activeProfile?.id} onBack={() => setActiveView('list')} />
     )
   }
 

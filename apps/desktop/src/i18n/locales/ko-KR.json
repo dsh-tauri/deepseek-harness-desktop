@@ -612,7 +612,7 @@
   "recovery.reason.runtime.detail": "플러그인에서 런타임 오류가 발생했습니다. 플러그인을 제거하고 계속하면 문제가 해결될 수 있습니다.",
   "recovery.reason.unknown.title": "시작 중 플러그인 오류가 발생했습니다",
   "recovery.reason.unknown.detail": "Harness가 플러그인을 불러오는 중 오류를 보고했지만 정확한 원인을 자동으로 확인하지 못했습니다.",
-  "backup.profile_scope": "프로파일 백업에는 활성 프로파일의 설정만 포함됩니다. 대화나 공유 워크스페이스 데이터는 포함되지 않으며 DSH_HOME 안에 저장됩니다.",
+  "backup.profile_scope": "프로파일 백업에는 {{profile}}의 설정만 포함됩니다. 대화나 공유 워크스페이스 데이터는 포함되지 않으며 DSH_HOME 안에 저장됩니다.",
   "backup.recovery_section": "복구용 내보내기(대화 포함)",
   "backup.recovery_desc": "세션, 공유 저장소 및 모든 프로파일을 DSH_HOME 외부의 데스크톱 앱 데이터 폴더로 수동 내보내기합니다. 종속성과 기존 백업 압축 파일은 제외됩니다. 링크된 파일이나 폴더가 있으면 해당 데이터를 알림 없이 제외하는 대신 내보내기에 실패합니다. 내보낸 파일은 자동으로 삭제되지 않습니다. 자격 증명을 제외하더라도 다른 설정 파일에 비밀 정보가 포함될 수 있습니다.",
   "backup.export_recovery": "복구 압축 파일 내보내기",
