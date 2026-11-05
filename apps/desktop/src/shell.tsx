@@ -48,6 +48,51 @@ function createDragNeutralizer(): HTMLStyleElement {
   return element
 }
 
+/**
+ * 修正 DSH 顶层浮层的让位。
+ *
+ * DSH 的 Modal 用 `padding-top: max(24px, --dsh-frame-overlay-top)` 给顶部留白，但设置
+ * 面板的 overlay 只把 panel 按同一变量压矮、再整体垂直居中：屏幕够高时面板上下各留
+ * 30px，仍会顶到壳层导航栏底下。这里给设置 overlay 补上同样的顶部内边距，让面板整体
+ * 下移、避开导航栏。设置面板 portal 到 body，和壳层宿主是同层兄弟，故用 `:has` 精确定位。
+ */
+function createOverlayInset(): HTMLStyleElement {
+  const element = document.createElement('style')
+  element.setAttribute(NEUTRALIZER_ATTRIBUTE, '')
+  element.textContent
+    = 'html[data-windows-titlebar] body > div:has(> [data-shortcut-modal="settings"])'
+      + '{padding-top:var(--dsh-frame-overlay-top, 24px);box-sizing:border-box}'
+  return element
+}
+
+/**
+ * 把逃出 Shadow DOM 的弹层拉回壳层容器。
+ *
+ * HeroUI 的 Dropdown / Modal 内部走 react-aria 的 Popover，默认 portal 到
+ * `document.body`——那是 Shadow 外的 light DOM，拿不到壳层样式表，于是菜单、对话框
+ * 会渲染成一坨无样式黑字。react-aria 的 `UNSTABLE_portalContainer` 没有从 HeroUI
+ * 透出，因此改为观察 body 的新增节点：只要子树里带浮层语义，就把**最外层容器**整体
+ * 挪进 `#dsh-shell-portal`，保留它自己的定位与层叠结构。
+ */
+function adoptEscapedOverlays(portal: HTMLElement): void {
+  const OVERLAY_ROLES = ['menu', 'dialog', 'listbox', 'tooltip', 'alertdialog']
+  const containsOverlay = (node: HTMLElement): boolean =>
+    OVERLAY_ROLES.includes(node.getAttribute('role') ?? '')
+    || node.querySelector(OVERLAY_ROLES.map(role => `[role="${role}"]`).join(',')) !== null
+  const sweep = (mutations: MutationRecord[]) => {
+    for (const mutation of mutations) {
+      for (const added of mutation.addedNodes) {
+        if (!(added instanceof HTMLElement) || added.parentElement !== document.body)
+          continue
+        if (!containsOverlay(added))
+          continue
+        portal.append(added)
+      }
+    }
+  }
+  new MutationObserver(sweep).observe(document.body, { childList: true })
+}
+
 /** 主世界的注入脚本调用：确保 Shadow host 与挂载点已就绪。 */
 function ensureHostRoot(): void {
   if (document.querySelector(`[${HOST_ATTRIBUTE}]`) !== null)
@@ -61,9 +106,8 @@ function ensureHostRoot(): void {
   const host = document.createElement('div')
   host.setAttribute(HOST_ATTRIBUTE, '')
   host.setAttribute('data-theme', root.dataset.theme === 'dark' ? 'dark' : 'light')
-  // 宿主与挂载点必须可命中：真实输入走 compositor 的命中测试，链路上任何一层
-  // `pointer-events: none` 都会让该区域的事件彻底消失（导航栏 hover/按下态仍在，
-  // click 却永远不来）。穿透改由壳层内部的空白区域各自声明。
+  // 宿主整体穿透（`pointer-events: none`），交互区域各自声明 `auto`；真正的点击问题
+  // 出在浏览器进程的拖拽区判定，由 light DOM 的覆盖规则解决（见 createDragNeutralizer）。
   host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483000'
   const shadow = host.attachShadow({ mode: 'open' })
   const style = document.createElement('style')
@@ -71,12 +115,16 @@ function ensureHostRoot(): void {
   const mount = document.createElement('div')
   mount.id = MOUNT_ID
   mount.style.cssText = 'pointer-events:none'
+  // 弹层容器铺满视口：被搬进来的浮层仍是 `position: fixed`，锚点按视口算，
+  // 容器本身不拦截点击，由浮层各自声明可交互区域。
   const portal = document.createElement('div')
   portal.id = PORTAL_ID
-  portal.style.cssText = 'pointer-events:none'
+  portal.style.cssText = 'position:fixed;inset:0;pointer-events:none'
   shadow.append(style, mount, portal)
   root.append(host)
   root.append(createDragNeutralizer())
+  root.append(createOverlayInset())
+  adoptEscapedOverlays(portal)
   new MutationObserver(() => {
     host.setAttribute('data-theme', root.dataset.theme === 'dark' ? 'dark' : 'light')
   }).observe(root, { attributes: true, attributeFilter: ['data-theme'] })
