@@ -264,6 +264,7 @@ pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
 }
 
 #[cfg(any(windows, test))]
+#[cfg_attr(not(test), allow(dead_code))] // early 启动路径专用
 pub(crate) fn apply_at(profile: &std::path::Path) -> Result<(), String> {
     imp::apply_at(profile)
 }

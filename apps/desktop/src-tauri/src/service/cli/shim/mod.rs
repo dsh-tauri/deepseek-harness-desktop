@@ -20,6 +20,13 @@ pub use write::{is_generated_shim, user_dsh_preserved, write_shims};
 pub const SHIM_CMD_NAME: &str = "dsh.cmd";
 #[cfg(windows)]
 pub const SHIM_PS1_NAME: &str = "dsh.ps1";
+/// Windows `node` 启动器：把参数转发给随包 Electron 的 Node 模式。
+///
+/// 没有独立 Node 运行时，而 dsh/pnpm 及其子进程仍会按名字解析 `node`（包脚本、
+/// 第三方代码直接 spawn `node`）。这与上游 desktop 的做法一致：Windows 上是
+/// `node.cmd`（不是 node.exe），Unix 上是 `node` 外壳脚本。
+#[cfg(windows)]
+pub const NODE_SHIM_CMD_NAME: &str = "node.cmd";
 #[cfg(windows)]
 pub const PNPM_SHIM_CMD_NAME: &str = "pnpm.cmd";
 #[cfg(windows)]
@@ -36,6 +43,8 @@ pub const NPM_SHIM_PS1_NAME: &str = "npm.ps1";
 /// Unix 下 shim 文件名
 #[cfg(unix)]
 pub const SHIM_SH_NAME: &str = "dsh";
+#[cfg(unix)]
+pub const NODE_SHIM_SH_NAME: &str = "node";
 #[cfg(unix)]
 pub const PNPM_SHIM_SH_NAME: &str = "pnpm";
 

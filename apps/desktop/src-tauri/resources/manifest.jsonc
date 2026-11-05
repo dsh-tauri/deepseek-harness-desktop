@@ -5,9 +5,6 @@
       // 清单不再声明「推荐版本」，也没有固定的随包版本。
       "minimum": "0.2.1-rc.1"
     },
-    "node": {
-      "version": ">=22.22.0"
-    },
     "pnpm": {
       "version": ">=11.7.0",
       "sha256": "deafa7ec98a1218b6a047289b92fbe2395c1e22d3495bb711653013218ee15ee"
@@ -27,15 +24,6 @@
     //   $AppData/...    AppData 数据目录（debug 构建为 <base>/dev 的同级）
     //   $Resources/...  安装包资源目录（`resources/...` 为等价旧写法）
     //   绝对路径         任意位置（如加载本地捆绑版内核）
-    "node": {
-      "engine": ">=22.22.0",
-      "entry": {
-        "windows": "node.exe",
-        "default": "bin/node"
-      },
-      "managedRoot": "$AppData/runtime",
-      "overridable": true
-    },
     "pnpm": {
       "engine": ">=11.7.0",
       "entry": "bin/pnpm.cjs",

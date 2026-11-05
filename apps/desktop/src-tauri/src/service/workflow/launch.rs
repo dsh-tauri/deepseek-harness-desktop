@@ -33,7 +33,6 @@ type HarnessChild = std::process::Child;
 pub(super) struct LaunchPlan {
     pub(super) setting: config::Setting,
     pub(super) profile: String,
-    pub(super) node: PathBuf,
     pub(super) dsh_binary: PathBuf,
     pub(super) core_dir: PathBuf,
     pub(super) profile_root: PathBuf,
@@ -179,9 +178,7 @@ fn resolve_heal_port(configured: u16, heal_target: u16, heal_target_free: bool) 
 
 /// 检测并启动 Harness 服务
 pub async fn start(app_handle: crate::AppHandle) -> Result<(), String> {
-    super::early::wait_preparation().await?;
     let setting = config::get_store_dat_setting(&app_handle);
-    let node_binary_path = config::get_node_binary_path(&app_handle);
     // 活动核心的入口：本地核心存在时优先本地（需求 3），否则预打包
     let dsh_binary_path = crate::service::core::active_dsh_binary(&app_handle);
 
@@ -189,7 +186,7 @@ pub async fn start(app_handle: crate::AppHandle) -> Result<(), String> {
         log::debug!("Harness not installed, skipping startup");
         return Ok(());
     }
-    if !node_binary_path.exists() || !dsh_binary_path.exists() {
+    if !dsh_binary_path.exists() {
         // Windows RedirectionGuard(448)：安装器继承的强制执行上下文永不自行恢复，
         // 先尝试通过 explorer 逃逸重拉（见 relaunch_via_shell_escape 注释），
         // 成功则本进程退出；未命中（重拉未逃逸/非 448）才走常规缺失处理。
@@ -458,7 +455,6 @@ fn supervise_harness(
 
 /// 启动 Harness 服务进程
 pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
-    super::early::wait_preparation().await?;
     // 启动分段计时（issue #766）：只写日志，不改控制流。每段一行 `STARTUP_PHASE`，
     // `ms` 是本段耗时、`total` 是本次 launch 的累计耗时。启动慢的归因过去只能靠
     // 时间戳猜测（同一进程内 auto_start 与前端 invoke 并发交错），埋点后可直接
@@ -478,7 +474,6 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     };
     let mut setting = config::get_store_dat_setting(&app_handle);
     setting.port = super::instances::port(&app_handle);
-    let node_binary_path = config::get_node_binary_path(&app_handle);
     let transition = super::process::acquire_core_transition();
     tokio::pin!(transition);
     let _transition_guard = loop {
@@ -492,11 +487,6 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     };
     let dsh_binary_path = crate::service::core::active_dsh_binary(&app_handle);
 
-    log::debug!("Checking Node.js path: {:?}", node_binary_path);
-    if !node_binary_path.exists() {
-        log::error!("Node.js not installed");
-        return Err("NODE_NOT_FOUND: Node.js not installed".to_string());
-    }
     log::debug!("Checking Harness path: {:?}", dsh_binary_path);
     if !dsh_binary_path.exists() {
         log::error!("Harness not installed");
@@ -776,23 +766,11 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         return Err(e);
     }
     mark_phase("prepare_active_runtime", &mut phase_started);
-    // prepare 可能因核心原生模块的 ABI 与本地 node 不匹配而改用捆绑运行时
-    // （issue #441），此时必须重新解析：下面的 DSH_NODE 注入与 PATH 前置都以
-    // 这里的结果为准，否则子进程仍会用那个加载不了原生模块的本地 node。
-    let node_binary_path = config::get_node_binary_path(&app_handle);
-    if !node_binary_path.exists() {
-        log::error!("Node.js runtime resolved for launch is missing");
-        return Err(format!(
-            "NODE_NOT_FOUND: Node.js runtime is missing: {}",
-            node_binary_path.display()
-        ));
-    }
     let profile = crate::service::profile::active_profile(&app_handle);
     let plan = LaunchPlan {
         setting,
         profile_root: crate::service::profile::profile_dir_of(&app_handle, &profile),
         profile,
-        node: node_binary_path,
         dsh_binary: dsh_binary_path,
         core_dir: crate::service::core::active_core_dir(&app_handle),
         dsh_home,
@@ -838,7 +816,6 @@ pub(super) async fn launch_prepared(
     let LaunchPlan {
         setting,
         profile: active_profile,
-        node: node_binary_path,
         dsh_binary: dsh_binary_path,
         core_dir,
         profile_root,
@@ -878,11 +855,23 @@ pub(super) async fn launch_prepared(
     // dunce::canonicalize 而不是 std::fs::canonicalize：后者在 Windows 上会
     // 返回 `\\?\` verbatim 前缀，cmd.exe 无法直接启动这种路径，导致 pnpm/dsh
     // shim 报 "The system cannot find the path specified."。
-    let node_abs =
-        dunce::canonicalize(&node_binary_path).unwrap_or_else(|_| node_binary_path.clone());
+    let node_abs = dunce::canonicalize(
+        super::electron_executable(
+            notifications
+                .get()
+                .ok_or("APP_HANDLE_UNAVAILABLE: launch handle was not set")?,
+        )?,
+    )
+    .map_err(|error| format!("ELECTRON_EXECUTABLE_INVALID: {error}"))?;
     envs.insert(
         "DSH_NODE".to_string(),
         node_abs.to_string_lossy().into_owned(),
+    );
+    // 服务进程的可执行文件就是 Electron：不进 Node 模式会以 Chromium 启动，
+    // 派生 zygote/gpu/renderer 子进程而根本不执行 dsh（前端只看到端口没人监听）。
+    envs.insert(
+        "ELECTRON_RUN_AS_NODE".to_string(),
+        "1".to_string(),
     );
 
     // 扩展 PATH，让 dsh 及其子进程能找到 node 与桌面端自动配置的 Git；Windows
@@ -893,7 +882,7 @@ pub(super) async fn launch_prepared(
     // 前置应用自身的 shim 目录，使市场（dsh-market）及其子进程通过名字解析的
     // `pnpm`/`dsh` 都命中桌面端 shim，从而受桌面端 pnpm 选版策略管辖
     // （轻量缓解，issue #69 系列）。
-    if let Some(node_dir) = node_binary_path.parent() {
+    if let Some(node_dir) = node_abs.parent() {
         if let Some(existing_path) = std::env::var_os("PATH") {
             let git_dirs = win_inspector::git_bash_bin_dirs();
             // 只打印注入的前缀目录，完整 PATH 太长会刷屏
@@ -937,7 +926,7 @@ pub(super) async fn launch_prepared(
         &pnpm_root,
         &pnpm_binary,
         user_pnpm.as_deref(),
-        &node_binary_path,
+        &node_abs,
         &bin_dir,
     )
     .await
@@ -1121,7 +1110,7 @@ pub(super) async fn launch_prepared(
                             use std::os::windows::io::{FromRawHandle, OwnedHandle};
                             let spawned = if let Some(job) = job.as_deref() {
                                 super::win_spawn::spawn_with_hidden_console_in_job(
-                                    &node_binary_path,
+                                    &node_abs,
                                     &args,
                                     Some(&core_dir),
                                     &envs,
@@ -1129,7 +1118,7 @@ pub(super) async fn launch_prepared(
                                 )
                             } else {
                                 super::win_spawn::spawn_with_hidden_console_owned(
-                                    &node_binary_path,
+                                    &node_abs,
                                     &args,
                                     Some(&core_dir),
                                     &envs,
@@ -1152,7 +1141,7 @@ pub(super) async fn launch_prepared(
                         #[cfg(unix)]
                         {
                             use std::os::unix::process::CommandExt;
-                            let mut command = Command::new(&node_binary_path);
+                            let mut command = Command::new(&node_abs);
                             command
                                 .args(args)
                                 .envs(&envs)
@@ -1392,8 +1381,8 @@ mod tests {
         fn with_reader_failure(script: &str, reader: usize) -> Self {
             use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
-            let node = config::get_local_node_path()
-                .expect("supported Node.js required for supervisor tests");
+            let node = crate::service::workflow::test_runtime_executable()
+                .expect("bundled Electron runtime required for supervisor tests");
             let root = tempfile::tempdir().unwrap();
             let path = root.path().to_path_buf();
             let script_path = path.join("fixture.cjs");
@@ -1412,6 +1401,7 @@ mod tests {
                     path.join("AppData/Local").to_string_lossy().into_owned(),
                 ),
                 ("DSH_E2E_HOME".into(), path.to_string_lossy().into_owned()),
+                ("ELECTRON_RUN_AS_NODE".into(), "1".into()),
                 ("NODE_OPTIONS".into(), String::new()),
                 ("NODE_PATH".into(), String::new()),
             ]);
