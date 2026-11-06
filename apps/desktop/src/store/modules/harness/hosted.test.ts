@@ -30,6 +30,7 @@ beforeEach(async () => {
   owned = false
   vi.mocked(invoke).mockImplementation(async (command) => {
     switch (command) {
+      case 'prepare_harness_restart': return true
       case 'begin_harness_restart': return { id: 'hosted-restart' }
       case 'get_harness_restart': return null
       case 'finish_harness_restart': return true
@@ -120,17 +121,18 @@ it('keeps a restarted hosted runtime ready when an older exit ownership check fi
   rejectProbe(new Error('HARNESS_NOT_OWNED'))
   await handling
   expect(harness.status).toBe('ready')
-  expect(harness.serviceHealthy).toBe(true)
+  expect(harness.serviceHealthy).toBe(false)
   expect(recovery.reviewStartupRecovery).not.toHaveBeenCalled()
 })
 
 it('allows an explicit restart from a hosted document', async () => {
   harness.markHostedReady()
   await harness.restart()
-  expect(invoke).toHaveBeenCalledWith('shutdown_harness')
-  expect(invoke).toHaveBeenCalledWith('launch_harness')
+  expect(invoke).toHaveBeenCalledWith('prepare_harness_restart', { id: 'hosted-restart' })
+  expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
+  expect(invoke).not.toHaveBeenCalledWith('launch_harness')
   expect(harness.status).toBe('ready')
-  expect(harness.serviceHealthy).toBe(true)
+  expect(harness.serviceHealthy).toBe(false)
 })
 
 it('boots a normal desktop document after registering lifecycle listeners', async () => {

@@ -13,13 +13,13 @@ vi.mock('@/utils/toast', () => ({ toast: Object.assign(vi.fn(() => 'restart-toas
 vi.mock('../harness-updater', () => ({ harnessUpdater: { checkForUpdate: vi.fn() } }))
 vi.mock('../plugins', () => import('../plugins/utils'))
 vi.mock('../preinstall', () => ({ preinstall: {} }))
-vi.mock('../recovery', () => ({ recovery: { clear: vi.fn(), reset: vi.fn(), hide: vi.fn(), reviewStartupRecovery: vi.fn() } }))
+vi.mock('../recovery', () => ({ recovery: { listen: vi.fn(), clear: vi.fn(), reset: vi.fn(), hide: vi.fn(), reviewStartupRecovery: vi.fn() } }))
 vi.mock('../setting', () => ({ setting: { $state: { installed: true }, refresh: vi.fn() } }))
 
 let harness: typeof import('./store').harness
 let shutdown: () => Promise<void>
 let launchError: string | undefined
-let marker: { id: string } | null
+let marker: { id: string, phase?: 'leaving' | 'stopping' | 'loading' } | null
 let acceptSuccess: boolean
 
 beforeEach(async () => {
@@ -43,6 +43,12 @@ beforeEach(async () => {
       case 'begin_harness_restart':
         marker = { id: 'restart-42' }
         return marker
+      case 'prepare_harness_restart': return true
+      case 'resume_harness_restart':
+        await shutdown()
+        if (marker)
+          marker.phase = 'loading'
+        return true
       case 'get_harness_restart': return marker
       case 'finish_harness_restart':
         if ((args as { outcome: string }).outcome === 'success' && !acceptSuccess)
@@ -79,7 +85,87 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('shows one sticky bottom-right loading toast before shutdown completes for concurrent restarts', async () => {
+it('leaves the hosted renderer before stopping its backend', async () => {
+  await harness.restart()
+  expect(invoke).toHaveBeenCalledWith('prepare_harness_restart', { id: 'restart-42' })
+  expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
+  expect(invoke).not.toHaveBeenCalledWith('resume_harness_restart', expect.anything())
+  expect(invoke).not.toHaveBeenCalledWith('launch_harness')
+})
+
+it.each(['leaving', 'stopping'] as const)('the bootstrap resumes %s before plugin ensure and launch exactly once', async (phase) => {
+  marker = { id: 'restart-42', phase }
+  vi.stubGlobal('__DSH_BOOT__', undefined)
+  harness.startup()
+  harness.startup()
+  await vi.advanceTimersByTimeAsync(0)
+  const commands = vi.mocked(invoke).mock.calls.map(([command]) => command)
+  expect(commands.filter(command => command === 'resume_harness_restart')).toHaveLength(1)
+  expect(commands.indexOf('resume_harness_restart')).toBeLessThan(commands.indexOf('ensure_internal_plugins'))
+  expect(commands.indexOf('ensure_internal_plugins')).toBeLessThan(commands.indexOf('launch_harness'))
+  expect(commands.filter(command => command === 'launch_harness')).toHaveLength(1)
+})
+
+it('does not ensure plugins or launch while the native stop continuation is pending', async () => {
+  marker = { id: 'restart-42', phase: 'leaving' }
+  vi.stubGlobal('__DSH_BOOT__', undefined)
+  let stopped!: () => void
+  shutdown = () => new Promise<void>((resolve) => {
+    stopped = resolve
+  })
+  const initialization = harness.initialize()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(invoke).toHaveBeenCalledWith('resume_harness_restart', { id: 'restart-42' })
+  expect(invoke).not.toHaveBeenCalledWith('ensure_internal_plugins')
+  expect(invoke).not.toHaveBeenCalledWith('launch_harness')
+  stopped()
+  await initialization
+  expect(invoke).toHaveBeenCalledWith('ensure_internal_plugins')
+  expect(invoke).toHaveBeenCalledWith('launch_harness')
+})
+
+it('boots a loading continuation without repeating the native stop', async () => {
+  marker = { id: 'restart-42', phase: 'loading' }
+  vi.stubGlobal('__DSH_BOOT__', undefined)
+  await harness.initialize()
+  expect(invoke).not.toHaveBeenCalledWith('resume_harness_restart', expect.anything())
+  expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
+  expect(invoke).toHaveBeenCalledWith('launch_harness')
+})
+
+it('normal bootstrap reload without a native operation never stops the service', async () => {
+  vi.stubGlobal('__DSH_BOOT__', undefined)
+  await harness.initialize()
+  expect(invoke).not.toHaveBeenCalledWith('resume_harness_restart', expect.anything())
+  expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
+  expect(invoke).toHaveBeenCalledWith('launch_harness')
+})
+
+it('rejects a stale native continuation without starting the backend', async () => {
+  marker = { id: 'restart-42', phase: 'stopping' }
+  vi.stubGlobal('__DSH_BOOT__', undefined)
+  const original = vi.mocked(invoke).getMockImplementation()!
+  vi.mocked(invoke).mockImplementation((command, args) => command === 'resume_harness_restart' ? Promise.resolve(false) : original(command, args))
+  await harness.initialize()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(invoke).not.toHaveBeenCalledWith('launch_harness')
+  expect(harness.status).toBe('error')
+  expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({ description: 'Error: HARNESS_RESTART_RESUME_REJECTED' }))
+  expect(harness.busyAction).toBeNull()
+})
+
+it('reports a rejected navigation preparation without stopping the hosted backend', async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!
+  vi.mocked(invoke).mockImplementation((command, args) => command === 'prepare_harness_restart' ? Promise.resolve(false) : original(command, args))
+  await harness.restart()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
+  expect(harness.status).toBe('error')
+  expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({ description: 'Error: HARNESS_RESTART_PREPARE_REJECTED' }))
+})
+
+it('shows one sticky bottom-right loading toast before a bootstrap restart shutdown completes', async () => {
+  vi.stubGlobal('__DSH_BOOT__', undefined)
   let release!: () => void
   shutdown = () => new Promise<void>((resolve) => {
     release = resolve
@@ -187,6 +273,7 @@ it('does not create a restart notification when another lifecycle action owns th
 })
 
 it('does not treat health readiness or the old document mount as restart success', async () => {
+  vi.stubGlobal('__DSH_BOOT__', undefined)
   await harness.restart()
   expect(harness.serviceHealthy).toBe(true)
   harness.markHostedReady()
@@ -213,6 +300,10 @@ it('turns a navigation failure into one failure toast instead of keeping loading
 it('settles one failure toast when the real restart boot catches a launch failure', async () => {
   launchError = 'HARNESS_START_FAILED: launch denied'
   await harness.restart()
+  vi.stubGlobal('__DSH_BOOT__', undefined)
+  vi.resetModules()
+  ;({ harness } = await import('./store'))
+  await harness.initialize()
   await vi.advanceTimersByTimeAsync(0)
   expect(harness.status).toBe('error')
   expect(toast.close).toHaveBeenCalledExactlyOnceWith('restart-toast')

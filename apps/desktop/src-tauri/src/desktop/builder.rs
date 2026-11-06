@@ -1297,6 +1297,8 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::desktop::window::host_harness_document,
         crate::desktop::window::begin_harness_restart,
         crate::desktop::window::get_harness_restart,
+        crate::desktop::window::prepare_harness_restart,
+        crate::desktop::window::resume_harness_restart,
         crate::desktop::window::finish_harness_restart,
         crate::desktop::window::prepare_harness_webview,
         crate::desktop::window::release_harness_webview,

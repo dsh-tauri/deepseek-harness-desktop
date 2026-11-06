@@ -87,6 +87,7 @@ let webviewRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let policyApprovalKey: string | undefined
 let restartToastKey: string | undefined
 let restartOperationId: string | undefined
+let restartPhase: 'leaving' | 'stopping' | 'loading' | undefined
 const restoreRestartFlight = new SingleFlight<boolean>()
 const finishRestartFlight = new SingleFlight<boolean>()
 
@@ -176,12 +177,13 @@ export const harness = defineStore({
         if (restartOperationId !== undefined)
           return true
         try {
-          const operation = await invoke<{ id: string } | null>('get_harness_restart')
+          const operation = await invoke<{ id: string, phase: 'leaving' | 'stopping' | 'loading' } | null>('get_harness_restart')
           if (restartOperationId !== undefined)
             return true
           if (!operation)
             return false
           restartOperationId = operation.id
+          restartPhase = operation.phase
           this.restartPending = true
           this.showRestartLoading()
           return true
@@ -247,8 +249,25 @@ export const harness = defineStore({
         this.listenInternalPhase(),
         this.listenProcessExit(),
       ])
-      if (!isHostedServiceDocument())
-        await this.boot()
+      if (isHostedServiceDocument())
+        return
+      await this.restoreRestartToast()
+      if (restartOperationId !== undefined && (restartPhase === 'leaving' || restartPhase === 'stopping')) {
+        this.busyAction = 'restart'
+        try {
+          if (!await invoke<boolean>('resume_harness_restart', { id: restartOperationId }))
+            throw new Error('HARNESS_RESTART_RESUME_REJECTED')
+          restartPhase = 'loading'
+        }
+        catch (error) {
+          this.fail(String(error))
+          return
+        }
+        finally {
+          this.busyAction = null
+        }
+      }
+      await this.boot()
     },
 
     /** 订阅当前持有的 Harness 根进程退出事件，及时撤下失效 webview。 */
@@ -953,6 +972,18 @@ export const harness = defineStore({
         // 手动重启（含修复界面上的「重启 Harness」）：先退出恢复态，
         // 若重启仍失败，boot 的 catch 会重新定位问题插件并再次弹出。
         recovery.hide()
+        if (isHostedServiceDocument()) {
+          try {
+            void hooks['config.dialog.hidden'].trigger()
+            if (!await invoke<boolean>('prepare_harness_restart', { id: restartOperationId }))
+              throw new Error('HARNESS_RESTART_PREPARE_REJECTED')
+          }
+          catch (error) {
+            this.busyAction = null
+            this.fail(String(error), undefined, undefined, undefined, this.serviceRunning)
+          }
+          return
+        }
         try {
           void hooks['config.dialog.hidden'].trigger()
           await invoke('shutdown_harness')

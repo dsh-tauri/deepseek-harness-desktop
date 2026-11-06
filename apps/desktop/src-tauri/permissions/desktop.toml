@@ -5,6 +5,8 @@ commands.allow = [
   "host_harness_document",
   "begin_harness_restart",
   "get_harness_restart",
+  "prepare_harness_restart",
+  "resume_harness_restart",
   "finish_harness_restart",
   "navigate_remote_harness",
   "get_remote_shell_state",
