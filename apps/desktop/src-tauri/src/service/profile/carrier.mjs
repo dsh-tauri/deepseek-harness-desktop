@@ -1,9 +1,10 @@
+import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export async function main(desktopHost = false) {
-  const require = createRequire(pathToFileURL(process.argv[1]))
+  const require = createRequire(pathToFileURL(realpathSync.native(process.argv[1])))
   const load = name => import(pathToFileURL(require.resolve(name)).href)
   if (!desktopHost) {
     const { runCli } = await load('@deepseek-ai/dsh/lib/bin.js')
