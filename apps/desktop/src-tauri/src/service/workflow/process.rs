@@ -909,15 +909,14 @@ pub(super) fn terminate_windows_process(
     }
     // issue #1074：taskkill 失败后只升级已确认的句柄，不重新按裸 PID 打开进程。
     log::warn!("Harness process {pid} survived taskkill; terminating the retained handle");
-    if unsafe { TerminateProcess(handle, 1) } == 0
-        && unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0
-    {
-        return Err(format!(
-            "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
+    let termination_error =
+        (unsafe { TerminateProcess(handle, 1) } == 0).then(std::io::Error::last_os_error);
     if unsafe { WaitForSingleObject(handle, 5000) } != WAIT_OBJECT_0 {
+        if let Some(error) = termination_error {
+            return Err(format!(
+                "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {error}"
+            ));
+        }
         return Err(format!(
             "HARNESS_CLEANUP_FAILED: process {pid} did not exit"
         ));
@@ -2503,6 +2502,41 @@ setTimeout(() => process.exit(0), 60000);
             .unwrap_err()
             .starts_with("HARNESS_CLEANUP_FAILED:")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn denied_termination_waits_for_the_retained_process_to_exit() {
+        use std::io::Write;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+
+        let mut child = Command::new("node.exe")
+            .args([
+                "-e",
+                "require('fs').readSync(0,Buffer.alloc(1),0,1,null);setTimeout(()=>process.exit(0),1500)",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x08000000)
+            .spawn()
+            .unwrap();
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, child.id()) };
+        assert!(!handle.is_null());
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        let result = terminate_windows_process(child.id(), handle.as_raw_handle(), |_| {
+            child.stdin.take().unwrap().write_all(b"x").unwrap();
+        });
+        let stopped = child.try_wait().unwrap().is_some();
+        let exit = child.wait().unwrap();
+        result.expect("cleanup must confirm exit after a denied termination request");
+        assert!(
+            stopped,
+            "cleanup must wait for the retained process to exit"
+        );
+        assert!(exit.success());
     }
 
     #[cfg(windows)]

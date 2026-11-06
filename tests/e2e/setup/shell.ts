@@ -365,7 +365,7 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
       return
     const skip = page.locator(SETUP_PREINSTALL_SKIP).first()
     if (!dismissed && await skip.count() > 0 && await skip.isVisible()) {
-      await skip.click()
+      await skip.click({ noWaitAfter: true })
       dismissed = true
       continue
     }
