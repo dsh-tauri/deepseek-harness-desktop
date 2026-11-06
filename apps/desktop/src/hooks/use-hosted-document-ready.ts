@@ -1,8 +1,8 @@
-import { createSharedHook, useMount, useMutationObserver } from '@reause/core'
+import { useMount, useMutationObserver } from '@reause/core'
 import { useRef, useState } from 'react'
 import { isHostedServiceDocument } from '@/utils/window-presentation'
 
-export const useHostedDocumentReady = createSharedHook(() => {
+export function useHostedDocumentReady() {
   const [ready, setReady] = useState(false)
   const targetRef = useRef<HTMLElement | null>(document.body)
 
@@ -16,4 +16,4 @@ export const useHostedDocumentReady = createSharedHook(() => {
   useMutationObserver(targetRef, checkDocument, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
   useMount(checkDocument)
   return ready
-})
+}
