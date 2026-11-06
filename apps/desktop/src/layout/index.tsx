@@ -127,7 +127,9 @@ export function App() {
   }, { immediate: true })
 
   return (
-    <div className="flex h-screen w-screen" data-testid="dsh-shell-root">
+    // 根容器铺满视口，自身不拦截点击：可交互性由 `Shell` 的内容容器按「DSH 主框架是否
+    // 已渲染」决定——启动/预装/恢复页可点，文档即 DSH 时穿透给背后的页面。
+    <div className="flex h-screen w-screen pointer-events-none" data-testid="dsh-shell-root">
       <Shell />
       {}
       <If cond={status === 'ready'}>
