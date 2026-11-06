@@ -4,7 +4,7 @@
   "version": "0.31.0-beta.1",
   "identifier": "dsh-tauri",
   "build": {
-    "beforeBuildCommand": "pnpm -w build:plugins && pnpm build:shell",
+    "beforeBuildCommand": "pnpm -w build:plugins && pnpm build",
     "beforeBundleCommand": "node ../../crates/tauri-runtime-electron/tools/macos-sign/sign.mjs",
     "frontendDist": "../dist"
   },
