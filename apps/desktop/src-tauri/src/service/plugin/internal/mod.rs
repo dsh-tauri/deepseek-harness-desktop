@@ -21,20 +21,18 @@ use std::path::{Path, PathBuf};
 
 use super::cancel::terminate_owned_install;
 use super::install::{install_internal, trust_policy_rejection};
-use super::installed::{installed_name, profile_dir, ProfilePackageJson};
-use super::preset::{
-    bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo,
-};
-use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
+use super::installed::{ProfilePackageJson, installed_name, profile_dir};
+use super::preset::{PreinstallPluginInfo, bundled_dep_spec, bundled_plugin_dir, load_presets};
+use super::process::{PREINSTALL_LOG_EVENT, PreinstallLogPayload, ProcessOwner, new_process_owner};
 use crate::config;
 
+use manifest::internal_plugin_entry_is_ready;
 use manifest::{
     collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec,
     remove_duplicate_bundle_entries_from_patch, remove_internal_plugins_from_manifest,
     remove_stale_plugin_entry, write_profile_manifest,
 };
-pub(crate) use manifest::{internal_plugin_entry_is_ready, skip_unavailable_plugins};
-use materialize::{materialize_links, OfflineLink};
+use materialize::{OfflineLink, materialize_links};
 
 mod manifest;
 mod materialize;
@@ -292,7 +290,7 @@ fn repair_loader_state(
             return Err(format!(
                 "INTERNAL_PLUGIN_ROOT_READ_FAILED: {}: {error}",
                 root.display()
-            ))
+            ));
         }
     };
     if existing.as_deref() != Some(EMPTY_ROOT) && profile.is_dir() {
@@ -426,9 +424,9 @@ async fn subscribe_or_start(
 
                     if !wait_for_owner_release(owner, ENSURE_OWNER_DRAIN_TIMEOUT).await {
                         let reason = format!(
-                        "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
-                        ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
-                    );
+                            "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
+                            ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
+                        );
                         log::error!("{reason}");
                         outcome = Err(reason.clone());
                         let _ = result_tx.send(Some(outcome));
@@ -520,8 +518,8 @@ async fn receive_flight_result(
 /// 取消共享的内置插件安装并等待拥有者完成清理，确保 Retry 不会叠加新进程。
 pub(crate) async fn cancel() -> Result<(), String> {
     let mut result = {
-        let profile =
-            crate::service::workflow::instances::current_profile().unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
+        let profile = crate::service::workflow::instances::current_profile()
+            .unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
         let lock = ensure_lock(&profile);
         let mut coordinator = lock.lock().await;
         let Some(active) = &coordinator.active else {
@@ -687,7 +685,9 @@ fn prepare_internal_plugins(
         let link_ok = internal_plugin_entry_is_ready(&entry);
         let bundled = resolve_bundle(&preset.id);
         let Some(bundled) = bundled.filter(|source| internal_plugin_entry_is_ready(source)) else {
-            log::warn!("INTERNAL_PLUGIN_SOURCE_MISSING: {name}: bundled manifest or host entry unavailable, skipping repair (installed_ready={link_ok})");
+            log::warn!(
+                "INTERNAL_PLUGIN_SOURCE_MISSING: {name}: bundled manifest or host entry unavailable, skipping repair (installed_ready={link_ok})"
+            );
             sources_ready = false;
             if !link_ok {
                 skipped.insert(name);
@@ -759,7 +759,11 @@ fn require_running_plugins_ready(
     {
         return Err(format!(
             "INTERNAL_PLUGIN_RESTART_REQUIRED: 内置插件需要修复；请停止当前服务后通过正常启动重试（need={:?}, orphans={:?}, migration={}, sources_ready={}, fallback={}）。",
-            check.need.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>(),
+            check
+                .need
+                .iter()
+                .map(|(id, _, _)| id.as_str())
+                .collect::<Vec<_>>(),
             check.orphans,
             check.migration_pending,
             check.sources_ready,
@@ -1585,8 +1589,7 @@ mod tests {
     /// `cannot resolve profile bundle` 点名了本轮待装入口，同样必须走离线自建链接兜底。
     #[test]
     fn link_materialization_failure_detects_unresolved_internal_bundle() {
-        let error =
-            "PREINSTALL_FAILED: dsh plugin exited with code 1: throw new Error(`${binName}: \
+        let error = "PREINSTALL_FAILED: dsh plugin exited with code 1: throw new Error(`${binName}: \
                      cannot resolve profile bundle ${JSON.stringify(packageName)} ...`);\n\
                      Error: dsh: cannot resolve profile bundle \"dsh-tauri\" from the dsh \
                      installation or C:\\Users\\A1\\.dsh\\profiles\\web; run 'dsh plugin --profile \

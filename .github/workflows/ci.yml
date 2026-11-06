@@ -199,6 +199,9 @@ jobs:
       - name: Test workspace release versioning and immutable source guards
         run: node .github/scripts/check-mobile-release.mjs
 
+      - name: Test archived core native bridge
+        run: node --test apps/desktop/src-tauri/src/service/core/asar-native.test.cjs
+
       - name: Test iOS signing and Beta review guards without credentials
         run: python3 -m unittest discover -s .github/scripts -p 'test_ios_*.py' -v
 

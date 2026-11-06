@@ -3,7 +3,7 @@
     "dsh": {
       // 离线包随包内核、下载目标与更新提示都跟随 pkg 仓库的最新稳定发行版；
       // 清单不再声明「推荐版本」，也没有固定的随包版本。
-      "minimum": "0.2.1-rc.1"
+      "minimum": "0.2.2-rc.1"
     },
     "pnpm": {
       "version": ">=11.7.0",
@@ -32,7 +32,7 @@
     },
     "dsh": {
       "engine": {
-        "minimum": "0.2.1-rc.1"
+        "minimum": "0.2.2-rc.1"
       },
       "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",
       "managedRoot": "$AppData/dependencies/dsh",
@@ -65,7 +65,9 @@
       "dsh-tauri-connection",
       "dsh-tauri-bridge",
       "dsh-tauri-running-changes",
-      "dsh-tauri-kernel"
+      "dsh-tauri-kernel",
+      "dsh-tauri-mobile-ui",
+      "dsh-tauri-worktree"
     ],
     "built-in": [
       {
@@ -85,18 +87,6 @@
         "spec": "dsh-tauri-ui",
         "name": "DSH Tauri UI",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-ui"
-      },
-      {
-        "id": "dsh-tauri-mobile-ui",
-        "spec": "dsh-tauri-mobile-ui",
-        "name": "DSH Tauri Mobile UI",
-        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-mobile-ui"
-      },
-      {
-        "id": "dsh-tauri-worktree",
-        "spec": "dsh-tauri-worktree",
-        "name": "DSH Tauri Worktree",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-worktree"
       },
       {
         "id": "dsh-tauri-extension",

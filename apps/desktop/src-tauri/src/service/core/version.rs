@@ -8,16 +8,17 @@
 //! （`$Resources/dsh`，见 [`config::dependencies::bundled_core_dir`]），它在面板里
 //! 作为固定置顶的「本地」行存在，切换只是把 `dsh` 依赖根指向目标槽位或指回随包内核。
 
+use crate::AppHandle;
 use crate::config;
 use crate::service::{download, fs_guard, workflow};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use crate::AppHandle;
 
+use super::legacy::{is_directory_core, preserve_directory_core};
 use super::local::{find_user_dsh_bin, local_core};
 use super::source::{
-    active_is_bundled, active_source, core_supports_bundled_plugins, ensure_app_core_supported,
-    CoreSource, HarnessCore,
+    CoreSource, HarnessCore, active_is_bundled, active_source, core_supports_bundled_plugins,
+    ensure_app_core_supported,
 };
 
 /// 随包内核的行 id：面板据此置顶并标记「本地」，[`set_active`] 据此切回随包内核。
@@ -28,18 +29,17 @@ const BUNDLED_CORE_ID: &str = "app-bundled";
 /// 恒落在应用数据目录之下：槽位是桌面端自己下载的产物，即使清单把激活核心托管到安装
 /// 包资源（离线包 `$Resources/dsh`）也不能让下载产物写进安装目录——那里在 macOS `.app`
 /// 上是签名的只读内容、在 Linux deb 里属于 root，且会随应用升级被覆盖。
-fn dependencies_dir(app_handle: &AppHandle) -> PathBuf {
+fn dependencies_dir<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     config::get_base_dir(app_handle).join("dependencies")
 }
 
-/// 历史版本槽位：`dependencies/<tag>`。release tag 本身以 `dsh-` 开头
-/// （如 `dsh-0.1.0-rc.8-32331963388`），因此槽位目录名即 tag，不再叠加前缀。
-fn slot_dir(app_handle: &AppHandle, tag: &str) -> PathBuf {
-    dependencies_dir(app_handle).join(tag)
+fn installed_slot<R: tauri::Runtime>(dir: &Path, app: &AppHandle<R>) -> bool {
+    config::core_archive_in(dir).is_some()
+        && config::core_entry_exists(&config::dsh_binary_at(dir, app))
 }
 
 /// 定位已下载的槽位：`dependencies/<tag>` 存在时返回该目录。
-fn existing_slot_dir(app_handle: &AppHandle, tag: &str) -> Option<PathBuf> {
+fn existing_slot_dir<R: tauri::Runtime>(app_handle: &AppHandle<R>, tag: &str) -> Option<PathBuf> {
     let deps = dependencies_dir(app_handle);
     let slot = safe_slot_path(&deps, tag).ok()?;
     slot.is_dir().then_some(slot)
@@ -57,12 +57,7 @@ fn safe_slot_path(deps: &Path, tag: &str) -> Result<PathBuf, String> {
 
 /// 读取发行版目录 `package.json` 中 `@deepseek-ai/dsh` 依赖版本（历史槽位展示用）。
 fn read_manifest_dsh_version(dir: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(dir.join("package.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    v.get("dependencies")?
-        .get("@deepseek-ai/dsh")?
-        .as_str()
-        .map(|s| s.trim_start_matches(['^', '~', '=', '>', '<']).to_string())
+    config::dsh_version_at(&config::manifest_in(dir))
 }
 
 /// 核心列表：本地核心 + deepseek-harness-pkg 各发布版本（按版本去重）。
@@ -116,8 +111,8 @@ fn list_local(app_handle: &AppHandle) -> Vec<HarnessCore> {
 }
 
 /// 按给定版本行数据源构造核心列表（`release_metas` 为空即离线/本地视图）。
-fn rows_with_release_catalog(
-    app_handle: &AppHandle,
+fn rows_with_release_catalog<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
     release_metas: Vec<download::DshPkgReleaseMeta>,
     remote_catalog_available: bool,
 ) -> Vec<HarnessCore> {
@@ -166,16 +161,11 @@ fn rows_with_release_catalog(
                 tag: String::new(),
                 path: dir_str.clone(),
                 dir: dir_str,
-                present: dir
-                    .join(config::dependencies::entry_relative(
-                        app_handle,
-                        config::dependencies::DEP_DSH,
-                    ))
-                    .is_file(),
-                active: bundled_active,
+                present: config::core_entry_exists(&config::dsh_binary_at(dir, app_handle)),
+                active: bundled_active && !is_directory_core(dir),
                 removable: false,
                 preview: false,
-                orphaned: false,
+                orphaned: is_directory_core(dir),
                 bundled: true,
                 error: None,
             },
@@ -183,9 +173,9 @@ fn rows_with_release_catalog(
     }
 
     // 激活的预打包信息：tag（可空，旧安装无记录）+ 安装目录状态
-    let active_tag = config::get_dsh_pkg_tag(app_handle);
+    let active_tag = config::get_store_dat_setting(app_handle).dsh_pkg_tag;
     let active_dir = config::get_dsh_install_path(app_handle);
-    let active_present = config::get_dsh_binary_path(app_handle).exists();
+    let active_present = config::core_entry_exists(&config::get_dsh_binary_path(app_handle));
     // 激活核心按「版本」而非 tag 匹配版本行：pkg 仓库会对同一版本重打包/打
     // 测试 tag，版本行去重后保留的 tag 未必等于本机安装时的记录 tag。按 tag
     // 精确匹配会让激活版本行误标「未下载」并在列表底部多出一条重复激活行。
@@ -202,7 +192,8 @@ fn rows_with_release_catalog(
     // tag 的已装行——切换找不到槽位（CORE_VERSION_NOT_DOWNLOADED）、卸载找不到目录
     // （CORE_VERSION_NOT_FOUND），并吞掉核心更新提示（issue #790）。
     // 随包内核激活时（`app-bundled` 行已经代表它）不再让版本行认领同一份目录。
-    let installed_release = (!bundled_active)
+    let active_legacy = is_directory_core(&active_dir);
+    let installed_release = (!bundled_active && !active_legacy && active_present)
         .then(|| trusted_release_version(active_tag.as_deref(), manifest_version.as_deref()))
         .flatten();
 
@@ -253,7 +244,8 @@ fn rows_with_release_catalog(
         if in_place {
             active_rendered = true;
         }
-        let slot = existing_slot_dir(app_handle, tag);
+        let slot =
+            existing_slot_dir(app_handle, tag).filter(|slot| installed_slot(slot, app_handle));
         let removable = !in_place && slot.is_some();
         let (present, path, dir) = if in_place {
             let s = active_dir.to_string_lossy().into_owned();
@@ -288,7 +280,7 @@ fn rows_with_release_catalog(
     // 避免"本地核心出现后预打包消失"。
     // 随包内核已独立成行时不再兜底：`active_dir` 就是随包目录，再补一行会把下载版本
     // 的旧 tag 指向随包目录，出现重复且错误的「当前使用中」。
-    if !active_rendered && active_present && !bundled_active {
+    if !active_rendered && (active_present || active_legacy) && !bundled_active {
         rows.push(HarnessCore {
             id: "app".to_string(),
             source: CoreSource::App,
@@ -297,9 +289,9 @@ fn rows_with_release_catalog(
             path: active_dir.to_string_lossy().into_owned(),
             dir: active_dir.to_string_lossy().into_owned(),
             present: true,
-            active: source == CoreSource::App,
+            active: source == CoreSource::App && !active_legacy,
             removable: false,
-            orphaned: false,
+            orphaned: active_legacy,
             bundled: false,
             // 无远程元数据（离线/限流）：预览标记按 tag 命名兜底
             preview: active_tag.as_deref().is_some_and(download::is_preview_tag),
@@ -326,7 +318,10 @@ fn rows_with_release_catalog(
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             // 槽位目录名即 tag（`dsh-0.1.0-rc.8-...`）。`dsh` 为激活目录，跳过。
-            let tag = if name.starts_with("dsh-") || name.starts_with("src-") {
+            let tag = if name.starts_with("dsh-")
+                || name.starts_with("src-")
+                || name.starts_with(".retired-")
+            {
                 Some(name.clone())
             } else {
                 None
@@ -338,29 +333,39 @@ fn rows_with_release_catalog(
             let version = read_manifest_dsh_version(&entry.path())
                 .or_else(|| download::parse_version_from_tag(&tag))
                 .unwrap_or_default();
-            if version.is_empty() || !seen_tags.insert(tag.clone()) {
+            let dir = entry.path();
+            if safe_slot_path(&dependencies_dir(app_handle), &tag).is_err() {
                 continue;
             }
-            let orphaned = remote_catalog_available && !known_tags.contains(&tag);
+            let legacy = is_directory_core(&dir);
+            if !legacy && (version.is_empty() || !seen_tags.insert(tag.clone())) {
+                continue;
+            }
+            let orphaned = legacy || (remote_catalog_available && !known_tags.contains(&tag));
             if !orphaned && !seen_versions.insert(version.clone()) {
                 continue;
             }
-            let dir = entry.path();
             rows.push(HarnessCore {
-                id: format!("app-{tag}"),
+                id: if legacy {
+                    format!("app-retired-{tag}")
+                } else {
+                    format!("app-{tag}")
+                },
                 source: CoreSource::App,
                 version: version.clone(),
                 tag: tag.clone(),
                 path: dir.to_string_lossy().into_owned(),
                 dir: dir.to_string_lossy().into_owned(),
-                present: true,
+                present: legacy || installed_slot(&dir, app_handle),
                 active: false,
                 removable: true,
                 // 无远程元数据（离线/限流）：预览标记按 tag 命名兜底
                 preview: download::is_preview_tag(&tag),
                 orphaned,
                 bundled: false,
-                error: None,
+                error: legacy.then(|| {
+                    "CORE_VERSION_LEGACY_DIRECTORY: managed directory cores are retired".to_string()
+                }),
             });
         }
     }
@@ -393,7 +398,10 @@ fn any_release_installed(cores: &[HarnessCore], version: &str) -> bool {
 /// 内核随应用分发也算。无 release 身份的 `app` 兜底行只是"激活目录里有一份版本号相同
 /// 的副本"，证明不了某个 release 已下载（issue #790）。
 fn release_installed_on_disk(core: &HarnessCore) -> bool {
-    core.present && core.source == CoreSource::App && (core.bundled || !core.tag.is_empty())
+    core.present
+        && !core.orphaned
+        && core.source == CoreSource::App
+        && (core.bundled || !core.tag.is_empty())
 }
 
 /// 就地安装的激活副本（`dependencies/dsh`）的 release 身份：只认 store 里的 tag 记录，
@@ -447,7 +455,7 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         let baseline = config::manifest::minimum_dsh_version(app_handle);
         if !core_supports_bundled_plugins(&core.version, baseline.as_deref()) {
             return Err(format!(
-                "CORE_LOCAL_UNSUPPORTED: local dsh {} is below the minimum supported core; update it (`npm install -g @deepseek-ai/dsh@latest`) or keep a bundled version",
+                "CORE_LOCAL_UNSUPPORTED: local dsh {} is outside the supported 0.2.2 series; install a supported version with npm or select an asar core in Settings > Core",
                 core.version,
             ));
         }
@@ -462,8 +470,7 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         let Some(bundled) = config::dependencies::bundled_core_dir(app_handle) else {
             return Err("CORE_BUNDLED_NOT_FOUND: this install ships no bundled core".to_string());
         };
-        let entry = config::dependencies::entry_relative(app_handle, config::dependencies::DEP_DSH);
-        if !bundled.join(entry).is_file() {
+        if !config::core_entry_exists(&config::dsh_binary_at(&bundled, app_handle)) {
             return Err("CORE_BUNDLED_NOT_FOUND: bundled core files are missing".to_string());
         }
         ensure_app_core_supported(
@@ -480,19 +487,27 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         config::dependencies::record(app_handle, config::dependencies::DEP_DSH, Some(bundled));
     } else if id == "app" {
         ensure_app_core_supported(
-            &config::dependencies::managed_root(app_handle, config::dependencies::DEP_DSH),
+            &config::get_dsh_install_path(app_handle),
             None,
             config::manifest::minimum_dsh_version(app_handle).as_deref(),
         )?;
-        if !config::get_dsh_binary_path(app_handle).exists() {
+        if !config::core_entry_exists(&config::get_dsh_binary_path(app_handle)) {
             return Err("CORE_APP_NOT_FOUND: bundled core is not installed".to_string());
         }
         stop_harness_for_core_switch(app_handle).await?;
         config::update_store_dat_setting(app_handle, |setting| {
             setting.active_core = Some(CoreSource::App.as_str().to_string());
         });
-        // 切回预打包核心：托管根重新成为该依赖的安装根。
-        record_managed_core(app_handle);
+        config::dependencies::record(
+            app_handle,
+            config::dependencies::DEP_DSH,
+            Some(config::get_dsh_install_path(app_handle)),
+        );
+    } else if id.starts_with("app-retired-") {
+        return Err(
+            "CORE_VERSION_LEGACY_DIRECTORY: retired directory cores cannot be activated"
+                .to_string(),
+        );
     } else if let Some(tag) = id.strip_prefix("app-") {
         switch_app_version(app_handle, tag).await?;
     } else {
@@ -551,17 +566,25 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
     let deps = dependencies_dir(app_handle);
     // 槽位互换只在托管根内进行（映射可能把激活核心指向安装目录的捆绑副本）；
     // 随包资源构建不互换，见下方分支。
-    let active_dir = config::dependencies::managed_root(app_handle, config::dependencies::DEP_DSH);
+    let active_dir = dependencies_dir(app_handle).join("dsh");
     fs_guard::validate_id(tag)?;
     let cur_tag = config::get_dsh_pkg_tag(app_handle);
     let current = cur_tag.as_deref() == Some(tag)
-        && config::get_dsh_binary_path(app_handle).is_file();
+        && config::core_entry_exists(&config::get_dsh_binary_path(app_handle));
     let target_dir = if current {
         config::get_dsh_install_path(app_handle)
     } else {
         existing_slot_dir(app_handle, tag)
             .ok_or_else(|| format!("CORE_VERSION_NOT_DOWNLOADED: {tag}"))?
     };
+    if crate::service::core::is_directory_core(&target_dir) {
+        return Err(format!(
+            "CORE_VERSION_LEGACY_DIRECTORY: {tag} is a legacy directory core and is no longer supported; download a supported version from Settings > Core"
+        ));
+    }
+    if !installed_slot(&target_dir, app_handle) {
+        return Err(format!("CORE_VERSION_NOT_DOWNLOADED: {tag}"));
+    }
     ensure_app_core_supported(
         &target_dir,
         Some(tag),
@@ -725,10 +748,7 @@ fn record_managed_core(app_handle: &AppHandle) {
     config::dependencies::record(
         app_handle,
         config::dependencies::DEP_DSH,
-        Some(config::dependencies::managed_root(
-            app_handle,
-            config::dependencies::DEP_DSH,
-        )),
+        Some(dependencies_dir(app_handle).join("dsh")),
     );
 }
 
@@ -737,8 +757,8 @@ fn record_managed_core(app_handle: &AppHandle) {
 pub async fn download_version(app_handle: &AppHandle, tag: &str) -> Result<HarnessCore, String> {
     // 路径安全：tag 直接进入 `dependencies/<tag>` 槽位路径，需挡 `..`/分隔符
     fs_guard::validate_id(tag)?;
-    let dest = slot_dir(app_handle, tag);
-    if dest.exists() {
+    let dest = safe_slot_path(&dependencies_dir(app_handle), tag)?;
+    if installed_slot(&dest, app_handle) {
         return Ok(row_for_tag(app_handle, tag, &dest));
     }
 
@@ -771,6 +791,13 @@ pub async fn download_version(app_handle: &AppHandle, tag: &str) -> Result<Harne
         .unwrap_or(&info.asset_url)
         .to_string();
     tracker.start_phase("extract", &format!("正在解压核心版本 {tag}"));
+    if is_directory_core(&dest) {
+        preserve_directory_core(
+            &dest,
+            &dependencies_dir(app_handle),
+            &format!(".retired-{tag}"),
+        )?;
+    }
     download::ensure_extract(&tracker, name, buffer, dest.clone())
         .await
         .map_err(|e| format!("CORE_EXTRACT_FAILED: {e}"))?;
@@ -794,20 +821,28 @@ pub async fn remove_version(app_handle: &AppHandle, id: &str) -> Result<(), Stri
                 .to_string(),
         );
     }
-    let Some(tag) = id.strip_prefix("app-") else {
+    let retired = id.strip_prefix("app-retired-");
+    let Some(tag) = retired.or_else(|| id.strip_prefix("app-")) else {
         return Err(format!("CORE_INVALID_ID: {id}"));
     };
     // 路径安全：tag 需通过字符集白名单（tag 形如 `dsh-0.1.0-rc.8-<commit>`），
     // 拒绝 `..`、分隔符等，防止 `remove_core("app-..")` 把目标推出依赖根目录。
     fs_guard::validate_id(tag)?;
     let cur_tag = config::get_dsh_pkg_tag(app_handle);
-    if cur_tag.as_deref() == Some(tag) && active_source(app_handle) == CoreSource::App {
+    if retired.is_none()
+        && cur_tag.as_deref() == Some(tag)
+        && active_source(app_handle) == CoreSource::App
+    {
         return Err(format!(
             "CORE_ACTIVE_VERSION: cannot remove in-use version {tag}"
         ));
     }
     let dir = existing_slot_dir(app_handle, tag)
         .ok_or_else(|| format!("CORE_VERSION_NOT_FOUND: {tag}"))?;
+
+    if retired.is_some() && !is_directory_core(&dir) {
+        return Err(format!("CORE_INVALID_ID: {id}"));
+    }
 
     // 快速路径：目录未被任何进程持有，一次删掉，全程不碰运行中的服务。
     match std::fs::remove_dir_all(&dir) {
@@ -862,6 +897,240 @@ fn row_for_tag(app_handle: &AppHandle, tag: &str, dir: &Path) -> HarnessCore {
 mod tests {
     use super::*;
 
+    fn write_core_archive(root: &Path) {
+        let package = br#"{"name":"@deepseek-ai/dsh","version":"0.2.2-rc.1"}"#;
+        let json = serde_json::to_vec(&serde_json::json!({"files": {
+            "package.json": {"size": package.len(), "offset": "0"},
+            "node_modules": {"files": {"@deepseek-ai": {"files": {"dsh": {"files": {
+                "package.json": {"size": package.len(), "offset": "0"},
+                "lib": {"files": {"bin.js": {"size": 1, "offset": package.len().to_string()}}}
+            }}}}}}
+        }}))
+        .unwrap();
+        let payload = 4 + json.len() + (4 - json.len() % 4) % 4;
+        let header = payload + 4;
+        let mut bytes = Vec::new();
+        for word in [4u32, header as u32, payload as u32, json.len() as u32] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.extend_from_slice(&json);
+        bytes.resize(8 + header, 0);
+        bytes.extend_from_slice(package);
+        bytes.push(b'1');
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::write(root.join(config::dsh_core_asar_filename().unwrap()), bytes).unwrap();
+    }
+
+    fn write_directory_core(root: &Path) {
+        let package = root.join("node_modules/@deepseek-ai/dsh");
+        std::fs::create_dir_all(package.join("lib")).unwrap();
+        std::fs::write(package.join("lib/bin.js"), "legacy").unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"0.2.2-rc.1"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(config::DSH_MANIFEST_RELATIVE),
+            r#"{"dependencies":{"@deepseek-ai/dsh":"0.2.2-rc.1"}}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn retirement_and_catalog_keep_legacy_cores_separate_from_asar_releases() {
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path().join("home");
+        let bin = scratch.path().join("bin");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "service::core::version::tests::retirement_catalog_child",
+                "--nocapture",
+            ])
+            .env("DSH_TEST_RETIREMENT_ROOT", scratch.path())
+            .env("DSH_DOWNLOAD_CACHE_DIR", scratch.path().join("cache"))
+            .env("DSH_E2E_HOME", &home)
+            .env("TAURI_WEBDRIVER_PORT", "4445")
+            .env(
+                "DSH_CLI_PATH",
+                bin.join(if cfg!(windows) { "dsh.cmd" } else { "dsh" }),
+            )
+            .env("PATH", &bin)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", home.join("AppData/Roaming"))
+            .env("LOCALAPPDATA", home.join("AppData/Local"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn retirement_catalog_child() {
+        let Some(root) = std::env::var_os("DSH_TEST_RETIREMENT_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override = Some(
+            tauri::utils::config::AppDirectoriesOverride::Root(root.join("app-data")),
+        );
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(context)
+            .unwrap();
+        let app = app.handle();
+        let deps = dependencies_dir(app);
+        let default = deps.join("dsh");
+        let tag = "dsh-0.2.2-rc.1-123";
+        write_directory_core(&default);
+        config::update_store_dat_setting(app, |setting| {
+            setting.active_core = Some("app".to_string());
+            setting.dsh_pkg_tag = Some(tag.to_string());
+            setting.dsh_pkg_commit = Some("old".to_string());
+        });
+        config::dependencies::record(app, config::dependencies::DEP_DSH, Some(default.clone()));
+        super::super::legacy::retire_directory_core(app).unwrap();
+        let setting = config::get_store_dat_setting(app);
+        assert_eq!(
+            (
+                setting.active_core,
+                setting.dsh_pkg_tag,
+                setting.dsh_pkg_commit
+            ),
+            (None, None, None)
+        );
+        assert!(is_directory_core(&deps.join(tag)));
+        assert!(!is_directory_core(&default));
+        assert_eq!(
+            config::dependencies::active_root(app, config::dependencies::DEP_DSH),
+            default
+        );
+        super::super::legacy::retire_directory_core(app).unwrap();
+        assert!(!deps.join(format!(".retired-{tag}")).exists());
+
+        let catalog = || {
+            vec![
+                download::DshPkgReleaseMeta {
+                    tag: "dsh-0.2.2-rc.1-999".to_string(),
+                    prerelease: true,
+                },
+                download::DshPkgReleaseMeta {
+                    tag: tag.to_string(),
+                    prerelease: false,
+                },
+            ]
+        };
+        let rows = rows_with_release_catalog(app, catalog(), true);
+        let remote = rows
+            .iter()
+            .find(|row| row.id == format!("app-{tag}"))
+            .unwrap();
+        assert!(!remote.present && !remote.orphaned && !remote.preview);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| !row.orphaned && row.version == "0.2.2-rc.1")
+                .count(),
+            1
+        );
+        let legacy = rows
+            .iter()
+            .find(|row| row.id == format!("app-retired-{tag}"))
+            .unwrap();
+        assert!(legacy.present && legacy.orphaned && legacy.removable && !legacy.active);
+        assert!(
+            legacy
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("CORE_VERSION_LEGACY_DIRECTORY:"))
+        );
+        assert!(!any_release_installed(&rows, "0.2.2-rc.1"));
+        let offline = rows_with_release_catalog(app, Vec::new(), false);
+        assert!(
+            offline
+                .iter()
+                .any(|row| row.orphaned && row.dir == deps.join(tag).to_string_lossy())
+        );
+
+        let mapped = deps.join("custom-slot");
+        write_directory_core(&mapped);
+        config::dependencies::record(app, config::dependencies::DEP_DSH, Some(mapped.clone()));
+        config::update_store_dat_setting(app, |setting| {
+            setting.active_core = Some("app".to_string())
+        });
+        super::super::legacy::retire_directory_core(app).unwrap();
+        assert!(!mapped.exists());
+        assert!(is_directory_core(&deps.join("dsh-0.2.2-rc.1")));
+        assert_eq!(config::get_store_dat_setting(app).active_core, None);
+
+        let npm = root.join("bin");
+        write_directory_core(&npm);
+        std::fs::write(
+            npm.join(if cfg!(windows) { "dsh.cmd" } else { "dsh" }),
+            "user shim",
+        )
+        .unwrap();
+        let local_package = npm.join("node_modules/@deepseek-ai/dsh");
+        config::update_store_dat_setting(app, |setting| {
+            setting.active_core = Some("local".to_string())
+        });
+        config::dependencies::record(app, config::dependencies::DEP_DSH, Some(npm.clone()));
+        super::super::legacy::retire_directory_core(app).unwrap();
+        assert!(local_package.join("lib/bin.js").is_file());
+        assert_eq!(
+            config::get_store_dat_setting(app).active_core.as_deref(),
+            Some("local")
+        );
+        assert_eq!(active_source(app), CoreSource::Local);
+        let local_rows = rows_with_release_catalog(app, Vec::new(), false);
+        assert!(
+            local_rows
+                .iter()
+                .any(|row| row.id == "local" && row.present && row.active && !row.orphaned)
+        );
+
+        let resources = root.join("installed-resources/core");
+        write_directory_core(&resources);
+        config::update_store_dat_setting(app, |setting| {
+            setting.active_core = Some("app".to_string())
+        });
+        config::dependencies::record(app, config::dependencies::DEP_DSH, Some(resources.clone()));
+        super::super::legacy::retire_directory_core(app).unwrap();
+        assert!(
+            resources
+                .join("node_modules/@deepseek-ai/dsh/lib/bin.js")
+                .is_file()
+        );
+        assert_eq!(
+            config::dependencies::active_root(app, config::dependencies::DEP_DSH),
+            default
+        );
+        super::super::legacy::retire_directory_core(app).unwrap();
+
+        preserve_directory_core(&deps.join(tag), &deps, &format!(".retired-{tag}")).unwrap();
+        write_core_archive(&deps.join(tag));
+        let rows = rows_with_release_catalog(app, catalog(), true);
+        assert!(
+            rows.iter()
+                .any(|row| row.id == format!("app-{tag}") && row.present && !row.orphaned)
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.id == format!("app-retired-.retired-{tag}") && row.orphaned)
+        );
+        assert!(any_release_installed(&rows, "0.2.2-rc.1"));
+        assert!(ensure_app_core_supported(&deps.join(tag), Some(tag), Some("0.2.2-rc.1")).is_ok());
+    }
+
     #[test]
     fn slot_paths_reject_traversal_and_accept_release_tag() {
         let root = std::env::temp_dir().join(format!("dsh-core-slots-{}", std::process::id()));
@@ -890,59 +1159,6 @@ mod tests {
         assert!(safe_slot_path(&root, "dsh-evil").is_err());
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(outside);
-    }
-
-    #[test]
-    fn list_dedupes_versions_keeping_last_tag() {
-        // 模拟 pkg 仓库的测试打包：同一版本打多个 tag（最新在前），去重后每个版本
-        // 只保留最后一个 tag，且顺序保持首次出现顺序（版本新→旧）。预览标记
-        // （Pre-release label 或 tag 命名）以保留的 tag 为准：同版本先去重、再取
-        // 保留 tag 自己的标记。
-        let metas = vec![
-            // 最新：预览版（label + 命名一致）
-            ("dsh-0.2.0-preview.1-32490000001".to_string(), true),
-            ("dsh-0.1.1-rc.1-32342588166".to_string(), false),
-            ("dsh-0.1.0-rc.8-32331963388".to_string(), false),
-            // 同版本重复（测试打包）：后到的是预览 label，但再后到的是普通 release
-            ("dsh-0.1.0-rc.8-32342588166".to_string(), true),
-            ("dsh-0.1.0-rc.8-32342588167".to_string(), false),
-            ("dsh-0.1.0-rc.7-31773193667".to_string(), false),
-            ("dsh-0.1.0-rc.7-31773193668".to_string(), false),
-            // 漏标 Pre-release label 的预览版：按 tag 命名兜底识别
-            ("dsh-0.1.0-beta.1-32490000002".to_string(), false),
-        ];
-        let mut version_tags: Vec<(String, String, bool)> = Vec::new();
-        for meta in &metas {
-            let Some(version) = download::parse_version_from_tag(&meta.0) else {
-                continue;
-            };
-            let preview = meta.1 || download::is_preview_tag(&meta.0);
-            if let Some(entry) = version_tags.iter_mut().find(|(v, _, _)| v == &version) {
-                entry.1 = meta.0.clone();
-                entry.2 = preview;
-            } else {
-                version_tags.push((version, meta.0.clone(), preview));
-            }
-        }
-        let versions: Vec<&str> = version_tags.iter().map(|(v, _, _)| v.as_str()).collect();
-        let kept_tags: Vec<&str> = version_tags.iter().map(|(_, t, _)| t.as_str()).collect();
-        let previews: Vec<bool> = version_tags.iter().map(|(_, _, p)| *p).collect();
-        assert_eq!(
-            versions,
-            vec![
-                "0.2.0-preview.1",
-                "0.1.1-rc.1",
-                "0.1.0-rc.8",
-                "0.1.0-rc.7",
-                "0.1.0-beta.1"
-            ]
-        );
-        // rc.8 / rc.7 都保留了最后一个 tag
-        assert_eq!(kept_tags[2], "dsh-0.1.0-rc.8-32342588167");
-        assert_eq!(kept_tags[3], "dsh-0.1.0-rc.7-31773193668");
-        // 预览标记以保留的 tag 为准：rc.8 最终保留普通 release → 非预览；
-        // 预览版（label 或命名）→ 预览
-        assert_eq!(previews, vec![true, false, false, false, true]);
     }
 
     #[test]

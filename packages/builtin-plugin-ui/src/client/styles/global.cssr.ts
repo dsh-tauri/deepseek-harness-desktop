@@ -4,7 +4,7 @@ export const GLOBAL_STYLE_ID = 'dsh-tauri-ui-global-styles'
 
 const { c } = cssr
 
-const INPUT_DOCK_SELECTOR = '[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor])))'
+const INPUT_DOCK_SELECTOR = '[data-slot="conversation.input.dock"]:has(> :nth-child(3))'
 
 export default c([
   c(`:where(${INPUT_DOCK_SELECTOR})`, {
@@ -15,11 +15,11 @@ export default c([
     marginInline: 'auto',
     rowGap: '0',
   }),
-  c(`${INPUT_DOCK_SELECTOR} > :not([data-dsh-tauri-worktree-mode-anchor])`, {
+  c(`${INPUT_DOCK_SELECTOR} > *`, {
     '--dsh-composer-side-clearance': '0px',
   }),
   ...[2, 3, 4].flatMap((index) => {
-    const child = `> :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
+    const child = `> :nth-last-child(${index})`
     return [
       c(`${INPUT_DOCK_SELECTOR} ${child}`, {
         position: 'relative',
@@ -32,16 +32,16 @@ export default c([
         interpolateSize: 'allow-keywords',
         transition: 'height 220ms ease, transform 220ms ease, margin-bottom 220ms ease',
       }),
-      c(`${INPUT_DOCK_SELECTOR}:not(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover)):not(:focus-within) ${child}`, {
+      c(`${INPUT_DOCK_SELECTOR}:not(:has(> :hover)):not(:focus-within) ${child}`, {
         height: '12px',
         transform: `scale(${1 - (index - 1) * 0.02})`,
       }),
-      c(`${INPUT_DOCK_SELECTOR}:is(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover), :focus-within) ${child}`, {
+      c(`${INPUT_DOCK_SELECTOR}:is(:has(> :hover), :focus-within) ${child}`, {
         transform: 'scale(1)',
         marginBottom: '6px',
         overflow: 'visible',
       }),
-      c(`${INPUT_DOCK_SELECTOR}:is(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover), :focus-within) ${child}::after`, {
+      c(`${INPUT_DOCK_SELECTOR}:is(:has(> :hover), :focus-within) ${child}::after`, {
         content: '""',
         position: 'absolute',
         top: '100%',
@@ -52,7 +52,7 @@ export default c([
     ]
   }),
   c('@media (prefers-reduced-motion: reduce)', [
-    c(`${INPUT_DOCK_SELECTOR} > :not([data-dsh-tauri-worktree-mode-anchor])`, {
+    c(`${INPUT_DOCK_SELECTOR} > *`, {
       transition: 'none !important',
     }),
   ]),

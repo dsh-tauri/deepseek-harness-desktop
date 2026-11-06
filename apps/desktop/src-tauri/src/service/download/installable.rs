@@ -1,7 +1,7 @@
+use crate::AppHandle;
 use crate::config;
 use async_trait::async_trait;
 use std::path::PathBuf;
-use crate::AppHandle;
 
 /// 安装任务的类型标识：下载源选择、完整性校验与版本记录都按它分支，
 /// 而不是按任务在 `tasks` 向量里的位置索引（重排向量不应改变行为）。
@@ -70,20 +70,27 @@ impl Installable for Dsh {
         config::get_dsh_download_url()
     }
     fn get_install_path(&self, app: &AppHandle) -> PathBuf {
-        config::get_dsh_install_path(app)
+        let root = config::get_dsh_install_path(app);
+        let base = config::get_base_dir(app).join("dependencies");
+        if root.starts_with(&base) && config::core_archive_in(&root).is_some() {
+            root
+        } else {
+            base.join("dsh")
+        }
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
         // 文件在盘还不够：应用自动更新会把清单的最低支持核心版本顶高，而托管目录里
         // 还是升级前的旧文件。此时判为「未安装」才能让安装流程按记录 tag 重新下载，
         // 否则启动永远停在校验失败，重试也走同一条链路（issue #1374）。
-        crate::service::core::active_dsh_binary(app).is_file()
+        // 核心入口可能在 asar 归档内部（std::fs 看不到），必须走归档感知的判定。
+        config::core_entry_exists(&crate::service::core::active_dsh_binary(app))
             && crate::service::core::app_core_meets_baseline(app)
     }
     fn record_mapping(&self, app: &AppHandle) {
         // 记录**当前生效的根**而不是清单托管根：随包资源构建（离线包）里用户可以把内核
         // 切到 AppData 的槽位，写回托管根会把这次切换悄悄改回随包内核。
         let active = config::dependencies::active_root(app, config::dependencies::DEP_DSH);
-        if config::get_dsh_binary_path(app).is_file() {
+        if config::core_entry_exists(&config::get_dsh_binary_path(app)) {
             config::dependencies::record(app, InstallKind::Dsh.dependency_key(), Some(active));
         } else if crate::service::core::active_version(app).is_some() {
             // 只有系统（本地）核心可用：该依赖由系统环境满足。
