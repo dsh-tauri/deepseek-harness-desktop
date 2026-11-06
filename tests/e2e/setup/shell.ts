@@ -365,7 +365,7 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
     const skip = page.locator(SETUP_PREINSTALL_SKIP).first()
     if (await skip.count() > 0 && await skip.isVisible()) {
       await skip.click()
-      return
+      continue
     }
     if (await page.locator(SETUP_ERROR).count() > 0)
       throw new Error(`首次装配失败：${await pageText(page)}`)
