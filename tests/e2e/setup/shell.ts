@@ -359,12 +359,14 @@ async function pageText(page: Page): Promise<string> {
 /** 若出现预装引导则跳过，直到壳层承载起内部页面。 */
 export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs
+  let dismissed = false
   while (Date.now() < deadline) {
     if (await page.locator(HARNESS_READY).count() > 0)
       return
     const skip = page.locator(SETUP_PREINSTALL_SKIP).first()
-    if (await skip.count() > 0 && await skip.isVisible()) {
+    if (!dismissed && await skip.count() > 0 && await skip.isVisible()) {
       await skip.click()
+      dismissed = true
       continue
     }
     if (await page.locator(SETUP_ERROR).count() > 0)
