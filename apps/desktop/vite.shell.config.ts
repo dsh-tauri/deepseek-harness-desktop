@@ -41,8 +41,14 @@ function shadowScopedCss(): Plugin {
         for (const chunk of Object.values(bundle)) {
           if (chunk.type !== 'chunk' || !chunk.code.includes(placeholder))
             continue
-          // 用 JSON 转义成合法 JS 字符串字面量，内含反引号/换行也安全。
-          chunk.code = chunk.code.replaceAll(placeholder, JSON.stringify(css))
+          // 占位符本身是一个字符串字面量（`'<placeholder>'`），必须连同引号一起替换成
+          // `JSON.stringify(css)`；只换内部文本会得到 `'"<css>"'`，CSS 里的引号与换行
+          // 会让整个模块语法失效（`bootstrap failed SyntaxError`）。压缩器可能把单引号
+          // 换成双引号，两种都要命中。
+          chunk.code = chunk.code.replace(
+            new RegExp(`(['"])${placeholder}\\1`, 'g'),
+            () => JSON.stringify(css),
+          )
         }
       },
     },

@@ -52,7 +52,7 @@ impl ShellInjection {
   if (globalThis.__DSH_SHELL_LOADED__) return;
   globalThis.__DSH_SHELL_LOADED__ = true;
   const url = URL.createObjectURL(new Blob([{js}], {{ type: 'text/javascript' }}));
-  import(url).catch((error) => console.error('[shell] bootstrap failed', error));
+  import(url).then((mod) => mod.startShell()).catch((error) => console.error('[shell] bootstrap failed', error));
 }})();"#,
       theme = json!(theme.as_str()),
       js = json!(js),
