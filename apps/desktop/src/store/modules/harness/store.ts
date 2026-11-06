@@ -972,31 +972,25 @@ export const harness = defineStore({
         // 手动重启（含修复界面上的「重启 Harness」）：先退出恢复态，
         // 若重启仍失败，boot 的 catch 会重新定位问题插件并再次弹出。
         recovery.hide()
-        if (isHostedServiceDocument()) {
-          try {
-            void hooks['config.dialog.hidden'].trigger()
-            if (!await invoke<boolean>('prepare_harness_restart', { id: restartOperationId }))
-              throw new Error('HARNESS_RESTART_PREPARE_REJECTED')
-          }
-          catch (error) {
-            this.busyAction = null
-            this.fail(String(error), undefined, undefined, undefined, this.serviceRunning)
-          }
-          return
-        }
+        const leaving = isHostedServiceDocument()
         try {
           void hooks['config.dialog.hidden'].trigger()
-          await invoke('shutdown_harness')
-        }
-        catch (err) {
-          console.error('[Harness] shutdown during restart failed:', err)
-        }
-        this.serviceRunning = false
-        try {
+          if (!await invoke<boolean>('prepare_harness_restart', { id: restartOperationId }))
+            throw new Error('HARNESS_RESTART_PREPARE_REJECTED')
+          if (leaving)
+            return
+          if (!await invoke<boolean>('resume_harness_restart', { id: restartOperationId }))
+            throw new Error('HARNESS_RESTART_RESUME_REJECTED')
+          restartPhase = 'loading'
+          this.serviceRunning = false
           await this.boot()
         }
+        catch (error) {
+          this.fail(String(error), undefined, undefined, undefined, this.serviceRunning)
+        }
         finally {
-          this.busyAction = null
+          if (!leaving || this.status === 'error')
+            this.busyAction = null
         }
       })
     },

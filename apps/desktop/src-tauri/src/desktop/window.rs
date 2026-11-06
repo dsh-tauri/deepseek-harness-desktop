@@ -379,6 +379,9 @@ pub async fn prepare_harness_restart(app: AppHandle, webview: Webview, id: Strin
     {
         return Ok(false);
     }
+    if url == bootstrap {
+        return Ok(true);
+    }
     tauri_runtime_electron::set_webview_trusted_origin(&webview, &harness_bootstrap_origin(&bootstrap)?)
         .map_err(|error| format!("HARNESS_RESTART_TRUST_FAILED: {error}"))?;
     webview.navigate(bootstrap).map_err(|error| format!("HARNESS_RESTART_NAVIGATE_FAILED: {error}"))?;
@@ -950,6 +953,16 @@ mod harness_restart_tests {
         assert!(!state.prepare("main", "profile-a", &operation.id, &target(), bootstrap()));
         assert!(!state.prepare("main", "profile-b", &operation.id, &source(), bootstrap()));
         assert_eq!(state.get("main", "profile-a"), None);
+    }
+
+    #[test]
+    fn restart_already_in_bootstrap_can_prepare_and_resume_without_document_change() {
+        let mut state = HarnessRestarts::default();
+        let operation = state.begin("main", "profile-a".into(), bootstrap());
+        assert!(state.prepare("main", "profile-a", &operation.id, &bootstrap(), bootstrap()));
+        assert_eq!(state.claim_stop("main", "profile-a", &operation.id, &bootstrap()), Ok(true));
+        assert!(state.complete_stop("main", "profile-a", &operation.id, Ok(())));
+        assert_eq!(state.get("main", "profile-a").unwrap().phase, HarnessRestartPhase::Loading);
     }
 
     #[test]

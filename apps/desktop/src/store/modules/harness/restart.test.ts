@@ -85,6 +85,36 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('restarts from the bootstrap through native phases and consumes the loading operation after readiness', async () => {
+  vi.stubGlobal('__DSH_BOOT__', undefined)
+  const original = vi.mocked(invoke).getMockImplementation()!
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === 'begin_harness_restart') {
+      marker = { id: 'restart-42', phase: 'leaving' }
+      return marker
+    }
+    if (command === 'finish_harness_restart' && (args as { outcome: string }).outcome === 'success') {
+      if (marker?.phase !== 'loading')
+        return false
+      marker = null
+      return true
+    }
+    return original(command, args)
+  })
+  await harness.restart()
+  const commands = vi.mocked(invoke).mock.calls.map(([command]) => command)
+  expect(commands.filter(command => command === 'prepare_harness_restart')).toHaveLength(1)
+  expect(commands.filter(command => command === 'resume_harness_restart')).toHaveLength(1)
+  expect(commands).not.toContain('shutdown_harness')
+  expect(commands.indexOf('prepare_harness_restart')).toBeLessThan(commands.indexOf('resume_harness_restart'))
+  expect(commands.indexOf('resume_harness_restart')).toBeLessThan(commands.indexOf('ensure_internal_plugins'))
+  expect(marker).toEqual({ id: 'restart-42', phase: 'loading' })
+  await harness.completeRestartDocument()
+  expect(marker).toBeNull()
+  expect(harness.restartPending).toBe(false)
+  expect(toast).toHaveBeenCalledWith('Harness restarted', expect.objectContaining({ variant: 'success' }))
+})
+
 it('leaves the hosted renderer before stopping its backend', async () => {
   await harness.restart()
   expect(invoke).toHaveBeenCalledWith('prepare_harness_restart', { id: 'restart-42' })
@@ -179,10 +209,11 @@ it('shows one sticky bottom-right loading toast before a bootstrap restart shutd
     sticky: true,
     isLoading: true,
   }))
-  expect(invoke).toHaveBeenCalledWith('shutdown_harness')
+  expect(invoke).toHaveBeenCalledWith('resume_harness_restart', { id: 'restart-42' })
+  expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
   release()
   await Promise.all([first, second])
-  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'shutdown_harness')).toHaveLength(1)
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'resume_harness_restart')).toHaveLength(1)
   expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
 })
 
