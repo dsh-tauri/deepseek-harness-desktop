@@ -63,6 +63,10 @@ pub fn setup(app_handle: crate::AppHandle) {
         log::warn!("pnpm modules metadata self-heal skipped: {e}");
     }
 
+    if let Err(e) = crate::service::core::retire_directory_core(&app_handle) {
+        log::warn!("legacy directory core retirement skipped: {e}");
+    }
+
     crate::service::profile::ensure_desktop_profile(&app_handle);
 
     crate::service::workflow::instances::window_profile(&app_handle, MAIN_WINDOW_LABEL);
@@ -78,10 +82,8 @@ pub fn setup(app_handle: crate::AppHandle) {
             log::debug!("auto_start disabled, skipping startup");
             return;
         }
-        let profile = crate::service::workflow::instances::window_profile(
-            &app_for_start,
-            MAIN_WINDOW_LABEL,
-        );
+        let profile =
+            crate::service::workflow::instances::window_profile(&app_for_start, MAIN_WINDOW_LABEL);
         if let Err(e) = crate::service::workflow::instances::scope(
             profile,
             crate::service::workflow::start(app_for_start),
@@ -1579,7 +1581,10 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Destroyed => {
-                crate::desktop::window::forget_harness_documents(window.app_handle(), window.label());
+                crate::desktop::window::forget_harness_documents(
+                    window.app_handle(),
+                    window.label(),
+                );
                 if let Some(profile) =
                     crate::service::workflow::instances::release_window(window.label())
                 {

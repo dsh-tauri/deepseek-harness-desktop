@@ -12,12 +12,12 @@
 //! 各有一处真值。将来做本地捆绑版只需把清单（或映射表）指向 `resources/*`，路径解析
 //! 逻辑无需改动。写入单点收口到 [`record`]，且内容不变时不落盘。
 
-use crate::{AppHandle};
+use crate::AppHandle;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{ Runtime};
+use tauri::Runtime;
 
 use super::manifest;
 
@@ -259,9 +259,18 @@ pub(crate) fn entry_relative_from(manifest: Option<&manifest::Manifest>, key: &s
     split_entry(declared.unwrap_or_else(|| default_entry(key)))
 }
 
-/// 当前生效的依赖入口绝对路径（不校验存在性）
 pub fn binary_path<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
-    active_root(app, key).join(entry_relative(app, key))
+    binary_path_at(app, &active_root(app, key), key)
+}
+
+pub fn binary_path_at<R: Runtime>(app: &AppHandle<R>, root: &Path, key: &str) -> PathBuf {
+    let entry = entry_relative(app, key);
+    if key == DEP_DSH {
+        if let Ok(name) = super::runtime::dsh_core_asar_filename() {
+            return root.join(name).join(entry);
+        }
+    }
+    root.join(entry)
 }
 
 /// 入口路径 → 相对路径（统一分隔符；`/` 与 `\` 都接受）
@@ -430,5 +439,4 @@ mod tests {
             }
         );
     }
-
 }

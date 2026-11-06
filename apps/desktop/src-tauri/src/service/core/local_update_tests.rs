@@ -1,6 +1,6 @@
 use super::*;
 use crate::config;
-use crate::service::core::source::{active_source, CoreSource};
+use crate::service::core::source::{CoreSource, active_source};
 use crate::service::workflow;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -118,7 +118,9 @@ fn local_update_isolation_checks_real_state_before_running_the_package_manager()
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("LOCAL_UPDATE_ISOLATION_VERIFIED"));
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("LOCAL_UPDATE_ISOLATION_VERIFIED")
+        );
     }
 }
 
@@ -208,10 +210,6 @@ fn local_update_isolation_child() {
     let entry = config::get_dsh_binary_path(app.handle());
     assert!(managed.starts_with(&scratch));
     assert!(entry.starts_with(&managed));
-    std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
-    if case != "missing-app" {
-        std::fs::write(&entry, "managed entry").unwrap();
-    }
     let managed_manifest = if case == "unsupported-app" {
         br#"{"dependencies":{"@deepseek-ai/dsh":"0.1.6"}}"#.as_slice()
     } else if case == "unreadable-app" {
@@ -219,7 +217,53 @@ fn local_update_isolation_child() {
     } else {
         br#"{"dependencies":{"@deepseek-ai/dsh":"0.2.2-rc.1"}}"#.as_slice()
     };
-    std::fs::write(managed.join("package.json"), managed_manifest).unwrap();
+    let managed_package = if case == "unsupported-app" {
+        br#"{"name":"@deepseek-ai/dsh","version":"0.1.6"}"#.as_slice()
+    } else if case == "unreadable-app" {
+        b"not json".as_slice()
+    } else {
+        br#"{"name":"@deepseek-ai/dsh","version":"0.2.2-rc.1"}"#.as_slice()
+    };
+    let mut lib_files = serde_json::json!({});
+    if case != "missing-app" {
+        lib_files["bin.js"] = serde_json::json!({
+            "size": b"managed entry".len(),
+            "offset": (managed_manifest.len() + managed_package.len()).to_string()
+        });
+    }
+    let json = serde_json::to_vec(&serde_json::json!({"files": {
+        "package.json": {"size": managed_manifest.len(), "offset": "0"},
+        "node_modules": {"files": {"@deepseek-ai": {"files": {"dsh": {"files": {
+            "package.json": {"size": managed_package.len(), "offset": managed_manifest.len().to_string()},
+            "lib": {"files": lib_files}
+        }}}}}}
+    }}))
+    .unwrap();
+    let payload = 4 + json.len() + (4 - json.len() % 4) % 4;
+    let header = payload + 4;
+    let mut archive_bytes = Vec::new();
+    for word in [4u32, header as u32, payload as u32, json.len() as u32] {
+        archive_bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    archive_bytes.extend_from_slice(&json);
+    archive_bytes.resize(8 + header, 0);
+    archive_bytes.extend_from_slice(managed_manifest);
+    archive_bytes.extend_from_slice(managed_package);
+    if case != "missing-app" {
+        archive_bytes.extend_from_slice(b"managed entry");
+    }
+    let archive = managed.join(config::dsh_core_asar_filename().unwrap());
+    std::fs::create_dir_all(&managed).unwrap();
+    std::fs::write(&archive, &archive_bytes).unwrap();
+    assert_eq!(config::core_entry_exists(&entry), case != "missing-app");
+    assert_eq!(
+        config::get_dsh_version(app.handle()).as_deref(),
+        match case.as_str() {
+            "unsupported-app" => Some("0.1.6"),
+            "unreadable-app" => None,
+            _ => Some("0.2.2-rc.1"),
+        }
+    );
     let profile = config::get_dsh_data_path(app.handle()).join("profiles/keep-profile");
     assert!(profile.starts_with(&scratch));
     std::fs::create_dir_all(&profile).unwrap();
@@ -293,12 +337,14 @@ fn local_update_isolation_child() {
                     .as_deref(),
                 Some("app")
             );
-            assert!(tokio::time::timeout(
-                Duration::from_millis(40),
-                workflow::acquire_core_transition()
-            )
-            .await
-            .is_err());
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(40),
+                    workflow::acquire_core_transition()
+                )
+                .await
+                .is_err()
+            );
             std::fs::write(scratch.join("pm-release"), "release").unwrap();
             assert_eq!(task.await.unwrap().unwrap(), "0.2.2-rc.1");
             let _guard =
@@ -410,12 +456,6 @@ fn local_update_isolation_child() {
         std::fs::read(profile.join("session.jsonl")).unwrap(),
         b"keep session"
     );
-    assert_eq!(
-        std::fs::read(managed.join("package.json")).unwrap(),
-        managed_manifest
-    );
-    if case != "missing-app" {
-        assert_eq!(std::fs::read(entry).unwrap(), b"managed entry");
-    }
+    assert_eq!(std::fs::read(archive).unwrap(), archive_bytes);
     println!("LOCAL_UPDATE_ISOLATION_VERIFIED");
 }

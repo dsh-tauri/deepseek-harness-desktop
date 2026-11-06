@@ -31,7 +31,9 @@ pub struct LatestDshPkg {
 }
 
 /// 构造带 User-Agent 与超时的 GitHub 请求客户端。
-fn github_client(app_handle: &crate::AppHandle) -> Result<reqwest::Client, String> {
+fn github_client<R: tauri::Runtime>(
+    app_handle: &crate::AppHandle<R>,
+) -> Result<reqwest::Client, String> {
     config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(std::time::Duration::from_secs(5))
@@ -66,6 +68,11 @@ async fn fetch_releases_latest(client: &reqwest::Client) -> Result<serde_json::V
         .map_err(|e| format!("Failed to parse latest release response: {e}"))
 }
 
+fn supported_release_tag(tag: &str) -> bool {
+    parse_version_from_tag(tag)
+        .is_some_and(|version| crate::service::core::core_supports_bundled_plugins(&version, None))
+}
+
 /// 从 Releases 页面 HTML 中解析 release 标签及 Pre-release 标记。
 ///
 /// 页面可能为同一 release 渲染桌面端和移动端两个链接，因此按 tag 去重。
@@ -88,7 +95,7 @@ fn parse_release_list_from_html(body: &str) -> Vec<DshPkgReleaseMeta> {
         // 从当前 tag 开始截取到下一个 tag，避免把上一个 release 的
         // `Pre-release` 文案带入当前条目（尤其是 alpha 后面的 rc）。
         let entry = &body[start..next];
-        if !tag.is_empty() && seen.insert(tag.to_string()) {
+        if supported_release_tag(tag) && seen.insert(tag.to_string()) {
             releases.push(DshPkgReleaseMeta {
                 tag: tag.to_string(),
                 prerelease: entry.contains("Pre-release"),
@@ -143,8 +150,8 @@ fn first_non_preview_tag_from_atom(body: &str) -> Option<String> {
             .and_then(|s| s.split('"').next())
             .filter(|t| !t.is_empty());
         if let Some(tag) = tag {
-            if is_preview_tag(tag) {
-                log::debug!("DSH_ATOM: skip preview release {tag}");
+            if is_preview_tag(tag) || !supported_release_tag(tag) {
+                log::debug!("DSH_ATOM: skip unsupported or preview release {tag}");
             } else {
                 return Some(tag.to_string());
             }
@@ -173,20 +180,19 @@ async fn fetch_latest_dsh_tag_from_atom(app_handle: &crate::AppHandle) -> Result
         .await
         .map_err(|e| format!("DSH_ATOM: {e}"))?;
     first_non_preview_tag_from_atom(&body)
-        .ok_or_else(|| "DSH_ATOM: no non-preview release in atom feed".to_string())
+        .ok_or_else(|| "DSH_ATOM: no supported non-preview release in atom feed".to_string())
 }
 
 /// 从 expanded_assets HTML 片段中解析指定资产文件名后的 `sha256:<64hex>` 摘要。
 ///
 /// 纯函数，便于对真实页面片段做离线单元测试；解析失败返回 `None`。
 fn parse_digest_from_expanded_assets(body: &str, expected_name: &str) -> Option<String> {
-    let pos = body.find(expected_name)?;
-    // 4096 字节窗口的终点回退到 UTF-8 字符边界，避免切片落在多字节字符中间 panic
-    let mut end = (pos + 4096).min(body.len());
-    while end > pos && !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    let window = &body[pos..end];
+    let asset_path = format!("/{expected_name}\"");
+    let window = body
+        .split("<li ")
+        .skip(1)
+        .filter_map(|row| row.split_once("</li>").map(|(row, _)| row))
+        .find(|row| row.contains(&asset_path))?;
     const START: &str = "sha256:";
     let hash_start = window.find(START)?;
     let hash = &window[hash_start + START.len()..];
@@ -286,9 +292,16 @@ pub async fn fetch_latest_dsh_pkg_info(
     //     同样不会推给用户自动更新）。但「最新 release 恰好是预览版」时不能因此
     //     让初始化/更新流程整体卡死（issue #299），改为回退到最新非预览版 release，
     //     仍然绝不把预览版推给用户自动更新。
-    if is_preview_tag(&tag_name) {
+    if is_preview_tag(&tag_name)
+        || !supported_release_tag(&tag_name)
+        || api_release
+            .as_ref()
+            .and_then(|release| release.get("prerelease"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    {
         log::info!(
-            "DSH_SKIP_PREVIEW: latest release {} is a preview, falling back to latest non-preview release",
+            "DSH_SKIP_RELEASE: latest release {} is unsupported or a preview, falling back to latest supported non-preview release",
             tag_name
         );
         return fetch_latest_non_preview(app_handle).await;
@@ -314,29 +327,8 @@ pub async fn fetch_latest_dsh_pkg_info(
     // 4. 资产 URL 与摘要：URL 与摘要必须始终来自同一个 release。
     // API 不可用时 tag 来自 Atom，因此下载地址也必须按该 tag 确定性构造，
     // 不能继续使用 latest 地址，否则会把别的 release 内容拿来匹配当前摘要。
-    let (asset_url, mut digest) = match api_release.as_ref() {
-        Some(release) => {
-            let asset = release
-                .get("assets")
-                .and_then(|value| value.as_array())
-                .and_then(|assets| {
-                    assets.iter().find(|asset| {
-                        asset.get("name").and_then(|value| value.as_str())
-                            == Some(expected_name.as_str())
-                    })
-                });
-            let asset_url = asset
-                .and_then(|a| a.get("browser_download_url").and_then(|v| v.as_str()))
-                .map(|u| u.to_string())
-                .unwrap_or_else(|| config::get_dsh_download_url().unwrap_or_default());
-            let digest = asset
-                .and_then(|a| a.get("digest").and_then(|v| v.as_str()))
-                .filter(|v| v.starts_with("sha256:"))
-                .map(|v| v.to_string());
-            (asset_url, digest)
-        }
-        None => (config::get_dsh_download_url_for_tag(&tag_name)?, None),
-    };
+    let (asset_url, mut digest) =
+        release_asset_metadata(api_release.as_ref(), &tag_name, &expected_name)?;
 
     // 4b. API 限流/不可用导致取不到可信摘要时，改从 expanded_assets HTML
     // （github.com，非 api.github.com，不受 403 限流）解析作者填写的 sha256，
@@ -371,7 +363,16 @@ pub async fn fetch_latest_dsh_pkg_info(
     })
 }
 
-/// 最新非预览版 release：仅当最新 release 是预览版时由 [`fetch_latest_dsh_pkg_info`] 调用。
+fn latest_supported_non_preview_tag(releases: &[DshPkgReleaseMeta]) -> Option<&str> {
+    releases
+        .iter()
+        .find(|meta| {
+            !meta.prerelease && !is_preview_tag(&meta.tag) && supported_release_tag(&meta.tag)
+        })
+        .map(|meta| meta.tag.as_str())
+}
+
+/// 最新非预览版 release：仅当最新 release 不受支持或是预览版时调用。
 ///
 /// 从完整 release 列表（[`fetch_dsh_pkg_releases`]，最新在前，含 Pre-release label）
 /// 取最新一条「非预览」的 release（label 非 Pre-release 且 tag 命名非预览标记，
@@ -379,25 +380,59 @@ pub async fn fetch_latest_dsh_pkg_info(
 /// 属于同一发布。找不到非预览版（全部是预览版）时返回错误，调用方保持不更新——
 /// 不把预览版推给用户自动更新，也不再以「最新是预览版」整段卡死初始化流程。
 async fn fetch_latest_non_preview(app_handle: &crate::AppHandle) -> Result<LatestDshPkg, String> {
-    let tag = fetch_dsh_pkg_releases(app_handle)
-        .await?
-        .into_iter()
-        .find(|m| !m.prerelease && !is_preview_tag(&m.tag))
-        .map(|m| m.tag)
+    let releases = fetch_dsh_pkg_releases(app_handle).await?;
+    let tag = latest_supported_non_preview_tag(&releases).ok_or_else(|| {
+        "DSH_PREVIEW_RELEASE: no supported non-preview release available, not an update".to_string()
+    })?;
+    fetch_dsh_pkg_asset(app_handle, tag).await
+}
+
+fn release_asset_metadata(
+    release: Option<&serde_json::Value>,
+    tag: &str,
+    expected_name: &str,
+) -> Result<(String, Option<String>), String> {
+    let Some(release) = release else {
+        return Ok((config::get_dsh_download_url_for_tag(tag)?, None));
+    };
+    let asset = release
+        .get("assets")
+        .and_then(|value| value.as_array())
+        .and_then(|assets| {
+            assets.iter().find(|asset| {
+                asset.get("name").and_then(|value| value.as_str()) == Some(expected_name)
+            })
+        })
+        .ok_or_else(|| format!("DSH_RELEASE_ASSET_MISSING: {expected_name} in release {tag}"))?;
+    let asset_url = asset
+        .get("browser_download_url")
+        .and_then(|value| value.as_str())
+        .filter(|url| !url.is_empty())
         .ok_or_else(|| {
-            "DSH_PREVIEW_RELEASE: no non-preview release available, not an update".to_string()
-        })?;
-    fetch_dsh_pkg_asset(app_handle, &tag).await
+            format!("DSH_RELEASE_ASSET_MISSING: download URL for {expected_name} in release {tag}")
+        })?
+        .to_string();
+    let digest = asset
+        .get("digest")
+        .and_then(|value| value.as_str())
+        .filter(|value| value.starts_with("sha256:"))
+        .map(str::to_string);
+    Ok((asset_url, digest))
 }
 
 /// 拉取指定 tag 的发行版信息（资产 URL + 可信摘要），供核心面板按版本下载。
 ///
 /// API 失败时资产 URL 按 tag 确定性构造，摘要从同一个 tag 的页面读取，避免
 /// latest 地址与固定 tag 的摘要发生错配。
-pub async fn fetch_dsh_pkg_asset(
-    app_handle: &crate::AppHandle,
+pub async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
+    app_handle: &crate::AppHandle<R>,
     tag: &str,
 ) -> Result<LatestDshPkg, String> {
+    if !supported_release_tag(tag) {
+        return Err(format!(
+            "CORE_APP_UNSUPPORTED: release {tag} is outside the supported 0.2.2 core series (minimum 0.2.2-rc.1)"
+        ));
+    }
     let client = github_client(app_handle)?;
     let expected_name = config::get_dsh_download_url()?
         .rsplit('/')
@@ -428,23 +463,7 @@ pub async fn fetch_dsh_pkg_asset(
         }
     };
 
-    let asset = json
-        .as_ref()
-        .and_then(|json| json.get("assets"))
-        .and_then(|value| value.as_array())
-        .and_then(|assets| {
-            assets.iter().find(|asset| {
-                asset.get("name").and_then(|value| value.as_str()) == Some(expected_name.as_str())
-            })
-        });
-    let asset_url = asset
-        .and_then(|a| a.get("browser_download_url").and_then(|v| v.as_str()))
-        .map(|u| u.to_string())
-        .unwrap_or_else(|| config::get_dsh_download_url_for_tag(tag).unwrap_or_default());
-    let mut digest = asset
-        .and_then(|a| a.get("digest").and_then(|v| v.as_str()))
-        .filter(|v| v.starts_with("sha256:"))
-        .map(|v| v.to_string());
+    let (asset_url, mut digest) = release_asset_metadata(json.as_ref(), tag, &expected_name)?;
 
     // 2. 摘要兜底：expanded_assets HTML（github.com，非 api.github.com）
     if digest.is_none() {
@@ -733,6 +752,9 @@ pub async fn fetch_dsh_pkg_releases(
             .iter()
             .filter_map(|entry| {
                 let tag = entry.get("tag_name")?.as_str()?.to_string();
+                if !supported_release_tag(&tag) {
+                    return None;
+                }
                 let prerelease = entry
                     .get("prerelease")
                     .and_then(|v| v.as_bool())
@@ -782,6 +804,119 @@ pub async fn fetch_dsh_pkg_tags(
 mod tests {
     use super::*;
 
+    const WINDOWS_ARM_ASSET_ROW: &str = r#"<li data-view-component="true" class="Box-row d-flex flex-column flex-md-row">
+      <div data-view-component="true" class="d-flex flex-justify-start flex-items-center col-12 col-lg-6">
+        <span class="d-flex flex-items-start">
+          <a href="/dsh-tauri/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-41838008646/deepseek-harness-pkg-windows-arm64.asar.zip" rel="nofollow" data-turbo="false" class="wb-break-all">
+            <span class="text-bold">deepseek-harness-pkg-windows-arm64.asar.zip</span>
+          </a>
+        </span>
+      </div>
+      <div data-view-component="true" class="d-flex flex-auto flex-justify-end flex-items-center col-md-6">
+        <span data-view-component="true" class="Truncate-text">sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da</span>
+        <clipboard-copy aria-label="Copy to clipboard digest for deepseek-harness-pkg-windows-arm64.asar.zip" value="sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da"></clipboard-copy>
+      </div>
+    </li>"#;
+
+    #[test]
+    fn digest_does_not_leak_from_next_asset_row() {
+        let html = format!(
+            r#"<li data-view-component="true" class="Box-row d-flex flex-column flex-md-row">
+              <a href="/dsh-tauri/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-41838008646/deepseek-harness-pkg-windows.asar.zip" rel="nofollow" data-turbo="false" class="wb-break-all">
+                <span class="text-bold">deepseek-harness-pkg-windows.asar.zip</span>
+              </a>
+            </li>{WINDOWS_ARM_ASSET_ROW}"#
+        );
+        assert_eq!(
+            parse_digest_from_expanded_assets(&html, "deepseek-harness-pkg-windows.asar.zip"),
+            None
+        );
+    }
+
+    #[test]
+    fn digest_matches_windows_arm_asset_row() {
+        assert_eq!(
+            parse_digest_from_expanded_assets(
+                WINDOWS_ARM_ASSET_ROW,
+                "deepseek-harness-pkg-windows-arm64.asar.zip"
+            )
+            .as_deref(),
+            Some("sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da")
+        );
+    }
+
+    #[test]
+    fn atom_rejects_out_of_series_releases() {
+        let feed = concat!(
+            "<feed>",
+            r#"<entry><link href="/x/releases/tag/dsh-0.2.3-123"/></entry>"#,
+            r#"<entry><link href="/x/releases/tag/dsh-0.2.2-rc.0-123"/></entry>"#,
+            r#"<entry><link href="/x/releases/tag/dsh-0.2.1-123"/></entry>"#,
+            r#"<entry><link href="/x/releases/tag/dsh-0.2.2-rc.1-41838008646"/></entry>"#,
+            "</feed>"
+        );
+        assert_eq!(
+            first_non_preview_tag_from_atom(feed).as_deref(),
+            Some("dsh-0.2.2-rc.1-41838008646")
+        );
+    }
+
+    #[test]
+    fn release_metadata_rejects_missing_asar_asset() {
+        for release in [
+            serde_json::json!({"assets": []}),
+            serde_json::json!({"assets": [{"name": "deepseek-harness-pkg-windows.zip", "browser_download_url": "https://example.invalid/old.zip"}]}),
+            serde_json::json!({"assets": [{"name": "deepseek-harness-pkg-windows.asar.zip"}]}),
+        ] {
+            let error = release_asset_metadata(
+                Some(&release),
+                "dsh-0.2.2-rc.1-123",
+                "deepseek-harness-pkg-windows.asar.zip",
+            )
+            .unwrap_err();
+            assert!(error.starts_with("DSH_RELEASE_ASSET_MISSING:"), "{error}");
+        }
+    }
+
+    #[test]
+    fn supported_release_tags_stay_within_022_from_rc1() {
+        for tag in [
+            "dsh-0.2.2-rc.1-123",
+            "dsh-0.2.2-rc.10-123",
+            "dsh-0.2.2-123",
+            "src-0.2.2+build.1",
+        ] {
+            assert!(supported_release_tag(tag), "{tag}");
+        }
+        for tag in [
+            "dsh-0.2.1-123",
+            "dsh-0.2.2-alpha.1-123",
+            "dsh-0.2.2-rc.0-123",
+            "dsh-0.2.3-123",
+            "dsh-0.3.0-123",
+            "dsh-1.0.0-123",
+            "invalid",
+        ] {
+            assert!(!supported_release_tag(tag), "{tag}");
+        }
+    }
+
+    #[tokio::test]
+    async fn tag_download_rejects_unsupported_releases_before_network() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        for tag in [
+            "dsh-0.2.1-123",
+            "dsh-0.2.2-rc.0-123",
+            "dsh-0.2.3-123",
+            "invalid",
+        ] {
+            let error = fetch_dsh_pkg_asset(app.handle(), tag).await.unwrap_err();
+            assert!(error.starts_with("CORE_APP_UNSUPPORTED:"), "{error}");
+        }
+    }
+
     fn latest(tag: &str, commit: &str) -> LatestDshPkg {
         LatestDshPkg {
             tag: tag.to_string(),
@@ -793,16 +928,20 @@ mod tests {
 
     #[test]
     fn atom_fallback_download_url_is_pinned_to_resolved_tag() {
-        let tag = "dsh-src-0.1.2-alpha.1-33260039971";
-        let url = config::get_dsh_download_url_for_tag(tag).expect("dsh url");
+        let tag = "dsh-0.2.2-rc.1-41838008646";
+        let expected_name = config::get_dsh_download_url().unwrap();
+        let expected_name = expected_name.rsplit('/').next().unwrap();
+        let (url, digest) = release_asset_metadata(None, tag, expected_name).unwrap();
+        assert_eq!(digest, None);
         assert!(url.contains(&format!("/releases/download/{tag}/")));
         assert!(!url.contains("/releases/latest/download/"));
         assert!(
-            url.ends_with("deepseek-harness-pkg-windows.zip")
-                || url.ends_with("deepseek-harness-pkg-linux.zip")
-                || url.ends_with("deepseek-harness-pkg-linux-arm64.zip")
-                || url.ends_with("deepseek-harness-pkg-macos-arm64.zip")
-                || url.ends_with("deepseek-harness-pkg-macos-x64.zip")
+            url.ends_with("deepseek-harness-pkg-windows.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-windows-arm64.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-linux.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-linux-arm64.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-macos-arm64.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-macos-x64.asar.zip")
         );
     }
 
@@ -817,48 +956,68 @@ mod tests {
     }
 
     #[test]
-    fn parses_digest_from_expanded_assets_html() {
-        // 模拟 expanded_assets 片段：资产文件名之后紧跟作者填写的 sha256:<64hex>。
-        // 来自真实 rc.8 页面：windows 资产摘要为 4d541676...
-        let html = "…/deepseek-harness-pkg-windows.zip…<span>sha256:4d5416766eb4a66e81b83532abeea64de7e7e2e0bac69a4f0c0508e1d91936c0</span>";
-        let got = parse_digest_from_expanded_assets(html, "deepseek-harness-pkg-windows.zip");
-        assert_eq!(
-            got.as_deref(),
-            Some("sha256:4d5416766eb4a66e81b83532abeea64de7e7e2e0bac69a4f0c0508e1d91936c0")
-        );
-        // 文件名不存在 → None
-        assert_eq!(
-            parse_digest_from_expanded_assets(html, "deepseek-harness-pkg-linux.zip"),
-            None
-        );
-        // 摘要缺失 → None
+    fn digest_requires_exact_asset_filename() {
         assert_eq!(
             parse_digest_from_expanded_assets(
-                "<p>no digest here</p>",
-                "deepseek-harness-pkg-windows.zip"
+                WINDOWS_ARM_ASSET_ROW,
+                "deepseek-harness-pkg-windows.asar.zip"
+            ),
+            None
+        );
+        let signature_row =
+            WINDOWS_ARM_ASSET_ROW.replace("windows-arm64.asar.zip", "windows-arm64.asar.zip.asc");
+        assert_eq!(
+            parse_digest_from_expanded_assets(
+                &signature_row,
+                "deepseek-harness-pkg-windows-arm64.asar.zip"
             ),
             None
         );
     }
 
     #[test]
-    fn parsed_digest_window_clamps_to_char_boundary() {
-        // 构造一个 body 使 `(pos + 4096)` 恰好落在多字节字符的中间字节：
-        // 旧实现 `&body[pos..pos + 4096]` 会在非字符边界切片而 panic，修复后回退到边界再解析。
-        let name = "deepseek-harness-pkg-windows.zip";
-        let digest = "4d5416766eb4a66e81b83532abeea64de7e7e2e0bac69a4f0c0508e1d91936c0";
-        let prefix = format!("{name}<span>sha256:{digest}</span>");
-        let mut body = prefix.clone();
-        // 补齐到字节 4094 处，放一个 3 字节汉字（占用 4094..4097），使索引 4096 落在其中间字节
-        let needed = 4094usize.saturating_sub(body.len());
-        body.push_str(&"a".repeat(needed));
-        body.push('中');
-        body.push_str(&"a".repeat(16));
-        // 确保总长 > 4096，维持 (pos + 4096) 处于非边界字节（否则不会触发回退分支）
-        assert!(body.len() > 4096);
-        let got = parse_digest_from_expanded_assets(&body, name);
-        let expected = format!("sha256:{digest}");
-        assert_eq!(got.as_deref(), Some(expected.as_str()));
+    fn digest_handles_long_utf8_asset_rows() {
+        let html = WINDOWS_ARM_ASSET_ROW.replace(
+            "<span data-view-component=",
+            &format!("{}<span data-view-component=", "中".repeat(1500)),
+        );
+        assert_eq!(
+            parse_digest_from_expanded_assets(&html, "deepseek-harness-pkg-windows-arm64.asar.zip")
+                .as_deref(),
+            Some("sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da")
+        );
+    }
+
+    #[test]
+    fn digest_rejects_invalid_hash_lengths() {
+        for hash in [
+            "abc",
+            "25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9daa",
+        ] {
+            let html = WINDOWS_ARM_ASSET_ROW.replace(
+                "25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da",
+                hash,
+            );
+            assert_eq!(
+                parse_digest_from_expanded_assets(
+                    &html,
+                    "deepseek-harness-pkg-windows-arm64.asar.zip"
+                ),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn release_metadata_selects_windows_arm_asar_url_and_digest() {
+        let release = serde_json::json!({"assets": [
+            {"name": "deepseek-harness-pkg-windows.asar.zip", "browser_download_url": "https://example.invalid/x64", "digest": "sha256:wrong-platform"},
+            {"name": "deepseek-harness-pkg-windows-arm64.asar.zip", "browser_download_url": "https://github.com/dsh-tauri/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-41838008646/deepseek-harness-pkg-windows-arm64.asar.zip", "digest": "sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da"}
+        ]});
+        assert_eq!(release_asset_metadata(Some(&release), "dsh-0.2.2-rc.1-41838008646", "deepseek-harness-pkg-windows-arm64.asar.zip").unwrap(), (
+            "https://github.com/dsh-tauri/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-41838008646/deepseek-harness-pkg-windows-arm64.asar.zip".to_string(),
+            Some("sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da".to_string())
+        ));
     }
 
     #[test]
@@ -902,67 +1061,41 @@ mod tests {
     }
 
     #[test]
-    fn release_page_parser_preserves_preview_labels_and_deduplicates_links() {
+    fn release_page_parser_filters_series_preserves_labels_and_deduplicates_links() {
         let html = concat!(
-            r#"<a href="/dsh-tauri-desk/deepseek-harness-pkg/releases/tag/dsh-0.2.0-beta.1-1">Pre-release</a>"#,
-            r#"<a href="/dsh-tauri-desk/deepseek-harness-pkg/releases/tag/dsh-0.2.0-beta.1-1">same release</a>"#,
-            r#"<a href="/dsh-tauri-desk/deepseek-harness-pkg/releases/tag/dsh-0.1.1-rc.2-2">Release</a>"#,
+            r#"<a href="/x/releases/tag/dsh-0.2.3-1">Release</a>"#,
+            r#"<a href="/x/releases/tag/dsh-0.2.2-rc.0-1">Release</a>"#,
+            r#"<a href="/x/releases/tag/dsh-0.2.2-rc.2-1">Pre-release</a>"#,
+            r#"<a href="/x/releases/tag/dsh-0.2.2-rc.2-1">same release</a>"#,
+            r#"<a href="/x/releases/tag/dsh-0.2.2-rc.1-2">Release</a>"#,
         );
         let releases = parse_release_list_from_html(html);
         assert_eq!(releases.len(), 2);
-        assert_eq!(releases[0].tag, "dsh-0.2.0-beta.1-1");
+        assert_eq!(releases[0].tag, "dsh-0.2.2-rc.2-1");
         assert!(releases[0].prerelease);
-        assert_eq!(releases[1].tag, "dsh-0.1.1-rc.2-2");
+        assert_eq!(releases[1].tag, "dsh-0.2.2-rc.1-2");
         assert!(!releases[1].prerelease);
     }
 
-    /// 验证 [`fetch_latest_non_preview`] 的选型谓词（无需网络的纯逻辑）：
-    /// 最新 release 是预览版时，应回退到最新一条「非预览」release（issue #299）。
     #[test]
-    fn non_preview_selection_skips_preview_tags_and_labels() {
-        let pick_non_preview = |releases: &[DshPkgReleaseMeta]| {
-            releases
-                .iter()
-                .find(|m| !m.prerelease && !is_preview_tag(&m.tag))
-                .map(|m| m.tag.clone())
-        };
-
-        // 最新是标签预览版（dsh-…-alpha.3，issue #299 现场：dsh-0.1.2-alpha.3）
-        // + 上方一条被 Pre-release label 标记的 release → 回退到非预览 rc。
-        let releases = vec![
-            DshPkgReleaseMeta {
-                tag: "dsh-0.1.2-alpha.3-33444825807".to_string(),
-                prerelease: false,
-            },
-            DshPkgReleaseMeta {
-                tag: "dsh-0.1.1-rc.2-32485170079".to_string(),
-                prerelease: true,
-            },
-            DshPkgReleaseMeta {
-                tag: "dsh-0.1.1-rc.8-32342588166".to_string(),
-                prerelease: false,
-            },
-        ];
+    fn non_preview_selection_skips_unsupported_tags_and_preview_labels() {
+        let releases = [
+            ("dsh-0.2.3-123", false),
+            ("dsh-0.2.2-rc.0-123", false),
+            ("dsh-0.2.2-alpha.3-123", false),
+            ("dsh-0.2.2-rc.2-123", true),
+            ("dsh-0.2.2-rc.1-41838008646", false),
+        ]
+        .map(|(tag, prerelease)| DshPkgReleaseMeta {
+            tag: tag.to_string(),
+            prerelease,
+        });
         assert_eq!(
-            pick_non_preview(&releases).as_deref(),
-            Some("dsh-0.1.1-rc.8-32342588166")
+            latest_supported_non_preview_tag(&releases),
+            Some("dsh-0.2.2-rc.1-41838008646")
         );
-
-        // 全部是预览版（标签或 label）→ 找不到非预览版，`fetch_latest_non_preview`
-        // 返回错误，调用方按「无可用 release」处理（不推预览版更新）。
-        let all_preview = vec![
-            DshPkgReleaseMeta {
-                tag: "dsh-0.2.0-preview.1-32490000001".to_string(),
-                prerelease: false,
-            },
-            DshPkgReleaseMeta {
-                tag: "dsh-0.1.0-rc.7-32054485373".to_string(),
-                prerelease: true,
-            },
-        ];
-        assert_eq!(pick_non_preview(&all_preview), None);
-        // 空列表 → None
-        assert_eq!(pick_non_preview(&[]), None);
+        assert_eq!(latest_supported_non_preview_tag(&releases[..4]), None);
+        assert_eq!(latest_supported_non_preview_tag(&[]), None);
     }
 
     #[test]
@@ -970,19 +1103,19 @@ mod tests {
         // 最新条目是预览版 → 必须跳过，取下一条非预览版（rc）
         let feed = concat!(
             "<feed>",
-            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.2.0-preview.1-32490000001\"/></entry>",
-            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.1.1-rc.2-32485170079\"/></entry>",
+            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.2.2-preview.1-32490000001\"/></entry>",
+            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.2.2-rc.1-41838008646\"/></entry>",
             "</feed>"
         );
         assert_eq!(
             first_non_preview_tag_from_atom(feed).as_deref(),
-            Some("dsh-0.1.1-rc.2-32485170079")
+            Some("dsh-0.2.2-rc.1-41838008646")
         );
         // 全部是预览版 → None（调用方按「无可用 release」处理，不推更新）
         let all_preview = concat!(
             "<feed>",
-            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.2.0-preview.1-32490000001\"/></entry>",
-            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.2.0-beta.1-32490000002\"/></entry>",
+            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.2.2-preview.1-32490000001\"/></entry>",
+            "<entry><link rel=\"alternate\" href=\"/x/deepseek-harness-pkg/releases/tag/dsh-0.2.2-beta.1-32490000002\"/></entry>",
             "</feed>"
         );
         assert_eq!(first_non_preview_tag_from_atom(all_preview), None);

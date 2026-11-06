@@ -2,24 +2,24 @@
 
 This directory is bundled into the installer as `resources/**`.
 
-Both the bundled offline installer and update checks follow the newest stable
-release in the package repository — the manifest declares no pinned "recommended"
-core any more. The minimum supported core is `0.2.1-rc.1`; earlier core versions
-are unsupported. Legacy data-location notes below describe migration history, not
-support for earlier Harness versions.
+The desktop supports the 0.2.2 core series, starting at `0.2.2-rc.1`.
+Offline bundles select the newest compatible, non-draft, non-preview release
+with uploaded, SHA-256-verifiable asar assets for all supported desktop targets.
+RC tags are accepted unless GitHub marks the release as a prerelease.
 
 At runtime, the application downloads everything it needs into the OS user-data
 directory (the Tauri app-data dir for identifier `dsh-tauri`, e.g.
 `%APPDATA%/dsh-tauri/` on Windows):
 
-- `runtime/` — the bundled Node.js runtime (downloaded on first run)
 - `dependencies/dsh/` — the packaged DeepSeek Harness distribution (downloaded from the
-  `dsh-tauri/deepseek-harness-pkg` release feed)
+  `dsh-tauri-desk/deepseek-harness-pkg` release feed)
 - `data/dsh/` — **legacy** `$DSH_HOME` location (pre-migration builds only; see below)
 - `logs/` — application and `dsh` service logs
 - `.store.dat` — desktop settings (port, auto-start, language, etc.)
 
-No manual Node.js or pnpm installation is required.
+The installed Electron runtime runs dsh and pnpm in Node mode. No standalone
+Node.js runtime is downloaded or bundled; historical `runtime/` copies are removed
+on startup.
 
 On the first launch after the identifier was shortened from
 `io.github.hairyf.deepseek-harness-desktop` to `dsh-tauri`, the app **moves** the
@@ -52,12 +52,12 @@ mapping entry**.
 
 ```jsonc
 {
-  "engines": { "dsh": { "minimum": "0.2.1-rc.1" } },
+  "engines": { "dsh": { "minimum": "0.2.2-rc.1" } },
   "dependencies": {
-    "node": {
-      "engine": ">=22.22.0",
-      "entry": { "windows": "node.exe", "default": "bin/node" },
-      "managedRoot": "$AppData/runtime",
+    "pnpm": {
+      "engine": ">=11.7.0",
+      "entry": "bin/pnpm.cjs",
+      "managedRoot": "$AppData/dependencies/pnpm",
       "overridable": true
     }
   },
@@ -80,7 +80,7 @@ relative path).
 
 | Section | Purpose |
 | ------- | ------- |
-| `engines.dsh.minimum` | Lowest supported core (`0.2.1-rc.1`); earlier cores are unsupported |
+| `engines.dsh.minimum` | Lowest supported core (`0.2.2-rc.1`); only the 0.2.2 series is supported |
 | `dependencies` | Dependency mapping spec: entry path per platform, default managed root, whether arbitrary overrides are allowed |
 | `plugins.preset` | Community preset list shown by the first-run wizard / sidebar |
 | `plugins.built-in` | Plugins shipped *with* the installer (auto-installed and auto-healed at startup) |
@@ -94,7 +94,7 @@ Which root is actually used is recorded per machine in
 `<app-data>/dependencies.json` (debug: `<app-data>/dev/dependencies.json`):
 
 ```json
-{ "node": "C:/Users/you/AppData/Roaming/dsh-tauri/runtime", "pnpm": null, "dsh": "C:/Users/you/AppData/Roaming/dsh-tauri/dependencies/dsh" }
+{ "pnpm": null, "dsh": "C:/Users/you/AppData/Roaming/dsh-tauri/dependencies/dsh" }
 ```
 
 * a path → that root is used (an absolute location anywhere on disk, or a
@@ -110,68 +110,48 @@ in `src-tauri` has to move.
 
 ### Offline bundle
 
-`Build & Release (Offline Bundle)` (`.github/workflows/release-bundle.yml`) produces a
-second set of installers that need no network on first launch. Its
-`.github/actions/prepare-bundle-resources` step unpacks the runtime into `resources/`:
+`Build & Release (Offline Bundle)` prepares pnpm and the packaged asar core under
+`resources/`. Electron is already provided by the desktop build.
 
 | Directory | Bundled contents |
 | --------- | ---------------- |
-| `resources/node` | Node.js runtime (`node.exe` / `bin/node`) |
 | `resources/pnpm` | pnpm distribution (`bin/pnpm.cjs`) |
-| `resources/dsh` | packaged DeepSeek Harness core (`node_modules/@deepseek-ai/dsh/lib/bin.js`) |
-| `resources/git` | MinGit — **not** bundled by default (`bundle_git` opt-in) |
+| `resources/dsh` | `deepseek-harness-pkg-<platform>.asar` and any accompanying unpacked files |
+| `resources/git` | MinGit, only with the `bundle_git` opt-in |
 
-Only what running `dsh` itself needs is bundled. Git is deliberately left out: it is not
-required to start the harness, only git-backed features (worktree, `github:` plugins) are,
-and an air-gapped machine can never provision it later. A bundled build therefore stops
-treating Git as a startup prerequisite (see `config::dependencies::bundled_core_dir`),
-so the install screen is never entered for a download that cannot succeed.
+The action downloads `.asar.zip` assets, verifies the GitHub release SHA-256
+digest, and unpacks them without extracting the asar itself. Names match
+`config::runtime::dsh_core_asar_filename`: Windows x64 uses `windows`,
+Windows ARM64 uses `windows-arm64`, Linux uses `linux` or `linux-arm64`,
+and macOS uses `macos-x64` or `macos-arm64`. Windows ARM64 uses native
+Electron and a matching core; the current Windows release workflow builds x64 only.
 
-Every asset is SHA-256 verified before unpacking (Node against the official
-`SHASUMS256.txt`, the core against its GitHub release digest, pnpm/MinGit against the
-pins in `src-tauri/src/config/constants.rs`). Versions and download prefixes are read from
-that same file, and the core version is resolved from the newest stable release in
-the package repository, so the bundle never drifts from what the app would
-otherwise download.
-
-The step then rewrites **this file** so every bundled dependency resolves through the
-installer's own resources:
+pnpm and optional MinGit use the SHA-256 pins in
+`src-tauri/src/config/constants.rs`. The core tag is resolved from published
+0.2.2 releases with the complete supported asar asset set, without pinning an
+unreleased build. Missing assets or digests exclude a release from selection.
+The action verifies the archive file on disk because its inner entry is read
+through Electron, then rewrites `manifest.jsonc` in the build workspace:
 
 ```jsonc
 {
   "dependencies": {
-    "node": { "entry": { "windows": "node.exe", "default": "bin/node" }, "managedRoot": "$Resources/node", "overridable": false },
+    "pnpm": { "entry": "bin/pnpm.cjs", "managedRoot": "$Resources/pnpm", "overridable": false },
     "dsh": { "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js", "managedRoot": "$Resources/dsh", "overridable": true }
   }
 }
 ```
 
-The rewrite only ever touches the build output — the committed manifest keeps its
-`$AppData/...` defaults. `overridable` is per dependency:
+The committed manifest keeps its `$AppData/...` defaults. Bundled pnpm and optional
+MinGit are pinned to resources so stale dependency mappings cannot override them.
+The core stays overridable: users can switch between its read-only bundled asar
+and downloaded slots in app data. Core archives are loaded through Electron's
+`client.node`; local npm directory cores remain supported separately.
 
-* `node` / `pnpm` (and MinGit, when bundled) are pinned (`false`): they ship with the
-  installer, and a stale `<app-data>/dependencies.json` (written by an earlier,
-  non-bundled install and possibly pointing at deleted directories) must not win over
-  them. `config::dependencies::active_root` additionally ignores a recorded root whose
-  path no longer exists.
-* `dsh` stays overridable (`true`): the bundled core is the core panel's pinned **本地**
-  entry, and switching cores works by pointing the `dsh` dependency root elsewhere —
-  either at a downloaded slot in `<app-data>/dependencies/<tag>` or back at
-  `$Resources/dsh`. Downloaded cores therefore keep landing in app data; the install
-  directory is never written to and never loses its bundled core (unlike a directory
-  swap, which would move `resources/dsh` into app data on every switch).
-
-`resource_root()` strips the Windows `\\?\` verbatim prefix that Tauri's
-`resource_dir()` carries (it canonicalizes the exe path). Without that, `$Resources/dsh`
-resolves to a verbatim path, which is handed to node as its main module — and node's
-`resolveMainPath` fails on it with `EISDIR: illegal operation on a directory, lstat 'C:'`,
-so the bundled core could never start.
-
-The bundled core is used in place, so the install directory must stay writable for the
-desktop's startup patches and plugin entry links — true for the per-user NSIS install, not
-for `/usr/lib/**` in the Linux deb (documented limitation). Community/preset plugins are
-still installed from the network; the offline bundle only removes the *first-launch*
-dependency downloads.
+Git is not needed to start dsh and is omitted by default. Git-backed features
+(worktrees and `github:` plugins) need an existing Git installation or the opt-in
+bundle. Community and preset plugin installation still needs network access;
+the offline bundle only removes first-launch dependency downloads.
 
 ### Preset plugins — `plugins.preset`
 

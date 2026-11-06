@@ -15,9 +15,9 @@ use tauri::Manager;
 #[cfg(unix)]
 use super::process::warn_if_inotify_watch_limit_low;
 use super::process::{
-    has_owned_process, launch_guard, on_owned_process_exit_at, register_owned_process, stop,
-    take_startup_sweep, terminate_stale_harness_processes, LaunchGuard, OwnedProcess,
-    HARNESS_PROCESS_EXITED_EVENT,
+    HARNESS_PROCESS_EXITED_EVENT, LaunchGuard, OwnedProcess, has_owned_process, launch_guard,
+    on_owned_process_exit_at, register_owned_process, stop, take_startup_sweep,
+    terminate_stale_harness_processes,
 };
 use super::status;
 #[cfg(windows)]
@@ -94,8 +94,12 @@ fn build_harness_args(
         directory,
         filename,
     ]);
-    if profile == crate::service::profile::DESKTOP_PROFILE {
-        args.extend(crate::service::profile::carrier_node_args(true));
+    if profile == crate::service::profile::DESKTOP_PROFILE
+        || config::asar_ancestor(dsh_binary).is_some()
+    {
+        args.extend(crate::service::profile::carrier_node_args(
+            profile == crate::service::profile::DESKTOP_PROFILE,
+        ));
     }
     args.extend([
         dsh_binary.as_os_str().to_os_string(),
@@ -186,7 +190,7 @@ pub async fn start(app_handle: crate::AppHandle) -> Result<(), String> {
         log::debug!("Harness not installed, skipping startup");
         return Ok(());
     }
-    if !dsh_binary_path.exists() {
+    if !config::core_entry_exists(&dsh_binary_path) {
         // Windows RedirectionGuard(448)：安装器继承的强制执行上下文永不自行恢复，
         // 先尝试通过 explorer 逃逸重拉（见 relaunch_via_shell_escape 注释），
         // 成功则本进程退出；未命中（重拉未逃逸/非 448）才走常规缺失处理。
@@ -271,7 +275,7 @@ fn wait_harness(
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
         use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, WaitForSingleObject, INFINITE,
+            GetExitCodeProcess, INFINITE, WaitForSingleObject,
         };
 
         let handle = child.as_raw_handle();
@@ -488,7 +492,8 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     let dsh_binary_path = crate::service::core::active_dsh_binary(&app_handle);
 
     log::debug!("Checking Harness path: {:?}", dsh_binary_path);
-    if !dsh_binary_path.exists() {
+    // 托管核心是 asar 归档，入口在归档内部：std::fs 看不到它，只能按归档判定。
+    if !config::core_entry_exists(&dsh_binary_path) {
         log::error!("Harness not installed");
         return Err("HARNESS_NOT_FOUND: Harness not installed".to_string());
     }
@@ -498,9 +503,11 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
             .then(|| config::get_dsh_pkg_tag(&app_handle))
             .flatten();
         let baseline = config::manifest::minimum_dsh_version(&app_handle);
-        if let Err(error) =
-            crate::service::core::ensure_app_core_supported(&core_dir, tag.as_deref(), baseline.as_deref())
-        {
+        if let Err(error) = crate::service::core::ensure_app_core_supported(
+            &core_dir,
+            tag.as_deref(),
+            baseline.as_deref(),
+        ) {
             return Err(error);
         }
     }
@@ -695,11 +702,6 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         return Err(e);
     }
     mark_phase("ensure_preset_plugins", &mut phase_started);
-    // 预打包核心运行时自愈：把 app 内置插件与 profile 插件入口链接进活动核心的
-    // node_modules（dsh 的 loader 以核心根为裸包解析根），并核验/修复 sharp/koffi
-    // 原生可选依赖。只作用于 CoreSource::App，本地核心由用户自行管理。dsh 在缺失
-    // 这些入口或原生依赖时无法启动，因此失败直接阻断本次 launch（前端展示可恢复
-    // 错误），而不是带着必然失败的核心继续 spawn。
     if let Err(e) = crate::service::core::prepare_active_runtime(&app_handle).await {
         log::error!("prepare active core runtime failed: {e}");
         return Err(e);
@@ -769,6 +771,11 @@ pub(super) async fn launch_prepared(
         user_pnpm,
         core_version,
     } = plan;
+    let native_bridge = if config::asar_ancestor(&dsh_binary_path).is_some() {
+        Some(crate::service::core::prepare_native_bridge(&bin_dir)?)
+    } else {
+        None
+    };
     let mut envs: HashMap<String, String> = HashMap::new();
     envs.insert(
         "DSH_HOME".to_string(),
@@ -794,13 +801,11 @@ pub(super) async fn launch_prepared(
     // dunce::canonicalize 而不是 std::fs::canonicalize：后者在 Windows 上会
     // 返回 `\\?\` verbatim 前缀，cmd.exe 无法直接启动这种路径，导致 pnpm/dsh
     // shim 报 "The system cannot find the path specified."。
-    let node_abs = dunce::canonicalize(
-        super::electron_executable(
-            notifications
-                .get()
-                .ok_or("APP_HANDLE_UNAVAILABLE: launch handle was not set")?,
-        )?,
-    )
+    let node_abs = dunce::canonicalize(super::electron_executable(
+        notifications
+            .get()
+            .ok_or("APP_HANDLE_UNAVAILABLE: launch handle was not set")?,
+    )?)
     .map_err(|error| format!("ELECTRON_EXECUTABLE_INVALID: {error}"))?;
     envs.insert(
         "DSH_NODE".to_string(),
@@ -822,10 +827,7 @@ pub(super) async fn launch_prepared(
     );
     // 服务进程的可执行文件就是 Electron：不进 Node 模式会以 Chromium 启动，
     // 派生 zygote/gpu/renderer 子进程而根本不执行 dsh（前端只看到端口没人监听）。
-    envs.insert(
-        "ELECTRON_RUN_AS_NODE".to_string(),
-        "1".to_string(),
-    );
+    envs.insert("ELECTRON_RUN_AS_NODE".to_string(), "1".to_string());
 
     // 扩展 PATH，让 dsh 及其子进程能找到 node 与桌面端自动配置的 Git；Windows
     // 上再注入 Git Bash 的 bin 目录：persistent bash（--noprofile --norc）不执行
@@ -1049,7 +1051,7 @@ pub(super) async fn launch_prepared(
                     &mut started,
                     guards,
                     |report_path| {
-                        let args = build_harness_args(
+                        let mut args = build_harness_args(
                             &dsh_binary_path,
                             &active_profile,
                             hmr_patch.as_deref(),
@@ -1057,6 +1059,15 @@ pub(super) async fn launch_prepared(
                             heap_mb,
                             report_path,
                         );
+                        if let Some(bridge) = &native_bridge {
+                            args.splice(
+                                0..0,
+                                [
+                                    OsString::from("--require"),
+                                    bridge.as_os_str().to_os_string(),
+                                ],
+                            );
+                        }
                         #[cfg(windows)]
                         {
                             use std::os::windows::io::{FromRawHandle, OwnedHandle};
@@ -1331,7 +1342,7 @@ mod tests {
         }
 
         fn with_reader_failure(script: &str, reader: usize) -> Self {
-            use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+            use std::sync::{Arc, Mutex, atomic::AtomicUsize};
 
             let node = crate::service::workflow::test_runtime_executable()
                 .expect("bundled Electron runtime required for supervisor tests");
@@ -1543,11 +1554,8 @@ mod tests {
                 .build()
                 .unwrap()
                 .block_on(async {
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(20),
-                        self.transition.lock(),
-                    )
-                    .await
+                    tokio::time::timeout(std::time::Duration::from_secs(20), self.transition.lock())
+                        .await
                 })
                 .expect("supervisor must release the core transition");
             drop(guard);
@@ -1694,18 +1702,37 @@ mod tests {
     #[test]
     fn supervisor_retries_only_duplicate_code_one_at_most_twice() {
         for (script, attempts, resets) in [
-            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)", 3, 2),
-            ("require('fs').writeSync(2,'Error: EADDRINUSE\\n');process.exit(1)", 1, 0),
-            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)", 1, 0),
+            (
+                "require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)",
+                3,
+                2,
+            ),
+            (
+                "require('fs').writeSync(2,'Error: EADDRINUSE\\n');process.exit(1)",
+                1,
+                0,
+            ),
+            (
+                "require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)",
+                1,
+                0,
+            ),
         ] {
             let mut fixture = SupervisedNode::new(script);
             fixture.acknowledge();
             fixture.finish().unwrap();
-            assert_eq!(fixture.attempts.load(Ordering::SeqCst), attempts, "{script}");
+            assert_eq!(
+                fixture.attempts.load(Ordering::SeqCst),
+                attempts,
+                "{script}"
+            );
             assert_eq!(fixture.resets.load(Ordering::SeqCst), resets, "{script}");
             assert!(fixture.instance.process.lock().unwrap().is_none());
             assert!(!fixture.instance.launching.load(Ordering::SeqCst));
-            assert_eq!(*fixture.instance.status.lock().unwrap(), status::Status::Stopped);
+            assert_eq!(
+                *fixture.instance.status.lock().unwrap(),
+                status::Status::Stopped
+            );
             assert!(fixture.transition.try_lock().is_ok());
         }
     }

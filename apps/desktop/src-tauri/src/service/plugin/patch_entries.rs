@@ -19,8 +19,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use serde_yaml::{Mapping, Value};
 use crate::AppHandle;
+use serde_yaml::{Mapping, Value};
 
 use super::atomic_write::write_patch_layer_atomically;
 use super::installed::ProfilePackageJson;
@@ -309,10 +309,9 @@ fn package_resolvable(profile_dir: &Path, install_anchor: Option<&Path>, name: &
 /// 不要求包导出 `./package.json`），因此结果与 loader 的 import 一致。
 fn resolvable_from(anchor: &Path, name: &str) -> bool {
     anchor.ancestors().any(|dir| {
-        dir.join("node_modules")
-            .join(name)
-            .join("package.json")
-            .is_file()
+        let manifest = dir.join("node_modules").join(name).join("package.json");
+        // asar 核心的包在归档内部（issue #1377）：std::fs 看不到，必须经归档判定。
+        manifest.is_file() || crate::config::asar::contains(&manifest)
     })
 }
 
@@ -647,9 +646,11 @@ mod tests {
         assert_eq!(report.layers[0].removed, 1);
         let backup = PathBuf::from(&report.layers[0].backup);
         assert!(backup.is_file());
-        assert!(std::fs::read_to_string(&backup)
-            .unwrap()
-            .contains("dsh-gone"));
+        assert!(
+            std::fs::read_to_string(&backup)
+                .unwrap()
+                .contains("dsh-gone")
+        );
         let stripped = std::fs::read_to_string(profile.join("cordis.patch.yml")).unwrap();
         assert!(stripped.contains("dsh-keep"), "{stripped}");
         assert!(stripped.contains("untouched"), "{stripped}");
@@ -809,10 +810,12 @@ mod tests {
         );
         assert!(error.contains("symlink"), "{error}");
         assert_eq!(std::fs::read_to_string(&target).unwrap(), DANGLING_LAYER);
-        assert!(std::fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     /// 原子改写：成功路径不留临时文件，且内容与备份都在。
