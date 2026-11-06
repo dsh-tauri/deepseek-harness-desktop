@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, completePreinstall, invoke, startShellApp } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, completePreinstall, diagnose, invoke, SHELL_ROOT, startShellApp } from '../setup/shell'
 
 declare global {
   interface Window {
@@ -52,7 +52,7 @@ for (const preference of ['light', 'dark'] as const) {
     })
     const page = app.window.page
     try {
-      await page.getByTestId('dsh-navbar-menu-config').waitFor({ state: 'visible', timeout: 15000 })
+      await page.locator(SHELL_ROOT).waitFor({ state: 'visible', timeout: 15000 })
       await page.context().addInitScript(recordThemeFrames)
       await page.emulateMedia({ colorScheme: preference === 'light' ? 'dark' : 'light' })
       await completePreinstall(page, ASSEMBLY_TIMEOUT_MS)
@@ -63,8 +63,10 @@ for (const preference of ['light', 'dark'] as const) {
       const bootFrames = await page.evaluate(() => window.__dshThemeFrames)
       expect(bootFrames.length, '必须采集真实原生文档首帧').toBeGreaterThan(0)
       expect(bootFrames.filter(frame => frame.background !== background), '原生启动至DSH首屏不能出现相反画布帧').toEqual([])
-      await page.getByTestId('dsh-navbar-sidebar-toggle').click({ timeout: 5000 })
-      await page.getByRole('button', { name: /账号菜单|Account menu/, exact: true }).click()
+      const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/, exact: true })
+      if (!await accountMenu.isVisible())
+        await page.getByTestId('dsh-navbar-sidebar-toggle').click({ timeout: 5000 })
+      await accountMenu.click()
       await page.getByRole('menuitem', { name: /设置|Settings/, exact: true }).click()
       const dialog = page.getByRole('dialog', { name: /设置|Settings/, exact: true })
       await dialog.getByRole('button', { name: preference === 'light' ? /浅色|Light/ : /深色|Dark/, exact: true }).waitFor({ timeout: 30000 })
@@ -77,6 +79,10 @@ for (const preference of ['light', 'dark'] as const) {
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor), { message: '用户切换跟随系统必须切换到系统画布色' }).toBe(preference === 'light' ? 'rgb(21, 21, 23)' : 'rgb(255, 255, 255)')
       await dialog.getByRole('button', { name: preference === 'light' ? /深色|Dark/ : /浅色|Light/, exact: true }).click()
       await expect.poll(() => readFile(path.join(info.data_dir, 'profiles', 'desktop', 'cordis.patch.yml'), 'utf8'), { message: '真实用户主题修改必须持久化' }).toContain(`preference: ${preference === 'light' ? 'dark' : 'light'}`)
+    }
+    catch (error) {
+      console.error(await diagnose(app))
+      throw error
     }
     finally {
       await app.stop()
