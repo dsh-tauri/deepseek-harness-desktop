@@ -6,6 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { createElement, useState } from 'react'
 import { UNSAFE_PortalProvider } from 'react-aria'
 import { createRoot } from 'react-dom/client'
+import { enableShadowDOM } from 'react-stately/private/flags/flags'
 import { ToastProvider } from '@/components/toast-provider'
 import { queryClient } from '@/config/client'
 import { resolveTheme } from '@/hooks/use-theme-adaptive'
@@ -22,6 +23,14 @@ const HOST_ATTRIBUTE = 'data-dsh-shell-host'
 const NEUTRALIZER_ATTRIBUTE = 'data-dsh-shell-drag-neutralizer'
 const MOUNT_ID = 'dsh-shell-root'
 const PORTAL_ID = 'dsh-shell-portal'
+
+// 壳层整棵树渲染在 Shadow DOM 里，必须先打开 react-aria 的 Shadow DOM 支持。
+// 该开关默认关闭，关闭时 `usePress` 判定「事件目标是否在按下元素内」用的是普通
+// `contains`，跨 shadow 边界的 retarget 会让它恒为 false——`pointerdown` 一进来就
+// 被丢弃，`onPress` 永不触发。表现为按钮有 hover、有 pointerdown，点了却毫无反应。
+// 挂到全局对象上：纯函数调用会被 tree-shaking 判为无副作用整段删掉。
+;(globalThis as { __dshEnableShadowDom?: () => void }).__dshEnableShadowDom = enableShadowDOM
+enableShadowDOM()
 
 /**
  * 把壳层内所有浮层挂载点交给 react-aria。
@@ -107,15 +116,17 @@ function ensureHostRoot(): void {
   const host = document.createElement('div')
   host.setAttribute(HOST_ATTRIBUTE, '')
   host.setAttribute('data-theme', root.dataset.theme === 'dark' ? 'dark' : 'light')
-  // 宿主整体穿透（`pointer-events: none`），交互区域各自声明 `auto`；真正的点击问题
-  // 出在浏览器进程的拖拽区判定，由 light DOM 的覆盖规则解决（见 createDragNeutralizer）。
-  host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483000'
+  // 宿主、挂载点、弹层容器三者都必须可命中（`pointer-events: auto`）：真实输入走
+  // compositor 的命中测试，祖先链上任何一层是 `none`，其下所有元素都收不到点击。
+  // `elementFromPoint` 能穿透 `none` 看到按钮，所以只靠它排查会误判成「事件到了」。
+  // 穿透交给壳层根容器 `<App>` 内部的空白区域各自声明。
+  host.style.cssText = 'position:fixed;inset:0;pointer-events:auto;z-index:2147483000'
   const shadow = host.attachShadow({ mode: 'open' })
   const style = document.createElement('style')
   style.textContent = env.__DSH_SHELL_CSS__
   const mount = document.createElement('div')
   mount.id = MOUNT_ID
-  mount.style.cssText = 'pointer-events:none'
+  mount.style.cssText = 'position:fixed;inset:0;pointer-events:auto'
   // 弹层容器铺满视口且自身不拦截点击：react-aria 的浮层是 `position: fixed`，
   // 锚点按视口算；可交互区域由浮层自己声明。层级必须高于挂载点，否则菜单、对话框会被
   // 导航栏整条盖住（截图里表现为「菜单藏在白底下面」）。

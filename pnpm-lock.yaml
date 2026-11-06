@@ -343,6 +343,9 @@ catalogs:
     react-if-lite:
       specifier: ^0.1.0
       version: 0.1.0
+    react-stately:
+      specifier: ^3.51.0
+      version: 3.51.0
     semver:
       specifier: ^7.8.0
       version: 7.8.5
@@ -801,6 +804,9 @@ importers:
       react-if-lite:
         specifier: catalog:runtime
         version: 0.1.0(react@19.3.1)
+      react-stately:
+        specifier: catalog:runtime
+        version: 3.51.0(react@19.3.1)
       semver:
         specifier: catalog:runtime
         version: 7.8.5

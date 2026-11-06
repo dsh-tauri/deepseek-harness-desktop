@@ -195,8 +195,15 @@ export function Shell() {
   // 铺到壳层根元素上会糊住背后的文档，表现为整窗一片纯色。
   const frameStyle = isHostedServiceDocument() ? undefined : (dshStyle.frame || {})
 
+  // 文档即 DSH 时，内容区必须让点击穿透到背后的 DSH 页面；启动页 / 预装 / 恢复页要
+  // 自己接收点击，因此只在已就绪的 hosted 形态下穿透。
+  const passThrough = isHostedServiceDocument()
+
   return (
-    <main className="relative flex flex-col min-h-0 flex-1" style={frameStyle}>
+    <main
+      className={`relative flex flex-col min-h-0 flex-1 ${passThrough ? 'pointer-events-none' : ''}`}
+      style={frameStyle}
+    >
       {/* 启动页、预装引导与恢复页共用外观变量 */}
       <style>{appearanceCss}</style>
       <If
