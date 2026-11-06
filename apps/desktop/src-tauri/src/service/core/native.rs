@@ -64,7 +64,16 @@ mod tests {
         );
         let paths: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(Path::new(&paths[0]), archive);
-        let bin = dunce::canonicalize(scratch.path().join("bin")).unwrap();
-        assert!(Path::new(&paths[1]).starts_with(bin.join(".asar-native")));
+        let cache = Path::new(&paths[1]);
+        assert_eq!(cache.file_name().unwrap().len(), 64);
+        let cache_root = cache.parent().unwrap();
+        assert_eq!(
+            cache_root.file_name().unwrap(),
+            std::ffi::OsStr::new(".asar-native")
+        );
+        assert_eq!(
+            dunce::canonicalize(cache_root.parent().unwrap()).unwrap(),
+            dunce::canonicalize(scratch.path().join("bin")).unwrap()
+        );
     }
 }
