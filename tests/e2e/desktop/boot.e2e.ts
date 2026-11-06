@@ -2,7 +2,7 @@ import type { Page } from 'playwright'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, diagnose, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 interface RuntimeInfo {
   app_version: string
@@ -32,7 +32,13 @@ interface BrowserReservation {
 const app = shellAppScope()
 
 beforeAll(async () => {
-  await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
+  try {
+    await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
+  }
+  catch (error) {
+    console.error(`[e2e-assembly] ${await diagnose(app.get())}`)
+    throw error
+  }
 }, ASSEMBLY_TIMEOUT_MS)
 
 /**

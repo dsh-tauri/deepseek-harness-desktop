@@ -173,7 +173,7 @@ export async function diagnose(app: ShellApp): Promise<string> {
   ].join('\n')
 }
 
-export async function startShellApp(options: { downloadCacheDir?: string } = {}): Promise<ShellApp> {
+export async function startShellApp(options: { downloadCacheDir?: string, prepareHome?: (home: string) => Promise<void>, electronArgs?: string[] } = {}): Promise<ShellApp> {
   const candidates = process.env.DSH_E2E_BINARY ? [process.env.DSH_E2E_BINARY] : BINARIES
   const binary = candidates.map(candidate => path.resolve(ROOT, candidate)).find(existsSync)
   expect(binary, `缺少 debug 产物：${candidates.join(' 或 ')}；先执行 pnpm --filter dsh-desktop build 与 cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml`).toBeTruthy()
@@ -217,6 +217,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     await mkdir(path.join(home, 'home', 'AppData', 'Roaming'), { recursive: true })
     await mkdir(path.join(home, 'home', 'AppData', 'Local'), { recursive: true })
 
+    await options.prepareHome?.(home)
     const port = await freePort()
     child = spawn(binary!, [], {
       cwd: ROOT,
@@ -236,7 +237,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
         XDG_STATE_HOME: path.join(home, 'state'),
         TAURI_WEBDRIVER_PORT: '4445',
         TAURI_RUNTIME_ELECTRON_OWNER: path.basename(home),
-        TAURI_RUNTIME_ELECTRON_ARGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${port}`,
+        TAURI_RUNTIME_ELECTRON_ARGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${port} ${(options.electronArgs ?? []).join(' ')}`,
       },
     })
 
@@ -348,8 +349,7 @@ export async function installErrorCollector(page: Page): Promise<void> {
 }
 
 export async function pageErrors(page: Page): Promise<string[]> {
-  const errors = await page.evaluate(readPageErrors) as string[]
-  return process.platform === 'darwin' ? errors.filter(error => !error.includes('notifications.registerListener not allowed')) : errors
+  return await page.evaluate(readPageErrors) as string[]
 }
 
 async function pageText(page: Page): Promise<string> {
