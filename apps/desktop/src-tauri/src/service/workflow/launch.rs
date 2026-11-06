@@ -867,6 +867,20 @@ pub(super) async fn launch_prepared(
         "DSH_NODE".to_string(),
         node_abs.to_string_lossy().into_owned(),
     );
+    // 把「随包 Electron 可执行文件」本身显式交给插件子进程。
+    //
+    // `DSH_NODE` 的语义是「用 Node 模式跑 dsh 内核的运行时」，它可以被用户自装的核心
+    // 换成别的 Node，并不承诺「这是一个可供插件复用的 GUI Electron」。插件若想复用
+    // 宿主 Electron 去拉一个透明置顶窗口（桌宠等），只能靠 `DSH_NODE` 反推，且必须自己
+    // 摘掉下面那个 `ELECTRON_RUN_AS_NODE=1`，既不可靠也容易踩坑。
+    //
+    // `DSH_ELECTRON_PATH` 专门表达这件事：值就是桌面端自己启动 GUI 的同一个二进制，
+    // 插件拉起窗口时直接用它、并自行移除 `ELECTRON_RUN_AS_NODE` 即可。与 `DSH_NODE`
+    // 同源（同一个 `electron_executable` 结果），不引入第二套路径解析。
+    envs.insert(
+        "DSH_ELECTRON_PATH".to_string(),
+        node_abs.to_string_lossy().into_owned(),
+    );
     // 服务进程的可执行文件就是 Electron：不进 Node 模式会以 Chromium 启动，
     // 派生 zygote/gpu/renderer 子进程而根本不执行 dsh（前端只看到端口没人监听）。
     envs.insert(
