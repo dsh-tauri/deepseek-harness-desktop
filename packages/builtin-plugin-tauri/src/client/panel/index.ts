@@ -1,6 +1,5 @@
 import type { ComponentType, ReactElement } from 'react'
 import type { ClientContext, Translate } from '../types'
-import { createElement } from 'react'
 
 const PANEL_LIST_SLOT = 'sidebar.panellist'
 const PANEL_MAIN_SLOT = 'main'
@@ -23,23 +22,6 @@ export interface PanelHandle {
   select: () => void
   close: () => void
   dispose: () => void
-}
-
-export function hidePanel(ctx: ClientContext, id: string, registrant: string): () => void {
-  return ctx.slots.inject(PANEL_LIST_SLOT as never, () => {
-    const entry = ctx.slots.entriesOfSlot(PANEL_LIST_SLOT as never).find(entry => entry.options.id === id)
-    return ctx.slots.register({
-      ...entry?.options,
-      name: PANEL_LIST_SLOT,
-      id,
-      priority: (entry?.options.priority ?? 0) - 1,
-      registrant,
-    } as never, () => createElement(
-      'span',
-      { 'data-dsh-hidden-panel': id },
-      createElement('style', { 'data-plugin': registrant }, 'button:has([data-dsh-hidden-panel]) { display: none !important; }'),
-    ))
-  })
 }
 
 export function definePanel(ctx: ClientContext, entry: PanelEntry): PanelHandle {

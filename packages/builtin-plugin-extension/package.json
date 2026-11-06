@@ -2,7 +2,7 @@
   "name": "dsh-tauri-extension",
   "type": "module",
   "version": "1.0.0",
-  "description": "DSH Tauri 扩展面板：技能、MCP 与插件市场。",
+  "description": "DSH Tauri 技能与 MCP 设置页。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",

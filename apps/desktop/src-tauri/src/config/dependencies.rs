@@ -25,7 +25,6 @@ use super::manifest;
 pub const MAPPING_FILE: &str = "dependencies.json";
 
 /// 逻辑依赖键
-pub const DEP_NODE: &str = "node";
 pub const DEP_PNPM: &str = "pnpm";
 pub const DEP_DSH: &str = "dsh";
 pub const DEP_GIT: &str = "git";
@@ -161,11 +160,6 @@ pub fn record<R: Runtime>(app: &AppHandle<R>, key: &str, value: Option<PathBuf>)
     }
 }
 
-/// 单键映射（见 [`DependencyMapping::get`]）
-pub fn mapped<R: Runtime>(app: &AppHandle<R>, key: &str) -> Option<Option<PathBuf>> {
-    read_mapping(app).get(key)
-}
-
 /// 清单声明的默认托管根（映射未记录或为系统时使用）
 pub fn managed_root<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
     let base = super::runtime::get_base_dir(app);
@@ -279,7 +273,6 @@ fn split_entry(raw: &str) -> PathBuf {
 
 fn default_managed_root(key: &str) -> &'static str {
     match key {
-        DEP_NODE => "runtime",
         DEP_PNPM => "dependencies/pnpm",
         DEP_DSH => "dependencies/dsh",
         DEP_GIT => "dependencies/git",
@@ -289,13 +282,6 @@ fn default_managed_root(key: &str) -> &'static str {
 
 fn default_entry(key: &str) -> &'static str {
     match key {
-        DEP_NODE => {
-            if cfg!(windows) {
-                "node.exe"
-            } else {
-                "bin/node"
-            }
-        }
         DEP_PNPM => "bin/pnpm.cjs",
         DEP_DSH => "node_modules/@deepseek-ai/dsh/lib/bin.js",
         DEP_GIT => {
@@ -331,18 +317,17 @@ mod tests {
         let file = dir.join(MAPPING_FILE);
 
         let mut mapping = DependencyMapping::default();
-        mapping.set(DEP_NODE, Some(PathBuf::from("C:/app/runtime")));
+        mapping.set(DEP_DSH, Some(PathBuf::from("C:/app/dependencies/dsh")));
         mapping.set(DEP_PNPM, None);
         std::fs::write(&file, serde_json::to_string_pretty(&mapping).unwrap()).unwrap();
 
         let read = read_mapping_at(&file);
         assert_eq!(
-            read.get(DEP_NODE),
-            Some(Some(PathBuf::from("C:/app/runtime")))
+            read.get(DEP_DSH),
+            Some(Some(PathBuf::from("C:/app/dependencies/dsh")))
         );
         assert_eq!(read.get(DEP_PNPM), Some(None));
-        assert_eq!(read.get(DEP_DSH), None);
-        assert!(read.get(DEP_NODE).is_some_and(|value| value.is_some()));
+        assert!(read.get(DEP_DSH).is_some_and(|value| value.is_some()));
 
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -428,7 +413,7 @@ mod tests {
 
     #[test]
     fn default_roots_and_entries_match_the_manifest_spec() {
-        assert_eq!(default_managed_root(DEP_NODE), "runtime");
+        assert_eq!(default_managed_root("node"), "dependencies");
         assert_eq!(default_managed_root(DEP_PNPM), "dependencies/pnpm");
         assert_eq!(default_managed_root(DEP_DSH), "dependencies/dsh");
         assert_eq!(default_entry(DEP_PNPM), "bin/pnpm.cjs");

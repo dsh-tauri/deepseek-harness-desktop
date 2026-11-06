@@ -15,6 +15,9 @@
 use std::fs;
 use std::path::Path;
 
+/// 旧版独立 Node 运行时在依赖映射表里的键名。
+const LEGACY_NODE_MAPPING_KEY: &str = "node";
+
 /// 清除 `root` 下携带过来的 pnpm 安装元数据（`node_modules/.modules.yaml`）。
 ///
 /// 该文件是纯元数据，记录的绝对路径来自旧位置；删除后 pnpm 跳过兼容性校验，
@@ -50,6 +53,33 @@ pub(crate) fn purge_carried_pnpm_metadata(root: &Path) {
         } else {
             purge_carried_pnpm_metadata(&path);
         }
+    }
+}
+
+/// 启动自愈：删除历史遗留的独立 Node 运行时目录（`$AppData/runtime`）。
+///
+/// dsh 与 pnpm 已改为以随包 Electron 的 Node 模式运行，该目录不再被任何路径
+/// 使用；但旧安装可能残留一整套 node 发行版（debug 构建下含 corepack/npm 与
+/// `node_modules`），既占空间，也会让「打开运行环境目录」指向一个已废弃的运行时。
+///
+/// 同时把映射表里的 `node` 记录一并清掉：映射值会让解析链把该槽位当作「已 pin」，
+/// 目录删掉后记录悬空反而更容易误导后续诊断。幂等、best-effort，仅告警不阻断启动。
+pub fn remove_legacy_node_runtime(app_handle: &crate::AppHandle) -> Result<(), String> {
+    let legacy = crate::config::legacy_node_root(app_handle);
+    let mut failures = Vec::new();
+    if legacy.is_dir() {
+        match fs::remove_dir_all(&legacy) {
+            Ok(()) => log::info!("removed legacy node runtime: {}", legacy.display()),
+            // Windows 上仍有句柄未释放时保留目录，下次启动再试。
+            Err(error) => failures.push(format!("{}: {error}", legacy.display())),
+        }
+    }
+    // 依赖映射的 `node` 键已不再有对应运行时；清空它，免得记录悬空。
+    crate::config::dependencies::record(app_handle, LEGACY_NODE_MAPPING_KEY, None);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("LEGACY_NODE_CLEANUP_FAILED: {}", failures.join("; ")))
     }
 }
 

@@ -1485,11 +1485,16 @@ mod tests {
     #[test]
     fn owned_ready_url_comes_from_real_process_stdout_without_http_probes() {
         use std::time::{Duration, Instant};
+        let Some(node) = crate::service::workflow::test_runtime_executable() else {
+            return;
+        };
         let root = tempfile::tempdir().unwrap();
-        let node = config::get_local_node_path().expect("supported Node.js required");
         let mut child = Command::new(node)
             .args(["-e", r#"process.stderr.write('dsh web: http://127.0.0.1:41010/?token=stderr\n'); process.stdout.write('Starting plugins...\ndsh web: http://127.0.0.1:41010/?token=owned-ready\r\n')"#])
             .env("DSH_E2E_HOME", root.path())
+            .env("ELECTRON_RUN_AS_NODE", "1")
+            .env("NODE_OPTIONS", "")
+            .env("NODE_PATH", "")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn().unwrap();

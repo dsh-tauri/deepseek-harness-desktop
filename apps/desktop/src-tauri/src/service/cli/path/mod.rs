@@ -38,8 +38,6 @@ pub(crate) use registry::{
 };
 // 数据目录（issue #871）在 Unix 上复用 rc 的「标记块 + 备份写回」原语，
 // 免得再抄一份 rc 文件读写实现。rc 模块本身是私有的，跨模块用要在这里再导出。
-#[cfg(any(windows, test))]
-pub(crate) use pnpm::find_user_pnpm_from;
 pub use pnpm::{find_user_pnpm, pnpm_env_value};
 #[cfg(unix)]
 pub(crate) use rc::{strip_rc_block, upsert_rc_block, write_rc_with_backup};

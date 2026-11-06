@@ -88,11 +88,6 @@ pub fn run() -> Result<(), String> {
         Some(instance) => std::sync::Arc::new(instance),
         None => return Ok(()),
     };
-    let startup = service::workflow::early::Startup::begin(
-        &context,
-        #[cfg(all(windows, not(debug_assertions)))]
-        single_instance.clone(),
-    );
     // 任务栏固定项按窗口所属进程创建：壳窗口跑在内嵌 Electron 运行时进程里，
     // 没有 relaunch 命令时 Windows 只能裸启动该 exe，落到 Electron 默认页而不是
     // 本应用（0.30 用户的「升级后打不开」即此）。显式声明与安装器一致的 AUMID，
@@ -105,7 +100,6 @@ pub fn run() -> Result<(), String> {
         .map_err(|error| format!("STARTUP_FAILED: {error}"))?
         .run(move |app_handle, event| match event {
             tauri::RunEvent::Ready => {
-                startup.attach(app_handle);
                 #[cfg(all(windows, not(debug_assertions)))]
                 if let Err(error) = single_instance.attach(app_handle) {
                     log::error!("SINGLE_INSTANCE_ATTACH_FAILED: {error}");
@@ -130,7 +124,6 @@ pub fn run() -> Result<(), String> {
             // 残留并把原生模块 DLL（如 sharp 的 libvips-42.dll）锁在内存，
             // 下次启动重新解压时会失败（Windows os error 32）
             tauri::RunEvent::Exit => {
-                startup.shutdown();
                 // 进行中的插件安装子进程是独立进程组，父进程退出不会连带回收；
                 // 不显式结束就会留下占着档案 / pnpm store 的孤儿，让下一次启动
                 // 永久卡在安装阶段（且日志无任何输出）。必须先于其它收尾动作。
