@@ -129,10 +129,21 @@ beforeAll(async () => {
  * 这里只做一件事——核心进程已退出时立刻失败，不把崩溃耗成超时。
  */
 async function waitHealthy(page: Page): Promise<HealthCheck> {
-  await page.waitForFunction(() => location.protocol === 'chrome-error:' || document.readyState === 'complete', undefined, { timeout: WINDOW_TIMEOUT_MS })
-  if (await page.evaluate(() => location.protocol === 'chrome-error:'))
+  let documentState: { protocol: string, readyState: DocumentReadyState } | undefined
+  await expect.poll(async () => {
+    try {
+      documentState = await page.evaluate(() => ({ protocol: location.protocol, readyState: document.readyState }))
+    }
+    catch (error) {
+      if (String(error).includes('Execution context was destroyed, most likely because of a navigation'))
+        return false
+      throw error
+    }
+    return documentState.protocol === 'chrome-error:' || documentState.readyState === 'complete'
+  }, { timeout: WINDOW_TIMEOUT_MS, message: '顶层 Harness 文档必须完成加载后才能调用原生命令' }).toBe(true)
+  if (documentState?.protocol === 'chrome-error:')
     throw new Error('Harness 顶层导航进入 chrome-error，禁止继续等待原生命令')
-  expect(await page.evaluate(() => document.readyState), '顶层 Harness 文档必须完成加载后才能调用原生命令').toBe('complete')
+  expect(documentState?.readyState, '顶层 Harness 文档必须完成加载后才能调用原生命令').toBe('complete')
   let serviceUrl = ''
   await expect.poll(async () => {
     const info = await invoke<RuntimeInfo>(page, 'get_runtime_info')
