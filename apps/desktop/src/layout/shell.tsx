@@ -53,7 +53,7 @@ export function Shell() {
   const borderTint = remoteView.tint
   const remoteMode = activeTunnelUrl !== ''
   const live = status === 'ready' && (remoteMode || serviceHealthy || isHostedServiceDocument())
-  const notificationSource = activeTunnelUrl || webviewSrc
+  const notificationSource = isHostedServiceDocument() ? location.origin : activeTunnelUrl || webviewSrc
   const notifications = useNativeNotifications(notificationSource)
 
   useNotificationAction(notifications.handleAction)

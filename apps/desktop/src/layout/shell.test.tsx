@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   setShortcuts: vi.fn(),
   dshStyle: { frame: { background: 'rgb(10, 20, 30)' }, sidebar: { background: 'rgb(40, 50, 60)' } },
   setDshStyle: vi.fn(),
-  harness: { status: 'ready', serviceHealthy: true, serviceRunning: true, webviewKey: 0, webviewLoaded: false, webviewAlive: false, webviewError: false, webviewSrc: 'http://127.0.0.1:3081', startupPhase: 'process-boot', busyAction: null },
+  harness: { markHostedReady: vi.fn(), status: 'ready', serviceHealthy: true, serviceRunning: true, webviewKey: 0, webviewLoaded: false, webviewAlive: false, webviewError: false, webviewSrc: 'http://127.0.0.1:3081', startupPhase: 'process-boot', busyAction: null },
   recovery: { recovery: { required: false } },
   emit: vi.fn().mockResolvedValue(undefined),
   getAllWindows: vi.fn(),
@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => mocks.window, getAllWindows: mocks.getAllWindows }))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: async (event: string, handler: (event: { payload: unknown }) => void) => {
@@ -135,6 +136,7 @@ afterEach(() => {
   delete (globalThis as Record<string, unknown>).__DSH_NAVIGATION__
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 it.each(['ready', 'timeout'])('mirrors frame and sidebar reports until the full-sidebar cover reveals on %s', (reveal) => {
@@ -175,6 +177,35 @@ it('returns to local content before opening remote settings after plugin readine
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://settings:open', expect.anything())
   act(() => mocks.listeners.get('dsh://appearance:ready')!({ payload: undefined }))
   expect(mocks.emit).toHaveBeenCalledWith('dsh://settings:open', { section: 'dsh-tauri-remote', tab: 'machines' })
+})
+
+it.each([
+  ['click', ''],
+  ['action', ''],
+  ['click', 'https://next.test/?token=next'],
+  ['action', 'https://next.test/?token=next'],
+])('delivers hosted %s notifications from the current document while the pending target is %s', async (kind, target) => {
+  vi.stubGlobal('__DSH_HOSTED__', true)
+  vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+  vi.stubGlobal('location', new URL('https://hosted.test/?token=current'))
+  mocks.harness.webviewSrc = ''
+  render(<Shell />)
+  act(() => navbar().onRemoteChange(target, null))
+  const metadata = { tag: 'hosted-tag', sessionId: 'hosted-session', windowLabel: 'window-2', sourceOrigin: 'https://hosted.test' }
+  await act(async () => {
+    if (kind === 'click')
+      await mocks.clicked!({ data: metadata })
+    else
+      await mocks.action!({ actionId: 'approve', extra: metadata })
+    await vi.advanceTimersByTimeAsync(250)
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'https://hosted.test' } })
+  })
+  expect(window.localStorage.getItem('dsh-notification-source:window-2')).toBe('https://hosted.test')
+  expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
+    ['dsh://notification-clicked', kind === 'click'
+      ? { tag: 'hosted-tag', sessionId: 'hosted-session', sourceOrigin: 'https://hosted.test' }
+      : { tag: 'hosted-tag', sessionId: 'hosted-session', sourceOrigin: 'https://hosted.test', action: 'approve', inputValue: undefined }],
+  ])
 })
 
 it('coalesces duplicate notification actions without losing the response text', async () => {

@@ -12,7 +12,6 @@ import { useThemeAdaptive } from '@/hooks/use-theme-adaptive'
 import { useWakelockRelease } from '@/hooks/use-wakelock-release'
 import { useFrameChrome } from '@/hooks/use-window-chrome'
 import { toast } from '@/utils/toast'
-import { isHostedServiceDocument } from '@/utils/window-presentation'
 import { store } from '../store'
 import { Recovery } from '../ui/plugin/recovery'
 import { Shell } from './shell'
@@ -68,8 +67,7 @@ export function App() {
   })
 
   useMount(() => {
-    if (!isHostedServiceDocument())
-      store.harness.startup()
+    store.harness.startup()
   })
 
   const autoCheckUpdate = settingReady && autoUpdate

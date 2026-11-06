@@ -22,7 +22,7 @@ import { queryClient } from '@/config/client'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
 import { toast } from '@/utils/toast'
-import { isHostedDocument } from '@/utils/window-presentation'
+import { isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
 import { harnessUpdater } from '../harness-updater'
 import { parseBlockedRefusal } from '../plugins'
 import { preinstall } from '../preinstall'
@@ -174,7 +174,8 @@ export const harness = defineStore({
         this.listenInternalPhase(),
         this.listenProcessExit(),
       ])
-      await this.boot()
+      if (!isHostedServiceDocument())
+        await this.boot()
     },
 
     /** 订阅当前持有的 Harness 根进程退出事件，及时撤下失效 webview。 */
@@ -206,6 +207,9 @@ export const harness = defineStore({
       })) {
         return
       }
+
+      if (isHostedServiceDocument() && await invoke('get_remote_shell_state') !== null)
+        return
 
       const probe = await checkHealthViaProxy()
       if (!shouldAcceptRuntimeExit({
