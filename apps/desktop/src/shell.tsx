@@ -160,6 +160,7 @@ function start(): void {
     document.addEventListener('DOMContentLoaded', start, { once: true })
     return
   }
+  document.documentElement.dataset.theme = getInitialTheme()
   ensureHostRoot()
   const mount = document
     .querySelector(`[${HOST_ATTRIBUTE}]`)
@@ -179,6 +180,5 @@ function start(): void {
  * 独立壳层页（dev）走 `main.tsx` 的另一分支，不经过这里。
  */
 export function startShell(): void {
-  document.documentElement.dataset.theme = getInitialTheme()
   start()
 }
