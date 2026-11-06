@@ -85,6 +85,10 @@ const restartFlight = new SingleFlight<void>()
 const webviewReloadGate = new BoundedReloadGate(WEBVIEW_RELOAD_MAX_ATTEMPTS)
 let webviewRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let policyApprovalKey: string | undefined
+let restartToastKey: string | undefined
+let restartOperationId: string | undefined
+const restoreRestartFlight = new SingleFlight<boolean>()
+const finishRestartFlight = new SingleFlight<boolean>()
 
 /**
  * 桌面外壳核心业务模块：安装/启动流程、服务生命周期（启动/健康检查/重启/停止）、
@@ -127,6 +131,7 @@ export const harness = defineStore({
      */
     webviewAliveKey: null as number | null,
     webviewKey: 0,
+    restartPending: false,
     serviceHealthy: false,
     serviceRunning: false,
     startupPhase: 'plugin-install' as StartupPhase,
@@ -155,6 +160,74 @@ export const harness = defineStore({
     },
   },
   actions: {
+    showRestartLoading() {
+      if (restartToastKey !== undefined && toast.isActive(restartToastKey))
+        return
+      restartToastKey = toast(i18next.t('messages.harness_restarting'), {
+        placement: 'bottom end',
+        timeout: 0,
+        sticky: true,
+        isLoading: true,
+      })
+    },
+
+    restoreRestartToast(): Promise<boolean> {
+      return restoreRestartFlight.run(async () => {
+        if (restartOperationId !== undefined)
+          return true
+        try {
+          const operation = await invoke<{ id: string } | null>('get_harness_restart')
+          if (restartOperationId !== undefined)
+            return true
+          if (!operation)
+            return false
+          restartOperationId = operation.id
+          this.restartPending = true
+          this.showRestartLoading()
+          return true
+        }
+        catch (error) {
+          console.error('[Harness] restore restart notification failed:', error)
+          return false
+        }
+      })
+    },
+
+    completeRestartDocument(): Promise<boolean> {
+      return this.finishRestartNotification('success')
+    },
+
+    finishRestartNotification(outcome: 'success' | 'error', description?: string): Promise<boolean> {
+      return finishRestartFlight.run(async () => {
+        await this.restoreRestartToast()
+        const id = restartOperationId
+        if (id === undefined)
+          return false
+        try {
+          const accepted = await invoke<boolean>('finish_harness_restart', { id, outcome })
+          if (!accepted || restartOperationId !== id)
+            return false
+          restartOperationId = undefined
+          this.restartPending = false
+          if (restartToastKey !== undefined) {
+            toast.close(restartToastKey)
+            restartToastKey = undefined
+          }
+          if (outcome === 'success' && this.status !== 'error') {
+            toast(i18next.t('messages.harness_restarted'), { placement: 'bottom end', variant: 'success' })
+          }
+          else {
+            toast(i18next.t('messages.harness_restart_failed'), { placement: 'bottom end', variant: 'danger', description: description ?? this.errorMsg })
+          }
+        }
+        catch (error) {
+          console.error('[Harness] settle restart notification failed:', error)
+          return false
+        }
+        return true
+      })
+    },
+
     resetFrontendPreload() {
       this.frontendGeneration++
       this.frontendBootHtml = null
@@ -812,6 +885,8 @@ export const harness = defineStore({
       this.heapOomHint = heapOomHint ?? ''
       this.status = 'error'
       this.serviceRunning = keepServiceRunning
+      if (restartOperationId !== undefined)
+        void this.finishRestartNotification('error', message)
     },
 
     async switchProfile(id: string) {
@@ -846,6 +921,28 @@ export const harness = defineStore({
         if (this.busyAction)
           return
         this.busyAction = 'restart'
+        this.showRestartLoading()
+        const previouslyHealthy = this.serviceHealthy
+        this.serviceHealthy = false
+        try {
+          const operation = await invoke<{ id: string }>('begin_harness_restart')
+          restartOperationId = operation.id
+          this.restartPending = true
+        }
+        catch (error) {
+          if (restartToastKey !== undefined) {
+            toast.close(restartToastKey)
+            restartToastKey = undefined
+          }
+          this.busyAction = null
+          this.serviceHealthy = previouslyHealthy
+          toast(i18next.t('messages.harness_restart_failed'), {
+            placement: 'bottom end',
+            variant: 'danger',
+            description: String(error),
+          })
+          return
+        }
         ++bootToken
         this.resetFrontendPreload()
         // 重启旧进程前先撤下旧 webview；这样延迟到达的旧进程退出事件不会被

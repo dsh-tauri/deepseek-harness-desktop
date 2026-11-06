@@ -1295,6 +1295,9 @@ mod macos_bundle_tests {
 pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'static {
     let handler: fn(Invoke<ElectronRuntime>) -> bool = tauri::generate_handler![
         crate::desktop::window::host_harness_document,
+        crate::desktop::window::begin_harness_restart,
+        crate::desktop::window::get_harness_restart,
+        crate::desktop::window::finish_harness_restart,
         crate::desktop::window::prepare_harness_webview,
         crate::desktop::window::release_harness_webview,
         crate::desktop::window::update_harness_webview,

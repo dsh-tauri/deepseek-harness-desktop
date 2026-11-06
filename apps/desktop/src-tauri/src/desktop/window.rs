@@ -164,6 +164,135 @@ pub(crate) struct RemoteShellState {
     pub trusted_origin: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct HarnessRestartOperation {
+    id: String,
+}
+
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HarnessRestartOutcome {
+    Success,
+    Error,
+}
+
+struct HarnessRestart {
+    operation: HarnessRestartOperation,
+    profile: String,
+    source_url: Url,
+    target_url: Option<Url>,
+}
+
+static HARNESS_RESTART_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct HarnessRestarts(HashMap<String, HarnessRestart>);
+
+impl HarnessRestarts {
+    fn begin(&mut self, window: &str, profile: String, source_url: Url) -> HarnessRestartOperation {
+        let operation = HarnessRestartOperation {
+            id: format!("restart-{}", HARNESS_RESTART_SEQUENCE.fetch_add(1, Ordering::Relaxed)),
+        };
+        self.0.insert(window.to_owned(), HarnessRestart {
+            operation: operation.clone(), profile, source_url, target_url: None,
+        });
+        operation
+    }
+
+    fn forget(&mut self, window: &str) {
+        self.0.remove(window);
+    }
+
+    fn current(&mut self, window: &str, profile: &str) -> Option<&mut HarnessRestart> {
+        if self.0.get(window).is_some_and(|restart| restart.profile != profile) {
+            self.0.remove(window);
+        }
+        self.0.get_mut(window)
+    }
+
+    fn get(&mut self, window: &str, profile: &str) -> Option<HarnessRestartOperation> {
+        self.current(window, profile).map(|restart| restart.operation.clone())
+    }
+
+    fn bind_target(&mut self, window: &str, profile: &str, id: &str, url: &Url) {
+        if let Some(restart) = self.current(window, profile) {
+            if restart.operation.id == id {
+                restart.target_url = Some(url.clone());
+            }
+        }
+    }
+
+    fn finish(
+        &mut self,
+        window: &str,
+        profile: &str,
+        id: &str,
+        outcome: HarnessRestartOutcome,
+        url: &Url,
+    ) -> bool {
+        let Some(restart) = self.current(window, profile) else { return false; };
+        if restart.operation.id != id {
+            return false;
+        }
+        let target = restart.target_url.as_ref() == Some(url);
+        let owned = match outcome {
+            HarnessRestartOutcome::Success => target && restart.source_url != *url,
+            HarnessRestartOutcome::Error => target || restart.source_url == *url,
+        };
+        if !owned {
+            return false;
+        }
+        self.0.remove(window);
+        true
+    }
+}
+
+#[derive(Default)]
+struct HarnessRestartState(Mutex<HarnessRestarts>);
+
+pub(crate) fn forget_harness_restart(app: &AppHandle, window: &str) {
+    if let Some(state) = app.try_state::<HarnessRestartState>() {
+        state.0.lock().unwrap_or_else(|error| error.into_inner()).forget(window);
+    }
+}
+
+#[tauri::command]
+pub fn begin_harness_restart(app: AppHandle, webview: Webview) -> Result<HarnessRestartOperation, String> {
+    require_shell(&webview)?;
+    let source_url = webview.url().map_err(|error| format!("HARNESS_RESTART_URL_FAILED: {error}"))?;
+    let window = webview.window();
+    let profile = crate::service::workflow::instances::window_profile(&app, window.label());
+    app.manage(HarnessRestartState::default());
+    let state = app.state::<HarnessRestartState>();
+    Ok(state.0.lock().unwrap_or_else(|error| error.into_inner())
+        .begin(window.label(), profile, source_url))
+}
+
+#[tauri::command]
+pub fn get_harness_restart(app: AppHandle, webview: Webview) -> Result<Option<HarnessRestartOperation>, String> {
+    require_shell(&webview)?;
+    let window = webview.window();
+    let profile = crate::service::workflow::instances::window_profile(&app, window.label());
+    let Some(state) = app.try_state::<HarnessRestartState>() else { return Ok(None); };
+    Ok(state.0.lock().unwrap_or_else(|error| error.into_inner()).get(window.label(), &profile))
+}
+
+#[tauri::command]
+pub fn finish_harness_restart(
+    app: AppHandle,
+    webview: Webview,
+    id: String,
+    outcome: HarnessRestartOutcome,
+) -> Result<bool, String> {
+    require_shell(&webview)?;
+    let url = webview.url().map_err(|error| format!("HARNESS_RESTART_URL_FAILED: {error}"))?;
+    let window = webview.window();
+    let profile = crate::service::workflow::instances::window_profile(&app, window.label());
+    let Some(state) = app.try_state::<HarnessRestartState>() else { return Ok(false); };
+    Ok(state.0.lock().unwrap_or_else(|error| error.into_inner())
+        .finish(window.label(), &profile, &id, outcome, &url))
+}
+
 #[derive(Default)]
 struct HostedOrigins(Mutex<HashMap<String, String>>);
 
@@ -176,6 +305,7 @@ pub(crate) fn remote_shell_state(app: &AppHandle, label: &str) -> Option<RemoteS
 }
 
 pub(crate) fn set_remote_shell(app: &AppHandle, label: &str, state: Option<RemoteShellState>) {
+    forget_harness_restart(app, label);
     app.manage(RemoteShellWindows::default());
     let binding = app.state::<RemoteShellWindows>();
     let mut windows = binding.0.lock().unwrap_or_else(|error| error.into_inner());
@@ -210,12 +340,27 @@ pub async fn host_harness_document(
 ) -> Result<(), String> {
     require_shell(&webview)?;
     let url = harness_guest_url(&url)?;
+    let profile = crate::service::workflow::instances::window_profile(&app, webview.window().label());
+    let restart = app.try_state::<HarnessRestartState>().and_then(|state| {
+        state.0.lock().unwrap_or_else(|error| error.into_inner())
+            .get(webview.window().label(), &profile)
+    });
     let host = authenticate_harness_host(&app, &webview, &url).await?;
+    if crate::service::workflow::instances::window_profile(&app, webview.window().label()) != profile {
+        forget_harness_restart(&app, webview.window().label());
+        return Err("HARNESS_DOCUMENT_PROFILE_CHANGED".into());
+    }
     tauri_runtime_electron::bind_authenticated_web_host(&webview, &host)
         .map_err(|error| format!("HARNESS_AUTH_BIND_FAILED: {error}"))?;
     app.manage(HostedOrigins::default());
     app.state::<HostedOrigins>().0.lock().unwrap_or_else(|error| error.into_inner())
         .insert(webview.label().to_owned(), url.origin().ascii_serialization());
+    if let Some(operation) = restart {
+        if let Some(state) = app.try_state::<HarnessRestartState>() {
+            state.0.lock().unwrap_or_else(|error| error.into_inner())
+                .bind_target(webview.window().label(), &profile, &operation.id, &url);
+        }
+    }
     webview.navigate(url).map_err(|error| error.to_string())
 }
 
@@ -510,6 +655,120 @@ pub async fn release_harness_webview(
 }
 
 #[cfg(test)]
+mod harness_restart_tests {
+    use super::{HarnessRestartOperation, HarnessRestarts, Url};
+    use super::HarnessRestartOutcome::{Error, Success};
+
+    fn source() -> Url {
+        Url::parse("http://127.0.0.1:3080/?startup=1").unwrap()
+    }
+
+    fn target() -> Url {
+        Url::parse("http://127.0.0.1:3080/?startup=2").unwrap()
+    }
+
+    fn pending() -> (HarnessRestarts, HarnessRestartOperation) {
+        let mut state = HarnessRestarts::default();
+        let operation = state.begin("main", "profile-a".into(), source());
+        state.bind_target("main", "profile-a", &operation.id, &target());
+        (state, operation)
+    }
+
+    #[test]
+    fn stale_id_cannot_finish_or_replace_new_operation_target() {
+        let (mut state, old) = pending();
+        let current = state.begin("main", "profile-a".into(), source());
+        state.bind_target("main", "profile-a", &old.id, &target());
+        assert!(!state.finish("main", "profile-a", &old.id, Error, &source()));
+        assert!(!state.finish("main", "profile-a", &current.id, Success, &target()));
+        assert_eq!(state.get("main", "profile-a"), Some(current));
+    }
+
+    #[test]
+    fn profile_mismatch_drops_operation_even_after_switching_back() {
+        let (mut state, operation) = pending();
+        assert!(!state.finish("main", "profile-b", &operation.id, Success, &target()));
+        assert_eq!(state.get("main", "profile-a"), None);
+    }
+
+    #[test]
+    fn wrong_window_cannot_finish_owned_operation() {
+        let (mut state, operation) = pending();
+        assert!(!state.finish("extra", "profile-a", &operation.id, Success, &target()));
+        assert_eq!(state.get("main", "profile-a"), Some(operation));
+    }
+
+    #[test]
+    fn old_source_document_cannot_finish_success() {
+        let (mut state, operation) = pending();
+        assert!(!state.finish("main", "profile-a", &operation.id, Success, &source()));
+        assert_eq!(state.get("main", "profile-a"), Some(operation));
+    }
+
+    #[test]
+    fn success_requires_exact_target_url() {
+        let (mut state, operation) = pending();
+        let other = Url::parse("http://127.0.0.1:3080/?startup=3").unwrap();
+        assert!(!state.finish("main", "profile-a", &operation.id, Success, &other));
+        assert!(state.finish("main", "profile-a", &operation.id, Success, &target()));
+    }
+
+    #[test]
+    fn source_url_reused_as_target_cannot_finish_success() {
+        let (mut state, operation) = pending();
+        state.bind_target("main", "profile-a", &operation.id, &source());
+        assert!(!state.finish("main", "profile-a", &operation.id, Success, &source()));
+    }
+
+    #[test]
+    fn success_consumes_operation_exactly_once() {
+        let (mut state, operation) = pending();
+        assert!(state.finish("main", "profile-a", &operation.id, Success, &target()));
+        assert!(!state.finish("main", "profile-a", &operation.id, Success, &target()));
+        assert_eq!(state.get("main", "profile-a"), None);
+    }
+
+    #[test]
+    fn error_can_finish_only_owned_source_or_target_once() {
+        for url in [source(), target()] {
+            let (mut state, operation) = pending();
+            assert!(state.finish("main", "profile-a", &operation.id, Error, &url));
+            assert!(!state.finish("main", "profile-a", &operation.id, Error, &url));
+        }
+    }
+
+    #[test]
+    fn error_from_another_document_cannot_consume_operation() {
+        let (mut state, operation) = pending();
+        let other = Url::parse("http://127.0.0.1:3080/?startup=3").unwrap();
+        assert!(!state.finish("main", "profile-a", &operation.id, Error, &other));
+        assert_eq!(state.get("main", "profile-a"), Some(operation));
+    }
+
+    #[test]
+    fn error_before_navigation_can_finish_from_source() {
+        let mut state = HarnessRestarts::default();
+        let operation = state.begin("main", "profile-a".into(), source());
+        assert!(state.finish("main", "profile-a", &operation.id, Error, &source()));
+    }
+
+    #[test]
+    fn forget_drops_only_owned_window_operation() {
+        let (mut state, operation) = pending();
+        let extra = state.begin("extra", "profile-a".into(), source());
+        state.forget("main");
+        assert!(!state.finish("main", "profile-a", &operation.id, Success, &target()));
+        assert_eq!(state.get("extra", "profile-a"), Some(extra));
+    }
+
+    #[test]
+    fn operation_response_serializes_only_id() {
+        let (_, operation) = pending();
+        assert_eq!(serde_json::to_value(&operation).unwrap(), serde_json::json!({ "id": operation.id }));
+    }
+}
+
+#[cfg(test)]
 #[test]
 fn harness_document_discards_proof_after_navigation_crash_and_release() {
     use tauri_runtime_electron::WebviewLoadState::{Started, Finished, Failed, ProcessGone};
@@ -550,7 +809,7 @@ fn application_capabilities_separate_shell_and_harness_commands() {
     };
     let guest = Origin::Remote { url };
     let wrong_origin = Origin::Remote { url: Url::parse("http://127.0.0.1:3081/").unwrap() };
-    for command in ["host_harness_document", "get_dsh_theme", "get_runtime_info", "read_service_logs", "quit_app", "update_app_config", "prepare_harness_webview", "update_harness_webview", "release_harness_webview"] {
+    for command in ["host_harness_document", "begin_harness_restart", "get_harness_restart", "finish_harness_restart", "get_dsh_theme", "get_runtime_info", "read_service_logs", "quit_app", "update_app_config", "prepare_harness_webview", "update_harness_webview", "release_harness_webview"] {
         assert!(allowed(command, "main", &Origin::Local), "{command}");
         assert!(!allowed(command, "harness-1", &guest), "{command}");
     }

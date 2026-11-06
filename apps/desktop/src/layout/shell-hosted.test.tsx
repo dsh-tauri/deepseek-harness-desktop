@@ -50,6 +50,7 @@ beforeEach(() => {
     status: 'ready',
     serviceHealthy: true,
     serviceRunning: true,
+    restartPending: false,
     webviewSrc: 'http://127.0.0.1:3081?t=1&dshDesktop=1',
     webviewKey: 0,
     webviewLoaded: false,
@@ -133,6 +134,15 @@ it('keeps an actual hosted service document transparent without rehosting its cu
   expect(harness.webviewLoaded).toBe(true)
   expect(harness.webviewAlive).toBe(true)
   expect(view.container.querySelector('main')?.className).toContain('pointer-events-none')
+})
+
+it('reloads an actual same-origin document only for a pending native restart', async () => {
+  vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+  vi.stubGlobal('location', new URL('http://127.0.0.1:3081/?t=old'))
+  harness.restartPending = true
+  render(<Shell />)
+  await act(async () => {})
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('host_harness_document', { url: 'http://127.0.0.1:3081?t=1&dshDesktop=1' })
 })
 
 it('does not repeat accepted hosted navigation when service health fluctuates', async () => {

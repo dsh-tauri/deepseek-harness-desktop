@@ -35,7 +35,7 @@ const FULL_SIDEBAR_REVEAL_MS = 15_000
 /** 壳层窗口组合：导航栏 + 启动/预装/恢复/Harness 内容分支。 */
 export function Shell() {
   // 1. 数据查询 (Queries)
-  const { status, serviceHealthy, webviewSrc } = useStore(store.harness)
+  const { status, serviceHealthy, webviewSrc, restartPending } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
   const [dshStyle, setDshStyle] = useDshStyle()
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
@@ -76,7 +76,7 @@ export function Shell() {
       return
     if (status !== 'ready' || !serviceHealthy || !webviewSrc)
       return
-    if (isHostedServiceDocument() && new URL(webviewSrc).origin === location.origin)
+    if (isHostedServiceDocument() && new URL(webviewSrc).origin === location.origin && !restartPending)
       return
     if (hostedNavigationRef.current === webviewSrc)
       return
@@ -87,7 +87,7 @@ export function Shell() {
         console.error('[Shell] host document failed:', error)
         store.harness.fail(String(error), undefined, undefined, undefined, store.harness.serviceRunning)
       })
-  }, [status, serviceHealthy, webviewSrc, remoteMode])
+  }, [status, serviceHealthy, webviewSrc, remoteMode, restartPending])
 
   function syncViewMenu() {
     if (type() !== 'macos')

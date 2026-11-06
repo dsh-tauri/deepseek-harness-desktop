@@ -8,6 +8,7 @@ import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { queryKeys } from '@/config/query-keys'
 import { useListen } from '@/hooks/use-listen'
+import { useRestartToast } from '@/hooks/use-restart-toast'
 import { useThemeAdaptive } from '@/hooks/use-theme-adaptive'
 import { useWakelockRelease } from '@/hooks/use-wakelock-release'
 import { useFrameChrome } from '@/hooks/use-window-chrome'
@@ -37,6 +38,7 @@ export function App() {
   const { updateInfo, updating } = useStore(store.harnessUpdater)
 
   useWakelockRelease()
+  useRestartToast()
   useThemeAdaptive()
   useFrameChrome()
 

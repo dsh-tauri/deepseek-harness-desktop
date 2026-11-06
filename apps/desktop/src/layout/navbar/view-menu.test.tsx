@@ -125,6 +125,8 @@ beforeEach(() => {
         return openUrl(args as { url: string })
       case 'toggle_devtools':
         return toggleDevtools()
+      case 'host_harness_document':
+        return
       case 'plugin:event|listen': {
         const listener = args as unknown as Listener
         listeners.set(listener.handler, listener)

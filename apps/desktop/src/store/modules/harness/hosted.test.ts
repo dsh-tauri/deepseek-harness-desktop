@@ -30,6 +30,9 @@ beforeEach(async () => {
   owned = false
   vi.mocked(invoke).mockImplementation(async (command) => {
     switch (command) {
+      case 'begin_harness_restart': return { id: 'hosted-restart' }
+      case 'get_harness_restart': return null
+      case 'finish_harness_restart': return true
       case 'get_remote_shell_state': return remoteState
       case 'proxy_health_check':
         if (!owned)
