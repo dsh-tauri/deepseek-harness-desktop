@@ -34,30 +34,39 @@ let bootPreference;
 let bootBackground;
 let previousBackground;
 let previousPriority;
+function releaseThemeHydration() {{
+  themeHydration.disconnect();
+  const body = document.body;
+  if (body && bootBackground !== undefined && body.style.backgroundColor === bootBackground) {{
+    if (previousBackground) body.style.setProperty('background-color', previousBackground, previousPriority);
+    else body.style.removeProperty('background-color');
+  }}
+}}
+document.addEventListener('DOMContentLoaded', () => {{
+  if (!document.documentElement?.dataset.dsThemeSource) releaseThemeHydration();
+}}, {{ once: true }});
 const themeHydration = new MutationObserver(() => {{
   const root = document.documentElement;
   const body = document.body;
   if (!root || !body) return;
-  const source = root.dataset.dsThemeSource;
-  bootPreference ??= source;
-  if (bootPreference !== 'light' && bootPreference !== 'dark') {{
-    if (bootPreference) themeHydration.disconnect();
-    return;
-  }}
   if (bootBackground === undefined) {{
-    bootBackground = getComputedStyle(body).getPropertyValue('--dsh-boot-bg').trim();
+    const background = getComputedStyle(body).getPropertyValue('--dsh-boot-bg').trim();
+    if (!background) return;
+    bootBackground = background;
     previousBackground = body.style.getPropertyValue('background-color');
     previousPriority = body.style.getPropertyPriority('background-color');
     if (bootBackground) body.style.backgroundColor = bootBackground;
     bootBackground = body.style.backgroundColor;
   }}
+  const source = root.dataset.dsThemeSource;
+  bootPreference ??= source;
+  if (bootPreference !== 'light' && bootPreference !== 'dark') {{
+    if (bootPreference) releaseThemeHydration();
+    return;
+  }}
   if (!root.style.colorScheme) return;
   if (source !== 'system') {{
-    themeHydration.disconnect();
-    if (body.style.backgroundColor === bootBackground) {{
-      if (previousBackground) body.style.setProperty('background-color', previousBackground, previousPriority);
-      else body.style.removeProperty('background-color');
-    }}
+    releaseThemeHydration();
     return;
   }}
   if (root.style.colorScheme !== bootPreference) root.style.colorScheme = bootPreference;
@@ -129,7 +138,12 @@ async function run(boot, first, hydrated, concurrentBackground) {{
     disconnect() {{ disconnected++; super.disconnect(); }}
   }};
   window.document.body.style.setProperty('--dsh-boot-bg', boot === 'dark' ? '#151517' : '#fff');
+  await tick();
   window.eval({script});
+  window.document.body.append(window.document.createElement('span'));
+  await Promise.resolve();
+  assert.equal(disconnected, 0);
+  assert.equal(window.document.body.style.backgroundColor, boot === 'dark' ? 'rgb(21, 21, 23)' : 'rgb(255, 255, 255)');
   window.document.documentElement.dataset.dsThemeSource = boot;
   await tick();
   function present(source) {{
@@ -186,21 +200,21 @@ async function run(boot, first, hydrated, concurrentBackground) {{
 const vm = require('node:vm');
 for (const hasRoot of [false, true]) {{
   const root = {{ dataset: {{}} }};
-  let ready;
+  const ready = [];
   const document = {{
     documentElement: hasRoot ? root : null,
     addEventListener(event, callback, options) {{
       assert.equal(event, 'DOMContentLoaded');
       assert.equal(options.once, true);
-      ready = callback;
+      ready.push(callback);
     }}
   }};
   vm.runInNewContext({script}, {{ document, MutationObserver: class {{ observe() {{}} disconnect() {{}} }} }});
   if (!hasRoot) {{
     assert.equal(root.dataset.theme, undefined);
-    assert.equal(typeof ready, 'function');
+    assert.equal(ready.length, 2);
     document.documentElement = root;
-    ready();
+    for (const callback of ready) callback();
   }}
   assert.equal(root.dataset.theme, {theme});
 }}"#,
