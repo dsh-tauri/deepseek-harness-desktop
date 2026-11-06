@@ -200,8 +200,12 @@ export function useRemote() {
   }
 
   function backToLocal() {
-    if (isHostedServiceDocument() && targets.activeId !== null)
-      void invoke('navigate_remote_harness', { machineId: null }).catch(error => console.error('[remote] local navigation failed:', error))
+    if (isHostedServiceDocument()) {
+      void invoke<{ machineId: string } | null>('get_remote_shell_state').then((state) => {
+        if (state !== null)
+          return invoke('navigate_remote_harness', { machineId: null })
+      }).catch(error => console.error('[remote] local navigation failed:', error))
+    }
     epochRef.current += 1
     setBootId(null)
     setTargets({ activeId: null, pendingId: null, activeTunnelUrl: '' })
