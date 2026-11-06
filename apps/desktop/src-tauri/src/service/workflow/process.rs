@@ -2253,7 +2253,12 @@ setTimeout(() => process.exit(0), 60000);
                     }
                     assert!(fs::rename(&core, case.join("renamed")).is_err());
                 } else {
-                    assert_eq!(selected.len(), 1);
+                    assert_eq!(
+                        selected.len(),
+                        1,
+                        "{mode}: shim={shim_pid}, listener={listener}, snapshot={}",
+                        String::from_utf8_lossy(&snapshot)
+                    );
                     assert_eq!(
                         selected[0].0, shim_pid,
                         "{mode}: select the top shim, not just the listener"
