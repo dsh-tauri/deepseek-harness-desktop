@@ -377,7 +377,7 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
 }
 
 /** Registers the shared app for `beforeAll`/`afterAll`; not a React hook. */
-export function shellAppScope(options: { downloadCacheDir?: string } = {}): { get: () => ShellApp } {
+export function shellAppScope(options: { downloadCacheDir?: string, electronArgs?: string[] } = {}): { get: () => ShellApp } {
   let current: ShellApp | undefined
 
   beforeAll(async () => {
