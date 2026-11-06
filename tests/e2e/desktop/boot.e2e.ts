@@ -198,8 +198,15 @@ describe('desktop boot and profile lifecycle', () => {
           }
         }
         finally {
-          if (cloneId)
-            await invoke(main, 'remove_profile', { id: cloneId })
+          // 窗口销毁与「档案解绑」之间是异步的：`Destroyed` 事件里才 release_window，
+          // 而 CDP 页面已关闭不代表该事件已处理完。这里轮询删除，容忍这段收尾时间，
+          // 而不是把产品侧「使用中的档案不可删除」的守卫当成失败。
+          if (cloneId) {
+            await expect.poll(
+              () => invoke(main, 'remove_profile', { id: cloneId }).then(() => 'removed', error => String(error)),
+              { timeout: WINDOW_TIMEOUT_MS, message: '关闭克隆档案窗口后其档案应可删除' },
+            ).toBe('removed')
+          }
         }
       }
     }
