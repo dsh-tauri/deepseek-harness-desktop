@@ -64,6 +64,7 @@ mod tests {
         );
         let paths: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(Path::new(&paths[0]), archive);
-        assert!(Path::new(&paths[1]).starts_with(scratch.path().join("bin/.asar-native")));
+        let bin = dunce::canonicalize(scratch.path().join("bin")).unwrap();
+        assert!(Path::new(&paths[1]).starts_with(bin.join(".asar-native")));
     }
 }

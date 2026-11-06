@@ -197,7 +197,9 @@ pub fn write_shims_at(bin_dir: &Path, paths: &ShimPaths, dsh_home: &Path) -> Res
     fs::create_dir_all(bin_dir)
         .map_err(|e| format!("SHIM_MKDIR_FAILED: create bin dir failed: {e}"))?;
 
-    crate::service::core::prepare_native_bridge(bin_dir)?;
+    if config::asar_ancestor(&paths.dsh_bin).is_some() {
+        crate::service::core::prepare_native_bridge(bin_dir)?;
+    }
 
     // 写入单个 shim：若目标已存在且非本应用生成，则跳过不覆盖（保留用户文件）。
     macro_rules! write_if_ours {
@@ -271,6 +273,46 @@ pub fn write_shims_at(bin_dir: &Path, paths: &ShimPaths, dsh_home: &Path) -> Res
 mod tests {
     use super::super::test_util::{sample_dsh_home, sample_shim_paths, shim_paths_for};
     use super::*;
+
+    #[test]
+    fn write_shims_at_writes_runtime_shims_for_directory_core_when_bridge_is_unwritable() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        let bridge = bin_dir.join("asar-native.cjs");
+        std::fs::create_dir_all(&bridge).unwrap();
+        let paths = shim_paths_for(&dir.path().join("app"));
+
+        write_shims_at(&bin_dir, &paths, &dir.path().join("home")).unwrap();
+
+        #[cfg(windows)]
+        let names = [NODE_SHIM_CMD_NAME, PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME];
+        #[cfg(not(windows))]
+        let names = [NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME];
+        for name in names {
+            let path = bin_dir.join(name);
+            assert!(is_generated_shim(&path), "{name} was not written");
+            let content = std::fs::read_to_string(path).unwrap();
+            assert!(!content.contains("--require"), "{name}: {content}");
+            assert!(!content.contains("asar-native.cjs"), "{name}: {content}");
+        }
+        assert!(bridge.is_dir());
+    }
+
+    #[test]
+    fn write_shims_at_fails_for_asar_core_when_bridge_is_unwritable() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        std::fs::create_dir_all(bin_dir.join("asar-native.cjs")).unwrap();
+        let mut paths = shim_paths_for(&dir.path().join("app"));
+        paths.dsh_bin = dir.path().join("core.asar/lib/bin.js");
+
+        let error = write_shims_at(&bin_dir, &paths, &dir.path().join("home")).unwrap_err();
+
+        assert!(
+            error.starts_with("CORE_NATIVE_BOOTSTRAP_WRITE_FAILED:"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn foreign_file_detection() {
