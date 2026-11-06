@@ -72,8 +72,11 @@ fn valid_entries(node: &Value, data_length: u64) -> bool {
             .values()
             .all(|entry| valid_entries(entry, data_length));
     }
-    if node.get("link").is_some() || node.get("unpacked").and_then(Value::as_bool) == Some(true) {
+    if node.get("unpacked").and_then(Value::as_bool) == Some(true) {
         return false;
+    }
+    if let Some(link) = node.get("link") {
+        return link.as_str().is_some_and(|target| !target.is_empty());
     }
     node.get("offset")
         .and_then(Value::as_str)
@@ -171,7 +174,7 @@ pub fn read_json(path: &Path) -> Option<Value> {
 mod tests {
     use super::*;
 
-    fn insert_entry(tree: &mut Map<String, Value>, relative: &str, size: usize, offset: usize) {
+    fn insert_entry(tree: &mut Map<String, Value>, relative: &str, entry: Value) {
         let segments: Vec<&str> = relative.split('/').filter(|s| !s.is_empty()).collect();
         let (last, parents) = segments.split_last().unwrap();
         let mut node = tree;
@@ -183,31 +186,143 @@ mod tests {
                 .and_then(Value::as_object_mut)
                 .expect("directory node");
         }
-        node.insert(
-            (*last).to_string(),
-            serde_json::json!({ "size": size, "offset": offset.to_string() }),
-        );
+        node.insert((*last).to_string(), entry);
     }
 
     fn write_archive(path: &Path, files: &[(&str, &[u8])]) {
+        write_archive_with_links(path, files, &[]);
+    }
+
+    fn write_archive_with_links(path: &Path, files: &[(&str, &[u8])], links: &[(&str, &str)]) {
         let mut data: Vec<u8> = Vec::new();
         let mut tree = Map::new();
         for (name, content) in files {
             let offset = data.len();
             data.extend_from_slice(content);
-            insert_entry(&mut tree, name, content.len(), offset);
+            insert_entry(
+                &mut tree,
+                name,
+                serde_json::json!({ "size": content.len(), "offset": offset.to_string() }),
+            );
+        }
+        for (name, target) in links {
+            insert_entry(&mut tree, name, serde_json::json!({ "link": target }));
         }
         let json = serde_json::to_vec(&serde_json::json!({ "files": tree })).unwrap();
         let header_size = json.len() + 8 + (4 - json.len() % 4) % 4;
         let mut out = Vec::new();
         out.extend_from_slice(&4u32.to_le_bytes());
         out.extend_from_slice(&(header_size as u32).to_le_bytes());
-        out.extend_from_slice(&(header_size as u32).to_le_bytes());
+        out.extend_from_slice(&((header_size - 4) as u32).to_le_bytes());
         out.extend_from_slice(&(json.len() as u32).to_le_bytes());
         out.extend_from_slice(&json);
         out.resize(DATA_OFFSET_BASE as usize + header_size, 0);
         out.extend_from_slice(&data);
         std::fs::write(path, out).unwrap();
+    }
+
+    fn write_linux_arm_archive(path: &Path) {
+        let links = [
+            ("node_modules/.bin/acorn", "node_modules/acorn/bin/acorn"),
+            (
+                "node_modules/.bin/anthropic-ai-sdk",
+                "node_modules/@anthropic-ai/sdk/bin/cli",
+            ),
+            (
+                "node_modules/.bin/cordis",
+                "node_modules/@deepseek-ai/cordis/bin.js",
+            ),
+            (
+                "node_modules/.bin/dsh",
+                "node_modules/@deepseek-ai/dsh/lib/bin.js",
+            ),
+            (
+                "node_modules/.bin/dsoffice",
+                "node_modules/@deepseek-ai/libreoffice-kit/lib/cli.js",
+            ),
+            (
+                "node_modules/.bin/is-docker",
+                "node_modules/is-docker/cli.js",
+            ),
+            (
+                "node_modules/.bin/is-inside-container",
+                "node_modules/is-inside-container/cli.js",
+            ),
+            (
+                "node_modules/.bin/js-yaml",
+                "node_modules/js-yaml/bin/js-yaml.js",
+            ),
+            (
+                "node_modules/.bin/node-which",
+                "node_modules/which/bin/node-which",
+            ),
+            (
+                "node_modules/.bin/pi-ai",
+                "node_modules/@earendil-works/pi-ai/dist/cli.js",
+            ),
+            (
+                "node_modules/.bin/semver",
+                "node_modules/semver/bin/semver.js",
+            ),
+            (
+                "node_modules/.bin/which-command",
+                "node_modules/which-command/cli.js",
+            ),
+            ("node_modules/.bin/yaml", "node_modules/yaml/bin.mjs"),
+            (
+                "node_modules/@deepseek-ai/dsh-subprocess-local/node_modules/.bin/cordis",
+                "node_modules/@deepseek-ai/cordis/bin.js",
+            ),
+        ];
+        let mut files: Vec<(&str, &[u8])> = links
+            .iter()
+            .map(|(_, target)| (*target, b"entry".as_slice()))
+            .collect();
+        files.push((
+            "node_modules/@deepseek-ai/dsh/package.json",
+            br#"{"name":"@deepseek-ai/dsh","version":"0.2.2-rc.1","bin":{"dsh":"lib/bin.js"}}"#,
+        ));
+        write_archive_with_links(path, &files, &links);
+    }
+
+    #[test]
+    fn linux_arm_symlinks_do_not_hide_regular_manifest_and_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("deepseek-harness-pkg-linux-arm64.asar");
+        write_linux_arm_archive(&archive);
+        let manifest = read_json(&archive.join("node_modules/@deepseek-ai/dsh/package.json"))
+            .expect("regular manifest beside Linux package symlinks");
+        assert_eq!(manifest["version"], "0.2.2-rc.1");
+        let entry = archive.join("node_modules/@deepseek-ai/dsh/lib/bin.js");
+        assert!(contains(&entry));
+        assert_eq!(read_file(&entry).unwrap(), b"entry");
+        let link = archive.join("node_modules/.bin/dsh");
+        assert!(!contains(&link));
+        assert!(read_file(&link).is_none());
+    }
+
+    #[test]
+    fn linux_arm_symlinks_do_not_allow_truncated_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("deepseek-harness-pkg-linux-arm64.asar");
+        write_linux_arm_archive(&archive);
+        let entry = archive.join("node_modules/@deepseek-ai/dsh/lib/bin.js");
+        assert!(contains(&entry));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&archive)
+            .unwrap();
+        file.set_len(file.metadata().unwrap().len() - 1).unwrap();
+        assert!(!contains(&entry));
+        assert!(read_file(&entry).is_none());
+        assert!(read_json(&archive.join("node_modules/@deepseek-ai/dsh/package.json")).is_none());
+    }
+
+    #[test]
+    fn malformed_link_metadata_is_rejected() {
+        for target in [Value::Null, serde_json::json!(7), serde_json::json!("")] {
+            assert!(!valid_entries(&serde_json::json!({ "link": target }), 0));
+        }
     }
 
     #[test]
