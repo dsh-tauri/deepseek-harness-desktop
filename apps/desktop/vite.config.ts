@@ -9,6 +9,16 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
     rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules'))
+            return
+          if (id.includes('/@heroui/') || id.includes('/@react-aria/') || id.includes('/@react-stately/'))
+            return 'ui'
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/'))
+            return 'react'
+        },
+      },
       input: {
         main: '/index.html',
         pet: '/pet.html',

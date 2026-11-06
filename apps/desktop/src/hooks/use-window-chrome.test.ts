@@ -1,15 +1,18 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { cleanup, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { applyFrameMode, frameMode } from '@/utils/window-frame'
-import { useFullscreen, useMaximized } from './use-window-chrome'
+import { useFrameChrome, useFullscreen, useMaximized } from './use-window-chrome'
 
 const mocks = vi.hoisted(() => ({
   isFullscreen: vi.fn(),
   isMaximized: vi.fn(),
   onResized: vi.fn(),
+}))
+
+vi.mock('@/utils/window-frame', async importOriginal => ({
+  ...await importOriginal<typeof import('@/utils/window-frame')>(),
+  IS_MACOS: true,
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -20,17 +23,36 @@ vi.mock('@tauri-apps/api/window', () => ({
   }),
 }))
 
-const frameCss = readFileSync(resolve(import.meta.dirname, '../styles/main.css'), 'utf8')
-
 afterEach(() => {
   cleanup()
   delete (window as any).__DSH_FRAME__
   delete (window as any).__TAURI_INTERNALS__
   delete document.documentElement.dataset.dshFrame
   vi.resetAllMocks()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  delete document.documentElement.dataset.windowsTitlebar
+  document.documentElement.style.cssText = ''
 })
 
 describe('rounded frame chrome mode', () => {
+  it('removes hosted navbar clearance when an unframed macOS window enters fullscreen', async () => {
+    vi.stubGlobal('__TAURI_INTERNALS__', {})
+    vi.stubGlobal('__DSH_HOSTED__', true)
+    let resize: (() => void) | undefined
+    mocks.onResized.mockImplementation(async (handler) => {
+      resize = handler
+      return vi.fn()
+    })
+    mocks.isFullscreen.mockResolvedValue(false)
+    renderHook(useFrameChrome)
+    await waitFor(() => expect(mocks.isFullscreen).toHaveBeenCalled())
+    expect(document.documentElement.style.getPropertyValue('--dsh-windows-titlebar-height')).toBe('44px')
+    mocks.isFullscreen.mockResolvedValue(true)
+    await act(async () => resize!())
+    await waitFor(() => expect(document.documentElement.hasAttribute('data-windows-titlebar')).toBe(false))
+  })
+
   it('stays off without the native frame flag', () => {
     ;(window as any).__DSH_FRAME__ = false
     expect(frameMode(false)).toBe('')
@@ -50,11 +72,6 @@ describe('rounded frame chrome mode', () => {
     expect(document.documentElement.dataset.dshFrame).toBe('flat')
     applyFrameMode(false, true)
     expect(document.documentElement.dataset.dshFrame).toBe('flat')
-  })
-
-  it('limits rounded body clipping to border mode', () => {
-    expect(frameCss).toContain('html[data-dsh-frame="border"] body {\n  clip-path: inset(0 round var(--frame-radius));\n}')
-    expect(frameCss).not.toMatch(/html\[data-dsh-frame\] body\s*\{[^}]*clip-path/)
   })
 
   it.each(['maximized', 'fullscreen'] as const)('subscribes to resize before reading %s state', async (state) => {

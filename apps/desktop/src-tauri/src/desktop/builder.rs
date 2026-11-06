@@ -62,7 +62,10 @@ pub fn setup(app_handle: crate::AppHandle) {
             crate::service::profile::ensure_desktop_profile(&app_handle);
         }
 
-        crate::service::workflow::instances::window_profile(&app_handle, MAIN_WINDOW_LABEL);
+        crate::service::workflow::instances::bind_window(
+            MAIN_WINDOW_LABEL,
+            &crate::service::profile::active_profile(&app_handle),
+        );
         crate::service::scheduler::start(&app_handle);
 
         #[cfg(not(debug_assertions))]
@@ -835,32 +838,25 @@ pub fn build_main_window(
 
     let _geometry_restore = crate::config::GeometryRestoreGuard::begin();
 
-    // 文档即 DSH 时主窗口加载的就是 Harness 页面，宿主路径桥必须挂在它自己身上
-    // （以前挂在内嵌 guest webview 上，那条路径已不再走）。只有 preload 的隔离世界
-    // 读得到 `webUtils`，所以仍用 preload 注入。
     let _host_paths =
         tauri_runtime_electron::WebviewSetup::new(MAIN_WINDOW_LABEL)
+            .authenticated_web_host_session()
+            .browser_host()
             .preload_script(include_str!("preload.js.inc"));
 
     let mut webview_builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
-            .title(crate::desktop::product_name(app));
-    // dev 下没有 `dist.shell` 时不注入，页面退回「壳层页 + webview 标签」形态。
-    if let Some(injection) =
-        crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None))
+            .title(crate::desktop::product_name(app))
+            .initialization_script(include_str!("browser.js.inc"));
+    if let Some(injection) = (!cfg!(debug_assertions)
+        || cfg!(feature = "dsh-shell-dev")
+        || app.config().build.dev_url.is_none())
+        .then(|| crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None)))
+        .flatten()
     {
         webview_builder = webview_builder.initialization_script(injection.source().to_owned());
     }
-    let webview_builder = webview_builder.initialization_script_for_all_frames(format!(
-        "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
-        serde_json::to_string(&crate::config::get_dsh_service_url(
-            crate::service::workflow::instances::scope_sync(
-                crate::service::workflow::instances::window_profile(app, MAIN_WINDOW_LABEL),
-                || crate::service::workflow::instances::port(app),
-            )
-        ))
-        .unwrap_or_default()
-    ));
+
 
     #[cfg(windows)]
     let webview_builder = webview_builder.visible(false);
@@ -874,6 +870,7 @@ pub fn build_main_window(
             _ => tauri::webview::PermissionResponse::Default,
         })
         .build()?;
+    crate::desktop::window::connect_browser_events(webview_window.as_ref())?;
     tauri_runtime_electron::on_new_window(webview_window.as_ref(), move |url, features| {
         crate::desktop::window::on_new_window(app_handle.clone(), url, features)
     })?;
@@ -921,29 +918,25 @@ pub fn build_shell_window(
 ) -> tauri::Result<crate::WebviewWindow<ElectronRuntime>> {
     let app_handle = app.clone();
 
-    let label_for_profile = label.clone();
+    let _setup = tauri_runtime_electron::WebviewSetup::new(&label)
+        .authenticated_web_host_session()
+        .browser_host()
+        .preload_script(include_str!("preload.js.inc"));
     let mut webview_builder = with_shell_chrome(
         app,
-        WebviewWindowBuilder::new(app, label, WebviewUrl::App(path)).title(title),
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App(path))
+            .title(title)
+            .initialization_script(include_str!("browser.js.inc")),
     )?;
-    // 新窗口同样是「壳层 UI 注入壳层页」的形态，必须跟主窗口一样走 Shadow DOM 注入：
-    // 少了这一步，壳层会退回页面内 `#root` 的普通渲染，层级脱离宿主，菜单/弹层被
-    // DSH 页面盖住，右侧控件也随之失效。dev 无 `dist.shell` 时跳过，退回 webview 形态。
-    if let Some(injection) =
-        crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None))
+    if let Some(injection) = (!cfg!(debug_assertions)
+        || cfg!(feature = "dsh-shell-dev")
+        || app.config().build.dev_url.is_none())
+        .then(|| crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None)))
+        .flatten()
     {
         webview_builder = webview_builder.initialization_script(injection.source().to_owned());
     }
-    let webview_builder = webview_builder.initialization_script_for_all_frames(format!(
-        "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
-        serde_json::to_string(&crate::config::get_dsh_service_url(
-            crate::service::workflow::instances::scope_sync(
-                crate::service::workflow::instances::window_profile(app, &label_for_profile),
-                || crate::service::workflow::instances::port(app),
-            )
-        ))
-        .unwrap_or_default()
-    ));
+
     let webview_builder = match navigation_script {
         Some(script) => webview_builder.initialization_script_for_all_frames(script),
         None => webview_builder,
@@ -956,6 +949,7 @@ pub fn build_shell_window(
             _ => tauri::webview::PermissionResponse::Default,
         })
         .build()?;
+    crate::desktop::window::connect_browser_events(window.as_ref())?;
     tauri_runtime_electron::on_new_window(window.as_ref(), move |url, features| {
         crate::desktop::window::on_new_window(app_handle.clone(), url, features)
     })?;
@@ -1419,6 +1413,8 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::list_preset_pets,
         crate::desktop::pet_mouse::start_pet_mouse_stream,
         crate::bridge::remote::remote,
+        crate::bridge::remote::navigate_remote_harness,
+        crate::bridge::remote::get_remote_shell_state,
         crate::bridge::remote_bridge_ping,
         crate::bridge::remote_open_window,
     ];

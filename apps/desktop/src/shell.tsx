@@ -97,20 +97,12 @@ function createDragNeutralizer(): HTMLStyleElement {
   return element
 }
 
-/**
- * 修正 DSH 顶层浮层的让位。
- *
- * DSH 的 Modal 用 `padding-top: max(24px, --dsh-frame-overlay-top)` 给顶部留白，但设置
- * 面板的 overlay 只把 panel 按同一变量压矮、再整体垂直居中：屏幕够高时面板上下各留
- * 30px，仍会顶到壳层导航栏底下。这里给设置 overlay 补上同样的顶部内边距，让面板整体
- * 下移、避开导航栏。设置面板 portal 到 body，和壳层宿主是同层兄弟，故用 `:has` 精确定位。
- */
 function createOverlayInset(): HTMLStyleElement {
   const element = document.createElement('style')
   element.setAttribute(NEUTRALIZER_ATTRIBUTE, '')
   element.textContent
-    = 'html[data-windows-titlebar] body > div:has(> [data-shortcut-modal="settings"])'
-      + '{padding-top:var(--dsh-frame-overlay-top, 24px);box-sizing:border-box}'
+    = 'html[data-windows-titlebar] [data-shortcut-modal="settings"][data-slot-sidebar="dsh-tauri-ui"]'
+      + '{top:var(--dsh-windows-titlebar-height,44px);height:calc(100% - var(--dsh-windows-titlebar-height,44px))}'
   return element
 }
 

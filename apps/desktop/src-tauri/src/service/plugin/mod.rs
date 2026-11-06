@@ -70,7 +70,7 @@ pub use install::{
 #[cfg(any(windows, test))]
 pub(crate) use installed::ensure_npmrc_at;
 pub(crate) use installed::{
-    declared_packages, ensure_profile_npmrc, installed_name, list_installed, profile_dir,
+    declared_packages, ensure_profile_npmrc, installed_name, profile_dir,
     ProfilePackageJson,
 };
 pub use installed::{list, PreinstallPlugin};
@@ -83,7 +83,7 @@ pub(crate) use patch_entries::{strip_active_unresolved_entries, PatchEntryStripR
 pub(crate) use patch_guard::preflight_at as preflight_patch_entries_at;
 pub(crate) use patch_guard::{
     patch_layer_paths, quarantine_active_patch_layers, quarantine_failure_message,
-    quarantine_patch_layers_in, PatchQuarantineReport,
+    PatchQuarantineReport,
 };
 pub(crate) use patch_yaml::{parse_patch_layer, render_patch_layer};
 pub use preset::repo_url_of;

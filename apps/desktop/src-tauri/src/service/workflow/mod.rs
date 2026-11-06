@@ -9,7 +9,6 @@
 //!   Windows RedirectionGuard(448) 逃逸重拉
 //! - [`install`]：安装环境（Node.js 运行时 + Harness 发行版 + pnpm + MinGit）
 //! - [`health`]：健康检查（Rust 代理，避免 WebView CORS 问题）
-//! - [`startup`]：启动耗时观测（spawn → 首个 HTTP 响应 → 客户端模块就绪）
 //! - [`status`] / [`utils`] / [`win_inspector`] / [`win_spawn`]：既有子模块
 
 pub mod instances;
@@ -28,7 +27,6 @@ mod heap;
 mod install;
 mod launch;
 mod process;
-mod startup;
 mod sweep;
 
 pub use health::{proxy_health_check, recheck_ownership, HealthCheck};

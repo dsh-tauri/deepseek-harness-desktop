@@ -36,11 +36,32 @@ fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
     Ok((verb, path))
 }
 
+fn machine_tunnel_url(machines: &Value, machine_id: &str) -> Result<tauri::Url, String> {
+    let machine = machines
+        .get("items")
+        .and_then(Value::as_array)
+        .and_then(|items| items.iter().find(|item| item.get("id").and_then(Value::as_str) == Some(machine_id)))
+        .ok_or_else(|| "REMOTE_MACHINE_NOT_FOUND".to_string())?;
+    if machine.get("state").and_then(Value::as_str) != Some("connected") {
+        return Err("REMOTE_MACHINE_NOT_CONNECTED".into());
+    }
+    let url = machine.get("tunnelBaseUrl").and_then(Value::as_str)
+        .ok_or_else(|| "REMOTE_MACHINE_NOT_CONNECTED".to_string())?;
+    validate_loopback_http_url(url)
+}
+
+#[cfg(test)]
 async fn remote_request(
     port: u16,
     method: reqwest::Method,
     path: &str,
     payload: Option<Value>,
+) -> Result<Value, String> {
+    remote_request_authenticated(port, method, path, payload, None).await
+}
+
+async fn remote_request_authenticated(
+    port: u16, method: reqwest::Method, path: &str, payload: Option<Value>, cookie: Option<&str>,
 ) -> Result<Value, String> {
     let is_get = method == reqwest::Method::GET;
     let client = reqwest::Client::builder()
@@ -53,6 +74,9 @@ async fn remote_request(
         method,
         format!("{}{path}", crate::config::get_dsh_service_url(port)),
     );
+    if let Some(cookie) = cookie {
+        request = request.header(reqwest::header::COOKIE, cookie);
+    }
     if let Some(payload) = payload.filter(|value| !value.is_null()) {
         if is_get {
             let params = payload.as_object().ok_or_else(|| {
@@ -111,10 +135,47 @@ pub async fn remote(
 ) -> Result<Value, String> {
     let (method, path) = remote_method(&method)?;
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
-    let port = crate::service::workflow::instances::scope_sync(profile, || {
+    let port = crate::service::workflow::instances::scope_sync(profile.clone(), || {
         crate::service::workflow::instances::port(&app_handle)
     });
-    remote_request(port, method, path, payload).await
+    let host = crate::service::workflow::instances::scope(profile,
+        crate::service::workflow::auth::authenticated_host(&app_handle, port),
+    ).await?;
+    let client = app_handle.state::<tauri_runtime_electron::ElectronClient>();
+    let cookie = host.cookie_header(client.inner()).await.map_err(|error| format!("REMOTE_AUTH_FAILED: {error}"))?;
+    remote_request_authenticated(port, method, path, payload, Some(&cookie)).await
+}
+
+#[tauri::command]
+pub fn get_remote_shell_state(webview: crate::Webview) -> Result<Option<crate::desktop::window::RemoteShellState>, String> {
+    crate::desktop::window::require_shell(&webview)?;
+    Ok(crate::desktop::window::remote_shell_state(webview.app_handle(), webview.window().label()))
+}
+
+#[tauri::command]
+pub async fn navigate_remote_harness(app: AppHandle, webview: crate::Webview, machine_id: Option<String>) -> Result<(), String> {
+    crate::desktop::window::require_shell(&webview)?;
+    let label = webview.window().label().to_owned();
+    if let Some(machine_id) = machine_id {
+        let machines = remote(webview.window(), app.clone(), "GET /api/tauri/remote/machines".into(), None).await?;
+        let url = machine_tunnel_url(&machines, &machine_id)?;
+        let origin = url.origin().ascii_serialization();
+        let mut capability: Value = serde_json::from_str(include_str!("../../capabilities/hosted-shell.json")).map_err(|error| error.to_string())?;
+        capability["identifier"] = format!("remote-shell-{label}-{}", url.port().ok_or("REMOTE_URL_INVALID")?).into();
+        capability["webviews"] = serde_json::json!([webview.label()]);
+        capability["remote"] = serde_json::json!({"urls": [format!("{origin}/*")]});
+        app.add_capability(capability.to_string()).map_err(|error| error.to_string())?;
+        tauri_runtime_electron::set_webview_trusted_origin(&webview, &origin).map_err(|error| error.to_string())?;
+        crate::desktop::window::set_remote_shell(&app, &label, Some(crate::desktop::window::RemoteShellState { machine_id, trusted_origin: origin }));
+        webview.navigate(url).map_err(|error| error.to_string())
+    } else {
+        let profile = crate::service::workflow::instances::window_profile(&app, &label);
+        let port = crate::service::workflow::instances::scope_sync(profile, || crate::service::workflow::instances::port(&app));
+        let url = crate::config::get_dsh_service_url(port);
+        crate::desktop::window::host_harness_document(app.clone(), webview, url).await?;
+        crate::desktop::window::set_remote_shell(&app, &label, None);
+        Ok(())
+    }
 }
 
 /// 弹窗窗口 label 前缀（与 capability 的 `remote-*` glob 对应）。
@@ -154,32 +215,15 @@ fn validate_loopback_http_url(raw: &str) -> Result<tauri::Url, String> {
             url.host_str()
         ));
     }
+    if url.port().is_none() || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
+        return Err("REMOTE_URL_INVALID: expected a plain tunnel origin".into());
+    }
     Ok(url)
 }
 
 #[tauri::command]
 pub fn remote_bridge_ping() -> String {
     "ok".to_string()
-}
-
-/// 校验弹窗入参并生成 (label, url)；抽成纯函数便于单测。`url` 允许为空
-/// ——未连接机器也可先开窗（窗口内壳层会发起标准连接流程），仅在非空时
-/// 做回环校验。
-fn open_window_args(machine_id: &str, url: &str) -> Result<(String, Option<tauri::Url>), String> {
-    if machine_id.trim().is_empty() {
-        return Err("REMOTE_WINDOW_FAILED: machineId must not be empty".to_string());
-    }
-    let parsed_url = if url.trim().is_empty() {
-        None
-    } else {
-        Some(validate_loopback_http_url(url)?)
-    };
-    let label = format!(
-        "{}{}",
-        REMOTE_WINDOW_LABEL_PREFIX,
-        sanitize_label_part(machine_id)
-    );
-    Ok((label, parsed_url))
 }
 
 fn profile_window_label(profile: &str, machine_id: &str) -> String {
@@ -196,17 +240,15 @@ fn profile_window_label(profile: &str, machine_id: &str) -> String {
 
 /// 打开（已开则聚焦）当前档案的远端窗口。
 ///
-/// 壳不自存机器状态：前端按窗口 label 自解析目标机器并切换（机器状态经
-/// `/api/tauri/remote/machines` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
-/// 重复建窗）；失败返回带前缀的可读错误，由调用方（S4 面板按钮）呈现。
 #[tauri::command]
 pub async fn remote_open_window(
     window: crate::Window,
     app_handle: AppHandle,
     machine_id: String,
-    url: String,
 ) -> Result<(), String> {
-    let (_, _validated_url) = open_window_args(&machine_id, &url)?;
+    if machine_id.trim().is_empty() {
+        return Err("REMOTE_WINDOW_FAILED: machineId must not be empty".into());
+    }
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     let label = profile_window_label(&profile, &machine_id);
     if let Some(existing) = app_handle.get_window(&label) {
@@ -244,10 +286,25 @@ pub async fn remote_open_window(
 
 #[cfg(test)]
 mod tests {
-    use super::{remote_method, remote_request, sanitize_label_part, validate_loopback_http_url};
+    use super::{machine_tunnel_url, remote_method, remote_request, sanitize_label_part, validate_loopback_http_url};
     use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    #[test]
+    fn remote_navigation_uses_only_the_connected_machine_row() {
+        let machines = json!({
+            "items": [
+                {"id": "m1", "state": "connected", "tunnelBaseUrl": "http://127.0.0.1:43123"},
+                {"id": "m2", "state": "reconnecting", "tunnelBaseUrl": "http://127.0.0.1:43124"},
+                {"id": "m3", "state": "connected", "tunnelBaseUrl": "http://example.com"}
+            ]
+        });
+        assert_eq!(machine_tunnel_url(&machines, "m1").unwrap().as_str(), "http://127.0.0.1:43123/");
+        assert_eq!(machine_tunnel_url(&machines, "m2").unwrap_err(), "REMOTE_MACHINE_NOT_CONNECTED");
+        assert_eq!(machine_tunnel_url(&machines, "m4").unwrap_err(), "REMOTE_MACHINE_NOT_FOUND");
+        assert!(machine_tunnel_url(&machines, "m3").unwrap_err().starts_with("REMOTE_URL_INVALID:"));
+    }
 
     #[test]
     fn remote_windows_are_isolated_by_profile() {
@@ -582,12 +639,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn empty_machine_id_is_rejected_before_url_validation() {
-        // 空白 machineId 直接拒绝（label 无法生成），错误前缀与窗口失败族一致
-        let err = super::open_window_args("  ", "http://127.0.0.1:3080")
-            .err()
-            .expect("blank machineId should be rejected");
-        assert!(err.starts_with("REMOTE_WINDOW_FAILED:"));
-    }
 }

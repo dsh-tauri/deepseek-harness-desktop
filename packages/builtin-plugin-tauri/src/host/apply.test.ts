@@ -4,14 +4,13 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { apply } from './apply'
 
 vi.mock('./server', () => ({ server: () => {} }))
-vi.mock('./service/gate', () => ({ gate: { attach: () => () => {} } }))
 
 afterEach(() => {
   vi.unstubAllEnvs()
 })
 
 function injections(embedded: string): IndexInjectRow[] {
-  vi.stubEnv('DSH_TAURI_EMBEDDED', embedded)
+  vi.stubEnv('DSH_TAURI_DESKTOP', embedded)
   const rows: IndexInjectRow[] = []
   const ctx = {
     effect(callback: () => void) { callback() },
@@ -62,6 +61,28 @@ it.each([['?dshDesktop=1&t=1', 'yKfg'], ['', undefined], ['?t=1', undefined]])('
       runInNewContext(row.text, page)
   }
   expect(page.NEARTOKEN_AFF).toBe(expected)
+})
+
+it('embedded host preserves kernel authentication for index and API requests', () => {
+  vi.stubEnv('DSH_TAURI_DESKTOP', '1')
+  const connection = {
+    browserPeer: { signal: new AbortController().signal },
+    disposed: false,
+    admit: () => ({ rejection: 401 }),
+    authorizeIndex: () => false,
+  }
+  const admit = connection.admit
+  const authorizeIndex = connection.authorizeIndex
+  const ctx = {
+    connection,
+    effect(callback: () => void) { callback() },
+    on() { return () => {} },
+  } as unknown as HostContext
+  apply(ctx)
+  expect(connection.admit).toBe(admit)
+  expect(connection.authorizeIndex).toBe(authorizeIndex)
+  expect(connection.admit()).toEqual({ rejection: 401 })
+  expect(connection.authorizeIndex()).toBe(false)
 })
 
 it('non-embedded host leaves the index injection table unchanged', () => {

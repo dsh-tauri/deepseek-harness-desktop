@@ -149,7 +149,7 @@ export function RemoteSwitcher({ onChange, visible = true, onManage, onSync }: {
                         onPointerUp={e => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
-                          invoke('remote_open_window', { machineId: machine.id, url: machine.tunnelBaseUrl ?? '' }).catch(handleOpenWindowError)
+                          invoke('remote_open_window', { machineId: machine.id }).catch(handleOpenWindowError)
                         }}
                       >
                         <ArrowUpRightFromSquare className="size-3.5" />

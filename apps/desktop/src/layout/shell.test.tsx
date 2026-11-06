@@ -78,33 +78,6 @@ vi.mock('./harness/content', () => ({
   ),
 }))
 
-it('logs the selected shell branch and deduplicates unrelated rerenders without exposing remote URLs', () => {
-  window.location.hash = ''
-  const view = render(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith(
-    expect.stringContaining('branch=webview status=ready remote=false healthy=true'),
-  )
-  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('loaded=false'))
-  view.rerender(<Shell />)
-  expect(console.warn).toHaveBeenCalledTimes(1)
-  mocks.harness.status = 'error'
-  view.rerender(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('branch=setup'))
-  mocks.recovery.recovery.required = true
-  view.rerender(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('branch=recovery'))
-  mocks.harness.status = 'preinstall'
-  view.rerender(<Shell />)
-  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('branch=preinstall'))
-  mocks.harness.status = 'ready'
-  mocks.harness.serviceHealthy = false
-  view.rerender(<Shell />)
-  act(() => navbar().onRemoteChange('https://example.test/?token=secret', null))
-  expect(console.warn).toHaveBeenLastCalledWith(expect.stringContaining('remote=true'))
-  expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('secret')
-  expect(console.warn).toHaveBeenCalledTimes(6)
-})
-
 function installLocalStorage() {
   const items = new Map<string, string>()
   const storage: Storage = {
@@ -145,7 +118,6 @@ beforeEach(() => {
   window.localStorage.setItem('dsh-notification-source:window-1', 'http://127.0.0.1:3081')
   Object.assign(mocks.harness, { status: 'ready', serviceHealthy: true, webviewSrc: 'http://127.0.0.1:3081' })
   mocks.recovery.recovery.required = false
-  vi.spyOn(console, 'warn').mockImplementation(() => {})
   mocks.navbar.mockClear()
   mocks.setShortcuts.mockClear()
   vi.clearAllMocks()

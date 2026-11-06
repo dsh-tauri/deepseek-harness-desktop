@@ -3,6 +3,8 @@ identifier = "allow-shell-commands"
 description = "Desktop shell commands."
 commands.allow = [
   "host_harness_document",
+  "navigate_remote_harness",
+  "get_remote_shell_state",
   "prepare_harness_webview",
   "release_harness_webview",
   "update_harness_webview",

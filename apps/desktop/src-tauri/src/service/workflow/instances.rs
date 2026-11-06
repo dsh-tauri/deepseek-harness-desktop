@@ -16,15 +16,31 @@ struct Registry {
 
 pub(super) struct Instance {
     pub process: Mutex<Option<super::process::OwnedProcess>>,
+    pub launch_url: Mutex<Arc<Mutex<Option<(u16, String)>>>>,
+    pub authenticated_host: tokio::sync::Mutex<Option<(String, tauri_runtime_electron::AuthenticatedWebHost)>>,
     pub launching: Arc<std::sync::atomic::AtomicBool>,
     pub status: Mutex<Status>,
     pub port: Mutex<Option<u16>>,
+}
+
+impl Instance {
+    pub fn reset_launch_url(&self) {
+        *self
+            .launch_url
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Arc::default();
+        if let Ok(mut host) = self.authenticated_host.try_lock() {
+            *host = None;
+        }
+    }
 }
 
 impl Default for Instance {
     fn default() -> Self {
         Self {
             process: Mutex::new(None),
+            launch_url: Mutex::new(Arc::default()),
+            authenticated_host: tokio::sync::Mutex::new(None),
             launching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             status: Mutex::new(Status::Initial),
             port: Mutex::new(None),
@@ -89,12 +105,13 @@ pub fn profiles() -> Vec<String> {
 }
 
 pub fn window_profile(app: &crate::AppHandle, label: &str) -> String {
-    let mut registry = registry().lock().unwrap_or_else(|error| error.into_inner());
-    registry
+    let profile = registry()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
         .windows
-        .entry(label.to_string())
-        .or_insert_with(|| crate::service::profile::active_profile(app))
-        .clone()
+        .get(label)
+        .cloned();
+    profile.unwrap_or_else(|| crate::service::profile::active_profile(app))
 }
 
 pub fn window_uses_profile(label: &str, profile: &str) -> bool {
@@ -212,7 +229,12 @@ pub fn dsh_service_origin(webview: &crate::Webview) -> Option<tauri::Url> {
         return None;
     }
     let app = webview.app_handle();
-    let profile = window_profile(app, webview.window().label());
+    let profile = registry()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .windows
+        .get(webview.window().label())
+        .cloned()?;
     let port = scope_sync(profile, || port(app));
     tauri::Url::parse(&crate::config::get_dsh_service_url(port)).ok()
 }
@@ -274,9 +296,11 @@ mod tests {
             }),
             scope("concurrent-profile-b".into(), async {
                 tokio::task::yield_now().await;
-                assert!(!instance()
-                    .launching
-                    .load(std::sync::atomic::Ordering::SeqCst));
+                assert!(
+                    !instance()
+                        .launching
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                );
                 assert_eq!(current_profile().as_deref(), Some("concurrent-profile-b"));
                 instance()
             })

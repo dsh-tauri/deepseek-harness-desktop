@@ -24,6 +24,11 @@ interface HealthCheck {
   boot_html?: string
 }
 
+interface BrowserReservation {
+  lease: string
+  partition: string
+}
+
 const app = shellAppScope()
 
 beforeAll(async () => {
@@ -39,6 +44,7 @@ beforeAll(async () => {
  * 这里只做一件事——核心进程已退出时立刻失败，不把崩溃耗成超时。
  */
 async function waitHealthy(page: Page): Promise<HealthCheck> {
+  await expect.poll(() => page.evaluate(() => document.readyState), { timeout: WINDOW_TIMEOUT_MS, message: '顶层 Harness 文档必须完成加载后才能调用原生命令' }).toBe('complete')
   let serviceUrl = ''
   await expect.poll(async () => {
     const info = await invoke<RuntimeInfo>(page, 'get_runtime_info')
@@ -55,7 +61,12 @@ async function waitHealthy(page: Page): Promise<HealthCheck> {
     const health = await invoke<HealthCheck>(page, 'proxy_health_check')
     return health.status.startsWith('healthy')
   }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
-  return { service_url: serviceUrl, status: `healthy - ${new URL(serviceUrl).origin}` }
+  const origin = new URL(serviceUrl).origin
+  if (new URL(page.url()).origin !== origin && !page.url().includes('tauri.localhost'))
+    await invoke(page, 'host_harness_document', { url: serviceUrl })
+  await page.waitForURL(url => url.origin === origin, { timeout: WINDOW_TIMEOUT_MS })
+  await page.locator('div[class$="_frame"]').waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
+  return { service_url: serviceUrl, status: `healthy - ${origin}` }
 }
 
 describe('desktop boot and profile lifecycle', () => {
@@ -95,6 +106,30 @@ describe('desktop boot and profile lifecycle', () => {
     }), '无宿主路径的文件必须回落为空串，而不是抛错').toBe('')
   })
 
+  it('acquires and releases a Browser guest partition through the native bridge', async () => {
+    const main = app.get().window.page
+    await waitHealthy(main)
+    const workspace = `e2e-${randomUUID()}`
+    const reservation = await main.evaluate(async (value) => {
+      const bridge = (window as Window & { dshDesktop?: { browser?: { acquire: (workspace: string) => Promise<BrowserReservation>, release: (lease: string) => Promise<void> } } }).dshDesktop?.browser
+      if (!bridge)
+        throw new Error('Native Browser bridge is unavailable')
+      return await bridge.acquire(value)
+    }, workspace)
+    try {
+      expect(reservation.lease, '原生 Browser bridge 必须返回 guest lease').toMatch(/^[0-9a-f-]{36}$/i)
+      expect(reservation.partition, '原生 Browser bridge 必须返回隔离 session partition').toMatch(/^electron-browser-[0-9a-f-]{36}$/i)
+    }
+    finally {
+      await main.evaluate(async (lease) => {
+        const bridge = (window as Window & { dshDesktop?: { browser?: { release: (lease: string) => Promise<void> } } }).dshDesktop?.browser
+        if (!bridge)
+          throw new Error('Native Browser bridge disappeared before release')
+        await bridge.release(lease)
+      }, reservation.lease)
+    }
+  })
+
   it.runIf(process.platform !== 'darwin')('keeps the hosted DSH document intact while shell popovers open and close', async () => {
     const shell = app.get()
     const main = shell.window.page
@@ -122,8 +157,11 @@ describe('desktop boot and profile lifecycle', () => {
     try {
       await main.locator(NAVBAR_MENU_CONFIG).click({ timeout: WINDOW_TIMEOUT_MS })
       await expect.poll(() => main.locator(NAVBAR_MENU_POPOVER).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '必须打开真实的壳层菜单' }).toBe(true)
-      // 文档即 DSH：菜单与 DSH 同处一棵 DOM 树，打开弹层不隐藏、不截图、不冻结页面。
+      await main.locator('[data-testid="dsh-navbar-item-application"]').click()
+      await expect.poll(() => main.locator('[data-testid="dsh-config-dialog"]').isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '点击 Application 菜单项必须打开设置对话框' }).toBe(true)
       expect(main.url().startsWith(origin), '打开壳层菜单不得把主窗口导航走').toBe(true)
+      await main.locator('[data-testid="dsh-config-dialog-close"]').click()
+      await expect.poll(() => main.locator('[data-testid="dsh-config-dialog"]').isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '关闭设置对话框必须执行实际关闭动作' }).toBe(false)
     }
     finally {
       await main.keyboard.press('Escape')

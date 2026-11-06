@@ -68,7 +68,14 @@ export default defineConfig({
     outDir: 'dist.shell',
     emptyOutDir: true,
     // 注入侧只有一个 Blob URL，无法解析相对导入；依赖的动态 import 必须内联成一个文件。
-    rollupOptions: { output: { inlineDynamicImports: true } },
+    rollupOptions: {
+      onwarn(warning, warn) {
+        if (warning.code === 'MODULE_LEVEL_DIRECTIVE' && warning.message.includes('"use client"'))
+          return
+        warn(warning)
+      },
+      output: { inlineDynamicImports: true },
+    },
     lib: {
       entry: fileURLToPath(new URL('./src/shell.tsx', import.meta.url)),
       formats: ['es'],

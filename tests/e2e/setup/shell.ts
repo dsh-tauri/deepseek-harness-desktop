@@ -23,8 +23,6 @@ const BINARIES = [
   'target/debug/deepseek-harness-desktop',
 ]
 
-const SHELL_PAGE = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost|http:\/\/localhost:1420)/
-
 export const MAIN_LABEL = 'main'
 export const APP_TITLE = 'DeepSeek Harness'
 
@@ -101,7 +99,7 @@ ${tail()}`)
 
     try {
       const targets = await targetsOf(port)
-      if (targets.some(target => target.type === 'page' && SHELL_PAGE.test(target.url)))
+      if (targets.some(target => target.type === 'page'))
         return
       lastError = `targets=${JSON.stringify(targets.map(target => target.url))}`
     }
@@ -118,8 +116,6 @@ async function windowsOf(browser: Browser): Promise<ShellWindow[]> {
   const windows: ShellWindow[] = []
   for (const context of browser.contexts()) {
     for (const page of context.pages()) {
-      if (!SHELL_PAGE.test(page.url()))
-        continue
       const label = await page.evaluate(() => (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? '').catch(() => '')
       if (label)
         windows.push({ label, page })
@@ -257,10 +253,15 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     const connected = browser
     const context = connected.contexts()[0]
     expect(context, '未获取到 Electron 默认上下文').toBeTruthy()
-    const host = context!.pages().find(candidate => SHELL_PAGE.test(candidate.url()))
-    expect(host, `未找到壳层渲染页，现有 page：${context!.pages().map(page => page.url()).join(', ')}`).toBeTruthy()
-
-    const shellWindow: ShellWindow = { label: MAIN_LABEL, page: host! }
+    let host: ShellWindow | undefined
+    const deadline = Date.now() + WINDOW_TIMEOUT_MS
+    while (Date.now() < deadline && !host) {
+      host = (await windowsOf(connected)).find(candidate => candidate.label === MAIN_LABEL)
+      if (!host)
+        await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    expect(host, 'CDP 页面必须暴露主 Electron 窗口元数据').toBeTruthy()
+    const shellWindow: ShellWindow = { label: MAIN_LABEL, page: host!.page }
 
     return {
       binary: binary!,
@@ -283,11 +284,16 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
         throw new Error(`原生窗口未在 ${WINDOW_TIMEOUT_MS}ms 内创建（command=${command}）`)
       },
       closeWindow: async (label: string) => {
-        const target = (await windowsOf(connected)).find(entry => entry.label === label)
-        if (!target)
-          return
-        await target.page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close')).catch(() => undefined)
-        await expect.poll(() => target.page.isClosed(), { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 的 CDP 页面必须销毁` }).toBe(true)
+        let target: ShellWindow | undefined
+        await expect.poll(
+          async () => {
+            target = (await windowsOf(connected)).find(entry => entry.label === label)
+            return Boolean(target)
+          },
+          { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 必须可通过窗口元数据识别` },
+        ).toBe(true)
+        await target!.page.evaluate(label => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), label)
+        await expect.poll(() => target!.page.isClosed(), { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 的 CDP 页面必须销毁` }).toBe(true)
       },
       output: () => output,
       stop,

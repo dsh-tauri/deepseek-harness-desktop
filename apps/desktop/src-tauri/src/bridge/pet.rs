@@ -530,15 +530,42 @@ fn emit_pet_session(app: &AppHandle, action: &str, payload: &Value) {
 /// 消费宿主会话增量 SSE 流：读取 `http://127.0.0.1:<port>/api/tauri/pet/session/stream`，
 /// 每个 `data:` 帧（`{"action":...,"payload":...}`）解析后经 emit_to 直达桌宠 WebView；
 /// `: state-lost` 注释帧翻译成一次整批作废（见 [`SSE_STATE_LOST_COMMENT`]）。
-async fn consume_pet_session_stream(app: &AppHandle, url: &str) -> Result<(), String> {
-    consume_pet_session_stream_with(url, |action, payload| {
+async fn consume_pet_session_stream(
+    app: &AppHandle,
+    profile: &str,
+    url: &str,
+) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|error| error.to_string())?;
+    let port = parsed.port().ok_or_else(|| "PET_STREAM_URL_INVALID: missing port".to_string())?;
+    if parsed.scheme() != "http"
+        || parsed.host_str() != Some("127.0.0.1")
+        || parsed.path() != SESSION_STREAM_PATH
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("PET_STREAM_URL_INVALID: stream URL must be the local pet endpoint".into());
+    }
+    let host = crate::service::workflow::instances::scope(profile.to_owned(), async {
+        crate::service::workflow::auth::authenticated_host(app, port).await
+    })
+    .await?;
+    let client = app.state::<tauri_runtime_electron::ElectronClient>();
+    let cookie_header = host
+        .cookie_header(client.inner())
+        .await
+        .map_err(|error| format!("HARNESS_COOKIE_READ_FAILED: {error}"))?;
+    consume_pet_session_stream_with(url, Some(&cookie_header), |action, payload| {
         emit_pet_session(app, action, payload);
     })
     .await
 }
 
 /// [`consume_pet_session_stream`] 的取帧主体：把每个动作交给 `on_frame`，与 Tauri 运行时解耦。
-async fn consume_pet_session_stream_with<F>(url: &str, mut on_frame: F) -> Result<(), String>
+async fn consume_pet_session_stream_with<F>(
+    url: &str,
+    cookie_header: Option<&str>,
+    mut on_frame: F,
+) -> Result<(), String>
 where
     F: FnMut(&str, &Value),
 {
@@ -548,10 +575,14 @@ where
     // 即便偶尔连上，代理缓冲也会把逐条帧攒成一批，气泡文案滞后且抖动。
     let client = reqwest::Client::builder()
         .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| error.to_string())?;
-    let response = client
-        .get(url)
+    let mut request = client.get(url);
+    if let Some(cookie) = cookie_header {
+        request = request.header(reqwest::header::COOKIE, cookie);
+    }
+    let response = request
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -689,8 +720,8 @@ pub fn sync_pet_session_stream(app: &AppHandle, wanted: bool) {
         let mut throttle = PetStreamLogThrottle::new();
         loop {
             let profile = crate::service::workflow::instances::window_profile(&app, "main");
-            let url = pet_session_stream_url(&app, profile);
-            match consume_pet_session_stream(&app, &url).await {
+            let url = pet_session_stream_url(&app, profile.clone());
+            match consume_pet_session_stream(&app, &profile, &url).await {
                 Ok(()) => {
                     if throttle.should_log(PET_STREAM_ENDED) {
                         log::info!("[pet-stream] host session stream ended; reconnecting in 2s");
@@ -699,6 +730,10 @@ pub fn sync_pet_session_stream(app: &AppHandle, wanted: bool) {
                     }
                 }
                 Err(error) => {
+                    if error.starts_with("HARNESS_NOT_READY") || error.starts_with("HARNESS_NOT_OWNED") {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
                     if throttle.should_log(&error) {
                         log::warn!(
                             "[pet-stream] host session stream error: {error}; reconnecting in 2s"
@@ -2413,6 +2448,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stream_requires_auth_cookie_and_never_forwards_it_across_redirects() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let redirect_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let redirect_port = redirect_listener.local_addr().unwrap().port();
+        redirect_listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    socket.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                let path = request.lines().next().unwrap();
+                let cookie = request.lines().any(|line| line.eq_ignore_ascii_case("cookie: session=main-process"));
+                let response = if path == "GET /redirect HTTP/1.1" {
+                    format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{redirect_port}/capture\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                } else if cookie {
+                    let body = ": keepalive\n\ndata: {\"action\":\"update\",\"payload\":{\"id\":\"authenticated\"}}\n\n";
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                } else {
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+                };
+                socket.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let base = format!("http://127.0.0.1:{port}");
+        let mut frames = Vec::new();
+        let unauthorized = consume_pet_session_stream_with(&format!("{base}/session/stream"), None, |action, _| frames.push(action.to_string())).await.unwrap_err();
+        assert_eq!(unauthorized, "HTTP 401 Unauthorized");
+        consume_pet_session_stream_with(&format!("{base}/session/stream"), Some("session=main-process"), |action, payload| frames.push(format!("{action}:{}", payload["id"].as_str().unwrap()))).await.unwrap();
+        assert_eq!(frames, vec!["update:authenticated"]);
+        let redirect = consume_pet_session_stream_with(&format!("{base}/redirect"), Some("session=main-process"), |_, _| {}).await.unwrap_err();
+        assert_eq!(redirect, "HTTP 302 Found");
+        server.join().unwrap();
+        assert!(redirect_listener.accept().is_err(), "redirect destination must not receive the credential");
+    }
+
+    #[tokio::test]
     async fn stream_url_uses_profile_runtime_port_after_spawn() {
         let app = tauri::test::mock_app();
         let server =
@@ -2431,7 +2508,7 @@ mod tests {
             format!("http://127.0.0.1:{port}/api/tauri/pet/session/stream")
         );
         let mut frames = Vec::new();
-        consume_pet_session_stream_with(&url, |action, payload| {
+        consume_pet_session_stream_with(&url, None, |action, payload| {
             frames.push((action.to_string(), payload.clone()));
         })
         .await
@@ -2449,7 +2526,7 @@ mod tests {
     async fn stream_connect_clears_stale_bubbles_when_host_state_was_dropped() {
         let url = spawn_single_frame_sse_server(": state-lost\n\n", "create", "{\"id\":\"s1\"}");
         let mut actions: Vec<String> = Vec::new();
-        consume_pet_session_stream_with(&url, |action, _| actions.push(action.to_string()))
+        consume_pet_session_stream_with(&url, None, |action, _| actions.push(action.to_string()))
             .await
             .expect("consume single-frame stream");
 
@@ -2463,7 +2540,7 @@ mod tests {
     async fn stream_connect_without_state_lost_keeps_live_bubbles() {
         let url = spawn_single_frame_sse_server(": keepalive\n\n", "create", "{\"id\":\"s1\"}");
         let mut actions: Vec<String> = Vec::new();
-        consume_pet_session_stream_with(&url, |action, _| actions.push(action.to_string()))
+        consume_pet_session_stream_with(&url, None, |action, _| actions.push(action.to_string()))
             .await
             .expect("consume single-frame stream");
 
@@ -2489,6 +2566,7 @@ mod tests {
         let mut actions: Vec<String> = Vec::new();
         let error = consume_pet_session_stream_with(
             &format!("http://127.0.0.1:{port}/session/stream"),
+            None,
             |action, _| actions.push(action.to_string()),
         )
         .await

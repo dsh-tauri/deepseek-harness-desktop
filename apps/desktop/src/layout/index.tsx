@@ -67,10 +67,6 @@ export function App() {
     }
   })
 
-  // 主窗口有两个阶段：先加载壳层页（需要拉起服务），再导航到 DSH 页面（服务已在跑，
-  // 不能再启动一遍，否则会把承载当前文档的服务重启掉）。
-  // 判据必须用 origin 匹配的 `isHostedServiceDocument`：注入脚本对所有 frame 生效，
-  // `isHostedDocument` 在壳层页里同样为 true，用它当开关会让服务永远起不来。
   useMount(() => {
     if (!isHostedServiceDocument())
       store.harness.startup()

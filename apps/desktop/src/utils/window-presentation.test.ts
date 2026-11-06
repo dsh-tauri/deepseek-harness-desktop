@@ -5,6 +5,7 @@ import { isFullSidebarWindow, isHostedDocument, isHostedServiceDocument } from '
 afterEach(() => {
   delete (globalThis as Record<string, unknown>).__DSH_HOSTED__
   delete (globalThis as Record<string, unknown>).__DSH_SERVICE_ORIGIN__
+  delete (globalThis as Record<string, unknown>).__DSH_BOOT__
   delete (globalThis as Record<string, unknown>).__DSH_NAVIGATION__
 })
 
@@ -19,13 +20,20 @@ describe('hosted document detection', () => {
     expect(isHostedDocument()).toBe(true)
   })
 
-  it('recognises the DSH document only when the origin matches', () => {
+  it('recognises a booted hosted document after its service selects a different port', () => {
     ;(globalThis as Record<string, unknown>).__DSH_HOSTED__ = true
     ;(globalThis as Record<string, unknown>).__DSH_SERVICE_ORIGIN__ = 'http://127.0.0.1:3080'
-    expect(isHostedServiceDocument()).toBe(location.origin === 'http://127.0.0.1:3080')
+    ;(globalThis as Record<string, unknown>).__DSH_BOOT__ = { entries: [] }
+    expect(isHostedServiceDocument()).toBe(true)
   })
 
-  it('ignores a hosted flag without a service origin', () => {
+  it('does not treat a same-origin shell bootstrap page as the DSH document', () => {
+    ;(globalThis as Record<string, unknown>).__DSH_HOSTED__ = true
+    ;(globalThis as Record<string, unknown>).__DSH_SERVICE_ORIGIN__ = location.origin
+    expect(isHostedServiceDocument()).toBe(false)
+  })
+
+  it('does not treat a hosted bootstrap without DSH boot data as ready', () => {
     ;(globalThis as Record<string, unknown>).__DSH_HOSTED__ = true
     expect(isHostedServiceDocument()).toBe(false)
   })

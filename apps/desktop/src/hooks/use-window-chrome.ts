@@ -71,7 +71,7 @@ export function useMacOSFullscreen(): boolean {
 export function useFrameChrome(): void {
   const framed = isFramedWindow()
   const maximized = useMaximized(framed)
-  const fullscreen = useFullscreen(framed)
+  const fullscreen = useFullscreen(framed || IS_MACOS)
   useWatch([maximized, fullscreen], () => {
     if (maximized === undefined || fullscreen === undefined)
       return

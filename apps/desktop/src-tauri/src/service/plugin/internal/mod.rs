@@ -708,10 +708,6 @@ fn prepare_internal_plugins(
             .get(&name)
             .is_some_and(|actual| dep_matches_spec(actual, &expected));
 
-        // ③ 挂载登记：`dsh.profile.bundles` 缺项时插件从不挂载——宿主插件的 apply
-        // （含 dsh-tauri 的载体鉴权 gate）不运行，索引恒 401、健康检查永远
-        // `boot page returned 401`。这种「依赖在、bundle 没登记」的半残状态必须判为
-        // 需重装：只按 deps/link 判定会把它当成就绪，装过一次后永远修不回来。
         let bundle_ok = manifest
             .as_ref()
             .and_then(|value| value.pointer("/dsh/profile/bundles"))

@@ -2,7 +2,7 @@
   "name": "dsh-tauri",
   "type": "module",
   "version": "1.0.0",
-  "description": "DeepSeek Harness 桌面壳的消息桥接插件；同时承载桌面端认证适配：内嵌沙箱 WebView 属跨源环境，无法完成 SameSite=Strict 的浏览器会话 Cookie 交换。",
+  "description": "DeepSeek Harness 桌面壳的消息与原生功能桥接插件。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",

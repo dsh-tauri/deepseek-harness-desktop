@@ -81,7 +81,7 @@ fn harness_guest_url(value: &str) -> Result<Url, String> {
     Ok(url)
 }
 
-pub(super) fn require_shell(webview: &Webview) -> Result<(), String> {
+pub(crate) fn require_shell(webview: &Webview) -> Result<(), String> {
     let url = webview.url().map_err(|error| error.to_string())?;
     let packaged = (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
         || (matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"));
@@ -92,13 +92,17 @@ pub(super) fn require_shell(webview: &Webview) -> Result<(), String> {
             .dev_url
             .as_ref()
             .is_some_and(|dev| dev.origin() == url.origin());
-    // 主窗口文档即 DSH 后，主 webview 的 URL 是本机服务地址；只对主窗口放行该 origin，
-    // 其它窗口仍必须停在壳层页。
     let hosted = webview.label() == webview.window().label()
         && matches!(url.scheme(), "http" | "https")
-        && crate::service::workflow::instances::dsh_service_origin(webview)
-            .is_some_and(|service| service.origin() == url.origin());
-    if webview.label() != webview.window().label() || !(packaged || dev || hosted) {
+        && (crate::service::workflow::instances::dsh_service_origin(webview)
+            .is_some_and(|service| service.origin() == url.origin())
+            || webview.app_handle().try_state::<HostedOrigins>().is_some_and(|origins|
+                origins.0.lock().unwrap_or_else(|error| error.into_inner())
+                    .get(webview.label()).is_some_and(|origin| origin == &url.origin().ascii_serialization())));
+    let remote = webview.label() == webview.window().label()
+        && remote_shell_state(&webview.app_handle(), webview.window().label())
+            .is_some_and(|state| state.trusted_origin == url.origin().ascii_serialization());
+    if webview.label() != webview.window().label() || !(packaged || dev || hosted || remote) {
         return Err("HARNESS_WEBVIEW_SHELL_REQUIRED".into());
     }
     Ok(())
@@ -153,7 +157,39 @@ impl HarnessDocument {
 #[derive(Default)]
 struct HarnessDocuments(Mutex<HashMap<String, Arc<Mutex<HarnessDocument>>>>);
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RemoteShellState {
+    pub machine_id: String,
+    pub trusted_origin: String,
+}
+
+#[derive(Default)]
+struct HostedOrigins(Mutex<HashMap<String, String>>);
+
+#[derive(Default)]
+struct RemoteShellWindows(Mutex<HashMap<String, RemoteShellState>>);
+
+pub(crate) fn remote_shell_state(app: &AppHandle, label: &str) -> Option<RemoteShellState> {
+    app.try_state::<RemoteShellWindows>()?
+        .0.lock().unwrap_or_else(|error| error.into_inner()).get(label).cloned()
+}
+
+pub(crate) fn set_remote_shell(app: &AppHandle, label: &str, state: Option<RemoteShellState>) {
+    app.manage(RemoteShellWindows::default());
+    let binding = app.state::<RemoteShellWindows>();
+    let mut windows = binding.0.lock().unwrap_or_else(|error| error.into_inner());
+    match state {
+        Some(state) => { windows.insert(label.to_owned(), state); }
+        None => { windows.remove(label); }
+    }
+}
+
 pub(super) fn forget_harness_documents(app: &AppHandle, owner: &str) {
+    set_remote_shell(app, owner, None);
+    if let Some(origins) = app.try_state::<HostedOrigins>() {
+        origins.0.lock().unwrap_or_else(|error| error.into_inner()).remove(owner);
+    }
     if let Some(documents) = app.try_state::<HarnessDocuments>() {
         documents.0.lock().unwrap().retain(|_, document| {
             let mut document = document.lock().unwrap();
@@ -166,10 +202,6 @@ pub(super) fn forget_harness_documents(app: &AppHandle, owner: &str) {
     }
 }
 
-/// 主窗口「文档即 DSH」：把承载壳层的 DSH 页面导航进当前 webview。
-///
-/// 壳层由建窗时的初始化脚本注入（见 [`crate::desktop::shell`]），这里的
-/// 导航随后发生，页面首帧即带壳层。远程 Harness 需要目标机令牌，该入口只服务本机。
 #[tauri::command]
 pub async fn host_harness_document(
     app: AppHandle,
@@ -178,25 +210,30 @@ pub async fn host_harness_document(
 ) -> Result<(), String> {
     require_shell(&webview)?;
     let url = harness_guest_url(&url)?;
-    let profile =
-        crate::service::workflow::instances::window_profile(&app, webview.window().label());
+    let host = authenticate_harness_host(&app, &webview, &url).await?;
+    tauri_runtime_electron::bind_authenticated_web_host(&webview, &host)
+        .map_err(|error| format!("HARNESS_AUTH_BIND_FAILED: {error}"))?;
+    app.manage(HostedOrigins::default());
+    app.state::<HostedOrigins>().0.lock().unwrap_or_else(|error| error.into_inner())
+        .insert(webview.label().to_owned(), url.origin().ascii_serialization());
+    webview.navigate(url).map_err(|error| error.to_string())
+}
+
+async fn authenticate_harness_host(
+    app: &AppHandle,
+    webview: &Webview,
+    url: &Url,
+) -> Result<tauri_runtime_electron::AuthenticatedWebHost, String> {
+    let profile = crate::service::workflow::instances::window_profile(app, webview.window().label());
     let port = crate::service::workflow::instances::scope_sync(profile.clone(), || {
-        crate::service::workflow::instances::port(&app)
+        crate::service::workflow::instances::port(app)
     });
-    let expected = Url::parse(&config::get_dsh_service_url(port)).map_err(|error| error.to_string())?;
-    if url.origin() != expected.origin() {
+    if url.port() != Some(port) {
         return Err("HARNESS_DOCUMENT_ORIGIN_MISMATCH".into());
     }
-    let log_path = config::service_log_path_from(&config::get_base_dir(&app), Some(&profile));
-    match crate::service::workflow::auth::session_cookie(port, &log_path).await {
-        Ok(cookie) => {
-            if let Err(error) = crate::service::workflow::auth::inject(&webview, cookie) {
-                log::warn!("[Webview] {error}");
-            }
-        }
-        Err(error) => log::warn!("[Webview] session cookie unavailable: {error}"),
-    }
-    webview.navigate(url).map_err(|error| error.to_string())
+    crate::service::workflow::instances::scope(profile,
+        crate::service::workflow::auth::authenticated_host(app, port),
+    ).await
 }
 
 fn track_harness_document(app: &AppHandle, guest: &Webview, owner: &str, url: &Url) -> Result<(), String> {
@@ -308,29 +345,11 @@ pub async fn prepare_harness_webview(
     require_shell(&webview)?;
     let url = harness_guest_url(&url)?;
     let remote = webview.label().starts_with("remote-");
-    if !remote {
-        let profile =
-            crate::service::workflow::instances::window_profile(&app, webview.window().label());
-        let port = crate::service::workflow::instances::scope_sync(profile.clone(), || {
-            crate::service::workflow::instances::port(&app)
-        });
-        let expected =
-            Url::parse(&config::get_dsh_service_url(port)).map_err(|error| error.to_string())?;
-        if url.origin() != expected.origin() {
-            return Err("HARNESS_WEBVIEW_ORIGIN_MISMATCH".into());
-        }
-        // 会话 Cookie 必须在子 WebView 创建前种下：子页面与壳共享同一份 Cookie
-        // 库，先种后加载才能让首帧请求（以及插件自建路由）就带凭证。
-        let log_path = config::service_log_path_from(&config::get_base_dir(&app), Some(&profile));
-        match crate::service::workflow::auth::session_cookie(port, &log_path).await {
-            Ok(cookie) => {
-                if let Err(error) = crate::service::workflow::auth::inject(&webview, cookie) {
-                    log::warn!("[Webview] {error}");
-                }
-            }
-            Err(error) => log::warn!("[Webview] session cookie unavailable: {error}"),
-        }
-    }
+    let host = if remote {
+        None
+    } else {
+        Some(authenticate_harness_host(&app, &webview, &url).await?)
+    };
     static NEXT_GUEST: AtomicU64 = AtomicU64::new(1);
     let label = format!("harness-{}", NEXT_GUEST.fetch_add(1, Ordering::Relaxed));
     let origin = url.origin();
@@ -381,7 +400,9 @@ pub async fn prepare_harness_webview(
     let _setup = if remote {
         setup
     } else {
-        setup.preload_script(include_str!("preload.js.inc"))
+        setup
+            .authenticated_web_host(host.as_ref().ok_or("HARNESS_AUTH_HOST_MISSING")?)
+            .preload_script(include_str!("preload.js.inc"))
     };
     let guest = webview
         .window()
@@ -414,6 +435,17 @@ pub async fn prepare_harness_webview(
         return Err(error);
     }
     Ok(label)
+}
+
+pub(super) fn connect_browser_events(webview: &Webview) -> tauri::Result<()> {
+    let owner = webview.clone();
+    tauri_runtime_electron::on_browser_open_requested(webview, move |lease, url| {
+        let _ = owner.emit_to(
+            tauri::EventTarget::webview(owner.label()),
+            "dsh-browser-open-requested",
+            serde_json::json!({ "lease": lease, "url": url }),
+        );
+    })
 }
 
 #[tauri::command]

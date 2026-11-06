@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { EventTarget } from '@tauri-apps/api/event'
-import type { ComponentProps, ComponentType } from 'react'
+import type { ComponentProps } from 'react'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,7 +18,7 @@ const { store, userAgent, openOverlay, openUrl, toggleDevtools, emitEvent } = vi
     toggleDevtools: vi.fn<() => Promise<void>>(),
     emitEvent: vi.fn(),
     store: {
-      harness: { status: 'ready', serviceHealthy: true },
+      harness: { status: 'ready', serviceHealthy: true, webviewSrc: 'http://127.0.0.1:3081', markHostedReady: vi.fn(), markWebviewLoaded: vi.fn(), markWebviewAlive: vi.fn(), markWebviewBootReady: vi.fn() },
       recovery: { recovery: { required: false } },
       desktopUpdater: { updateInfo: null, check: vi.fn().mockResolvedValue(null) },
       setting: { zoom: vi.fn() },
@@ -60,12 +60,6 @@ vi.mock('@/utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('@/ui/plugin/recovery', () => ({ Recovery: () => null }))
 vi.mock('@/layout/startup/setup', () => ({ Setup: () => null }))
 vi.mock('@/layout/startup/preinstall', () => ({ PreinstallSetup: () => null }))
-const DshShell = 'webview' as unknown as ComponentType<{ title: string, src: string }>
-vi.mock('@/layout/harness/content', () => ({
-  HarnessContent: ({ srcOverride }: { srcOverride?: string | null }) => (
-    <DshShell title="Harness" src={srcOverride ?? 'http://127.0.0.1:3081'} />
-  ),
-}))
 vi.mock('@/layout/remote/switcher', () => ({
   RemoteSwitcher: ({ onChange }: { onChange: (url: string, tint: string | null) => void }) => (
     <>
@@ -104,7 +98,7 @@ function nativeEvent(event: string, payload?: unknown, label?: string) {
 }
 
 function webview() {
-  return screen.getByTitle<HTMLElement>('Harness')
+  return screen.getByTestId<HTMLElement>('dsh-harness-webview')
 }
 
 function reportShortcuts() {
@@ -159,6 +153,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -191,6 +186,45 @@ describe('shell remote share availability', () => {
 })
 
 describe('native View menu state', () => {
+  it('leaves a ready hosted document clickable before the DSH frame mounts', () => {
+    vi.stubGlobal('__DSH_HOSTED__', true)
+    vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+    const css = document.createElement('style')
+    css.textContent = '.pointer-events-none{pointer-events:none}.pointer-events-auto{pointer-events:auto}'
+    document.head.append(css)
+    try {
+      const view = render(<Shell />)
+      const main = view.container.querySelector('main')!
+      expect(getComputedStyle(main).pointerEvents).toBe('none')
+      fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
+      expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()
+      expect(getComputedStyle(main).pointerEvents).toBe('none')
+      fireEvent.click(screen.getByRole('button', { name: 'Local' }))
+      expect(getComputedStyle(main).pointerEvents).toBe('none')
+      store.harness.status = 'preinstall'
+      view.rerender(<Shell />)
+      expect(getComputedStyle(main).pointerEvents).toBe('auto')
+    }
+    finally {
+      css.remove()
+    }
+  })
+
+  it('displays remote content in a hosted shell and returns to the local document', () => {
+    vi.stubGlobal('__DSH_HOSTED__', true)
+    vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+    render(<Shell />)
+    expect(screen.getByTestId('dsh-hosted-document')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
+    expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()
+    expect(screen.getByTestId('dsh-hosted-document')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Remote beta' }))
+    expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Local' }))
+    expect(screen.getByTestId('dsh-hosted-document')).not.toBeNull()
+    expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()
+  })
+
   it('closes only the window targeted by a native DSH event', async () => {
     render(<Shell />)
     await waitFor(() => expect([...listeners.values()].find(listener => listener.event === 'dsh://window:close')?.target).toEqual({ kind: 'Window', label: 'main' }))
@@ -254,7 +288,7 @@ describe('native View menu state', () => {
     reportShortcuts()
     store.harness.status = 'error'
     view.rerender(<Shell />)
-    expect(screen.queryByTitle('Harness')).toBeNull()
+    expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()
     await waitFor(() => expect(menuEntries[0].enabled).toBe(false))
     store.harness.status = 'ready'
     view.rerender(<Shell />)

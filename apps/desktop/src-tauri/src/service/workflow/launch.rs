@@ -960,7 +960,8 @@ pub(super) async fn launch_prepared(
     // 最佳努力：空值返回空 map，不覆盖用户已有的同名环境变量。
     envs.extend(config::proxy::proxy_child_env(&setting.proxy_url));
 
-    envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
+    envs.insert("DSH_TAURI_EMBEDDED".to_string(), "0".to_string());
+    envs.insert("DSH_TAURI_DESKTOP".to_string(), "1".to_string());
     // 内置插件自带的补丁层按核心版本决定默认状态；表达式跑在核心进程里，读不到版本。
     // 0.2.2-rc.1 起官方 schedule 支持新建会话，自研定时任务默认关闭。
     if let Some(version) = core_version.as_deref() {
@@ -1075,7 +1076,6 @@ pub(super) async fn launch_prepared(
     }
     let port = setting.port;
     mark_phase("pre_spawn_setup", &mut phase_started);
-    super::startup::note_spawn();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("harness-startup".into())

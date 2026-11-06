@@ -18,7 +18,7 @@ import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { store } from '@/store'
 import { ConfigDialog } from '@/ui/dialog/config'
 import { Recovery } from '@/ui/plugin/recovery'
-import { isFullSidebarWindow, isHarnessDocumentRendered, isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
+import { isFullSidebarWindow, isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
 import { HarnessContent } from './harness/content'
 import { FullSidebarNavbar } from './navbar/full-sidebar-navbar'
 import { Navbar } from './navbar/navbar'
@@ -35,7 +35,7 @@ const FULL_SIDEBAR_REVEAL_MS = 15_000
 /** 壳层窗口组合：导航栏 + 启动/预装/恢复/Harness 内容分支。 */
 export function Shell() {
   // 1. 数据查询 (Queries)
-  const { status, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, webviewSrc, startupPhase, busyAction } = useStore(store.harness)
+  const { status, serviceHealthy, webviewSrc } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
   const [dshStyle, setDshStyle] = useDshStyle()
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
@@ -52,20 +52,12 @@ export function Shell() {
   const activeTunnelUrl = remoteView.url
   const borderTint = remoteView.tint
   const remoteMode = activeTunnelUrl !== ''
-  // 文档即 DSH 时启动流程被跳过，`serviceHealthy` 停在初值 false；此时页面本身就是
-  // 服务产物，直接视为可用，否则导航栏的切换/远程控件全部不渲染。
-  // 文档即 DSH 时启动流程被跳过，`serviceHealthy` 可能停在初值；页面本身就是服务产物，
-  // 直接视为可用。判据必须与启动开关一致（origin 匹配），否则壳层页里 `live` 会提前为真，
-  // 把还没就绪的引导界面当成可用态。
   const live = status === 'ready' && (remoteMode || serviceHealthy || isHostedServiceDocument())
   const notificationSource = activeTunnelUrl || webviewSrc
   const notifications = useNativeNotifications(notificationSource)
 
   useNotificationAction(notifications.handleAction)
   useNotificationClicked(notifications.handleClick)
-  // 文档即 DSH 时 `App` 里的 startup() 被跳过，runtime 状态会停在初值，内容分支与导航栏
-  // 控件都进不到可用态；这里在渲染前把就绪态补齐。判据与 `App` 保持一致用 origin 匹配：
-  // 壳层页里 `isHostedDocument` 也为 true，用它会把启动前的引导页误判成已就绪。
   useMount(() => {
     if (isHostedServiceDocument())
       store.harness.markHostedReady()
@@ -80,9 +72,11 @@ export function Shell() {
   // 用 ref 记住已发起的地址，只在目标真正变化时再导航。
   const hostedNavigationRef = useRef<string | null>(null)
   useEffect(() => {
-    if (isHostedServiceDocument() || !isHostedDocument() || remoteMode)
+    if (!isHostedDocument() || remoteMode)
       return
     if (status !== 'ready' || !serviceHealthy || !webviewSrc)
+      return
+    if (isHostedServiceDocument() && new URL(webviewSrc).origin === location.origin)
       return
     if (hostedNavigationRef.current === webviewSrc)
       return
@@ -132,17 +126,6 @@ export function Shell() {
     }
   })
 
-  const branch = status === 'ready' ? 'webview' : status === 'preinstall' ? 'preinstall' : status === 'error' && recovery.required ? 'recovery' : 'setup'
-  // 传对象的 console.warn 会被前端 logger 序列化成 `[object Object]`，日志里等于没有信息；
-  // 这里拼成一行纯文本，字段名与取值都直接可读。
-  useWatch([branch, status, remoteMode, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, startupPhase, busyAction], () => {
-    console.warn(
-      `[Shell] view branch=${branch} status=${status} remote=${remoteMode} healthy=${serviceHealthy}`
-      + ` running=${serviceRunning} loaded=${webviewLoaded} alive=${webviewAlive}`
-      + ` error=${webviewError} phase=${startupPhase} busy=${busyAction}`,
-    )
-  }, { immediate: true })
-
   function handleRemoteChange(url: string, tint: string | null) {
     setRemoteView({ url, tint })
   }
@@ -155,7 +138,7 @@ export function Shell() {
   function openLocalSettingsTab(tab: string) {
     if (remoteMode) {
       pendingSettingsTabRef.current = tab
-      handleRemoteChange('', null)
+      void invoke('navigate_remote_harness', { machineId: null }).catch(error => console.error('[remote] local settings navigation failed:', error))
       return
     }
     openSettingsTab(tab)
@@ -195,12 +178,7 @@ export function Shell() {
   // 铺到壳层根元素上会糊住背后的文档，表现为整窗一片纯色。
   const frameStyle = isHostedServiceDocument() ? undefined : (dshStyle.frame || {})
 
-  // 只有「DSH 主框架真的渲染进来了」才让内容区穿透：那时壳层只是浮在 DSH 上的一层
-  // UI，必须放行点击给背后的页面。启动页 / 预装 / 恢复页要自己接收点击，绝不能穿透——
-  // 它们由同一个本机服务提供，`location.origin` 与 DSH 页面一致，单看 origin 会误判，
-  // 一旦穿透，这些页面的容器又没有声明 `pointer-events: auto`，整页会变成不可点
-  // （Playwright 里表现为 `<div id="root">` 拦截点击）。
-  const passThrough = isHarnessDocumentRendered()
+  const passThrough = isHostedDocument() && status === 'ready'
 
   return (
     <main
