@@ -204,7 +204,7 @@ export function Shell() {
 
   return (
     <main
-      className={`relative flex flex-col min-h-0 flex-1 ${passThrough ? 'pointer-events-none' : ''}`}
+      className={`relative flex flex-col min-h-0 flex-1 ${passThrough ? 'pointer-events-none' : 'pointer-events-auto'}`}
       style={frameStyle}
     >
       {/* 启动页、预装引导与恢复页共用外观变量 */}

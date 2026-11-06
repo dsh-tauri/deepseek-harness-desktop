@@ -135,11 +135,10 @@ function ensureHostRoot(): void {
   style.textContent = css
   const mount = document.createElement('div')
   mount.id = MOUNT_ID
-  // 挂载点必须可命中（`auto`）：`pointer-events` 是继承属性，设成 `none` 会让所有没显式
-  // 覆盖它的壳层控件（预装/启动/设置等页面的按钮）一起失效，只有导航栏那类自己声明了
-  // `auto` 的还能点。需要让点击落到背后的 DSH 页面时，由 `Shell` 的内容容器按
-  // 「DSH 主框架是否已渲染」单独穿透，而不是把整棵子树关掉。
-  mount.style.cssText = 'position:fixed;inset:0;pointer-events:auto'
+  // 挂载点必须整体穿透：它铺满视口，设成 `auto` 会把 DSH 页面的点击全部吞掉。
+  // 可交互性交给 `Shell` 的内容容器显式声明——启动/预装/恢复页 `auto`，文档即 DSH 时
+  // `none` 让点击落到背后的页面，导航栏等控件自己声明 `auto`。
+  mount.style.cssText = 'position:fixed;inset:0;pointer-events:none'
   // 弹层容器铺满视口且自身不拦截点击：react-aria 的浮层是 `position: fixed`，
   // 锚点按视口算；可交互区域由浮层自己声明。层级必须高于挂载点，否则菜单、对话框会被
   // 导航栏整条盖住（截图里表现为「菜单藏在白底下面」）。
