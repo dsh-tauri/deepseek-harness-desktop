@@ -7,14 +7,12 @@
     "dsh-tauri": "workspace:*",
     "dsh-tauri-archive": "workspace:*",
     "dsh-tauri-extension": "workspace:*",
-    "dsh-tauri-mobile-ui": "workspace:*",
     "dsh-tauri-model": "workspace:*",
     "dsh-tauri-notification": "workspace:*",
     "dsh-tauri-pet": "workspace:*",
     "dsh-tauri-remote": "workspace:*",
     "dsh-tauri-rightclick": "workspace:*",
     "dsh-tauri-scheduler": "workspace:*",
-    "dsh-tauri-ui": "workspace:*",
-    "dsh-tauri-worktree": "workspace:*"
+    "dsh-tauri-ui": "workspace:*"
   }
 }

@@ -103,9 +103,8 @@ pub(super) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str
 
 /// 自研适配插件已被官方取代的核心基线。
 ///
-/// 0.2.2-rc.1 起官方 schedule 支持新建会话、官方客户端自带移动端适配，因此
-/// `dsh-tauri-scheduler` 与 `dsh-tauri-mobile-ui` 在该版本及以上默认停用；更早
-/// 的核心没有这些能力，仍由它们补位。补丁层据此决定默认状态。
+/// 0.2.2-rc.1 起官方 schedule 支持新建会话，因此 `dsh-tauri-scheduler` 在该版本
+/// 及以上默认停用；更早的核心没有这些能力，仍由它补位。补丁层据此决定默认状态。
 const OFFICIAL_ADAPTERS_BASELINE: &str = "0.2.2-rc.1";
 
 /// 当前核心是否已自带上述能力（版本无法解析时按「未达标」处理，保持插件启用）。

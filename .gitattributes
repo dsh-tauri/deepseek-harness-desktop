@@ -10,8 +10,6 @@
 *.toml text eol=lf
 *.js text eol=lf
 *.mjs text eol=lf
-apps/desktop/tests/fixtures/scroll-follow-alpha5.txt text eol=lf
-apps/desktop/tests/fixtures/permission-settings-rc2.txt text eol=lf
 *.sh text eol=lf
 *.ico binary
 *.icns binary

@@ -68,7 +68,7 @@ pub use install::{
     remove_many, update_many, IncompatibleVersion, PolicyBlockedVersion,
 };
 pub(crate) use installed::{
-    declared_packages, ensure_profile_npmrc, installed_name, profile_dir, ProfilePackageJson,
+    ensure_profile_npmrc, installed_name, profile_dir, ProfilePackageJson,
 };
 pub use installed::{list, PreinstallPlugin};
 pub(crate) use internal::cancel as cancel_internal_plugins;

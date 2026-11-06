@@ -22,7 +22,7 @@ vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 const localFixture: HarnessCore = {
   id: 'local',
   source: 'local',
-  version: '0.2.1-rc.4',
+  version: '0.2.2-rc.1',
   tag: '',
   path: '/fixture/local/bin.js',
   dir: '/fixture/local',
@@ -34,10 +34,10 @@ const localFixture: HarnessCore = {
   bundled: false,
 }
 const managedFixture: HarnessCore = {
-  id: 'app-dsh-0.2.1-rc.5-41234040595',
+  id: 'app-dsh-0.2.2-rc.2-41234040595',
   source: 'app',
-  version: '0.2.1-rc.5',
-  tag: 'dsh-0.2.1-rc.5-41234040595',
+  version: '0.2.2-rc.2',
+  tag: 'dsh-0.2.2-rc.2-41234040595',
   path: '/fixture/managed',
   dir: '/fixture/managed',
   present: true,
@@ -84,7 +84,7 @@ function expectManagedWarning() {
 beforeEach(async () => {
   vi.clearAllMocks()
   cores = [{ ...localFixture }, { ...managedFixture }]
-  updateVersion = '0.2.2-rc.1'
+  updateVersion = '0.2.3-rc.1'
   updateError = null
   translations = createInstance()
   await translations.init({
@@ -135,14 +135,14 @@ describe('本地核心更新档案安全', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Update Local Core' }))
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.2.2-rc.1', {
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.2.3-rc.1', {
       variant: 'success',
       description: 'The desktop will keep using the current managed core. Switch back to the local core manually.',
       timeout: 10_000,
     }))
     expect(mocks.invoke).toHaveBeenCalledWith('update_local_core')
-    expect((screen.getByRole('checkbox', { name: '0.2.1-rc.5' }) as HTMLInputElement).checked).toBe(true)
-    expect((screen.getByRole('checkbox', { name: '0.2.2-rc.1' }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('checkbox', { name: '0.2.2-rc.2' }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('checkbox', { name: '0.2.3-rc.1' }) as HTMLInputElement).checked).toBe(false)
     expectNoCoreOrProfileSwitch()
   })
 
@@ -153,7 +153,7 @@ describe('本地核心更新档案安全', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Update Local Core' }))
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.2.2-rc.1', {
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.2.3-rc.1', {
       variant: 'success',
       description: 'The desktop will keep using the current managed core. Switch back to the local core manually.',
       timeout: 10_000,
@@ -199,14 +199,14 @@ describe('本地核心更新档案安全', () => {
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to update the local core', {}))
     expect(errorLog).toHaveBeenCalledWith('[ConfigCore] update local core failed:', error)
     expectNoCoreOrProfileSwitch()
-    expect((screen.getByRole('checkbox', { name: '0.2.1-rc.4' }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('checkbox', { name: '0.2.2-rc.1' }) as HTMLInputElement).checked).toBe(false)
     expect((screen.getByRole('button', { name: 'Update Local Core' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('更新后手动切回只显示普通确认，取消不切核心', async () => {
     renderCore()
     fireEvent.click(await screen.findByRole('button', { name: 'Update Local Core' }))
-    const updatedLocal = await screen.findByRole('checkbox', { name: '0.2.2-rc.1' })
+    const updatedLocal = await screen.findByRole('checkbox', { name: '0.2.3-rc.1' })
     fireEvent.click(updatedLocal)
 
     const dialog = await screen.findByRole('alertdialog')
