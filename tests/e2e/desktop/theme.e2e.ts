@@ -51,6 +51,44 @@ for (const preference of ['light', 'dark'] as const) {
       },
     })
     const page = app.window.page
+    const themeTrace: object[] = []
+    const runtimeErrors: string[] = []
+    const settingsWrites: object[] = []
+    const patchFile = path.join(app.home, 'home', '.dsh.dev', 'profiles', 'desktop', 'cordis.patch.yml')
+    page.on('pageerror', error => runtimeErrors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error')
+        runtimeErrors.push(message.text())
+    })
+    page.on('response', async (response) => {
+      if (response.request().method() !== 'POST' || new URL(response.url()).pathname !== '/api/settings/mutate')
+        return
+      try {
+        const request = response.request().postDataJSON() as { payload?: { args?: { ns?: string } } }
+        if (request.payload?.args?.ns === 'ui-theme')
+          settingsWrites.push({ request, status: response.status(), result: await response.json() })
+      }
+      catch (error) {
+        settingsWrites.push({ status: response.status(), error: String(error) })
+      }
+    })
+    async function captureTheme(stage: string) {
+      themeTrace.push({
+        stage,
+        ...await page.evaluate(() => ({
+          origin: location.origin,
+          systemDark: matchMedia('(prefers-color-scheme: dark)').matches,
+          source: document.documentElement.dataset.dsThemeSource,
+          inlineScheme: document.documentElement.style.colorScheme,
+          scheme: getComputedStyle(document.documentElement).colorScheme,
+          inlineBackground: document.body.style.backgroundColor,
+          background: getComputedStyle(document.body).backgroundColor,
+          bootBackground: getComputedStyle(document.body).getPropertyValue('--dsh-boot-bg'),
+          buttons: [...document.querySelectorAll('[role="dialog"] button[aria-pressed]')].map(button => ({ text: button.textContent, pressed: button.getAttribute('aria-pressed') })),
+        })),
+        patch: await readFile(patchFile, 'utf8'),
+      })
+    }
     try {
       await page.locator(SHELL_ROOT).waitFor({ state: 'visible', timeout: 15000 })
       await page.context().addInitScript(recordThemeFrames)
@@ -74,13 +112,23 @@ for (const preference of ['light', 'dark'] as const) {
       const frames = await page.evaluate(() => window.__dshThemeFrames)
       expect(frames.length, '必须采集真实原生文档首帧至就绪阶段').toBeGreaterThan(0)
       expect(frames.filter(frame => frame.background !== background), '启动全链路不能出现与持久主题相反的画布帧').toEqual([])
-      await dialog.getByRole('button', { name: /跟随系统|System/, exact: true }).click()
+      await captureTheme('before-system')
+      const systemButton = dialog.getByRole('button', { name: /跟随系统|System/, exact: true })
+      await systemButton.click()
+      await expect.poll(() => systemButton.getAttribute('aria-pressed'), { message: '系统主题按钮必须完成选中状态更新' }).toBe('true')
+      await captureTheme('after-system')
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.dsThemeSource), { message: '初始化交接后必须允许用户选择跟随系统' }).toBe('system')
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor), { message: '用户切换跟随系统必须切换到系统画布色' }).toBe(preference === 'light' ? 'rgb(21, 21, 23)' : 'rgb(255, 255, 255)')
-      await dialog.getByRole('button', { name: preference === 'light' ? /深色|Dark/ : /浅色|Light/, exact: true }).click()
+      await captureTheme('before-opposite')
+      const oppositeButton = dialog.getByRole('button', { name: preference === 'light' ? /深色|Dark/ : /浅色|Light/, exact: true })
+      await oppositeButton.click()
+      await expect.poll(() => oppositeButton.getAttribute('aria-pressed'), { message: '反色主题按钮必须完成选中状态更新' }).toBe('true')
+      await captureTheme('after-opposite')
       await expect.poll(() => readFile(path.join(info.data_dir, 'profiles', 'desktop', 'cordis.patch.yml'), 'utf8'), { message: '真实用户主题修改必须持久化' }).toContain(`preference: ${preference === 'light' ? 'dark' : 'light'}`)
     }
     catch (error) {
+      await captureTheme('failure').catch(captureError => runtimeErrors.push(String(captureError)))
+      console.error('NATIVE_THEME_DIAGNOSTICS', JSON.stringify({ preference, themeTrace, runtimeErrors, settingsWrites }))
       console.error(await diagnose(app))
       throw error
     }
