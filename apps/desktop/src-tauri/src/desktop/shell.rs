@@ -77,9 +77,44 @@ mod tests {
 
     #[test]
     fn initial_theme_waits_for_document_root_when_injected_at_document_start() {
-        let script = initial_theme_script(Theme::Light);
-        assert!(script.contains("if (document.documentElement) applyTheme();"));
-        assert!(script.contains("else document.addEventListener('DOMContentLoaded', applyTheme, { once: true });"));
-        assert!(script.contains(r#"if (root) root.dataset.theme = "light";"#));
+        let runtime = crate::service::workflow::test_runtime_executable()
+            .expect("bundled Electron runtime required for bootstrap test");
+        for theme in [Theme::Light, Theme::Dark] {
+            let script = initial_theme_script(theme);
+            let probe = format!(
+                r#"const assert = require('node:assert/strict');
+const vm = require('node:vm');
+for (const hasRoot of [false, true]) {{
+  const root = {{ dataset: {{}} }};
+  let ready;
+  const document = {{
+    documentElement: hasRoot ? root : null,
+    addEventListener(event, callback, options) {{
+      assert.equal(event, 'DOMContentLoaded');
+      assert.equal(options.once, true);
+      ready = callback;
+    }}
+  }};
+  vm.runInNewContext({script}, {{ document }});
+  if (!hasRoot) {{
+    assert.equal(root.dataset.theme, undefined);
+    assert.equal(typeof ready, 'function');
+    document.documentElement = root;
+    ready();
+  }}
+  assert.equal(root.dataset.theme, {theme});
+}}"#,
+                script = serde_json::json!(script),
+                theme = serde_json::json!(theme.as_str()),
+            );
+            let output = std::process::Command::new(&runtime)
+                .args(["-e", &probe])
+                .env("ELECTRON_RUN_AS_NODE", "1")
+                .env_remove("NODE_OPTIONS")
+                .env_remove("NODE_PATH")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        }
     }
 }

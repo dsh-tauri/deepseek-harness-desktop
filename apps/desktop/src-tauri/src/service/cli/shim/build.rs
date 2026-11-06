@@ -519,8 +519,7 @@ exit /b %ERRORLEVEL%
 }
 
 /// Unix `node` shell 脚本内容。
-#[cfg_attr(all(windows, not(test)), allow(dead_code))]
-#[cfg_attr(all(windows, not(test)), allow(dead_code))]
+#[cfg(not(windows))]
 pub fn build_node_sh_shim(paths: &ShimPaths) -> String {
     format!(
         r#"#!/bin/sh

@@ -328,6 +328,10 @@ fn supervise_harness(
     >,
     mut reset: impl FnMut(),
     mut persist: impl FnMut(u32),
+    mut probe: impl FnMut(
+        &mut HarnessChild,
+        Option<std::time::Duration>,
+    ) -> Result<Option<Option<i64>>, String>,
 ) -> Result<(), String> {
     let mut guards = Some(guards);
     let mut previous_exit = None;
@@ -397,7 +401,7 @@ fn supervise_harness(
             let _ = started.send(Ok(()));
         }
         let mut wait = |timeout| {
-            let result = wait_harness(&mut child, timeout);
+            let result = probe(&mut child, timeout);
             if let Err(error) = &result {
                 log::error!(
                     "{error}; terminating this Harness process before releasing its monitor"
@@ -1184,6 +1188,7 @@ pub(super) async fn launch_prepared(
                     |pid| {
                         let _ = fs::write(&pid_path, format!("{pid}\n{port}\n"));
                     },
+                    wait_harness,
                 );
                 if let Err(error) = result {
                     log::error!("Harness startup supervisor failed: {error}");
@@ -1385,14 +1390,16 @@ mod tests {
         spawned: std::sync::Arc<std::sync::Mutex<Option<OwnedProcess>>>,
         resets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         transition: std::sync::Arc<tokio::sync::Mutex<()>>,
+        probe_entered: std::sync::mpsc::Receiver<()>,
+        probe_release: Option<std::sync::mpsc::Sender<()>>,
     }
 
     impl SupervisedNode {
         fn new(script: &str) -> Self {
-            Self::with_reader_failure(script, 0)
+            Self::with_probe(script, 0, false)
         }
 
-        fn with_reader_failure(script: &str, reader: usize) -> Self {
+        fn with_probe(script: &str, reader: usize, early_exit: bool) -> Self {
             use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
             let node = crate::service::workflow::test_runtime_executable()
@@ -1432,6 +1439,8 @@ mod tests {
             );
             let (started_tx, started_rx) = tokio::sync::oneshot::channel();
             let (finished_tx, finished) = std::sync::mpsc::channel();
+            let (probe_entered_tx, probe_entered) = std::sync::mpsc::channel();
+            let (probe_release, probe_release_rx) = std::sync::mpsc::channel();
             let spawned = Arc::new(Mutex::new(None));
             let spawned_process = spawned.clone();
             let spawn_count = attempts.clone();
@@ -1439,6 +1448,7 @@ mod tests {
             let worker = std::thread::spawn(move || {
                 let log = path.join("dsh-web.log");
                 let mut started = Some(started_tx);
+                let mut probe_entered_tx = Some(probe_entered_tx);
                 let result = super::super::utils::with_output_reader_failure(reader, || {
                     super::super::instances::scope_sync(profile, || {
                         supervise_harness(
@@ -1529,6 +1539,24 @@ mod tests {
                                 reset_active_profile_root(&path);
                             },
                             |pid| fs::write(path.join("harness.pid"), pid.to_string()).unwrap(),
+                            |child, timeout| {
+                                if let Some(entered) = probe_entered_tx.take() {
+                                    entered.send(()).unwrap();
+                                    probe_release_rx.recv().map_err(|error| {
+                                        format!("FIXTURE_PROBE_RELEASE_FAILED: {error}")
+                                    })?;
+                                }
+                                if early_exit {
+                                    let exited = wait_harness(
+                                        child,
+                                        Some(std::time::Duration::from_secs(20)),
+                                    )?;
+                                    assert!(exited.is_some(), "fixture must exit before probe returns");
+                                    Ok(exited)
+                                } else {
+                                    wait_harness(child, timeout)
+                                }
+                            },
                         )
                     })
                 });
@@ -1547,24 +1575,27 @@ mod tests {
                 spawned,
                 resets,
                 transition,
+                probe_entered,
+                probe_release: Some(probe_release),
             }
         }
 
         fn acknowledge(&mut self) {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()
+            self.probe_entered
+                .recv_timeout(std::time::Duration::from_secs(20))
+                .expect("fixture must spawn, register, and enter the startup probe");
+            self.started
+                .take()
                 .unwrap()
-                .block_on(async {
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        self.started.take().unwrap(),
-                    )
-                    .await
-                })
-                .expect("spawn acknowledgement must not wait for the startup probe")
-                .expect("supervisor must send acknowledgement")
+                .try_recv()
+                .expect("spawn acknowledgement must precede the blocked startup probe")
                 .expect("fixture must spawn and register");
+        }
+
+        fn release_probe(&mut self) {
+            if let Some(release) = self.probe_release.take() {
+                let _ = release.send(());
+            }
         }
 
         /// 等待日志里出现全部片段：deadline 是「多久没有新进展」，不是绝对上限。
@@ -1642,6 +1673,7 @@ mod tests {
         }
 
         fn finish(&mut self) -> Result<(), String> {
+            self.release_probe();
             let result = self
                 .finished
                 .recv_timeout(std::time::Duration::from_secs(10))
@@ -1653,6 +1685,7 @@ mod tests {
 
     impl Drop for SupervisedNode {
         fn drop(&mut self) {
+            self.release_probe();
             let _ = self.cancel();
             if let Some(worker) = self.worker.take().filter(|worker| worker.is_finished()) {
                 let _ = worker.join();
@@ -1661,7 +1694,7 @@ mod tests {
     }
 
     fn assert_reader_failure_is_reaped(reader: usize) {
-        let mut fixture = SupervisedNode::with_reader_failure("setTimeout(()=>{},60000)", reader);
+        let mut fixture = SupervisedNode::with_probe("setTimeout(()=>{},60000)", reader, false);
         let error = fixture.finish().unwrap_err();
         assert_eq!(
             error,
@@ -1722,6 +1755,19 @@ mod tests {
     }
 
     #[test]
+    fn supervisor_acknowledges_while_startup_probe_is_blocked() {
+        let mut fixture = SupervisedNode::new("process.exit(0)");
+        fixture.acknowledge();
+        assert_eq!(
+            fixture.finished.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        );
+        fixture.release_probe();
+        fixture.finish().unwrap();
+        assert!(fixture.instance.process.lock().unwrap().is_none());
+    }
+
+    #[test]
     fn supervisor_acknowledges_before_probe_and_drains_both_full_pipes() {
         let mut fixture = SupervisedNode::new(
             "const fs=require('fs'); const chunk='x'.repeat(1024)+'\\n'; for(let i=0;i<512;i++){fs.writeSync(1,'OUT:'+chunk);fs.writeSync(2,'ERR:'+chunk)} fs.writeSync(1,'STDOUT_DONE\\n');fs.writeSync(2,'STDERR_DONE\\n');setTimeout(()=>{},10000)",
@@ -1745,6 +1791,7 @@ mod tests {
         let output = fs::read_to_string(fixture.root.path().join("dsh-web.log")).unwrap();
         assert_eq!(output.matches("OUT:").count(), 512);
         assert_eq!(output.matches("ERR:").count(), 512);
+        fixture.release_probe();
         fixture.wait_transition_released();
         assert!(!fixture.instance.launching.load(Ordering::SeqCst));
         assert!(fixture.instance.process.lock().unwrap().is_some());
@@ -1760,7 +1807,7 @@ mod tests {
             ("require('fs').writeSync(2,'Error: EADDRINUSE\\n');process.exit(1)", 1, 0),
             ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)", 1, 0),
         ] {
-            let mut fixture = SupervisedNode::new(script);
+            let mut fixture = SupervisedNode::with_probe(script, 0, true);
             fixture.acknowledge();
             fixture.finish().unwrap();
             assert_eq!(fixture.attempts.load(Ordering::SeqCst), attempts, "{script}");
@@ -1774,8 +1821,10 @@ mod tests {
 
     #[test]
     fn supervisor_releases_ownership_and_guards_when_retry_spawn_fails() {
-        let mut fixture = SupervisedNode::new(
+        let mut fixture = SupervisedNode::with_probe(
             "const fs=require('fs');fs.writeFileSync('fail-next-spawn','1');fs.writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)",
+            0,
+            true,
         );
         fixture.acknowledge();
         assert_eq!(

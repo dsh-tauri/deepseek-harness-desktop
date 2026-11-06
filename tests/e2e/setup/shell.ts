@@ -292,7 +292,9 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
           },
           { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 必须可通过窗口元数据识别` },
         ).toBe(true)
-        await target!.page.evaluate(label => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), label)
+        const controller = (await windowsOf(connected)).find(entry => entry.label !== label)
+        expect(controller, `关闭 ${label} 的命令必须由另一个存活窗口发出`).toBeTruthy()
+        await controller!.page.evaluate(label => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), label)
         await expect.poll(() => target!.page.isClosed(), { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 的 CDP 页面必须销毁` }).toBe(true)
       },
       output: () => output,

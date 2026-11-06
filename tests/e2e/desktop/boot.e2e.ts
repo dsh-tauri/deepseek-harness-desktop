@@ -62,9 +62,7 @@ async function waitHealthy(page: Page): Promise<HealthCheck> {
     return health.status.startsWith('healthy')
   }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
   const origin = new URL(serviceUrl).origin
-  if (new URL(page.url()).origin !== origin && !page.url().includes('tauri.localhost'))
-    await invoke(page, 'host_harness_document', { url: serviceUrl })
-  await page.waitForURL(url => url.origin === origin, { timeout: WINDOW_TIMEOUT_MS })
+  await expect.poll(() => new URL(page.url()).origin, { timeout: WINDOW_TIMEOUT_MS, message: '产品必须自行导航至所属核心文档' }).toBe(origin)
   await page.locator('div[class$="_frame"]').waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
   return { service_url: serviceUrl, status: `healthy - ${origin}` }
 }
@@ -202,6 +200,9 @@ describe('desktop boot and profile lifecycle', () => {
 
       await invoke(second.page, 'set_active_profile', { id: cloneId })
       await invoke(second.page, 'launch_harness')
+      await expect.poll(async () => (await invoke<HealthCheck>(second!.page, 'proxy_health_check')).status.startsWith('healthy'), { timeout: WINDOW_TIMEOUT_MS }).toBe(true)
+      const targetRuntime = await invoke<RuntimeInfo>(second.page, 'get_runtime_info')
+      await invoke(second.page, 'host_harness_document', { url: targetRuntime.service_url })
       const clonedRuntime = await waitHealthy(second.page)
       expect((await invoke<AppConfig>(second.page, 'get_app_config')).active_profile, '切换后窗口必须绑定克隆档案').toBe(cloneId)
       expect(clonedRuntime.service_url, '克隆档案必须使用独立核心服务地址').not.toBe(originalRuntime.service_url)
