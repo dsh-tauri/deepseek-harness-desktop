@@ -9,7 +9,7 @@ import { createRoot } from 'react-dom/client'
 import { enableShadowDOM } from 'react-stately/private/flags/flags'
 import { ToastProvider } from '@/components/toast-provider'
 import { queryClient } from '@/config/client'
-import { resolveTheme } from '@/hooks/use-theme-adaptive'
+import { getInitialTheme } from '@/hooks/use-theme-adaptive'
 import { App } from '@/layout'
 import '@/utils/logger'
 import './styles/main.css'
@@ -179,9 +179,6 @@ function start(): void {
  * 独立壳层页（dev）走 `main.tsx` 的另一分支，不经过这里。
  */
 export function startShell(): void {
-  document.documentElement.dataset.theme = resolveTheme(
-    undefined,
-    window.matchMedia('(prefers-color-scheme: dark)').matches,
-  )
+  document.documentElement.dataset.theme = getInitialTheme()
   start()
 }

@@ -4,7 +4,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ToastProvider } from '@/components/toast-provider'
 import { queryClient } from '@/config/client'
-import { resolveTheme } from '@/hooks/use-theme-adaptive'
+import { getInitialTheme } from '@/hooks/use-theme-adaptive'
 import { App } from '@/layout'
 import '@/utils/logger'
 import './styles/main.css'
@@ -25,10 +25,7 @@ import './styles/main.css'
 const injected = typeof (globalThis as { __DSH_SHELL_THEME__?: unknown }).__DSH_SHELL_THEME__ === 'string'
 
 if (!injected) {
-  document.documentElement.dataset.theme = resolveTheme(
-    undefined,
-    window.matchMedia('(prefers-color-scheme: dark)').matches,
-  )
+  document.documentElement.dataset.theme = getInitialTheme()
 
   createRoot(document.getElementById('root') as HTMLElement).render(
     <StrictMode>

@@ -1,28 +1,39 @@
 // @vitest-environment jsdom
-import { cleanup, renderHook } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { act, cleanup, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { useDshStyle } from './use-dsh-style'
 import { resolveTheme, useThemeAdaptive } from './use-theme-adaptive'
 
 const mocks = vi.hoisted(() => ({
-  preference: null as 'dark' | 'light' | 'system' | null,
-  systemDark: false,
-  dshStyle: {} as { colorScheme?: 'dark' | 'light' },
+  invoke: vi.fn(),
 }))
-vi.mock('./use-dsh-style', () => ({ useDshStyle: () => [mocks.dshStyle] }))
-vi.mock('./use-invoke', () => ({ useInvoke: (command: string) => {
-  expect(command).toBe('get_dsh_theme')
-  return mocks.preference
-} }))
-vi.mock('@reause/core', async importOriginal => ({
-  ...await importOriginal<typeof import('@reause/core')>(),
-  usePreferredDark: () => mocks.systemDark,
-}))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+
+const env = globalThis as { __DSH_SHELL_THEME__?: string }
+let media: MediaQueryList
+let resolvePreference: (preference: 'dark' | 'light' | 'system') => void
+
+beforeEach(() => {
+  media = Object.assign(new EventTarget(), {
+    matches: true,
+    media: '(prefers-color-scheme: dark)',
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+  }) as MediaQueryList
+  vi.stubGlobal('matchMedia', vi.fn(() => media))
+  mocks.invoke.mockImplementation(() => new Promise((resolve) => {
+    resolvePreference = resolve
+  }))
+})
 
 afterEach(() => {
   cleanup()
   delete document.documentElement.dataset.theme
-  mocks.dshStyle = {}
+  delete env.__DSH_SHELL_THEME__
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.clearAllMocks()
 })
 
 it.each([
@@ -36,30 +47,58 @@ it.each([
   expect(resolveTheme(preference, systemDark)).toBe(theme)
 })
 
-it('uses preference and system changes until the embedded document reports its color scheme', () => {
-  mocks.preference = 'light'
-  mocks.systemDark = true
-  const hook = renderHook(() => useThemeAdaptive())
+function setSystemDark(dark: boolean) {
+  Object.assign(media, { matches: dark })
+  act(() => media.dispatchEvent(Object.assign(new Event('change'), { matches: dark })))
+}
+
+it('follows system changes after the preference resolves to system', async () => {
+  env.__DSH_SHELL_THEME__ = 'light'
+  renderHook(() => useThemeAdaptive())
   expect(document.documentElement.dataset.theme).toBe('light')
-  mocks.preference = 'system'
-  hook.rerender()
+  await act(async () => resolvePreference('system'))
   expect(document.documentElement.dataset.theme).toBe('dark')
-  mocks.systemDark = false
-  hook.rerender()
+  setSystemDark(false)
   expect(document.documentElement.dataset.theme).toBe('light')
-  mocks.preference = 'dark'
-  hook.rerender()
+  setSystemDark(true)
   expect(document.documentElement.dataset.theme).toBe('dark')
-  mocks.dshStyle = { colorScheme: 'light' }
-  hook.rerender()
+})
+
+it('keeps an explicit light preference when the system appearance changes', async () => {
+  renderHook(() => useThemeAdaptive())
+  await act(async () => resolvePreference('light'))
+  setSystemDark(false)
+  setSystemDark(true)
   expect(document.documentElement.dataset.theme).toBe('light')
-  mocks.dshStyle = { colorScheme: 'dark' }
-  hook.rerender()
+})
+
+it('gives the embedded color scheme precedence before and after preference hydration', async () => {
+  env.__DSH_SHELL_THEME__ = 'light'
+  const hook = renderHook(() => {
+    useThemeAdaptive()
+    return useDshStyle()
+  })
+  act(() => hook.result.current[1]({ colorScheme: 'dark' }))
   expect(document.documentElement.dataset.theme).toBe('dark')
-  mocks.preference = 'light'
-  hook.rerender()
+  await act(async () => resolvePreference('light'))
   expect(document.documentElement.dataset.theme).toBe('dark')
-  mocks.dshStyle = {}
-  hook.rerender()
+  act(() => hook.result.current[1]({ colorScheme: 'light' }))
+  expect(document.documentElement.dataset.theme).toBe('light')
+  act(() => hook.result.current[1]({}))
+  expect(document.documentElement.dataset.theme).toBe('light')
+})
+
+it('uses the current system appearance while preference loading has no injected theme', () => {
+  renderHook(() => useThemeAdaptive())
+  expect(document.documentElement.dataset.theme).toBe('dark')
+})
+
+it('preserves injected light while the saved preference loads under a dark system', async () => {
+  env.__DSH_SHELL_THEME__ = 'light'
+  document.documentElement.dataset.theme = 'light'
+  renderHook(() => useThemeAdaptive())
+  expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('get_dsh_theme', undefined, undefined)
+  expect(document.documentElement.dataset.theme).toBe('light')
+  await act(async () => resolvePreference('light'))
   expect(document.documentElement.dataset.theme).toBe('light')
 })
