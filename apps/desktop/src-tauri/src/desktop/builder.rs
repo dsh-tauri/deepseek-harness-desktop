@@ -835,6 +835,13 @@ pub fn build_main_window(
 
     let _geometry_restore = crate::config::GeometryRestoreGuard::begin();
 
+    // 文档即 DSH 时主窗口加载的就是 Harness 页面，宿主路径桥必须挂在它自己身上
+    // （以前挂在内嵌 guest webview 上，那条路径已不再走）。只有 preload 的隔离世界
+    // 读得到 `webUtils`，所以仍用 preload 注入。
+    let _host_paths =
+        tauri_runtime_electron::WebviewSetup::new(MAIN_WINDOW_LABEL)
+            .preload_script(include_str!("preload.js.inc"));
+
     let mut webview_builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
             .title(crate::desktop::product_name(app));
