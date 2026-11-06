@@ -85,6 +85,7 @@ export function Shell() {
       .catch((error) => {
         hostedNavigationRef.current = null
         console.error('[Shell] host document failed:', error)
+        store.harness.fail(String(error), undefined, undefined, undefined, store.harness.serviceRunning)
       })
   }, [status, serviceHealthy, webviewSrc, remoteMode])
 
@@ -178,7 +179,7 @@ export function Shell() {
   // 铺到壳层根元素上会糊住背后的文档，表现为整窗一片纯色。
   const frameStyle = isHostedServiceDocument() ? undefined : (dshStyle.frame || {})
 
-  const passThrough = isHostedDocument() && status === 'ready'
+  const passThrough = isHostedServiceDocument() && status === 'ready'
 
   return (
     <main
