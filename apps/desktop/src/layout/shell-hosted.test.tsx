@@ -68,6 +68,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  document.body.replaceChildren()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -124,6 +125,10 @@ it.each(['pending', 'accepted'])('keeps the bootstrap loading until the DSH docu
 })
 
 it('keeps an actual hosted service document transparent without rehosting its current origin', async () => {
+  const frame = document.createElement('div')
+  frame.className = 'layout_frame'
+  frame.append(document.createElement('section'))
+  document.body.append(frame)
   vi.stubGlobal('__DSH_BOOT__', { entries: [] })
   vi.stubGlobal('location', new URL('http://127.0.0.1:3081/'))
   const view = render(<Shell />)
@@ -155,4 +160,45 @@ it('does not repeat accepted hosted navigation when service health fluctuates', 
     harness.serviceHealthy = true
   })
   expect(invoke).toHaveBeenCalledExactlyOnceWith('host_harness_document', { url: 'http://127.0.0.1:3081?t=1&dshDesktop=1' })
+})
+
+it('keeps service metadata covered until a visible populated DSH frame mounts', async () => {
+  vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+  vi.stubGlobal('location', new URL('http://127.0.0.1:3081/'))
+  const view = render(<Shell />)
+  await act(async () => {})
+  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  expect(harness.webviewLoaded).toBe(false)
+  expect(harness.webviewAlive).toBe(false)
+  const frame = document.createElement('div')
+  frame.className = 'layout_frame'
+  await act(async () => {
+    document.body.append(frame)
+  })
+  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  await act(async () => {
+    frame.style.visibility = 'hidden'
+    frame.append(document.createElement('section'))
+  })
+  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  await act(async () => {
+    frame.style.visibility = 'visible'
+  })
+  expect(view.queryByText('status.loading_plugins')).toBeNull()
+  expect(harness.webviewLoaded).toBe(true)
+  expect(harness.webviewAlive).toBe(true)
+  await act(async () => {
+    harness.serviceHealthy = false
+  })
+  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  await act(async () => {
+    harness.serviceHealthy = true
+    harness.restartPending = true
+  })
+  expect(view.getByTestId('dsh-hosted-loading').className).toContain('pointer-events-auto')
+  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  await act(async () => {
+    harness.restartPending = false
+  })
+  expect(view.queryByText('status.loading_plugins')).toBeNull()
 })

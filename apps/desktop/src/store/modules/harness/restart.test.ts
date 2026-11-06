@@ -232,6 +232,7 @@ it('the restart hook checks an already rendered DSH frame after restoring loadin
   acceptSuccess = true
   const frame = document.createElement('div')
   frame.className = 'layout_frame'
+  frame.append(document.createElement('section'))
   document.body.append(frame)
   const { useRestartToast } = await import('@/hooks/use-restart-toast')
   await act(async () => {
@@ -243,6 +244,7 @@ it('the restart hook checks an already rendered DSH frame after restoring loadin
 it('the restart hook does not infer an operation from a normal document frame', async () => {
   const frame = document.createElement('div')
   frame.className = 'layout_frame'
+  frame.append(document.createElement('section'))
   document.body.append(frame)
   const { useRestartToast } = await import('@/hooks/use-restart-toast')
   await act(async () => {
@@ -261,6 +263,7 @@ it('the restart hook stops observing the DSH document after unmount', async () =
   hook.unmount()
   const frame = document.createElement('div')
   frame.className = 'layout_frame'
+  frame.append(document.createElement('section'))
   await act(async () => {
     document.body.append(frame)
   })
@@ -294,6 +297,7 @@ it('the real restart hook waits for the DSH frame rather than accepting bootstra
   await act(async () => {
     const frame = document.createElement('div')
     frame.className = 'layout_frame'
+    frame.append(document.createElement('section'))
     document.body.append(frame)
   })
   expect(toast).toHaveBeenCalledWith('Harness restarted', expect.objectContaining({ variant: 'success' }))

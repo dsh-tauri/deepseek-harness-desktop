@@ -155,6 +155,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  document.body.replaceChildren()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -212,10 +213,16 @@ describe('native View menu state', () => {
     }
   })
 
-  it('displays remote content in a hosted shell and returns to the local document', () => {
+  it('displays remote content in a hosted shell and returns to the local document', async () => {
     vi.stubGlobal('__DSH_HOSTED__', true)
     vi.stubGlobal('__DSH_BOOT__', { entries: [] })
-    render(<Shell />)
+    const frame = document.createElement('div')
+    frame.className = 'layout_frame'
+    frame.append(document.createElement('section'))
+    document.body.append(frame)
+    await act(async () => {
+      render(<Shell />)
+    })
     expect(screen.getByTestId('dsh-hosted-document')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
     expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()

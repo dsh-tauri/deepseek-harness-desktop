@@ -1,14 +1,13 @@
-import { useMount, useMutationObserver, useWatch } from '@reause/core'
-import { useRef, useState } from 'react'
+import { useMount, useWatch } from '@reause/core'
+import { useState } from 'react'
 import { useStore } from 'valtio-define'
 import { harness } from '@/store/modules/harness'
-import { isHostedServiceDocument } from '@/utils/window-presentation'
+import { useHostedDocumentReady } from './use-hosted-document-ready'
 
 export function useRestartToast() {
   const { status, errorMsg } = useStore(harness)
   const [pending, setPending] = useState(false)
-  const targetRef = useRef<HTMLElement | null>(null)
-  targetRef.current = pending ? document.body : null
+  const documentReady = useHostedDocumentReady()
 
   function checkDocument() {
     if (!pending)
@@ -17,13 +16,12 @@ export function useRestartToast() {
       void harness.finishRestartNotification('error', errorMsg).then(settled => setPending(!settled))
       return
     }
-    if (!isHostedServiceDocument() || !document.querySelector('div[class$="_frame"]'))
+    if (!documentReady)
       return
     void harness.completeRestartDocument().then(settled => setPending(!settled))
   }
 
-  useMutationObserver(targetRef, checkDocument, { childList: true, subtree: true })
-  useWatch([pending, status], checkDocument)
+  useWatch([pending, status, documentReady], checkDocument)
   useMount(() => {
     void harness.restoreRestartToast().then(setPending)
   })
