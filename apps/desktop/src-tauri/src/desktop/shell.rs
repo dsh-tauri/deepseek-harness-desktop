@@ -23,12 +23,48 @@ pub struct ShellInjection {
 
 fn initial_theme_script(theme: Theme) -> String {
     format!(
-        r#"const applyTheme = () => {{
+        r#"const initialTheme = {};
+const applyTheme = () => {{
   const root = document.documentElement;
-  if (root) root.dataset.theme = {};
+  if (root) root.dataset.theme = initialTheme;
 }};
 if (document.documentElement) applyTheme();
-else document.addEventListener('DOMContentLoaded', applyTheme, {{ once: true }});"#,
+else document.addEventListener('DOMContentLoaded', applyTheme, {{ once: true }});
+let bootPreference;
+let bootBackground;
+let previousBackground;
+let previousPriority;
+const themeHydration = new MutationObserver(() => {{
+  const root = document.documentElement;
+  const body = document.body;
+  if (!root || !body) return;
+  const source = root.dataset.dsThemeSource;
+  bootPreference ??= source;
+  if (bootPreference !== 'light' && bootPreference !== 'dark') {{
+    if (bootPreference) themeHydration.disconnect();
+    return;
+  }}
+  if (bootBackground === undefined) {{
+    bootBackground = getComputedStyle(body).getPropertyValue('--dsh-boot-bg').trim();
+    previousBackground = body.style.getPropertyValue('background-color');
+    previousPriority = body.style.getPropertyPriority('background-color');
+    if (bootBackground) body.style.backgroundColor = bootBackground;
+    bootBackground = body.style.backgroundColor;
+  }}
+  if (!root.style.colorScheme) return;
+  if (source !== 'system') {{
+    themeHydration.disconnect();
+    if (body.style.backgroundColor === bootBackground) {{
+      if (previousBackground) body.style.setProperty('background-color', previousBackground, previousPriority);
+      else body.style.removeProperty('background-color');
+    }}
+    return;
+  }}
+  if (root.style.colorScheme !== bootPreference) root.style.colorScheme = bootPreference;
+  if (root.dataset.theme !== bootPreference) root.dataset.theme = bootPreference;
+  if (body.hasAttribute('data-ds-dark-theme') !== (bootPreference === 'dark')) body.toggleAttribute('data-ds-dark-theme', bootPreference === 'dark');
+}});
+themeHydration.observe(document, {{ childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'data-ds-theme-source', 'data-ds-dark-theme'] }});"#,
         json!(theme.as_str()),
     )
 }
@@ -76,6 +112,70 @@ mod tests {
     use super::{Theme, initial_theme_script};
 
     #[test]
+    fn theme_hydration_releases_after_the_first_durable_presenter_snapshot() {
+        let runtime = crate::service::workflow::test_runtime_executable()
+            .expect("bundled Electron runtime required for bootstrap test");
+        let script = initial_theme_script(Theme::Light);
+        let probe = format!(
+            r#"const assert = require('node:assert/strict');
+const {{ JSDOM }} = require({jsdom});
+const tick = () => new Promise(resolve => setImmediate(resolve));
+async function run(boot, first, hydrated, concurrentBackground) {{
+  const dom = new JSDOM('<!doctype html><html><body style="background-color: red !important"></body></html>', {{ runScripts: 'outside-only' }});
+  const window = dom.window;
+  let disconnected = 0;
+  const Original = window.MutationObserver;
+  window.MutationObserver = class extends Original {{
+    disconnect() {{ disconnected++; super.disconnect(); }}
+  }};
+  window.document.body.style.setProperty('--dsh-boot-bg', boot === 'dark' ? '#151517' : '#fff');
+  window.eval({script});
+  window.document.documentElement.dataset.dsThemeSource = boot;
+  await tick();
+  function present(source) {{
+    const dark = source === 'dark' || source === 'system' && boot === 'light';
+    window.document.documentElement.dataset.dsThemeSource = source;
+    window.document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    window.document.body.toggleAttribute('data-ds-dark-theme', dark);
+  }}
+  present(first);
+  await tick();
+  if (boot !== 'system') {{
+    assert.equal(window.document.body.hasAttribute('data-ds-dark-theme'), first === 'system' ? boot === 'dark' : first === 'dark');
+    if (concurrentBackground) window.document.body.style.backgroundColor = concurrentBackground;
+    if (hydrated) {{ present(hydrated); await tick(); }}
+    assert.equal(disconnected, 1);
+    assert.equal(window.document.body.style.backgroundColor, concurrentBackground ?? 'red');
+    if (!concurrentBackground) assert.equal(window.document.body.style.getPropertyPriority('background-color'), 'important');
+    present('system');
+    await tick();
+    assert.equal(window.document.body.hasAttribute('data-ds-dark-theme'), boot === 'light');
+  }} else assert.equal(disconnected, 1);
+  window.close();
+}}
+(async () => {{
+  await run('light', 'system', 'light');
+  await run('dark', 'system', 'dark');
+  await run('light', 'light');
+  await run('dark', 'dark');
+  await run('light', 'system', 'dark');
+  await run('system', 'system');
+  await run('light', 'system', 'light', 'blue');
+}})().catch(error => {{ console.error(error); process.exitCode = 1; }});"#,
+            jsdom = serde_json::json!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../node_modules/jsdom")),
+            script = serde_json::json!(script),
+        );
+        let output = std::process::Command::new(runtime)
+            .args(["-e", &probe])
+            .env("ELECTRON_RUN_AS_NODE", "1")
+            .env_remove("NODE_OPTIONS")
+            .env_remove("NODE_PATH")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
     fn initial_theme_waits_for_document_root_when_injected_at_document_start() {
         let runtime = crate::service::workflow::test_runtime_executable()
             .expect("bundled Electron runtime required for bootstrap test");
@@ -95,7 +195,7 @@ for (const hasRoot of [false, true]) {{
       ready = callback;
     }}
   }};
-  vm.runInNewContext({script}, {{ document }});
+  vm.runInNewContext({script}, {{ document, MutationObserver: class {{ observe() {{}} disconnect() {{}} }} }});
   if (!hasRoot) {{
     assert.equal(root.dataset.theme, undefined);
     assert.equal(typeof ready, 'function');
