@@ -11,6 +11,7 @@
     "icons": "tauri icon public/deepseek-harness-desktop-tauri.svg --output src-tauri/icons && tauri icon public/deepseek-harness-desktop-tauri-nightly.svg --output src-tauri/icons/nightly --ios-color \"#000000\" && tsx scripts/rebuild-macos-icon.ts",
     "build:shell": "vite build --config vite.shell.config.ts",
     "dev:desktop": "tauri dev",
+    "dev:shell:desktop": "node -e \"require('node:fs').rmSync('dist.shell',{recursive:true,force:true})\" && tauri dev",
     "build:desktop": "tauri build"
   },
   "dependencies": {
@@ -48,6 +49,7 @@
     "@vitejs/plugin-react": "catalog:build",
     "tsx": "catalog:build",
     "typescript": "catalog:cli",
-    "vite": "catalog:build"
+    "vite": "catalog:build",
+    "vite-plugin-tailwind-shadowdom": "catalog:build"
   }
 }

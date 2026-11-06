@@ -168,7 +168,7 @@ pub(super) fn forget_harness_documents(app: &AppHandle, owner: &str) {
 
 /// 主窗口「文档即 DSH」：把承载壳层的 DSH 页面导航进当前 webview。
 ///
-/// 壳层由建窗时的初始化脚本注入（见 [`crate::desktop::shell_injection`]），这里的
+/// 壳层由建窗时的初始化脚本注入（见 [`crate::desktop::shell`]），这里的
 /// 导航随后发生，页面首帧即带壳层。远程 Harness 需要目标机令牌，该入口只服务本机。
 #[tauri::command]
 pub async fn host_harness_document(

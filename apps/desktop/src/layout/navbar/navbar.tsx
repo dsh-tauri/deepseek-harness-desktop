@@ -464,13 +464,6 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
         onPointerDown={onDragRegionPointerDown}
       />
 
-      {/* 纯装饰：把 dsh 页面遮罩（`_mask_`）的底色/毛玻璃镜像到导航栏下沿，让两段观感连续。
-          dsh 弹模态（如首次进入的 apiKey 对话框）时遮罩铺满，这一层就该盖住导航栏——
-          壳层在 dsh 有模态期间不应可点，不要给它加 `pointer-events-none`。
-          0.1.7-rc.2 起官方遮罩的底色落在 `::after` 并带入场淡入，镜像层随样式一起带上
-          同参数的 `background` / `backdrop-filter` 过渡（见 `getOverlayMarkedStyle`）。 */}
-      <div className="absolute" style={dshStyle.marked || {}} />
-
       {/* 右侧控件：入站分享（远程）排在本地/远端切换器之前；切换器在 SSH 未启用时自身不渲染。 */}
       <If cond={onToggleSidebar != null}>
         <RemoteShare onManage={onOpenRemoteAccess} />

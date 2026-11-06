@@ -18,7 +18,7 @@ import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { store } from '@/store'
 import { ConfigDialog } from '@/ui/dialog/config'
 import { Recovery } from '@/ui/plugin/recovery'
-import { isFullSidebarWindow, isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
+import { isFullSidebarWindow, isHarnessDocumentRendered, isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
 import { HarnessContent } from './harness/content'
 import { FullSidebarNavbar } from './navbar/full-sidebar-navbar'
 import { Navbar } from './navbar/navbar'
@@ -195,9 +195,12 @@ export function Shell() {
   // 铺到壳层根元素上会糊住背后的文档，表现为整窗一片纯色。
   const frameStyle = isHostedServiceDocument() ? undefined : (dshStyle.frame || {})
 
-  // 文档即 DSH 时，内容区必须让点击穿透到背后的 DSH 页面；启动页 / 预装 / 恢复页要
-  // 自己接收点击，因此只在已就绪的 hosted 形态下穿透。
-  const passThrough = isHostedServiceDocument()
+  // 只有「DSH 主框架真的渲染进来了」才让内容区穿透：那时壳层只是浮在 DSH 上的一层
+  // UI，必须放行点击给背后的页面。启动页 / 预装 / 恢复页要自己接收点击，绝不能穿透——
+  // 它们由同一个本机服务提供，`location.origin` 与 DSH 页面一致，单看 origin 会误判，
+  // 一旦穿透，这些页面的容器又没有声明 `pointer-events: auto`，整页会变成不可点
+  // （Playwright 里表现为 `<div id="root">` 拦截点击）。
+  const passThrough = isHarnessDocumentRendered()
 
   return (
     <main

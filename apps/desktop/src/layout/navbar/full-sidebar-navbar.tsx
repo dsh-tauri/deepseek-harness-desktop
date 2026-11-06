@@ -47,9 +47,6 @@ export function FullSidebarNavbar() {
         onPointerDown={onDragRegionPointerDown}
       />
 
-      {/* 纯装饰：镜像 dsh 遮罩底色，让导航栏与页面两段观感连续（同常规导航栏）。 */}
-      <div className="absolute" style={dshStyle.marked || {}} />
-
       <If cond={!IS_MACOS}>
         <WindowControls />
       </If>

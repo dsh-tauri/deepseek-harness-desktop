@@ -3,12 +3,6 @@
   "identifier": "default",
   "description": "Capability for the main shell, pet window, and local auxiliary windows.",
   "local": true,
-  "remote": {
-    "urls": [
-      "http://127.0.0.1:*/*",
-      "http://localhost:*/*"
-    ]
-  },
   "windows": [
     "main",
     "pet",

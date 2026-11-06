@@ -17,7 +17,7 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@overlastic/react', () => ({ useOverlay: () => vi.fn() }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('i18next', () => ({ default: { t: (key: string) => key } }))
-vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [{ sidebar: { background: 'rgb(10, 20, 30)' }, marked: { inset: '0px', background: 'rgba(0, 0, 0, 0.5)' } }] }))
+vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [{ sidebar: { background: 'rgb(10, 20, 30)' } }] }))
 vi.mock('@/ui/dialog/about', () => ({ DesktopAboutDialog: () => null }))
 vi.mock('@/ui/dialog/config', () => ({ ConfigDialog: () => null }))
 vi.mock('@/ui/dialog/task-manager', () => ({ TaskManagerDialog: () => null }))
@@ -54,10 +54,6 @@ describe('fullSidebarNavbar', () => {
 
     const navbar = screen.getByTestId('dsh-full-sidebar-navbar-root')
     expect(navbar.style.background).toBe('rgb(10, 20, 30)')
-    const marked = navbar.querySelector<HTMLDivElement>('.absolute')!
-    expect(marked.style.inset).toBe('0px')
-    expect(marked.style.background).toBe('rgba(0, 0, 0, 0.5)')
-    expect(marked.classList.contains('pointer-events-none')).toBe(false)
     expect(screen.getByTestId('dsh-full-sidebar-navbar-mark').getAttribute('aria-hidden')).toBe('true')
     expect(screen.queryByTestId('dsh-navbar-sidebar-toggle')).toBeNull()
     expect(screen.queryByTestId('dsh-navbar-menu-file')).toBeNull()

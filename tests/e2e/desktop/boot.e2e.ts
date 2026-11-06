@@ -123,7 +123,7 @@ describe('desktop boot and profile lifecycle', () => {
       await main.locator(NAVBAR_MENU_CONFIG).click({ timeout: WINDOW_TIMEOUT_MS })
       await expect.poll(() => main.locator(NAVBAR_MENU_POPOVER).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '必须打开真实的壳层菜单' }).toBe(true)
       // 文档即 DSH：菜单与 DSH 同处一棵 DOM 树，打开弹层不隐藏、不截图、不冻结页面。
-      expect(main.url(), '打开壳层菜单不得把主窗口导航走').toStartWith(origin)
+      expect(main.url().startsWith(origin), '打开壳层菜单不得把主窗口导航走').toBe(true)
     }
     finally {
       await main.keyboard.press('Escape')

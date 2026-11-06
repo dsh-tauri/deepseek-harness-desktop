@@ -172,7 +172,7 @@ it.each(['ready', 'timeout'])('mirrors frame and sidebar reports until the full-
   expect(cover.style.background).toBe('rgb(40, 50, 60)')
   expect(view.getByTestId('full-sidebar-navbar')).toBeTruthy()
   expect(view.container.querySelector('main')?.style.background).toBe('rgb(10, 20, 30)')
-  const payload = { frame: null, sidebar: { background: 'red' }, marked: { inset: '0' }, colorScheme: 'light' }
+  const payload = { frame: null, sidebar: { background: 'red' }, colorScheme: 'light' }
   act(() => mocks.listeners.get('dsh://style')!({ payload }))
   expect(mocks.setDshStyle).toHaveBeenCalledExactlyOnceWith(payload)
   act(() => {

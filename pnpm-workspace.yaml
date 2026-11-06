@@ -172,6 +172,7 @@ catalogs:
     tailwindcss: 4.1.11
     tsx: ^4.23.12
     vite: ^7.0.4
+    vite-plugin-tailwind-shadowdom: ^1.1.1
   cli:
     publint: ^0.3.16
     tsdown: ^0.17.3

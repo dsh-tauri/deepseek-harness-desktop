@@ -34,6 +34,20 @@ export function isHostedServiceDocument(): boolean {
 }
 
 /**
+ * DSH 页面是否已经真正渲染进来。
+ *
+ * 主窗口先加载壳层页（启动 / 预装 / 恢复），就绪后再导航到 DSH。壳层页与 DSH 页面
+ * 由同一个本机服务提供，`location.origin` 完全一致，单看 origin 无法区分两者。
+ * DSH 的主框架 `div[class$="_frame"]` 只在 DSH 页面里出现，壳层页没有，用它判断
+ * 当前文档是否已经是 DSH 页面，可靠且与插件侧的 `FRAME_SELECTOR` 同一约定。
+ */
+export function isHarnessDocumentRendered(): boolean {
+  if (typeof document === 'undefined')
+    return false
+  return document.querySelector('div[class$="_frame"]') !== null
+}
+
+/**
  * 本窗口是否由「在新窗口全屏打开」建出。
  *
  * 注入脚本对全部 frame 生效：壳层与内嵌 dsh 各读自己 realm 的同一份载荷，

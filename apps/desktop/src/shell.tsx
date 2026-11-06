@@ -15,9 +15,20 @@ import '@/utils/logger'
 import './styles/main.css'
 
 interface ShellEnv {
+  /** 注入脚本提供的样式；缺省时用构建期注入到本模块的 `SHELL_CSS`（dev / 页面内加载）。 */
   __DSH_SHELL_CSS__?: string
   __DSH_SHELL_THEME__?: string
+  __DSH_SHELL_LOADED__?: boolean
 }
+
+/**
+ * 壳层样式，构建期由 `dsh-shell-shadow-css` 插件原地替换成 CSS 文本字面量。
+ *
+ * 这样壳层只有一份 `shell.mjs` 即可自包含：插件在 `generateBundle` 里把产出 CSS 的
+ * `:root` 改写为 `:host` 后，替换掉这里的占位符并删除 css asset，注入脚本不必再传样式。
+ * 未经过插件（如 ts 单测 / dev）时该常量保持原值，由调用方再回退到注入变量。
+ */
+const SHELL_CSS = '__DSH_SHELL_CSS_PLACEHOLDER__'
 
 const HOST_ATTRIBUTE = 'data-dsh-shell-host'
 const NEUTRALIZER_ATTRIBUTE = 'data-dsh-shell-drag-neutralizer'
@@ -103,13 +114,12 @@ function createOverlayInset(): HTMLStyleElement {
   return element
 }
 
-/** 主世界的注入脚本调用：确保 Shadow host 与挂载点已就绪。 */
+/** 确保 Shadow host 与挂载点已就绪；主世界注入脚本与 dev 自举都走这里。 */
 function ensureHostRoot(): void {
   if (document.querySelector(`[${HOST_ATTRIBUTE}]`) !== null)
     return
   const env = globalThis as ShellEnv
-  if (env.__DSH_SHELL_CSS__ === undefined)
-    return
+  const css = env.__DSH_SHELL_CSS__ ?? SHELL_CSS
   const root = document.documentElement
   if (root === null)
     return
@@ -122,7 +132,7 @@ function ensureHostRoot(): void {
   host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:999'
   const shadow = host.attachShadow({ mode: 'open' })
   const style = document.createElement('style')
-  style.textContent = env.__DSH_SHELL_CSS__
+  style.textContent = css
   const mount = document.createElement('div')
   mount.id = MOUNT_ID
   // 挂载点同样整体穿透：壳层内容只在导航栏等实际控件处声明 `auto`，其余区域让点击
@@ -144,10 +154,11 @@ function ensureHostRoot(): void {
 }
 
 /**
- * 渲染整棵壳层 UI。
+ * 渲染整棵壳层 UI —— 只负责「文档即 DSH」这一种形态。
  *
- * 生产：主窗口文档即 DSH，注入脚本先备好 Shadow host，这里把壳层渲染进去，与 DSH
- * 双向隔离。页内加载：没有注入样式，渲染进 `#root` 的 light DOM。
+ * 主窗口 webContents 直接加载 DSH 页面，注入脚本先备好 Shadow host，这里把壳层渲染
+ * 进去，与 DSH 双向隔离。dev 下的独立壳层页（没有 DSH 文档）由 `main.tsx` 用 webview
+ * 标签承载 DSH，不在本文件处理，因此这里不再回退到 `#root` 的 light DOM。
  */
 function start(): void {
   if (typeof document === 'undefined')
@@ -157,13 +168,10 @@ function start(): void {
     return
   }
   ensureHostRoot()
-  const shadow = document.querySelector(`[${HOST_ATTRIBUTE}]`)?.shadowRoot
-  // 文档即 DSH 时只渲染进注入的 Shadow host：落到 DSH 自己的 `#root` 会把壳层塞进
-  // DSH 容器并遮住整页。没有注入样式才视为壳层页，用 `#root` 兜底。
-  const hosted = (globalThis as ShellEnv).__DSH_SHELL_CSS__ !== undefined
-  const mount = hosted
-    ? shadow?.getElementById(MOUNT_ID)
-    : document.getElementById('root')
+  const mount = document
+    .querySelector(`[${HOST_ATTRIBUTE}]`)
+    ?.shadowRoot
+    ?.getElementById(MOUNT_ID)
   if (mount === null || mount === undefined)
     return
   // 同一文档可能被求值多次（注入脚本 + 页面内再导航）。再次 createRoot 同一容器会
@@ -173,9 +181,14 @@ function start(): void {
   createRoot(mount).render(createElement(ShellRoot))
 }
 
-document.documentElement.dataset.theme = resolveTheme(
-  undefined,
-  window.matchMedia('(prefers-color-scheme: dark)').matches,
-)
-
-start()
+/**
+ * 壳层自举入口：只在「文档即 DSH」时由 `main.tsx` 调用（注入脚本已备好 Shadow host）。
+ * 独立壳层页（dev）走 `main.tsx` 的另一分支，不经过这里。
+ */
+export function startShell(): void {
+  document.documentElement.dataset.theme = resolveTheme(
+    undefined,
+    window.matchMedia('(prefers-color-scheme: dark)').matches,
+  )
+  start()
+}

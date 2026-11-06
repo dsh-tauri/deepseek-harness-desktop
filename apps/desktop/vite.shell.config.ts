@@ -4,29 +4,45 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 
 /**
- * 壳层独立构建：产出单份 ESM（`shell.mjs`）+ 单份 CSS（`shell.css`）。
+ * 壳层独立构建：产出单份自包含 ESM（`shell.mjs`）。
  *
  * 用 ESM 而非 IIFE：壳层依赖（`tauri-runtime-electron/api`）含顶层 await，IIFE 不支持。
  * 注入侧以 Blob URL 动态 `import()`，因此不需要打包成自执行脚本。
+ *
+ * 样式直接内联进 `shell.mjs`：注入脚本只需要传一份 JS，不必再传 CSS。做法是让 Rollup
+ * 照常产出 css asset，在这里把 `:root` 改写为 `:host`、把 `html[data-theme=x]` 改写为
+ * `:host([data-theme=x])`，再把结果替换进 `shell.tsx` 的 `SHELL_CSS` 占位符并删除该
+ * asset。相比 `?inline`，这条路能精确区分「样式表」与「运行时拼出来的样式字符串」。
  */
 function shadowScopedCss(): Plugin {
   const themes = ['light', 'dark']
+  const placeholder = '__DSH_SHELL_CSS_PLACEHOLDER__'
   return {
     name: 'dsh-shell-shadow-css',
     enforce: 'post',
     generateBundle: {
       order: 'post',
       handler(_options, bundle) {
+        const cssAssets = Object.values(bundle).filter(
+          chunk => chunk.type === 'asset' && chunk.fileName.endsWith('.css'),
+        )
+        let css = ''
+        for (const asset of cssAssets) {
+          css += String(asset.source)
+          delete bundle[asset.fileName]
+        }
+        css = css.replaceAll(':root,:host', ':host')
+        for (const theme of themes) {
+          css = css
+            .replaceAll(`html[data-theme="${theme}"]`, `:host([data-theme="${theme}"])`)
+            .replaceAll(`html[data-theme=${theme}]`, `:host([data-theme=${theme}])`)
+        }
+        css = css.replaceAll(':root', ':host')
         for (const chunk of Object.values(bundle)) {
-          if (chunk.type !== 'asset' || !chunk.fileName.endsWith('.css'))
+          if (chunk.type !== 'chunk' || !chunk.code.includes(placeholder))
             continue
-          let css = String(chunk.source).replaceAll(':root,:host', ':host')
-          for (const theme of themes) {
-            css = css
-              .replaceAll(`html[data-theme="${theme}"]`, `:host([data-theme="${theme}"])`)
-              .replaceAll(`html[data-theme=${theme}]`, `:host([data-theme=${theme}])`)
-          }
-          chunk.source = css.replaceAll(':root', ':host')
+          // 用 JSON 转义成合法 JS 字符串字面量，内含反引号/换行也安全。
+          chunk.code = chunk.code.replaceAll(placeholder, JSON.stringify(css))
         }
       },
     },

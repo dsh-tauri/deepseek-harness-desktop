@@ -10,6 +10,7 @@
     "build": "pnpm --filter dsh-desktop build",
     "preview": "pnpm --filter dsh-desktop preview",
     "dev:desktop": "pnpm dev:plugins & pnpm --filter dsh-desktop tauri dev",
+    "dev:shell:desktop": "pnpm --filter dsh-desktop dev:shell:desktop",
     "build:desktop": "pnpm --filter dsh-desktop tauri build",
     "dev:plugins": "pnpm --filter \"./packages/builtin-plugin-*\" -r --parallel run dev",
     "tauri": "pnpm --filter dsh-desktop tauri",

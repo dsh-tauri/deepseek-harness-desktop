@@ -9,6 +9,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             manifest_dir.join(relative).display()
         );
     }
+    // 壳层产物经 `include_str!` 编译期内嵌；不声明依赖时改完 dist.shell 不会重编，
+    // 运行时仍是旧壳层（表现为改了 UI 却没反应）。
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("../dist.shell/shell.mjs").display()
+    );
     let target = tauri_utils::platform::Target::from_triple(&std::env::var("TARGET")?);
     let (mut config, _) = tauri_utils::config::parse::read_from(target, &std::env::current_dir()?)?;
     if let Ok(extra) = std::env::var("TAURI_CONFIG") {

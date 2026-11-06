@@ -29,7 +29,13 @@ export const MAIN_LABEL = 'main'
 export const APP_TITLE = 'DeepSeek Harness'
 
 export const SHELL_ROOT = '[data-testid="dsh-shell-root"]'
-export const SHELL_WEBVIEW = '[data-testid="dsh-shell-webview"]'
+/**
+ * 「壳层已经承载起内部页面」的判据。
+ *
+ * 生产路径下 DSH 就是主文档本身，没有子视图，就绪标志是 DSH 的主框架
+ * `div[class$="_frame"]` 出现；dev 的独立壳层页用 `<webview>` 标签承载，判据是它出现。
+ */
+export const HARNESS_READY = 'div[class$="_frame"], [data-testid="dsh-harness-webview"]'
 /** 壳层 UI 渲染在注入的 Shadow root 内，选择器必须带穿透段。 */
 export const SHELL_HOST = '[data-dsh-shell-host]'
 export const NAVBAR_MENU_CONFIG = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-config"]`
@@ -342,11 +348,11 @@ async function pageText(page: Page): Promise<string> {
   return await page.evaluate(() => (document.body.textContent ?? '').slice(0, 1500)).catch(() => '')
 }
 
-/** 若出现预装引导则跳过，直到壳层内嵌页面被拉起。 */
+/** 若出现预装引导则跳过，直到壳层承载起内部页面。 */
 export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (await page.locator(SHELL_WEBVIEW).count() > 0)
+    if (await page.locator(HARNESS_READY).count() > 0)
       return
     const skip = page.locator(SETUP_PREINSTALL_SKIP).first()
     if (await skip.count() > 0 && await skip.isVisible()) {

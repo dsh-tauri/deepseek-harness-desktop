@@ -818,8 +818,8 @@ fn with_shell_chrome<'a>(
 fn main_shell_theme(
     app: &crate::AppHandle<ElectronRuntime>,
     system: Option<tauri::Theme>,
-) -> crate::desktop::shell_injection::Theme {
-    use crate::desktop::shell_injection::Theme;
+) -> crate::desktop::shell::Theme {
+    use crate::desktop::shell::Theme;
     match crate::config::get_dsh_theme(app) {
         crate::config::DshTheme::Light => Theme::Light,
         crate::config::DshTheme::Dark => Theme::Dark,
@@ -835,24 +835,25 @@ pub fn build_main_window(
 
     let _geometry_restore = crate::config::GeometryRestoreGuard::begin();
 
-    let webview_builder =
+    let mut webview_builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
-            .title(crate::desktop::product_name(app))
-            .initialization_script(
-                crate::desktop::shell_injection::ShellInjection::new(main_shell_theme(app, None))
-                    .source()
-                    .to_owned(),
+            .title(crate::desktop::product_name(app));
+    // dev 下没有 `dist.shell` 时不注入，页面退回「壳层页 + webview 标签」形态。
+    if let Some(injection) =
+        crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None))
+    {
+        webview_builder = webview_builder.initialization_script(injection.source().to_owned());
+    }
+    let webview_builder = webview_builder.initialization_script_for_all_frames(format!(
+        "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
+        serde_json::to_string(&crate::config::get_dsh_service_url(
+            crate::service::workflow::instances::scope_sync(
+                crate::service::workflow::instances::window_profile(app, MAIN_WINDOW_LABEL),
+                || crate::service::workflow::instances::port(app),
             )
-            .initialization_script_for_all_frames(format!(
-                "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
-                serde_json::to_string(&crate::config::get_dsh_service_url(
-                    crate::service::workflow::instances::scope_sync(
-                        crate::service::workflow::instances::window_profile(app, MAIN_WINDOW_LABEL),
-                        || crate::service::workflow::instances::port(app),
-                    )
-                ))
-                .unwrap_or_default()
-            ));
+        ))
+        .unwrap_or_default()
+    ));
 
     #[cfg(windows)]
     let webview_builder = webview_builder.visible(false);
@@ -914,29 +915,28 @@ pub fn build_shell_window(
     let app_handle = app.clone();
 
     let label_for_profile = label.clone();
-    let webview_builder = with_shell_chrome(
+    let mut webview_builder = with_shell_chrome(
         app,
         WebviewWindowBuilder::new(app, label, WebviewUrl::App(path)).title(title),
     )?;
     // 新窗口同样是「壳层 UI 注入壳层页」的形态，必须跟主窗口一样走 Shadow DOM 注入：
     // 少了这一步，壳层会退回页面内 `#root` 的普通渲染，层级脱离宿主，菜单/弹层被
-    // DSH 页面盖住，右侧控件也随之失效。
-    let webview_builder = webview_builder
-        .initialization_script(
-            crate::desktop::shell_injection::ShellInjection::new(main_shell_theme(app, None))
-                .source()
-                .to_owned(),
-        )
-        .initialization_script_for_all_frames(format!(
-            "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
-            serde_json::to_string(&crate::config::get_dsh_service_url(
-                crate::service::workflow::instances::scope_sync(
-                    crate::service::workflow::instances::window_profile(app, &label_for_profile),
-                    || crate::service::workflow::instances::port(app),
-                )
-            ))
-            .unwrap_or_default()
-        ));
+    // DSH 页面盖住，右侧控件也随之失效。dev 无 `dist.shell` 时跳过，退回 webview 形态。
+    if let Some(injection) =
+        crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None))
+    {
+        webview_builder = webview_builder.initialization_script(injection.source().to_owned());
+    }
+    let webview_builder = webview_builder.initialization_script_for_all_frames(format!(
+        "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
+        serde_json::to_string(&crate::config::get_dsh_service_url(
+            crate::service::workflow::instances::scope_sync(
+                crate::service::workflow::instances::window_profile(app, &label_for_profile),
+                || crate::service::workflow::instances::port(app),
+            )
+        ))
+        .unwrap_or_default()
+    ));
     let webview_builder = match navigation_script {
         Some(script) => webview_builder.initialization_script_for_all_frames(script),
         None => webview_builder,
@@ -1023,7 +1023,7 @@ mod shell_nav_tests {
     #[test]
     fn shell_nav_height_matches_navbar_height_class() {
         let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/layout/components/navbar.tsx");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/layout/navbar/navbar.tsx");
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {} failed: {error}", path.display()));
 
@@ -1141,11 +1141,33 @@ mod security_tests {
         serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap()
     }
 
+    /// 主窗口把 DSH 作为自身文档加载，而 DSH 由本机 HTTP 服务提供（`http://127.0.0.1:PORT`），
+    /// 不属于 Tauri 本地协议，必须由单独的 `hosted-shell` 能力开放——否则 DSH 文档里的壳层
+    /// 调不动任何 IPC（`event.emit_to is not allowed on ...`）。那份能力只允许本机回环；
+    /// 默认能力保持纯本地，不向任何 URL 开放。
     #[test]
-    fn shell_capability_excludes_remote_origins() {
-        let capability = capability();
-        assert!(capability.get("remote").is_none());
-        assert_eq!(capability["local"], true);
+    fn shell_capability_only_trusts_loopback_origins() {
+        let default = capability();
+        assert_eq!(default["local"], true);
+        assert!(
+            default.get("remote").is_none(),
+            "默认能力只服务本地页面，不得开放给任何 URL"
+        );
+
+        let hosted: Value =
+            serde_json::from_str(include_str!("../../capabilities/hosted-shell.json")).unwrap();
+        assert_eq!(hosted["local"], false, "hosted-shell 只对回环页面生效");
+        let urls = hosted["remote"]["urls"]
+            .as_array()
+            .expect("hosted-shell 必须声明 remote.urls");
+        assert!(!urls.is_empty(), "文档即 DSH 时壳层需要在本机 HTTP 源上调 IPC");
+        for url in urls {
+            let pattern = url.as_str().expect("remote.urls 的元素必须是字符串");
+            assert!(
+                pattern.starts_with("http://127.0.0.1:") || pattern.starts_with("http://localhost:"),
+                "remote.urls 只允许本机回环，实际是 {pattern}"
+            );
+        }
     }
 
     #[test]
