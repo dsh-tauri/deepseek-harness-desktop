@@ -90,6 +90,8 @@ describe('desktop boot and profile lifecycle', () => {
     const shell = app.get()
     const health = await waitHealthy(shell.window.page)
     const origin = new URL(health.service_url).origin
+    const processes = await invoke<{ pid: number, kind: string }[]>(shell.window.page, 'get_task_manager_processes')
+    expect(processes.some(process => process.kind === 'desktop'), '托管壳层任务管理器必须可读取本应用进程').toBe(true)
     let harness: Page | undefined
     await expect.poll(() => {
       harness = shell.browser.contexts().flatMap(context => context.pages()).find(page => page.url().startsWith(`${origin}/`))
@@ -186,6 +188,7 @@ describe('desktop boot and profile lifecycle', () => {
     let cloneId: string | undefined
     let second: Awaited<ReturnType<typeof shell.openWindow>> | undefined
     let third: Awaited<ReturnType<typeof shell.openWindow>> | undefined
+    const failures: unknown[] = []
     try {
       const clone = await invoke<{ id: string }>(main, 'clone_profile', {
         sourceId: originalConfig.active_profile,
@@ -220,34 +223,33 @@ describe('desktop boot and profile lifecycle', () => {
       second = undefined
       expect((await waitHealthy(main)).service_url, '关闭克隆档案窗口不得影响原档案核心').toBe(originalRuntime.service_url)
     }
+    catch (error) {
+      failures.push(error)
+    }
     finally {
-      try {
-        if (third)
-          await shell.closeWindow(third.label)
-      }
-      finally {
+      for (const opened of [third, second]) {
+        if (!opened)
+          continue
         try {
-          if (second) {
-            try {
-              await invoke(second.page, 'set_active_profile', { id: originalConfig.active_profile })
-            }
-            finally {
-              await shell.closeWindow(second.label)
-            }
-          }
+          await shell.closeWindow(opened.label)
         }
-        finally {
-          // 窗口销毁与「档案解绑」之间是异步的：`Destroyed` 事件里才 release_window，
-          // 而 CDP 页面已关闭不代表该事件已处理完。这里轮询删除，容忍这段收尾时间，
-          // 而不是把产品侧「使用中的档案不可删除」的守卫当成失败。
-          if (cloneId) {
-            await expect.poll(
-              () => invoke(main, 'remove_profile', { id: cloneId }).then(() => 'removed', error => String(error)),
-              { timeout: WINDOW_TIMEOUT_MS, message: '关闭克隆档案窗口后其档案应可删除' },
-            ).toBe('removed')
-          }
+        catch (error) {
+          failures.push(error)
+        }
+      }
+      if (cloneId) {
+        try {
+          await expect.poll(
+            () => invoke(main, 'remove_profile', { id: cloneId }).then(() => 'removed', error => String(error)),
+            { timeout: WINDOW_TIMEOUT_MS, message: '关闭克隆档案窗口后其档案应可删除' },
+          ).toBe('removed')
+        }
+        catch (error) {
+          failures.push(error)
         }
       }
     }
+    if (failures.length > 0)
+      throw new AggregateError(failures, '档案窗口生命周期失败（首项为原始异常）')
   })
 })
