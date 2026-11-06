@@ -116,17 +116,18 @@ function ensureHostRoot(): void {
   const host = document.createElement('div')
   host.setAttribute(HOST_ATTRIBUTE, '')
   host.setAttribute('data-theme', root.dataset.theme === 'dark' ? 'dark' : 'light')
-  // 宿主、挂载点、弹层容器三者都必须可命中（`pointer-events: auto`）：真实输入走
-  // compositor 的命中测试，祖先链上任何一层是 `none`，其下所有元素都收不到点击。
-  // `elementFromPoint` 能穿透 `none` 看到按钮，所以只靠它排查会误判成「事件到了」。
-  // 穿透交给壳层根容器 `<App>` 内部的空白区域各自声明。
-  host.style.cssText = 'position:fixed;inset:0;pointer-events:auto;z-index:2147483000'
+  // 层级 999：高于 DSH 页面里除弹窗外的所有层（面板 40、遮罩 25、overlay 20 等），
+  // 又低于 DSH 自己的弹窗根（1000），这样参数面板、快捷键等弹窗能正常盖住导航栏，
+  // 不再需要用镜像层去「假装被遮住」。宿主本身铺满视口但整体穿透，交互区域各自声明 auto。
+  host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:999'
   const shadow = host.attachShadow({ mode: 'open' })
   const style = document.createElement('style')
   style.textContent = env.__DSH_SHELL_CSS__
   const mount = document.createElement('div')
   mount.id = MOUNT_ID
-  mount.style.cssText = 'position:fixed;inset:0;pointer-events:auto'
+  // 挂载点同样整体穿透：壳层内容只在导航栏等实际控件处声明 `auto`，其余区域让点击
+  // 直达背后的 DSH 页面。祖先链可穿透不会影响子元素自身的 `auto`。
+  mount.style.cssText = 'position:fixed;inset:0;pointer-events:none'
   // 弹层容器铺满视口且自身不拦截点击：react-aria 的浮层是 `position: fixed`，
   // 锚点按视口算；可交互区域由浮层自己声明。层级必须高于挂载点，否则菜单、对话框会被
   // 导航栏整条盖住（截图里表现为「菜单藏在白底下面」）。

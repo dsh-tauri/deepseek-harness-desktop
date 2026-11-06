@@ -913,10 +913,30 @@ pub fn build_shell_window(
 ) -> tauri::Result<crate::WebviewWindow<ElectronRuntime>> {
     let app_handle = app.clone();
 
+    let label_for_profile = label.clone();
     let webview_builder = with_shell_chrome(
         app,
         WebviewWindowBuilder::new(app, label, WebviewUrl::App(path)).title(title),
     )?;
+    // 新窗口同样是「壳层 UI 注入壳层页」的形态，必须跟主窗口一样走 Shadow DOM 注入：
+    // 少了这一步，壳层会退回页面内 `#root` 的普通渲染，层级脱离宿主，菜单/弹层被
+    // DSH 页面盖住，右侧控件也随之失效。
+    let webview_builder = webview_builder
+        .initialization_script(
+            crate::desktop::shell_injection::ShellInjection::new(main_shell_theme(app, None))
+                .source()
+                .to_owned(),
+        )
+        .initialization_script_for_all_frames(format!(
+            "globalThis.__DSH_HOSTED__ = true; globalThis.__DSH_SERVICE_ORIGIN__ = {};",
+            serde_json::to_string(&crate::config::get_dsh_service_url(
+                crate::service::workflow::instances::scope_sync(
+                    crate::service::workflow::instances::window_profile(app, &label_for_profile),
+                    || crate::service::workflow::instances::port(app),
+                )
+            ))
+            .unwrap_or_default()
+        ));
     let webview_builder = match navigation_script {
         Some(script) => webview_builder.initialization_script_for_all_frames(script),
         None => webview_builder,
