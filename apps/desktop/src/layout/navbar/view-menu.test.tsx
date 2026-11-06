@@ -234,6 +234,15 @@ describe('native View menu state', () => {
     expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()
   })
 
+  it('keeps the shortcut snapshot stable when the native catalog repeats unchanged rows', () => {
+    render(<Shell />)
+    const shortcuts = renderHook(useDshShortcuts)
+    reportShortcuts()
+    const previous = shortcuts.result.current[0]
+    reportShortcuts()
+    expect(shortcuts.result.current[0]).toBe(previous)
+  })
+
   it('closes only the window targeted by a native DSH event', async () => {
     render(<Shell />)
     await waitFor(() => expect([...listeners.values()].find(listener => listener.event === 'dsh://window:close')?.target).toEqual({ kind: 'Window', label: 'main' }))

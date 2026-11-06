@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { expect, it } from 'vitest'
-import { invoke, startShellApp } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, completePreinstall, invoke, startShellApp } from '../setup/shell'
 
 declare global {
   interface Window {
@@ -52,21 +52,18 @@ for (const preference of ['light', 'dark'] as const) {
     })
     const page = app.window.page
     try {
+      await page.getByTestId('dsh-navbar-menu-config').waitFor({ state: 'visible', timeout: 15000 })
       await page.context().addInitScript(recordThemeFrames)
       await page.emulateMedia({ colorScheme: preference === 'light' ? 'dark' : 'light' })
-      await invoke(page, 'launch_harness')
-      await expect.poll(async () => {
-        const health = await invoke<{ status: string }>(page, 'proxy_health_check')
-        return health.status.startsWith('healthy')
-      }, { timeout: 60000, message: '真实 Harness 服务必须完成启动' }).toBe(true)
+      await completePreinstall(page, ASSEMBLY_TIMEOUT_MS)
       const info = await invoke<{ service_url: string, data_dir: string }>(page, 'get_runtime_info')
-      await invoke(page, 'host_harness_document', { url: info.service_url })
+      await expect.poll(() => new URL(page.url()).origin, { message: '产品必须自动导航到真实 Harness 文档' }).toBe(new URL(info.service_url).origin)
       await page.locator('div[class$="_frame"]').waitFor({ state: 'visible', timeout: 60000 })
       const background = preference === 'light' ? 'rgb(255, 255, 255)' : 'rgb(21, 21, 23)'
       const bootFrames = await page.evaluate(() => window.__dshThemeFrames)
       expect(bootFrames.length, '必须采集真实原生文档首帧').toBeGreaterThan(0)
       expect(bootFrames.filter(frame => frame.background !== background), '原生启动至DSH首屏不能出现相反画布帧').toEqual([])
-      await page.getByTestId('dsh-navbar-sidebar-toggle').click()
+      await page.getByTestId('dsh-navbar-sidebar-toggle').click({ timeout: 5000 })
       await page.getByRole('button', { name: /账号菜单|Account menu/, exact: true }).click()
       await page.getByRole('menuitem', { name: /设置|Settings/, exact: true }).click()
       const dialog = page.getByRole('dialog', { name: /设置|Settings/, exact: true })
@@ -84,5 +81,5 @@ for (const preference of ['light', 'dark'] as const) {
     finally {
       await app.stop()
     }
-  }, 180000)
+  }, ASSEMBLY_TIMEOUT_MS)
 }

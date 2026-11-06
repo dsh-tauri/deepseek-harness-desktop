@@ -1,6 +1,6 @@
 import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
 import { useOverlay } from '@overlastic/react'
-import { useMount, useWatch } from '@reause/core'
+import { deepEqual, useMount, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -113,7 +113,8 @@ export function Shell() {
     setSidebarCollapsed(Boolean(payload.collapsed))
   })
   useListen<{ rows?: unknown }>('dsh://shortcuts', ({ payload }) => {
-    setDshShortcuts({ rows: parseShortcutRows(payload.rows) })
+    const rows = parseShortcutRows(payload.rows)
+    setDshShortcuts(previous => deepEqual(previous.rows, rows) ? previous : { rows })
   })
   useListen<void>('dsh://full-sidebar:ready', () => setFullSidebarRevealed(true))
   useListen<void>('dsh://window:close', () => {
