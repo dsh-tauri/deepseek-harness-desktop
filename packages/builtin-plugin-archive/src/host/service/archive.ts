@@ -54,9 +54,9 @@ async function permanentlyDelete(rawIds: readonly string[]): Promise<{ ok: true 
   if (missing.length > 0)
     throw new Error(`会话 '${missing[0]}' 不在归档集合中，拒绝删除`)
 
-  const liveFailures = session.remove(ids)
-  for (const sessionId of liveFailures)
-    host.logger?.warn?.(`[${LOG_PREFIX}] 会话 '${sessionId}' 无法从内存移除，刷新后消失`)
+  const stillLive = await session.dispose(ids)
+  for (const sessionId of stillLive)
+    host.logger?.warn?.(`[${LOG_PREFIX}] 会话 '${sessionId}' 仍在运行，无法停止其活动`)
 
   let removed = 0
   for (const sessionId of ids) {

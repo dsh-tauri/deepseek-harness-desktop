@@ -125,32 +125,6 @@ pub(super) fn remove_internal_plugin_bundles(
     modified
 }
 
-pub(crate) fn skip_unavailable_plugins(
-    profile: &Path,
-    names: &HashSet<&str>,
-) -> Result<(), String> {
-    let names = names
-        .iter()
-        .copied()
-        .filter(|name| !internal_plugin_entry_is_ready(&profile.join("node_modules").join(name)))
-        .collect::<HashSet<_>>();
-    if names.is_empty() {
-        return Ok(());
-    }
-    let path = profile.join("package.json");
-    let raw = match std::fs::read(&path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("INTERNAL_PLUGIN_MANIFEST_READ_FAILED: {error}")),
-    };
-    let mut manifest: serde_json::Value = serde_json::from_slice(&raw)
-        .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_PARSE_FAILED: {error}"))?;
-    if remove_internal_plugin_bundles(&mut manifest, &names) {
-        write_profile_manifest(&path, &manifest)?;
-    }
-    Ok(())
-}
-
 /// 经同目录临时文件原子替换 profile 清单，失败时保留原文件。
 pub(super) fn write_profile_manifest(
     path: &Path,
@@ -185,7 +159,7 @@ fn replace_manifest_file(temp: &Path, path: &Path) -> std::io::Result<()> {
 fn replace_manifest_file(temp: &Path, path: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     };
 
     let temp_wide: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -437,9 +411,11 @@ mod tests {
             std::fs::read_to_string(path.join("sentinel")).unwrap(),
             "original"
         );
-        assert!(!root
-            .join(format!("package.json.internal.{}.tmp", std::process::id()))
-            .exists());
+        assert!(
+            !root
+                .join(format!("package.json.internal.{}.tmp", std::process::id()))
+                .exists()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

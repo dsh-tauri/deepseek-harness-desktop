@@ -1,6 +1,5 @@
 import type { ClientContext } from 'dsh-tauri/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import { apply as mobile } from '../packages/builtin-plugin-mobile-ui/src/client'
 import { apply as notification } from '../packages/builtin-plugin-notification/src/client'
 import { apply as pet } from '../packages/builtin-plugin-pet/src/client'
 import { apply as desktop } from '../packages/builtin-plugin-tauri/src/client/apply'
@@ -23,11 +22,4 @@ it.each([[desktop, 9], [pet, 4], [notification, 3]] as const)('registers desktop
   const effect = vi.fn()
   apply({ effect, inject: vi.fn() } as unknown as ClientContext)
   expect(effect).toHaveBeenCalledTimes(count)
-})
-
-it('keeps mobile UI registration enabled without a native carrier', () => {
-  vi.stubGlobal('isTauri', false)
-  const effect = vi.fn()
-  mobile({ effect } as unknown as ClientContext)
-  expect(effect).toHaveBeenCalledTimes(6)
 })

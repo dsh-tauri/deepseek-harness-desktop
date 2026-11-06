@@ -5,69 +5,6 @@ use std::path::PathBuf;
 
 use tauri::{ Manager, Runtime};
 
-use crate::service::core::active_core_dir;
-
-/// 对某个 dsh 包文件的一次性幂等补丁判定结果。
-#[derive(Debug, PartialEq, Eq)]
-pub enum PatchOutcome {
-    /// 目标已含补丁标记（本补丁已生效，或上游官方已合并），无需再改。
-    AlreadyPatched,
-    /// 锚点缺失（上游布局变更），跳过并向调用方说明降级兜底。
-    AnchorMissing,
-    /// 已生成补丁后的完整内容。
-    Patched(String),
-}
-
-/// 对活动核心安装目录下的某个 dsh 包文件应用一次性幂等补丁。
-///
-/// - `rel_path`：相对活动核心安装目录的包内路径，例如
-///   `node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js`（即 `patch_dsh("packagename/xxx/xxx.js", ..)` 里的包路径）。
-/// - `patch`：纯函数式补丁判定，输入文件原文、返回 [`PatchOutcome`]；只做内容变换，
-///   不触碰文件系统，便于单测。
-///
-/// 统一处理「定位文件 → 读取 → 打补丁 → 写回」与对应的日志。文件缺失、已打过、
-/// 锚点变更均静默跳过并返回 Ok；只有真实读/写失败才返回 Err（不阻断启动的调用方
-/// 据此仅告警）。活动核心的判定与 [`active_core_dir`] 一致。
-pub fn patch_dsh(
-    app_handle: &crate::AppHandle,
-    rel_path: &str,
-    patch: impl FnOnce(&str) -> PatchOutcome,
-) -> Result<(), String> {
-    patch_core_file(&active_core_dir(app_handle), rel_path, patch)
-}
-
-/// [`patch_dsh`] 的目录版本：对显式给定的核心安装目录施加同一个补丁。
-///
-/// 供 E2E 编排复用——那条链路没有运行中的桌面端，拿不到 `AppHandle`，
-/// 但必须让被测核心与本应用装配出的核心保持同一份补丁。
-pub fn patch_core_file(
-    core_dir: &Path,
-    rel_path: &str,
-    patch: impl FnOnce(&str) -> PatchOutcome,
-) -> Result<(), String> {
-    let target = core_dir.join(rel_path);
-    if !target.exists() {
-        log::info!("dsh patch target not found, skip: {}", target.display());
-        return Ok(());
-    }
-    let source = std::fs::read_to_string(&target)
-        .map_err(|e| format!("DSH_PATCH_READ: {} failed: {e}", target.display()))?;
-    match patch(&source) {
-        PatchOutcome::AlreadyPatched => {
-            log::info!("dsh patch already applied: {}", target.display());
-        }
-        PatchOutcome::AnchorMissing => {
-            log::warn!("dsh patch anchor missing, skip: {}", target.display());
-        }
-        PatchOutcome::Patched(patched) => {
-            std::fs::write(&target, patched)
-                .map_err(|e| format!("DSH_PATCH_WRITE: {} failed: {e}", target.display()))?;
-            log::info!("dsh patch applied: {}", target.display());
-        }
-    }
-    Ok(())
-}
-
 pub fn show_window<R: Runtime>(window: &Window<R>) {
     let _ = window.unminimize();
     let _ = window.show();

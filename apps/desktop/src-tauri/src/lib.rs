@@ -14,15 +14,6 @@ fn application_context() -> tauri::Context<tauri_runtime_electron::ElectronRunti
     tauri::generate_context!()
 }
 
-/// 对显式给定的核心安装目录施加全套 dsh 补丁（`--patch-core <dir>` 的入口）。
-///
-/// E2E 的插件 L2 直接起 `dsh web`，不经过桌面端启动路径；没有这一步，被测核心就缺少
-/// 桌面端运行时会打上的补丁（鉴权、渲染器、会话、工作区等），断言的前提不成立。
-/// 因此把补丁集暴露成一个不带 GUI 的入口，让编排复用同一份 Rust 实现，而不是另抄一份。
-pub fn patch_core_dir(core_dir: &std::path::Path) -> Result<(), String> {
-    service::patch::apply_all_at(core_dir)
-}
-
 /// 声明 Windows 任务栏身份，让固定项重启本应用而不是内嵌的 Electron 运行时。
 ///
 /// 图钉由 Windows 按窗口所属进程创建：壳窗口的属主是内嵌运行时进程，缺 relaunch

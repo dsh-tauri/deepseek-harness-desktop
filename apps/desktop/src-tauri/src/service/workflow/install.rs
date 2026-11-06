@@ -188,7 +188,7 @@ pub async fn install(
             download::InstallKind::Git => {
                 return Err(
                     "INSTALL_TASK_INVALID: Git task not supported on this platform".to_string(),
-                )
+                );
             }
         };
         download::verify_sha256(&buffer, &expected_digest)?;
@@ -202,7 +202,10 @@ pub async fn install(
         );
         let dest = task.get_install_path(app_handle);
         log::debug!("Installation path: {:?}", dest);
-        download::ensure_extract(&tracker, name, buffer, dest).await?;
+        download::ensure_extract(&tracker, name, buffer, dest.clone()).await?;
+        if kind == download::InstallKind::Dsh {
+            config::dependencies::record(app_handle, config::dependencies::DEP_DSH, Some(dest));
+        }
         log::info!("Extraction completed");
         // 解压落盘即建立该依赖的路径映射（新用户 / 缺少内核的场景）。
         task.record_mapping(app_handle);

@@ -1,6 +1,6 @@
 import semver from 'semver'
 
-export const MIN_SUPPORTED_CORE_VERSION = '0.2.1-rc.1'
+export const MIN_SUPPORTED_CORE_VERSION = '0.2.2-rc.1'
 
 function normalizeVersion(version: string): string {
   let value = version
@@ -21,5 +21,7 @@ export function compareVersions(a: string, b: string): number {
 }
 
 export function isCoreUnsupported(version: string): boolean {
-  return compareVersions(version, MIN_SUPPORTED_CORE_VERSION) < 0
+  const parsed = semver.parse(normalizeVersion(version))
+  return !parsed || parsed.major !== 0 || parsed.minor !== 2 || parsed.patch !== 2
+    || semver.lt(parsed, MIN_SUPPORTED_CORE_VERSION)
 }

@@ -3,16 +3,11 @@ import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
-// 离线安装包（offline bundle）构建元数据。版本号、资产名与下载前缀全部取自
-// `src-tauri/src/config/constants.rs` 与 `src-tauri/resources/manifest.jsonc`，
-// 不在 workflow 或本脚本里另抄一份常量。
-
 const DSH_PKG_REPO = 'dsh-tauri-desk/deepseek-harness-pkg'
 const DSH_LATEST_DOWNLOAD_SEGMENT = 'releases/latest/download/'
 const RESOURCES_TOKEN = '$Resources'
 
-/** 随包资源目录名（= `src-tauri/resources/<dir>`，也是清单 `$Resources/<dir>` 的落点）。 */
-const BUNDLED_DIRS = { node: 'node', pnpm: 'pnpm', dsh: 'dsh', git: 'git' }
+const BUNDLED_DIRS = { pnpm: 'pnpm', dsh: 'dsh', git: 'git' }
 
 function bundleError(message, cause) {
   const error = new Error(`BUNDLE_METADATA: ${message}`)
@@ -27,7 +22,6 @@ function requireString(value, label) {
   return value
 }
 
-/** 解析 `constants.rs` 里的字符串常量（`pub const NAME: &str = "value";`）。 */
 function readRustStringConst(source, name) {
   const pattern = new RegExp(`pub const ${name}:\\s*&str\\s*=\\s*"([^"]*)"`)
   const match = pattern.exec(source)
@@ -36,11 +30,6 @@ function readRustStringConst(source, name) {
   return match[1]
 }
 
-/**
- * 去 JSONC 注释与尾逗号（与 `config::manifest::strip_jsonc` 等价）。
- *
- * 引号内的 `//`、`/*` 原样保留，转义字符不参与判定。
- */
 export function stripJsonc(raw) {
   let out = ''
   let inString = false
@@ -90,7 +79,6 @@ function manifestPath(repo) {
   return path.join(repo, 'apps/desktop/src-tauri', 'resources', 'manifest.jsonc')
 }
 
-/** 读取并解析资源清单（JSONC）。 */
 export function readManifest(repo = process.cwd()) {
   const file = manifestPath(repo)
   let raw
@@ -108,7 +96,6 @@ export function readManifest(repo = process.cwd()) {
   }
 }
 
-/** 从 release tag 解析版本号，与 Rust `download::parse_version_from_tag` 等价。 */
 export function parseVersionFromTag(tag) {
   if (typeof tag !== 'string')
     return null
@@ -133,25 +120,18 @@ export function parseVersionFromTag(tag) {
   return rest.length > 0 ? rest : null
 }
 
-/** Node.js 官方发行包资产名（与 `config::runtime::node_pkg_filename` 一致）。 */
-export function nodeAssetName(platform, arch, version) {
-  const os = platform === 'macos' ? 'darwin' : platform === 'windows' ? 'win' : 'linux'
-  // 与 Rust 一致：Windows 只提供 x64 发行包（arm64 主机走 x64 模拟）。
-  const cpu = platform === 'windows' ? 'x64' : arch
-  const ext = platform === 'windows' ? 'zip' : 'tar.gz'
-  return `node-v${version}-${os}-${cpu}.${ext}`
-}
-
-/** deepseek-harness-pkg 发行资产名（与 `config::runtime::dsh_pkg_asset_filename` 一致）。 */
 export function dshAssetName(platform, arch) {
   if (platform === 'windows')
-    return 'deepseek-harness-pkg-windows.zip'
+    return arch === 'arm64' ? 'deepseek-harness-pkg-windows-arm64.asar.zip' : 'deepseek-harness-pkg-windows.asar.zip'
   if (platform === 'linux')
-    return arch === 'arm64' ? 'deepseek-harness-pkg-linux-arm64.zip' : 'deepseek-harness-pkg-linux.zip'
-  return arch === 'arm64' ? 'deepseek-harness-pkg-macos-arm64.zip' : 'deepseek-harness-pkg-macos-x64.zip'
+    return arch === 'arm64' ? 'deepseek-harness-pkg-linux-arm64.asar.zip' : 'deepseek-harness-pkg-linux.asar.zip'
+  return arch === 'arm64' ? 'deepseek-harness-pkg-macos-arm64.asar.zip' : 'deepseek-harness-pkg-macos-x64.asar.zip'
 }
 
-/** MinGit 免安装发行包资产名（与 `config::runtime::mingit_pkg_filename` 一致）。 */
+export function dshArchiveName(platform, arch) {
+  return dshAssetName(platform, arch).replace(/\.zip$/, '')
+}
+
 export function mingitAssetName(arch, version) {
   if (arch === 'arm64')
     return `MinGit-${version}-arm64.zip`
@@ -160,7 +140,6 @@ export function mingitAssetName(arch, version) {
   throw bundleError(`MinGit is not available for windows ${arch}`)
 }
 
-/** 收集仓库内的构建常量（Node / pnpm / MinGit 与各自的下载前缀）。 */
 export function readBuildConstants(repo = process.cwd()) {
   const constantsPath = path.join(repo, 'apps/desktop/src-tauri', 'src', 'config', 'constants.rs')
   let source
@@ -171,8 +150,6 @@ export function readBuildConstants(repo = process.cwd()) {
     throw bundleError(`cannot read ${constantsPath}`, error)
   }
   return {
-    nodeVersion: readRustStringConst(source, 'NODE_VERSION').replace(/^v/, ''),
-    nodeBaseUrl: readRustStringConst(source, 'NODE_BASE_URL'),
     pnpmVersion: readRustStringConst(source, 'PNPM_VERSION'),
     pnpmBaseUrl: readRustStringConst(source, 'PNPM_BASE_URL'),
     pnpmSha256: readRustStringConst(source, 'PNPM_SHA256'),
@@ -184,48 +161,27 @@ export function readBuildConstants(repo = process.cwd()) {
   }
 }
 
-/**
- * 随包依赖键。
- *
- * 默认只随包 Node / pnpm / 内核三项：MinGit 约 35 MiB，而绝大多数 Windows 机器已有
- * 可用的系统 Git，内网补装又必然失败（应用侧据「随包资源」构建放宽 Git 就绪判定，
- * 见 `config::dependencies::is_bundled_install`）。确有需要时用 `--with-git` 显式开启。
- */
 export function bundleTargets(platform, { withGit = false } = {}) {
-  const keys = ['node', 'pnpm', 'dsh']
+  const keys = ['pnpm', 'dsh']
   if (platform === 'windows' && withGit)
     keys.push('git')
   return keys
 }
 
-/**
- * 按平台/架构列出离线包需要下载的全部资产。
- *
- * `sha256` 为构建期已知的固定摘要（pnpm / MinGit，取自 constants.rs），`sha256Url`
- * 为需要单独下载的摘要来源（Node 官方 SHASUMS256.txt）；dsh 的摘要在下载后经
- * GitHub Release API 读取（见 workflow）。
- */
 export function bundleAssets({ platform, arch, constants, dshTag, withGit = false }) {
-  const nodeName = nodeAssetName(platform, arch, constants.nodeVersion)
+  if (!isSupportedDshVersion(parseVersionFromTag(dshTag)))
+    throw bundleError(`unsupported core tag ${dshTag}; expected 0.2.2 from rc.1`)
   const dshName = dshAssetName(platform, arch)
   const assets = {
-    node: {
-      name: nodeName,
-      url: `${constants.nodeBaseUrl}v${constants.nodeVersion}/${nodeName}`,
-      sha256: '',
-      sha256Url: `${constants.nodeBaseUrl}v${constants.nodeVersion}/SHASUMS256.txt`,
-    },
     pnpm: {
       name: `pnpm-${constants.pnpmVersion}.tgz`,
       url: `${constants.pnpmBaseUrl}pnpm-${constants.pnpmVersion}.tgz`,
       sha256: constants.pnpmSha256,
-      sha256Url: '',
     },
     dsh: {
       name: dshName,
       url: `${constants.dshCoreUrl.replace(DSH_LATEST_DOWNLOAD_SEGMENT, `releases/download/${dshTag}/`)}${dshName}`,
       sha256: '',
-      sha256Url: '',
     },
   }
   if (platform === 'windows' && withGit) {
@@ -234,40 +190,17 @@ export function bundleAssets({ platform, arch, constants, dshTag, withGit = fals
       name,
       url: `${constants.mingitBaseUrl}${name}`,
       sha256: arch === 'arm64' ? constants.mingitArm64Sha256 : constants.mingitX64Sha256,
-      sha256Url: '',
     }
   }
   return assets
 }
 
-/**
- * 把资产表渲染成逐行 `|` 分隔的文本供 composite action 解析。
- *
- * 刻意不用 TAB：bash 的 `read` 在 IFS 只含空白字符时会把连续分隔符折叠成一个、
- * 并剥掉首尾分隔符，空字段（如 Node 没有固定 sha256）会串位。`|` 不属于空白
- * 字符，空字段因此能被如实保留。资产名与 URL 都不会包含 `|`。
- */
 export function toAssetTable(assets) {
   return Object.entries(assets)
-    .map(([key, asset]) => [key, asset.name, asset.url, asset.sha256 ?? '', asset.sha256Url ?? ''].join('|'))
+    .map(([key, asset]) => [key, asset.name, asset.url, asset.sha256 ?? ''].join('|'))
     .join('\n')
 }
 
-/**
- * 把清单里的依赖托管根改写成 `$Resources/<dir>`。
- *
- * 离线包把运行时随安装包分发，`managedRoot` 必须指向安装包资源目录。
- *
- * `overridable` 按依赖区分：
- * - Node / pnpm（以及可选的 MinGit）置 false：它们固定随包，本机既有的
- *   `dependencies.json` 记录（旧的非离线安装留下、可能已被删除）不该盖过随包资源；
- * - 内核保持 true：随包内核是核心面板里置顶的「本地」项，用户要能下载并切换到
- *   AppData 里的其它版本，也能切回来——切换正是通过依赖映射表实现的。
- *
- * 改写结果直接写回 `src-tauri/resources/manifest.jsonc`（构建产物，不提交），
- * 因此注释与缩进按 JSON 重新序列化。未随包的依赖（默认的 MinGit）保持清单原值，
- * 不能指向并不存在的 `$Resources/git`。
- */
 export function applyBundleManifest({ repo = process.cwd(), platform, withGit = false } = {}) {
   if (!['windows', 'macos', 'linux'].includes(platform))
     throw bundleError(`platform must be windows|macos|linux, got ${JSON.stringify(platform)}`)
@@ -306,35 +239,28 @@ async function githubJson(url) {
   return response.json()
 }
 
-/** 预览标记：与 Rust `download::is_preview_tag` 一致（rc 不算预览版）。 */
-const PREVIEW_MARKERS = ['preview', 'beta', 'alpha', 'canary', 'next']
-
-function isPreviewVersion(version) {
-  const pre = version.split('+')[0].split('-').slice(1).join('-')
-  return pre.split('.').some(id => PREVIEW_MARKERS.some(marker => id.startsWith(marker)))
+function isSupportedDshVersion(version) {
+  return typeof version === 'string' && /^0\.2\.2(?:-rc\.[1-9]\d*)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
 }
 
-/**
- * pkg 仓库里最新的**稳定版** release tag（不含预览版、不含 draft）。
- *
- * 随包内核与更新提示使用同一个来源：不再有人工维护的「推荐版本」，离线包随包的内核
- * 就是此刻最新的稳定发行版。返回完整 tag（含 build-id），下载地址与摘要都以它为准。
- */
 export async function resolveLatestStableDshTag(fetchJson = githubJson) {
   const releases = await fetchJson(
     `https://api.github.com/repos/${DSH_PKG_REPO}/releases?per_page=100`,
   )
   if (!Array.isArray(releases))
     throw bundleError('GitHub releases response is not an array')
-  // 列表按创建时间倒序，取第一条非 draft、非 Prerelease label、tag 命名也非预览的 release。
+  const requiredAssets = ['windows', 'macos', 'linux']
+    .flatMap(platform => ['x64', 'arm64'].map(arch => dshAssetName(platform, arch)))
   const release = releases.find((item) => {
     if (item?.draft === true || item?.prerelease === true)
       return false
     const version = parseVersionFromTag(item?.tag_name)
-    return version !== null && !isPreviewVersion(version)
+    return isSupportedDshVersion(version)
+      && requiredAssets.every(name => item.assets?.some(asset => asset.name === name
+        && asset.state === 'uploaded' && /^sha256:[a-f0-9]{64}$/i.test(asset.digest)))
   })
   if (!release)
-    throw bundleError(`no stable ${DSH_PKG_REPO} release found`)
+    throw bundleError(`no stable 0.2.2 ${DSH_PKG_REPO} release with verified asar assets found`)
   return requireString(release.tag_name, 'release tag_name')
 }
 
@@ -348,11 +274,13 @@ function appendOutputs(outputPath, values) {
 }
 
 function parseArgs(argv) {
-  const args = { assets: false, manifest: false, platform: '', arch: '', withGit: false }
+  const args = { assets: false, archive: false, manifest: false, platform: '', arch: '', withGit: false }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (arg === '--assets')
       args.assets = true
+    else if (arg === '--archive-name')
+      args.archive = true
     else if (arg === '--manifest')
       args.manifest = true
     else if (arg === '--with-git')
@@ -386,6 +314,12 @@ async function main() {
     return
   }
 
+  if (args.archive) {
+    requirePlatformArch(args)
+    process.stdout.write(`${dshArchiveName(args.platform, args.arch)}\n`)
+    return
+  }
+
   if (args.manifest) {
     requirePlatformArch(args)
     const { file, applied } = applyBundleManifest({ repo, platform: args.platform, withGit: args.withGit })
@@ -395,7 +329,6 @@ async function main() {
 
   const dshTag = await resolveLatestStableDshTag()
   appendOutputs(process.env.GITHUB_OUTPUT, {
-    node_version: constants.nodeVersion,
     pnpm_version: constants.pnpmVersion,
     mingit_version: constants.mingitVersion,
     dsh_tag: dshTag,

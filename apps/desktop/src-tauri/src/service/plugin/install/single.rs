@@ -2,9 +2,9 @@
 //! 与安装共用环境准备（shim、pnpm 选版、停止服务）与 allowBuilds 重试；
 //! 卸载后核验 profile 清单，插件仍被引用时走离线卸载兜底（受保护包除外）。
 
+use crate::{AppHandle, config};
 use std::ffi::OsString;
 use std::path::Path;
-use crate::AppHandle;
 
 use crate::service::cli;
 use crate::service::core;
@@ -14,9 +14,9 @@ use crate::service::workflow;
 use super::artifact::{ensure_plugin_entry_built, installed_package_name};
 use super::build_plugin_envs;
 use super::diagnose::{
-    git_transport_hint, incompatible_versions, network_error_hint, pick_error_message,
-    policy_blocked_versions, policy_verification_network_failure, store_mismatch_hint,
-    IncompatibleVersion, PolicyBlockedVersion,
+    IncompatibleVersion, PolicyBlockedVersion, git_transport_hint, incompatible_versions,
+    network_error_hint, pick_error_message, policy_blocked_versions,
+    policy_verification_network_failure, store_mismatch_hint,
 };
 use super::errors;
 use super::harness_prefer_bundled_pnpm;
@@ -592,7 +592,7 @@ async fn run_plugin_command(
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
-    if !dsh_bin.exists() {
+    if !config::core_entry_exists(&dsh_bin) {
         return Err("HARNESS_NOT_FOUND: dsh CLI missing".to_string());
     }
 
@@ -617,7 +617,15 @@ async fn run_plugin_command(
 
     let profile = active_profile(app_handle);
     let profile_path = crate::service::profile::profile_dir_of(app_handle, &profile);
-    let mut args = vec![dsh_bin.as_os_str().to_os_string()];
+    let mut args = Vec::new();
+    if config::asar_ancestor(&dsh_bin).is_some() {
+        args.extend([
+            OsString::from("--require"),
+            core::prepare_native_bridge(&cli::get_bin_dir(app_handle))?.into_os_string(),
+        ]);
+        args.extend(crate::service::profile::carrier_node_args(false));
+    }
+    args.push(dsh_bin.as_os_str().to_os_string());
     args.extend(single_plugin_args(&profile, action, sub_args));
 
     let cwd = crate::service::core::active_core_dir(app_handle);
@@ -1231,7 +1239,9 @@ mod tests {
         // git 依赖：插件不 bump version，只有 lock 里的 codeload 提交变化。
         // 指纹必须仍能识别（否则 git 插件的正常升级会被误报为假成功）。
         let lock = |sha: &str| {
-            format!("lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dsh-probe:\n        specifier: 'catalog:'\n        version: https://codeload.github.com/o/r/tar.gz/{sha}\n")
+            format!(
+                "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dsh-probe:\n        specifier: 'catalog:'\n        version: https://codeload.github.com/o/r/tar.gz/{sha}\n"
+            )
         };
         let before = probe_profile("git-before", &lock("aaaaaaaaaaaaaaaa"), Some("0.2.21"));
         let after = probe_profile("git-after", &lock("bbbbbbbbbbbbbbbb"), Some("0.2.21"));

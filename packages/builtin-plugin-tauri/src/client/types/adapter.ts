@@ -89,7 +89,6 @@ export type AdapterCapability
     | 'navigation.startSession'
     | 'navigation.openSession'
     | 'navigation.addWorkspace'
-    | 'composer.workspace-less'
     | 'dom.newSession'
     | 'dom.addWorkspace'
 

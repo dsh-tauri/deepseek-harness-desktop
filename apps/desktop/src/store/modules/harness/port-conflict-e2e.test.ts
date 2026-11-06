@@ -52,7 +52,6 @@ const REAL_CRASH_LOG = [
   'dsh-tauri-scheduler     webServer',
   'ssh-remote              webServer',
   'dsh-tauri-ui            webServer',
-  'dsh-tauri-worktree      webServer',
   'bridge-browser          webServer',
   'Full diagnostics: D:\\DSHHome\\logs\\startup-2026-10-09T23-55-29.658Z-4efe91d3-b128-4ce5-8738-1e5a1d34a6a8.log',
 ]
