@@ -169,7 +169,7 @@ export async function diagnose(app: ShellApp): Promise<string> {
     '--- 进程',
     ps,
     '--- 主进程输出',
-    app.output().slice(-20000),
+    app.output(),
   ].join('\n')
 }
 
@@ -241,7 +241,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     })
 
     const collect = (chunk: string | Uint8Array): void => {
-      output = (output + chunk.toString()).slice(-60000)
+      output += chunk.toString()
     }
     child.stdout?.on('data', collect)
     child.stderr?.on('data', collect)
