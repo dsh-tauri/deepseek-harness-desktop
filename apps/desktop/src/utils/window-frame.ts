@@ -40,14 +40,21 @@ export function applyFrameMode(maximized: boolean, fullscreen = false): void {
  * DSH 用 `data-windows-titlebar` 声明「顶部有一条自绘标题条」，并按其高度给主框架加
  * padding-top。文档即 DSH 时顶部那条就是壳层导航栏，因此复用同一套让位逻辑。全屏时导航栏
  * 自身隐藏，标记一并撤掉。
+ *
+ * 同时必须把 `--dsh-frame-chrome-top` 压到 0：该变量原本表示「原生标题栏占用的区域，
+ * 模态遮罩不要绘制」，DSH 的遮罩用 `inset: var(--dsh-frame-chrome-top)` 让出顶部。但在
+ * 这里那 44px 是应用自己的导航栏、属于内容区，遮罩应当盖住它，否则弹窗打开时导航栏
+ * 还露在外面且仍可点击。
  */
 export function applyHostedTitlebar(hosted: boolean, hidden: boolean): void {
   const root = document.documentElement
   if (!hosted || hidden) {
     delete root.dataset.windowsTitlebar
     root.style.removeProperty('--dsh-windows-titlebar-height')
+    root.style.removeProperty('--dsh-frame-chrome-top')
     return
   }
   root.dataset.windowsTitlebar = ''
   root.style.setProperty('--dsh-windows-titlebar-height', `${SHELL_NAVBAR_HEIGHT}px`)
+  root.style.setProperty('--dsh-frame-chrome-top', '0px')
 }
