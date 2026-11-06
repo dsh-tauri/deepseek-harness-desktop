@@ -10,6 +10,10 @@ export { emitTo } from '@tauri-apps/api/event'
 export type { EventCallback, EventName, EventTarget, Options, Event as TauriEvent, UnlistenFn } from '@tauri-apps/api/event'
 export { getCurrentWindow } from '@tauri-apps/api/window'
 
+export function isNativeNotificationAvailable(): boolean {
+  return (globalThis as { __DSH_NOTIFICATIONS_AVAILABLE__?: boolean }).__DSH_NOTIFICATIONS_AVAILABLE__ === true
+}
+
 function eventOptions(event: EventName, options?: Options): Options | undefined {
   return event.startsWith('dsh://') && options?.target === undefined
     ? { ...options, target: { kind: 'Window', label: getCurrentWindow().label } }

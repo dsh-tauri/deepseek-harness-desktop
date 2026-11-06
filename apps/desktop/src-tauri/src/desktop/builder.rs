@@ -751,6 +751,15 @@ fn shell_frame_for(transparent: bool) -> bool {
     transparent && (cfg!(target_os = "linux") || cfg!(windows))
 }
 
+struct NativeNotificationsAvailable(bool);
+
+pub(super) fn native_notifications_script(app: &crate::AppHandle<ElectronRuntime>) -> String {
+    format!(
+        "window.__DSH_NOTIFICATIONS_AVAILABLE__ = {};",
+        app.state::<NativeNotificationsAvailable>().inner().0
+    )
+}
+
 fn with_shell_chrome<'a>(
     app: &'a crate::AppHandle<ElectronRuntime>,
     builder: WebviewWindowBuilder<'a, ElectronRuntime, crate::AppHandle<ElectronRuntime>>,
@@ -763,6 +772,7 @@ fn with_shell_chrome<'a>(
     let live_transparency = cfg!(target_os = "linux");
     let builder = builder
         .transparent(transparent)
+        .initialization_script(native_notifications_script(app))
         .initialization_script(format!(
             "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_FRAME__ = {frame}; \
              window.__DSH_LIVE_TRANSPARENCY__ = {live_transparency}; window.__DSH_STORE_FILE__ = {};",
@@ -1732,10 +1742,11 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
         .unwrap_or(false);
     #[cfg(not(target_os = "macos"))]
     let in_app_bundle = true;
+    let builder = builder.manage(NativeNotificationsAvailable(in_app_bundle));
     let builder = if in_app_bundle {
         builder.plugin(tauri_plugin_notifications::init())
     } else {
-        log::warn!(
+        log::info!(
             "未运行在 .app 包内，跳过 tauri-plugin-notifications：macOS 的系统通知需要 .app 包，\
              打包后自动生效"
         );
