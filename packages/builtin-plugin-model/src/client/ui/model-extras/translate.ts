@@ -10,6 +10,7 @@ export const MODEL_EXTRAS_KEYS = [
   'fetchModelConfigHint',
   'fetchingConfig',
   'configUnreachable',
+  'configPresetsUnavailable',
   'configNoneApplied',
   'configApplied',
   'configUndisclosed',

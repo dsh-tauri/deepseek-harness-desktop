@@ -1,7 +1,7 @@
 import type { ModelDiscoveryChannel } from '../../service/model-config'
 import type { ModelDraft, ModelProbeTarget } from './model-config-toolbar'
 import type { Translate } from './types'
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { loadModelCapacities } from '../../service/model-config'
 import { mergeModelCards, modelConfigNotice, withDetail } from '../../service/model-config.utils'
 import { loadPresets } from '../../service/presets'
@@ -27,11 +27,12 @@ export function useModelConfigFetch(options: UseModelConfigFetchOptions): UseMod
   const [failure, setFailure] = useState<string>()
   const [notice, setNotice] = useState<string>()
 
-  const run = useCallback((targets?: readonly string[]) => {
+  const run = (targets?: readonly string[]): void => {
     void (async () => {
       setBusy(true)
       setFailure(undefined)
-      const [found] = await Promise.all([
+      setNotice(undefined)
+      const [found, presets] = await Promise.all([
         loadModelCapacities({
           settingsNs: options.probe.settingsNs,
           profilePath: options.probe.profilePath,
@@ -44,25 +45,31 @@ export function useModelConfigFetch(options: UseModelConfigFetchOptions): UseMod
         loadPresets(),
       ])
       setBusy(false)
-      if (!found.ok) {
-        setNotice(undefined)
+      if (!found.ok && !presets.ok) {
         setFailure(withDetail(options.t('configUnreachable'), found.error))
         return
       }
-      const merged = mergeModelCards(options.models, found.models, {
+      const merged = mergeModelCards(options.models, found.ok ? found.models : [], {
         ...targets === undefined ? {} : { targets },
         overwrite: targets === undefined,
-        presets: modelPresets.table,
+        presets: presets.ok ? modelPresets.table : {},
       })
       if (merged.applied > 0)
         options.onApply?.(merged.models, merged.applied, merged.undisclosed)
-      setNotice(modelConfigNotice(merged, {
-        applied: options.t('configApplied'),
-        none: options.t('configNoneApplied'),
-        undisclosed: options.t('configUndisclosed'),
-      }))
+      // issue #1363：能力表读不到时不能谎称「端点与能力表都没有可用配置」
+      if (presets.ok || merged.applied > 0 || merged.undisclosed.length > 0) {
+        setNotice(modelConfigNotice(merged, {
+          applied: options.t('configApplied'),
+          none: options.t('configNoneApplied'),
+          undisclosed: options.t('configUndisclosed'),
+        }))
+      }
+      if (!found.ok)
+        setFailure(withDetail(options.t('configUnreachable'), found.error))
+      else if (!presets.ok)
+        setFailure(withDetail(options.t('configPresetsUnavailable'), presets.error))
     })()
-  }, [options])
+  }
 
   return { busy, failure, notice, run }
 }
