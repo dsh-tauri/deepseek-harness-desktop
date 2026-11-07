@@ -22,8 +22,23 @@ permissions:
 
 jobs:
   build:
-    name: Build (windows)
-    runs-on: windows-latest
+    name: Build (${{ matrix.id }})
+    # 原生 arm64（issue #1402）各用同架构 runner：`pnpm install` 只落宿主平台的原生
+    # 可选依赖，在 x64 上交叉打 arm64 会漏掉 `@tailwindcss/oxide-win32-arm64-msvc`
+    # 一类绑定，产物一启动即 `Cannot find native binding`（与 macOS 的 issue #1326 同类）。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            arch: x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - id: windows-arm64
+            arch: arm64
+            target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - name: Checkout repository
@@ -39,11 +54,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # windows-latest 默认 PowerShell，$STAMP_VERSION 会被当成本地变量读成空串；显式用 bash。
+      # Windows runner 默认 PowerShell，$STAMP_VERSION 会被当成本地变量读成空串；显式用 bash。
       - name: Stamp injected version
         if: inputs.version != ''
         shell: bash
@@ -67,17 +83,34 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --config release-msi-version.tmp.json
+        run: pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --target ${{ matrix.target }} --config release-msi-version.tmp.json
+
+      # 安装包里的 Electron 运行时由 bundler 从这里取；缺了它 arm64 安装包会装上却启动不了。
+      - name: Verify arm64 Electron runtime
+        if: matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          runtime="apps/desktop/src-tauri/target/${{ matrix.target }}/release/runtime/win32-arm64"
+          if [ ! -f "$runtime/electron.exe" ]; then
+            echo "::error::$runtime/electron.exe is missing; the arm64 installer would carry no usable runtime"
+            exit 1
+          fi
+          shopt -s nullglob
+          dlls=("$runtime"/*.dll)
+          if [ "${#dlls[@]}" -eq 0 ]; then
+            echo "::error::$runtime has no Electron DLLs"
+            exit 1
+          fi
 
       - name: Normalize release asset names
-        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/release/bundle/nsis apps/desktop/src-tauri/target/release/bundle/msi
+        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
         with:
-          name: release-windows
+          name: release-windows-${{ matrix.arch }}
           path: |
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
-            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
           if-no-files-found: error
           retention-days: 7

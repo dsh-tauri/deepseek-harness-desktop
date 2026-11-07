@@ -328,7 +328,8 @@ jobs:
             echo '### 📦 Artifacts'
             echo '- **macOS (Apple Silicon)**: 下载 `aarch64.dmg`'
             echo '- **macOS (Intel)**: 下载 `x64.dmg`'
-            echo '- **Windows**: 下载 `.exe`'
+            echo '- **Windows (x64)**: 下载 `_x64-setup.exe`'
+            echo '- **Windows (ARM64)**: 下载 `_arm64-setup.exe`'
             echo '- **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）'
             echo '- **Linux (ARM64)**: 下载 `aarch64.AppImage` 或 `arm64.deb`（基于 Ubuntu 22.04 构建，GLIBC 符号上限 2.35）'
             echo
