@@ -382,9 +382,8 @@ pub async fn prepare_harness_restart(app: AppHandle, webview: Webview, id: Strin
     if url == bootstrap {
         return Ok(true);
     }
-    tauri_runtime_electron::set_webview_trusted_origin(&webview, &harness_bootstrap_origin(&bootstrap)?)
-        .map_err(|error| format!("HARNESS_RESTART_TRUST_FAILED: {error}"))?;
-    webview.navigate(bootstrap).map_err(|error| format!("HARNESS_RESTART_NAVIGATE_FAILED: {error}"))?;
+    tauri_runtime_electron::navigate_webview_with_trusted_origin(&webview, &harness_bootstrap_origin(&bootstrap)?, bootstrap.as_str())
+        .map_err(|error| format!("HARNESS_RESTART_NAVIGATE_FAILED: {error}"))?;
     Ok(true)
 }
 

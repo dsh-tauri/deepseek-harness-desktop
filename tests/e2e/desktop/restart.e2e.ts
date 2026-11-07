@@ -68,6 +68,13 @@ it('restarts through the local shell before stopping DSH and reports success onl
   const observations: RestartObservation[] = []
   const errors: Array<{ url: string, message: string }> = []
   const navigations: string[] = []
+  const failedResponses: Array<{ status: number, resource: string, time: number }> = []
+  page.on('response', (response) => {
+    if (response.status() < 400 || failedResponses.length >= 20)
+      return
+    const resource = new URL(response.url())
+    failedResponses.push({ status: response.status(), resource: resource.origin + resource.pathname, time: Date.now() })
+  })
   page.on('console', (message) => {
     if (message.type() === 'error')
       errors.push({ url: page.url(), message: message.text() })
@@ -85,6 +92,24 @@ it('restarts through the local shell before stopping DSH and reports success onl
     await page.locator('div[class$="_frame"]').waitFor({ state: 'visible', timeout: 60000 })
     await page.evaluate(observeRestart)
     const oldUrl = page.url()
+    expect(await page.evaluate(async () => {
+      const response = await fetch('/', { cache: 'no-store' })
+      await response.arrayBuffer()
+      return response.status
+    }), '重启前旧文档的真实认证请求必须成功').toBe(200)
+    await page.evaluate(() => {
+      const controller = new AbortController()
+      const timer = setInterval(() => {
+        void fetch('/', { cache: 'no-store', signal: controller.signal }).then(response => response.arrayBuffer()).catch((error) => {
+          if (!controller.signal.aborted)
+            console.error(error)
+        })
+      }, 20)
+      window.addEventListener('pagehide', () => {
+        clearInterval(timer)
+        controller.abort()
+      }, { once: true })
+    })
     const first = observations.length
     navigations.length = 0
     if (process.platform === 'darwin') {
@@ -111,6 +136,7 @@ it('restarts through the local shell before stopping DSH and reports success onl
     expect(errors, '重启全程不得出现页面异常或控制台错误').toEqual([])
   }
   catch (error) {
+    console.error('Restart resource failures:', failedResponses)
     console.error(await diagnose(app))
     throw error
   }
