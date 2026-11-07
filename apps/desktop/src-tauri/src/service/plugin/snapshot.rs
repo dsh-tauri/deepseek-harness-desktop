@@ -651,6 +651,7 @@ fn write_back_manifest_refs(app_handle: &AppHandle, id: &str, spec: &str) {
 
 /// 还原单个插件快照（覆盖式，内部停服务 + 三阶段切换 + 回滚）。
 pub async fn restore(app_handle: &AppHandle, id: &str) -> Result<(), String> {
+    let _guard = acquire_operation_lock().await?;
     // 范围限制：仅第三方可行动插件可还原
     if !is_actionable_plugin_ref(id) {
         return Err(format!(
@@ -667,7 +668,6 @@ pub async fn restore(app_handle: &AppHandle, id: &str) -> Result<(), String> {
     verify_archive_integrity(&archive_path, &manifest)?;
 
     // 操作锁 + 停止服务（与安装/卸载一致，还原期间避免资源竞争）
-    let _guard = acquire_operation_lock().await;
     if crate::service::workflow::has_owned_process() {
         if let Err(e) = crate::service::workflow::stop(app_handle.clone()).await {
             log::warn!("failed to stop harness before plugin restore: {e}");

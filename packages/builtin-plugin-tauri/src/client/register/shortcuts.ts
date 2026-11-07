@@ -34,14 +34,26 @@ export const shortcutsFeature = defineRegister((controller, ctx) => {
   if (typeof snapshot !== 'function')
     return
   const readCatalog = snapshot.bind(catalog)
+  let cancelPending: (() => void) | undefined
 
   function report(): void {
     void emit(EVENT_SHORTCUTS, { rows: project(readCatalog()) })
   }
+
+  function scheduleReport(): void {
+    if (cancelPending)
+      return
+    cancelPending = controller.timeout(() => {
+      cancelPending?.()
+      cancelPending = undefined
+      report()
+    }, 0)
+  }
+
   report()
   controller.add(() => void emit(EVENT_SHORTCUTS, { rows: [] }))
   if (typeof catalog?.subscribe === 'function')
-    controller.add(catalog.subscribe(report))
+    controller.add(catalog.subscribe(scheduleReport))
 
   controller.listenEvent(CMD_SHORTCUTS_OPEN, () => dispatchShortcut(readCatalog(), 'shortcuts.open'))
   controller.listenEvent<{ command?: unknown }>(CMD_VIEW_COMMAND, ({ payload }) => {

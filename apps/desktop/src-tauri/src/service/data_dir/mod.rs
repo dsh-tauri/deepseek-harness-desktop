@@ -207,10 +207,11 @@ pub fn preview(app_handle: &AppHandle, parent: &Path, leaf: &str) -> Result<Migr
 /// 调用方（`bridge::data_dir`）必须已经取得核心切换锁、停止 Harness 并持有
 /// 插件操作锁：迁移会改写 `DSH_HOME`，此刻任何仍在运行的 Harness 都会把数据
 /// 写回旧目录，导致两边各有一半。
-pub async fn migrate(
+pub(crate) async fn migrate(
     app_handle: AppHandle,
     parent: PathBuf,
     leaf: String,
+    mutation: crate::service::profile::mutation::MutationGuard,
 ) -> Result<MigrationOutcome, String> {
     let source = crate::config::get_dsh_data_path(&app_handle);
     let target = join_leaf(&parent, &leaf)?;
@@ -220,7 +221,8 @@ pub async fn migrate(
         let _ = handle.emit(PROGRESS_EVENT, payload);
     };
     let app = app_handle.clone();
-    tauri::async_runtime::spawn_blocking(move || migrate::run(&app, &source, &target, &emit))
+    let profile = crate::service::profile::active_profile(&app_handle);
+    mutation.spawn_blocking(profile, move || migrate::run(&app, &source, &target, &emit))
         .await
         .map_err(|e| format!("DATA_DIR_TASK: {e}"))?
 }
@@ -229,9 +231,10 @@ pub async fn migrate(
 ///
 /// `backup` 为 `None` 时按「会话数优先、时间戳其次」自动挑选；选择规则与恢复
 /// 脚本一致，两边挑中的必须是同一个目录。
-pub async fn rollback(
+pub(crate) async fn rollback(
     app_handle: AppHandle,
     backup: Option<PathBuf>,
+    mutation: crate::service::profile::mutation::MutationGuard,
 ) -> Result<MigrationOutcome, String> {
     let current = crate::config::get_dsh_data_path(&app_handle);
     let handle = app_handle.clone();
@@ -239,7 +242,8 @@ pub async fn rollback(
         let _ = handle.emit(PROGRESS_EVENT, payload);
     };
     let app = app_handle.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let profile = crate::service::profile::active_profile(&app_handle);
+    mutation.spawn_blocking(profile, move || {
         migrate::rollback(&app, &current, backup.as_deref(), &emit)
     })
     .await

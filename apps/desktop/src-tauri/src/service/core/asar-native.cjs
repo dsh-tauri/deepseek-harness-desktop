@@ -2,7 +2,7 @@
 
 const childProcess = require('node:child_process')
 const fs = require('node:fs')
-const { createRequire, registerHooks, syncBuiltinESMExports } = require('node:module')
+const { createRequire, Module, registerHooks, syncBuiltinESMExports } = require('node:module')
 const path = require('node:path')
 const process = require('node:process')
 const { fileURLToPath, pathToFileURL } = require('node:url')
@@ -138,6 +138,19 @@ module.exports = function registerNativePackages(archive, cache) {
     return destination
   }
 
+  // HMR 会在同步 resolve hook 之前预解析 require，必须先还原缓存模块的依赖查找位置。
+  const resolveFilename = Module._resolveFilename
+  function resolveFromArchive(request, parent, ...options) {
+    if (parent?.filename) {
+      const filename = original(parent.filename)
+      if (filename !== parent.filename) {
+        parent = Object.assign(Object.create(parent), { filename, paths: parent.paths?.map(original) })
+      }
+    }
+    return resolveFilename.call(this, request, parent, ...options)
+  }
+  Module._resolveFilename = resolveFromArchive
+
   const hook = registerHooks({
     resolve(specifier, context, nextResolve) {
       let parentURL = context.parentURL
@@ -239,6 +252,8 @@ module.exports = function registerNativePackages(archive, cache) {
       if (!registrations.has(key))
         return
       hook.deregister()
+      if (Module._resolveFilename === resolveFromArchive)
+        Module._resolveFilename = resolveFilename
       for (const [name, method] of methods) childProcess[name] = method
       workerThreads.Worker = Worker
       syncBuiltinESMExports()

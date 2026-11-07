@@ -60,7 +60,7 @@ struct ManifestEntry {
 }
 
 /// 获取备份目录（`$DSH_HOME/.backups/`），不存在时自动创建。
-pub fn get_backup_dir(app_handle: &AppHandle) -> PathBuf {
+pub fn get_backup_dir<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     let dir = config::get_dsh_data_path(app_handle).join(".backups");
     fs::create_dir_all(&dir).ok();
     dir
@@ -265,7 +265,10 @@ pub fn list_backups(app_handle: &AppHandle) -> Result<Vec<BackupInfo>, String> {
 /// 删除指定备份（文件 + 清单条目）。
 ///
 /// `timestamp` 会经过 `fs_guard::validate_id` 校验，防路径穿越。
-pub fn delete_backup(app_handle: &AppHandle, timestamp: &str) -> Result<(), String> {
+pub fn delete_backup<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    timestamp: &str,
+) -> Result<(), String> {
     crate::service::fs_guard::validate_id(timestamp)?;
     let _operation = BACKUP_OPERATION
         .lock()
@@ -280,7 +283,9 @@ pub fn delete_backup(app_handle: &AppHandle, timestamp: &str) -> Result<(), Stri
         fs::remove_file(&file).map_err(|e| format!("BACKUP_DELETE_FILE: {e}"))?;
     }
     // 同时匹配 profile 和 timestamp，避免误删其他 profile 的同时间戳备份
-    manifest.backups.retain(|e| !(e.profile == active && e.timestamp == timestamp));
+    manifest
+        .backups
+        .retain(|e| !(e.profile == active && e.timestamp == timestamp));
     write_manifest(&backup_dir, &manifest)?;
     Ok(())
 }
