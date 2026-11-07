@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { HarnessCore } from '@/types'
+import { OverlaysProvider } from '@overlastic/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { createInstance } from 'i18next'
@@ -59,7 +60,9 @@ function renderCore() {
   return render(
     <I18nextProvider i18n={translations}>
       <QueryClientProvider client={client}>
-        <ConfigCore />
+        <OverlaysProvider>
+          <ConfigCore />
+        </OverlaysProvider>
       </QueryClientProvider>
     </I18nextProvider>,
   )
