@@ -105,7 +105,9 @@ pub const E2E_PORT_ENV_VAR: &str = "TAURI_WEBDRIVER_PORT";
 pub const DOWNLOAD_CACHE_ENV_VAR: &str = "DSH_DOWNLOAD_CACHE_DIR";
 
 pub const STORE_SETTING_KEY: &str = "setting";
-/// Store 中记录主窗口几何（位置/大小/最大化）的键
+/// Store 中曾经记录主窗口几何（位置/大小/最大化）的键。
+///
+/// 几何已改由 tauri-plugin-window-state 保存（issue #1383），此键仅用于一次性迁移历史记录。
 pub const STORE_WINDOW_STATE_KEY: &str = "window_state";
 /// Store 中记录「已下载、等待安装」的桌面端安装包路径的键。
 /// 刻意独立于 `setting` 键：`Setting` 会被前端整对象写回，该运行期标记

@@ -1,0 +1,35 @@
+[package]
+name = "tauri-plugin-window-state"
+version = "2.5.1"
+description = "Save window positions and sizes and restore them when the app is reopened."
+authors = ["Tauri Programme within The Commons Conservancy"]
+license = "Apache-2.0 OR MIT"
+edition = "2024"
+rust-version = "1.90"
+repository = "https://github.com/tauri-apps/plugins-workspace"
+links = "tauri-plugin-window-state"
+exclude = [
+  "/banner.png",
+  "/guest-js",
+  "/package.json",
+  "/rollup.config.js",
+  "/tsconfig.json",
+]
+
+[package.metadata.platforms.support]
+windows = { level = "full", notes = "" }
+linux = { level = "full", notes = "" }
+macos = { level = "full", notes = "" }
+android = { level = "none", notes = "" }
+ios = { level = "none", notes = "" }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", default-features = false }
+log = "0.4.21"
+thiserror = "2"
+bitflags = "2"

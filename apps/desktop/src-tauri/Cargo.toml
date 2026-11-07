@@ -36,12 +36,13 @@ tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runt
   "tauri",
   "devtools"
 ] }
-electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "f26b5a3bf2e5ea58a6c5dc2f45baf452e051ad40" }
+electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "f8e91749bffe153125904cf967223d2331b133d6" }
 tauri-plugin-single-instance = { version = "2", features = [ "deep-link" ] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-store = "2"
+tauri-plugin-window-state = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-notifications = { version = "0.5.0-rc.14", default-features = false }
 tauri-plugin-autostart = "2"
@@ -133,6 +134,7 @@ libc = "0.2"
 [patch.crates-io]
 tauri-plugin-notifications = { path = "../../../crates/tauri-plugin-notifications" }
 tauri-runtime = { path = "vendor/tauri-runtime" }
+tauri-plugin-window-state = { path = "vendor/tauri-plugin-window-state" }
 
 [patch."https://github.com/hairyf/electron-rs.git"]
 electron-rs = { path = "../../../crates/electron-rs" }
