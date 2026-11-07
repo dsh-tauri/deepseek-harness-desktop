@@ -92,6 +92,8 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-working-directory@0.2.2-rc.1'
   - '@deepseek-ai/dsh-workspace@0.2.2-rc.1'
   - '@deepseek-ai/schemastery@3.19.0'
+  - '@overlastic/core@0.9.1'
+  - '@overlastic/react@0.9.1'
 
 trustPolicy: no-downgrade
 trustPolicyIgnoreAfter: 525600
@@ -257,7 +259,7 @@ catalogs:
     '@gravity-ui/icons': ^2.21.0
     '@heroui/react': ^3.2.4
     '@heroui/styles': ^3.2.4
-    '@overlastic/react': ^0.9.0
+    '@overlastic/react': ^0.9.1
     '@reause/core': ^0.1.7
     '@tanstack/react-query': ^5.101.4
     i18next: ^26.3.6

@@ -13,9 +13,9 @@ import { useListen } from '@/hooks/use-listen'
  * 核心版本下载对话框：复用首次安装（setup）的 `install-progress` 事件流，
  * 以进度条 + 日志面板展示下载/解压过程；成功自动关闭，失败展示错误与日志。
  *
- * 用法（overlastic holder）：
+ * 用法（overlays provider）：
  * ```tsx
- * const [dialog, openDownload] = useOverlay(DownloadCoreDialog, { type: 'holder' })
+ * const openDownload = useOverlay(DownloadCoreDialog)
  * await openDownload({ tag, version, runDownload: (tag) => download.mutateAsync(tag) })
  * ```
  * `runDownload` 由调用方注入（「核心」面板的 download mutation），对话框负责
@@ -39,7 +39,7 @@ export function DownloadCoreDialog(props: DownloadCoreDialogProps) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const error = errorMsg != null
 
-  // 进度事件：下载/解压阶段由后端 `install-progress` 推送；对话框随 holder 挂载，
+  // 进度事件：下载/解压阶段由后端 `install-progress` 推送；对话框随 provider 挂载，
   // 仅在打开期存在，因此按组件生命周期订阅即可（卸载自动注销）。
   useListen<InstallProgress>('install-progress', (event) => {
     const payload = event.payload

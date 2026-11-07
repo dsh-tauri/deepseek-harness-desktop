@@ -71,7 +71,7 @@ function basenameOf(path: string): string {
 export function ConfigDataDir() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
+  const openDialog = useOverlay(Modal)
 
   const statusQuery = useQuery({
     queryKey: queryKeys.dataDir,
@@ -466,7 +466,6 @@ export function ConfigDataDir() {
         </div>
       </If>
 
-      {dialogHolder}
     </div>
   )
 }
