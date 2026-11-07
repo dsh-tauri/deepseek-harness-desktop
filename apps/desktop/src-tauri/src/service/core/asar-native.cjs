@@ -6,6 +6,7 @@ const { createRequire, registerHooks, syncBuiltinESMExports } = require('node:mo
 const path = require('node:path')
 const process = require('node:process')
 const { fileURLToPath, pathToFileURL } = require('node:url')
+const { promisify } = require('node:util')
 const workerThreads = require('node:worker_threads')
 
 const registrations = new Map()
@@ -162,11 +163,8 @@ module.exports = function registerNativePackages(archive, cache) {
       return { ...result, url: pathToFileURL(path.join(materialize(root), path.relative(root, filename))).href }
     },
   })
-  const methods = new Map()
-  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
-    const method = childProcess[name]
-    methods.set(name, method)
-    childProcess[name] = function nativeChildProcess(filename, args, ...rest) {
+  function wrapChildProcess(name, method) {
+    return function nativeChildProcess(filename, args, ...rest) {
       if (name === 'fork' && !Array.isArray(args)) {
         rest.unshift(args)
         args = []
@@ -195,6 +193,17 @@ module.exports = function registerNativePackages(archive, cache) {
           filename = path.join(materialize(root), path.relative(root, filename))
       }
       return Reflect.apply(method, this, [filename, args, ...rest])
+    }
+  }
+  const methods = new Map()
+  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
+    const method = childProcess[name]
+    methods.set(name, method)
+    childProcess[name] = wrapChildProcess(name, method)
+    if (method[promisify.custom]) {
+      Object.defineProperty(childProcess[name], promisify.custom, {
+        value: wrapChildProcess(name, method[promisify.custom]),
+      })
     }
   }
   const Worker = workerThreads.Worker
