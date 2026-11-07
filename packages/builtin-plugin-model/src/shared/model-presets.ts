@@ -24,6 +24,12 @@ export const PRESET_SOURCE_URL
 
 export const PRESET_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
+/**
+ * 前缀回退与裁剪共用的最短键长。裁剪掉的键只能靠客户端「逐段删前缀」找回，
+ * 而客户端不会用短于该长度的前缀匹配，所以更短的键必须整条留在表里。
+ */
+export const PRESET_MIN_PREFIX_LENGTH = 3
+
 export const PRESET_REASONING_EFFORTS: Readonly<Record<string, string | null>> = { off: null, low: 'low', medium: 'medium', high: 'high' }
 
 function positiveInteger(value: unknown): number {
@@ -75,7 +81,10 @@ export function buildPresetTable(payload: unknown): PresetRowTable {
     const segments = key.split('-')
     let covered = false
     for (let end = segments.length - 1; end > 0 && !covered; end--) {
-      const prefix = merged.get(segments.slice(0, end).join('-'))
+      const name = segments.slice(0, end).join('-')
+      if (name.length < PRESET_MIN_PREFIX_LENGTH)
+        break
+      const prefix = merged.get(name)
       if (prefix !== undefined && prefix.every((fact, index) => fact === row[index]))
         covered = true
     }

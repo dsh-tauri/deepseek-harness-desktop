@@ -77,6 +77,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.DSH_HOME
   rmSync(scratch, { recursive: true, force: true })
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -176,5 +177,44 @@ describe('modelPresets.resolve caching', () => {
 
     expect(second.ok).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps reporting a served disk snapshot as stale', async () => {
+    fixture.piAiUnavailable = true
+    const stale: PresetTablePayload = {
+      version: PRESET_CATALOG_VERSION,
+      source: 'litellm',
+      fetchedAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+      presets: { 'cached-model': { contextWindow: 32000 } },
+    }
+    mkdirSync(join(scratch, PLUGIN_ID), { recursive: true })
+    writeFileSync(cacheFile(), JSON.stringify(stale), 'utf8')
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('network down')
+    }))
+    const modelPresets = await loadService()
+
+    const first = await modelPresets.resolve()
+    const second = await modelPresets.resolve()
+
+    expect(first.ok && first.stale).toBe(true)
+    expect(second.ok && second.stale).toBe(true)
+  })
+
+  it('retries the download once the failure cooldown expires', async () => {
+    vi.useFakeTimers({ now: new Date('2026-01-01T00:00:00Z') })
+    const fetchMock = vi.fn(async () => {
+      throw new Error('network down')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const modelPresets = await loadService()
+
+    await modelPresets.resolve()
+    await modelPresets.resolve()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    vi.setSystemTime(new Date('2026-01-01T00:02:00Z'))
+    await modelPresets.resolve()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

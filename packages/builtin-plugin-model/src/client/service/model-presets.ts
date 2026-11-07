@@ -1,5 +1,5 @@
 import type { ModelCapabilityPreset, PresetTable } from '../../shared/model-presets'
-import { PRESET_REASONING_EFFORTS } from '../../shared/model-presets'
+import { PRESET_MIN_PREFIX_LENGTH, PRESET_REASONING_EFFORTS } from '../../shared/model-presets'
 
 interface FamilyRule {
   pattern: RegExp
@@ -11,8 +11,6 @@ interface RuleFacts {
   vision: boolean
   reasoning: boolean
 }
-
-const MIN_PREFIX_LENGTH = 3
 
 const FAMILY_RULES: readonly FamilyRule[] = [
   { pattern: /\bclaude/, vision: true },
@@ -59,7 +57,7 @@ function candidateKeys(id: string): string[] {
   const segments = bare.split('-')
   for (let end = segments.length - 1; end > 0; end--) {
     const prefix = segments.slice(0, end).join('-')
-    if (prefix.length < MIN_PREFIX_LENGTH)
+    if (prefix.length < PRESET_MIN_PREFIX_LENGTH)
       break
     push(prefix)
   }
@@ -125,11 +123,22 @@ function ruleFacts(spellings: readonly string[]): RuleFacts | undefined {
   return matched ? { vision, reasoning } : undefined
 }
 
+function refusesThinking(known: ModelCapabilityPreset): boolean {
+  if (known.reasoning !== false)
+    return false
+  const declared = known.reasoningEfforts
+  if (declared === false)
+    return true
+  if (typeof declared !== 'object' || declared === null)
+    return true
+  return !Object.keys(declared).some(level => level !== 'off')
+}
+
 function combine(preset: ModelCapabilityPreset | undefined, rule: RuleFacts | undefined): ModelCapabilityPreset {
   const known = preset ?? {}
   const declared = known.reasoningEfforts
   const vision = known.input?.includes('image') === true || rule?.vision === true
-  const reasoning = known.reasoning === true || rule?.reasoning === true
+  const reasoning = !refusesThinking(known) && (known.reasoning === true || rule?.reasoning === true)
   const efforts = typeof declared === 'object' && declared !== null
     ? { ...declared }
     : reasoning

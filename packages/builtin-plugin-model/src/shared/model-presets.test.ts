@@ -59,6 +59,15 @@ describe('buildPresetTable', () => {
     expect(table['claude-3-5-sonnet-20241022']).toBeUndefined()
   })
 
+  it('keeps a key whose only covering prefix is shorter than the client fallback', () => {
+    const table = buildPresetTable({
+      'o3': { mode: 'chat', supports_reasoning: true, max_input_tokens: 200000 },
+      'o3-2025-01-16': { mode: 'chat', supports_reasoning: true, max_input_tokens: 200000 },
+    })
+    expect(table.o3).toEqual([0, 1, 200000, 0])
+    expect(table['o3-2025-01-16']).toEqual([0, 1, 200000, 0])
+  })
+
   it('returns an empty table for a payload that is not an object', () => {
     expect(buildPresetTable(undefined)).toEqual({})
     expect(buildPresetTable([])).toEqual({})

@@ -29,6 +29,8 @@ export const modelPresets = defineService({
 
 const FETCH_TIMEOUT_MS = 20_000
 
+const RETRY_COOLDOWN_MS = 60_000
+
 const EXTENDED_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
 type PiAiModel = PiAiBuiltinModel
@@ -49,8 +51,14 @@ interface LiveState extends PresetSourceState {
   stale: boolean
 }
 
+interface CachedLive {
+  payload: PresetTablePayload
+  stale: boolean
+}
+
 let piAiCached: PresetSourceState | undefined
-let litellmCached: PresetTablePayload | undefined
+let litellmCached: CachedLive | undefined
+let litellmFailure: { at: number, error: string } | undefined
 
 async function piAiPresets(): Promise<PresetSourceState> {
   if (piAiCached !== undefined)
@@ -70,26 +78,38 @@ async function piAiPresets(): Promise<PresetSourceState> {
   return piAiCached
 }
 
+function serveCachedLive(cached: CachedLive): LiveState {
+  return { table: cached.payload.presets, fetchedAt: cached.payload.fetchedAt, stale: cached.stale }
+}
+
 async function litellmPresets(force: boolean): Promise<LiveState> {
-  if (!force && litellmCached !== undefined)
-    return { table: litellmCached.presets, fetchedAt: litellmCached.fetchedAt, stale: false }
+  const cached = litellmCached
+  if (!force && cached !== undefined && !cached.stale && isFresh(cached.payload.fetchedAt))
+    return serveCachedLive(cached)
+  if (!force && litellmFailure !== undefined && Date.now() - litellmFailure.at < RETRY_COOLDOWN_MS) {
+    if (cached !== undefined)
+      return { ...serveCachedLive(cached), error: litellmFailure.error }
+    return { stale: false, error: litellmFailure.error }
+  }
   const disk = await readDiskPayload()
   if (!force && disk !== undefined && isFresh(disk.fetchedAt)) {
-    litellmCached = disk
-    return { table: disk.presets, fetchedAt: disk.fetchedAt, stale: false }
+    litellmCached = { payload: disk, stale: false }
+    return serveCachedLive(litellmCached)
   }
   try {
     const presets = await download()
     const payload: PresetTablePayload = { version: PRESET_CATALOG_VERSION, source: 'litellm', fetchedAt: new Date().toISOString(), presets }
-    litellmCached = payload
+    litellmCached = { payload, stale: false }
+    litellmFailure = undefined
     await writeDiskPayload(payload)
-    return { table: presets, fetchedAt: payload.fetchedAt, stale: false }
+    return serveCachedLive(litellmCached)
   }
   catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    litellmFailure = { at: Date.now(), error: message }
     if (disk !== undefined) {
-      litellmCached = disk
-      return { table: disk.presets, fetchedAt: disk.fetchedAt, stale: true, error: message }
+      litellmCached = { payload: disk, stale: true }
+      return { ...serveCachedLive(litellmCached), error: message }
     }
     return { stale: false, error: message }
   }

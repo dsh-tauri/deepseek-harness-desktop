@@ -95,4 +95,9 @@ describe('presetFor family rules', () => {
     const table: PresetTable = { 'vendor-flat': { input: ['text'], reasoning: false, reasoningEfforts: false } }
     expect(presetFor(table, 'vendor-flat')).toEqual({ input: ['text'], reasoningEfforts: false })
   })
+
+  it('keeps a declared refusal even when a family rule matches the id', () => {
+    const table: PresetTable = { 'gpt-5-mini': { input: ['text', 'image'], reasoning: false, reasoningEfforts: false } }
+    expect(presetFor(table, 'gpt-5-mini')).toEqual({ input: ['text', 'image'], reasoningEfforts: false })
+  })
 })
