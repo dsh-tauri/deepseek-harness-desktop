@@ -198,3 +198,21 @@ pub async fn test_proxy(app_handle: AppHandle) -> Result<config::proxy::ProxyTes
 pub fn get_dsh_theme(app_handle: AppHandle) -> config::DshTheme {
     config::get_dsh_theme(&app_handle)
 }
+
+/// Linux 下是否强制 Electron 走 X11（Wayland 下透明置顶窗口不可用）
+#[tauri::command]
+pub fn get_force_xwayland(app: AppHandle) -> bool {
+    cfg!(target_os = "linux") && config::get_store_dat_setting(&app).force_xwayland
+}
+
+/// 切换强制 X11 开关（仅 Linux 支持）
+#[tauri::command]
+pub fn set_force_xwayland(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("FORCE_XWAYLAND_UNSUPPORTED: only Linux supports Electron X11 mode".into());
+    }
+    Ok(config::update_store_dat_setting(&app, |setting| {
+        setting.force_xwayland = enabled;
+    })
+    .force_xwayland)
+}

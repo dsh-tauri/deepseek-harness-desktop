@@ -267,7 +267,7 @@ it('ignores native notification clicks and actions owned by another live window'
 })
 
 it.each(['window-closed', undefined])('elects one live shell for notification owner %s', async (windowLabel) => {
-  mocks.getAllWindows.mockResolvedValue([{ label: 'pet' }, { label: 'window-3' }, mocks.window])
+  mocks.getAllWindows.mockResolvedValue([{ label: 'popup' }, { label: 'window-3' }, mocks.window])
   render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { tag: 'historical', sessionId: 'session-old', windowLabel, sourceOrigin: 'http://127.0.0.1:3081' } })
@@ -277,7 +277,7 @@ it.each(['window-closed', undefined])('elects one live shell for notification ow
   expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: 'historical', sessionId: 'session-old', sourceOrigin: 'http://127.0.0.1:3081' })
   mocks.window.show.mockClear()
   mocks.emit.mockClear()
-  mocks.getAllWindows.mockResolvedValue([mocks.window, { label: 'window-1' }, { label: 'pet' }])
+  mocks.getAllWindows.mockResolvedValue([mocks.window, { label: 'window-1' }, { label: 'popup' }])
   await act(async () => {
     await mocks.clicked!({ data: { sessionId: 'session-old', windowLabel, sourceOrigin: 'http://127.0.0.1:3081' } })
   })

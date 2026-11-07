@@ -910,13 +910,8 @@ pub(super) async fn launch_prepared(
 
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "0".to_string());
     envs.insert("DSH_TAURI_DESKTOP".to_string(), "1".to_string());
-    // 内置插件自带的补丁层按核心版本决定默认状态；表达式跑在核心进程里，读不到版本。
-    // 0.2.2-rc.1 起官方 schedule 支持新建会话，自研定时任务默认关闭。
     if let Some(version) = core_version.as_deref() {
         envs.insert("DSH_TAURI_CORE_VERSION".to_string(), version.to_string());
-        if crate::service::core::retires_bundled_adapters(version) {
-            envs.insert("DSH_TAURI_OFFICIAL_ADAPTERS".to_string(), "1".to_string());
-        }
     }
 
     // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。

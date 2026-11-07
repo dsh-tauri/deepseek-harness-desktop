@@ -17,7 +17,7 @@
 
 ## 声明与验证边界
 
-根[声明索引](<../../../THIRD_PARTY_NOTICES.md>)和各包当前核对引用随子模块推进到 rc.4；既有 alpha.1 派生归属及 Scheduler 的原始 SHA 保留，不声称重新复制或重新验证每份派生文件。固定规范不修改；当前推荐、最低支持和解析依赖以[资源清单](<../../../src-tauri/resources/manifest.jsonc>)、[workspace 配置](<../../../pnpm-workspace.yaml>)和[锁文件](<../../../pnpm-lock.yaml>)为准。
+根[声明索引](<../../../THIRD_PARTY_NOTICES.md>)和各包当前核对引用随子模块推进到 rc.4；既有 alpha.1 派生归属保留，不声称重新复制或重新验证每份派生文件。固定规范不修改；当前推荐、最低支持和解析依赖以[资源清单](<../../../src-tauri/resources/manifest.jsonc>)、[workspace 配置](<../../../pnpm-workspace.yaml>)和[锁文件](<../../../pnpm-lock.yaml>)为准。
 
 本轮独立依赖 `pnpm install --frozen-lockfile --no-trust-lockfile --ignore-scripts` 通过；源码 typecheck 通过。基线、版本、最低声明、远端回退与滚动回归共 7 文件 / 276 项，seed `21201`–`21205` 连续通过；真实 Temp CLI `0.1.7-rc.1` 与 `0.2.1-rc.4` 的鉴权回归各 5 轮通过。真实 rc.4 发行 `ScrollFollow` 提取后应用生产 Rust 替换体，38 项共享契约通过；首次临时提取脚本边界错误导致 SyntaxError，修正提取边界后再验证，不归因于产品代码。1117 导航与更新前端定向回归 3 文件 / 27 项通过。
 

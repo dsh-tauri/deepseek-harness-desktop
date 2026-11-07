@@ -122,8 +122,7 @@ fn save_window_state<R: Runtime>(app_handle: &AppHandle<R>, state: &WindowState)
 ///
 /// 逐事件直接 `store.save()` 是同步整文件写盘，会把 Tauri 主线程（= Electron
 /// 事件循环线程）拖住；拖动这种连续事件流下主线程被写盘压死，表现为「一拖窗口
-/// 就整树退出」。桌宠窗口（`desktop::pet`）早已用节流规避了同一问题，主窗口
-/// 这条路径一直漏了。
+/// 就整树退出」。
 static GEOMETRY_CACHE: Mutex<PendingGeometry> = Mutex::new(PendingGeometry::new());
 
 /// 退出前收到的几何变动。只记真正发生过事件的字段：用 `WindowState::default()`

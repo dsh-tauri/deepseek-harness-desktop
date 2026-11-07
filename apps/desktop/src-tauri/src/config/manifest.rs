@@ -1,9 +1,9 @@
-//! 资源清单（`resources/manifest.jsonc`）：引擎版本、插件目录、预设宠物与依赖
-//! 映射规范的唯一真值来源。
+//! 资源清单（`resources/manifest.jsonc`）：引擎版本、插件目录与依赖映射规范的
+//! 唯一真值来源。
 //!
 //! 定位顺序按构建区分：debug 优先源码 `resources/`（构建产物中的资源可能过期），
 //! release 优先随安装包分发的资源目录，两者互为兜底。清单缺失/损坏只记日志并回落
-//! 空清单——插件与宠物目录不是启动硬依赖；依赖映射的读写见 [`super::dependencies`]。
+//! 空清单——插件目录不是启动硬依赖；依赖映射的读写见 [`super::dependencies`]。
 
 use crate::AppHandle;
 use serde::Deserialize;
@@ -21,7 +21,6 @@ pub const MANIFEST_FILE: &str = "manifest.jsonc";
 pub struct Manifest {
     pub engines: Engines,
     pub plugins: Plugins,
-    pub pets: Pets,
     pub dependencies: BTreeMap<String, DependencySpec>,
 }
 
@@ -207,51 +206,6 @@ where
         Some(Raw::Declared(value)) => Some(PluginVersion::Declared(value)),
         Some(Raw::Matrix(pairs)) => Some(PluginVersion::Matrix(pairs)),
     })
-}
-
-/// 预设宠物目录
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct Pets {
-    #[serde(rename = "built-in")]
-    pub built_in: Vec<PresetPetSpec>,
-}
-
-/// 预设宠物条目：字段名与 `dsh-pet-component` 的 props 一一对应，前端拿到后直接
-/// 展开给 `<Pet>`；`deny_unknown_fields` 保证清单写错字段（如 `sizeMB`）立即报错。
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PresetPetSpec {
-    pub id: String,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub desc: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<f64>,
-    pub config: String,
-    pub uri: PresetPetUri,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ext: Option<PresetPetExt>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PresetPetUri {
-    pub default: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mac: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PresetPetExt {
-    pub default: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mac: Option<String>,
 }
 
 /// 依赖映射规范：入口相对路径与默认托管根

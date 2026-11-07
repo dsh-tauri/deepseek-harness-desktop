@@ -52,7 +52,7 @@
 - 🗂️ **Конфигурация профилей** — отдельные конфигурации плагинов/настроек с переносом, резервным копированием и клонированием данных профиля в один клик.
 - 💽 **Каталог данных** — выбор места хранения данных при установке (Windows); позже в «Настройках» на Windows, macOS и Linux каталог можно перенести или откатить.
 - ⌨️ **Интеграция с CLI** — управляемые команды `dsh` / `pnpm` через shim-обёртки, а не глобальная установка ядра npm.
-- 🐾 **Десктопные питомцы** — ресурсы Pets / Codex, импорт пакетов и активность в диалоге; предустановленные медиа берутся с удалённых хостов.
+- 🐾 **Десктопные питомцы** — их даёт пресет-плагин `dsh-pet-lite`, см. пресеты ниже.
 - 🎨 **Персонализация** — 8 палитр, локальное масштабирование интерфейса, режим терминала, регулируемая прозрачность и необязательное матовое размытие.
 
 ## Встроенные плагины
@@ -61,12 +61,10 @@
 
 - [DSH Tauri](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri) — основной плагин: связь десктопа с Harness, адаптеры версий и управление зависимостями плагинов
 - [DSH Tauri UI](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-ui) — интерфейс настроек десктопа, нативные компоненты ядра, темы и палитры
-- [DSH Tauri Mobile UI](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-mobile-ui) — сенсорные макеты и мобильные параметры
 - [DSH Tauri Worktree](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-worktree) — Git worktrees и checkout на уровне сессии
 - [DSH Tauri Extension](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-extension) — официальный менеджер плагинов, магазин плагинов, Skills и MCP
-- [DSH Tauri Scheduler](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-scheduler) — плановые задачи и история запусков
 - [DSH Tauri Archive](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-archive) — архивирование и восстановление чата
-- [DSH Tauri Pet](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-pet) — настройки десктопного питомца и состояния активности
+- [DSH Pet Lite](https://github.com/hairyf/dsh-pet-lite) — лёгкий пресет-плагин питомца, устанавливается со страницы плагинов
 - [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-rightclick) — контекстные меню сессии, рабочей области и текста
 - [DSH Tauri Model](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-model) — выбор модели, параметры и автоматическая конфигурация
 - [DSH Tauri Remote](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-remote) — дистанционные подключения к Harness и синхронизация по SSH, а также шаринг локального Harness по LAN или публичному туннелю
@@ -177,7 +175,7 @@ brew install dsh-tauri/desktop/deepseek-harness
 - [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) — upstream-платформа агента `dsh`
 - [deepseek-harness-pkg](https://github.com/dsh-tauri/deepseek-harness-pkg) — предварительно собранные дистрибутивы Harness и источник загрузок
 - [electron-rs](https://github.com/hairyf/electron-rs) · [tauri-runtime-electron](https://github.com/hairyf/tauri-runtime-electron) — Electron Rust и Electron-рантайм для Tauri 2
-- [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-mov](https://github.com/dsh-tauri/dsh-pet-mov) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — ассеты питомцев и рендерер
+- [dsh-pet-lite](https://github.com/hairyf/dsh-pet-lite) · [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — плагин, ассеты и рендерер питомцев
 - [dsh-plugin-codex-pets](https://github.com/Skylarking/dsh-plugin-codex-pets) · [BongoCat](https://github.com/ayangweb/BongoCat) · [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) · [codex-to-dsh-pet](https://github.com/Signalight/codex-to-dsh-pet) — референсные проекты питомцев
 
 ## Вкладчики

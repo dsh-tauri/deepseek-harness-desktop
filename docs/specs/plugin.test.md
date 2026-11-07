@@ -70,7 +70,6 @@ packages/builtin-plugin-config/vitest.config.ts # plugin project 配置
 pnpm vitest run --project plugin
 
 # 运行单文件（必须使用位置参数）
-pnpm vitest run --project plugin tests/e2e/plugins/dsh-tauri-pet.e2e.ts
 
 ```
 
@@ -107,7 +106,7 @@ pnpm vitest run --project plugin tests/e2e/plugins/dsh-tauri-pet.e2e.ts
 
 | 元素归属 | 锚点规范 | 约束与说明 |
 | --- | --- | --- |
-| **插件包** (`packages/*`) | `data-dsh-*` *(例: `[data-dsh-tauri-pet-menu-item]`)* | 插件渲染挂载点。行为钩子**严禁为测试擅改**。 |
+| **插件包** (`packages/*`) | `data-dsh-*` *(例: `[data-dsh-tauri-archive-menu-item]`)* | 插件渲染挂载点。行为钩子**严禁为测试擅改**。 |
 | **壳层** (`src/**`) | `data-testid="dsh-<域>-<名称>"` | 全小写连字符，集中登记于 `selectors.ts`。 |
 | **dsh 上游结构** | `data-slot` / `role` / 前缀类 (`dsh`/`dshp`) | 属于 C 浏览器层断言，用例中需标明来源。 |
 

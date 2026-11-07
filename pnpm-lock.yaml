@@ -325,9 +325,6 @@ catalogs:
     '@tanstack/react-query':
       specifier: ^5.101.4
       version: 5.105.0
-    dsh-pet-component:
-      specifier: ^0.2.5
-      version: 0.2.5
     i18next:
       specifier: ^26.3.6
       version: 26.6.0
@@ -450,9 +447,6 @@ catalogs:
       specifier: ^18.0.10
       version: 18.1.2
   utils:
-    cron-schedule:
-      specifier: ^6.0.0
-      version: 6.0.0
     date-fns:
       specifier: ^4.4.0
       version: 4.4.0
@@ -498,7 +492,6 @@ overrides:
 patchedDependencies:
   '@tauri-apps/plugin-http@2.6.0': 6bbec7f8a8e969a867d222e8b2b542d2dbd639ffbaf2184a4df47f330b6ad431
   bumpp: ea42dd1273f65a02e22aa9c25e39361c8dac2320ed2fbff9c58d2bd3f46a40a3
-  dsh-pet-component@0.2.5: bc78110c62c900ae95f521e415f4c491503e89d69d81406def275b0566cfdfee
 
 importers:
 
@@ -786,9 +779,6 @@ importers:
       '@tauri-apps/plugin-store':
         specifier: 'catalog:'
         version: 2.5.0
-      dsh-pet-component:
-        specifier: catalog:runtime
-        version: 0.2.5(patch_hash=bc78110c62c900ae95f521e415f4c491503e89d69d81406def275b0566cfdfee)(change-case@5.4.4)(qrcode@1.5.4)(react@19.3.1)
       i18next:
         specifier: catalog:runtime
         version: 26.6.0(typescript@5.8.3)
@@ -1053,18 +1043,12 @@ importers:
       dsh-tauri-notification:
         specifier: workspace:*
         version: link:../builtin-plugin-notification
-      dsh-tauri-pet:
-        specifier: workspace:*
-        version: link:../builtin-plugin-pet
       dsh-tauri-remote:
         specifier: workspace:*
         version: link:../builtin-plugin-remote
       dsh-tauri-rightclick:
         specifier: workspace:*
         version: link:../builtin-plugin-rightclick
-      dsh-tauri-scheduler:
-        specifier: workspace:*
-        version: link:../builtin-plugin-scheduler
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../builtin-plugin-ui
@@ -1207,34 +1191,6 @@ importers:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(publint@0.3.25)(synckit@0.11.13)(typescript@5.8.3)
 
-  packages/builtin-plugin-pet:
-    dependencies:
-      '@deepseek-ai/dsh-skill-filesystem':
-        specifier: catalog:dsh
-        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-fs@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-brand@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-sandbox@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-session@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))))(@deepseek-ai/dsh-home-paths@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-skill@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))
-      dsh-h3:
-        specifier: 'catalog:'
-        version: 0.2.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-host-webserver@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@genapi/shared@4.1.4)(typescript@5.8.3)
-      dsh-tauri:
-        specifier: workspace:*
-        version: link:../builtin-plugin-tauri
-      h3:
-        specifier: 'catalog:'
-        version: 2.0.1
-    devDependencies:
-      dsh-tauri-config:
-        specifier: workspace:*
-        version: link:../builtin-plugin-config
-      dsh-tauri-ui:
-        specifier: workspace:*
-        version: link:../builtin-plugin-ui
-      react:
-        specifier: catalog:runtime
-        version: 19.3.1
-      tsdown:
-        specifier: catalog:cli
-        version: 0.17.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(publint@0.3.25)(synckit@0.11.13)(typescript@5.8.3)
-
   packages/builtin-plugin-remote:
     dependencies:
       dsh-h3:
@@ -1329,43 +1285,6 @@ importers:
       dsh-tauri-ui:
         specifier: workspace:*
         version: link:../builtin-plugin-ui
-      tsdown:
-        specifier: catalog:cli
-        version: 0.17.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(publint@0.3.25)(synckit@0.11.13)(typescript@5.8.3)
-
-  packages/builtin-plugin-scheduler:
-    dependencies:
-      cron-schedule:
-        specifier: catalog:utils
-        version: 6.0.0
-      dsh-h3:
-        specifier: 'catalog:'
-        version: 0.2.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-host-webserver@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@genapi/shared@4.1.4)(typescript@5.8.3)
-      dsh-tauri:
-        specifier: workspace:*
-        version: link:../builtin-plugin-tauri
-      dsh-tauri-ui:
-        specifier: workspace:*
-        version: link:../builtin-plugin-ui
-      h3:
-        specifier: 'catalog:'
-        version: 2.0.1
-      lodash-es:
-        specifier: catalog:utils
-        version: 4.18.1
-      pathe:
-        specifier: catalog:utils
-        version: 2.0.3
-      unstorage:
-        specifier: catalog:utils
-        version: 1.17.6(idb-keyval@6.3.0)
-    devDependencies:
-      '@types/lodash-es':
-        specifier: catalog:types
-        version: 4.17.12
-      dsh-tauri-config:
-        specifier: workspace:*
-        version: link:../builtin-plugin-config
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(publint@0.3.25)(synckit@0.11.13)(typescript@5.8.3)
@@ -3893,48 +3812,6 @@ packages:
     peerDependencies:
       react: '>=18'
 
-  '@reause/integrations@0.1.9':
-    resolution: {integrity: sha512-nh1zkXa3cLq2kqxrX2k1HP2WQT4rn5UshOLlSZhLt/NUrs3NAxOpJdq9PxZSyLnR63FpuyWUIMBaJU6BuV+rXg==}
-    peerDependencies:
-      async-validator: ^4
-      axios: ^1
-      change-case: ^5
-      drauu: ^1
-      focus-trap: ^7 || ^8
-      fuse.js: ^7
-      idb-keyval: ^6
-      jwt-decode: ^4
-      nprogress: ^0.2
-      qrcode: ^1.5
-      react: '>=18'
-      sortablejs: ^1
-      universal-cookie: ^7 || ^8
-    peerDependenciesMeta:
-      async-validator:
-        optional: true
-      axios:
-        optional: true
-      change-case:
-        optional: true
-      drauu:
-        optional: true
-      focus-trap:
-        optional: true
-      fuse.js:
-        optional: true
-      idb-keyval:
-        optional: true
-      jwt-decode:
-        optional: true
-      nprogress:
-        optional: true
-      qrcode:
-        optional: true
-      sortablejs:
-        optional: true
-      universal-cookie:
-        optional: true
-
   '@reause/shared@0.1.9':
     resolution: {integrity: sha512-o41IHYd7KdBdm7hEWTxJ3bBXHbeNps4G/Kp3u7PZn2445cuAs5xnhVc82e1KLCAVTXiawJWmPgnnN0AdMh4ffg==}
     peerDependencies:
@@ -5440,10 +5317,6 @@ packages:
     peerDependencies:
       react: '>=18.0.0'
 
-  cron-schedule@6.0.0:
-    resolution: {integrity: sha512-BoZaseYGXOo5j5HUwTaegIog3JJbuH4BbrY9A1ArLjXpy+RWb3mV28F/9Gv1dDA7E2L8kngWva4NWisnLTyfgQ==}
-    engines: {node: '>=20'}
-
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
@@ -5644,11 +5517,6 @@ packages:
         optional: true
       typescript:
         optional: true
-
-  dsh-pet-component@0.2.5:
-    resolution: {integrity: sha512-7uaVJfEC0o9tT2+ZeUiNHUwpa7He3q1TWdCwUu/snAus4z9WDUxKiLFracUugvlsCvJru785KKXmGKjgogAAXA==}
-    peerDependencies:
-      react: ^19.0.0
 
   dsh-taiwind@0.3.5:
     resolution: {integrity: sha512-lfhlKssqsEmqrknGIC5ELBxISKA0MhAG7RtVtpiWRd1GvdB9xsyPuxEKyGPR+/ykfRmIp05SNoHWpGK+mwo5Xw==}
@@ -12356,16 +12224,6 @@ snapshots:
       '@reause/shared': 0.1.9(react@19.3.1)
       react: 19.3.1
 
-  '@reause/integrations@0.1.9(change-case@5.4.4)(idb-keyval@6.3.0)(qrcode@1.5.4)(react@19.3.1)':
-    dependencies:
-      '@reause/core': 0.1.9(react@19.3.1)
-      '@reause/shared': 0.1.9(react@19.3.1)
-      react: 19.3.1
-    optionalDependencies:
-      change-case: 5.4.4
-      idb-keyval: 6.3.0
-      qrcode: 1.5.4
-
   '@reause/shared@0.1.9(react@19.3.1)':
     dependencies:
       react: 19.3.1
@@ -13829,8 +13687,6 @@ snapshots:
     dependencies:
       react: 19.3.1
 
-  cron-schedule@6.0.0: {}
-
   cross-spawn@7.0.6:
     dependencies:
       path-key: 3.1.1
@@ -13994,27 +13850,6 @@ snapshots:
     transitivePeerDependencies:
       - crossws
       - ocache
-
-  dsh-pet-component@0.2.5(patch_hash=bc78110c62c900ae95f521e415f4c491503e89d69d81406def275b0566cfdfee)(change-case@5.4.4)(qrcode@1.5.4)(react@19.3.1):
-    dependencies:
-      '@gravity-ui/icons': 2.23.0(react@19.3.1)
-      '@reause/core': 0.1.9(react@19.3.1)
-      '@reause/integrations': 0.1.9(change-case@5.4.4)(idb-keyval@6.3.0)(qrcode@1.5.4)(react@19.3.1)
-      css-render: 0.15.14
-      idb-keyval: 6.3.0
-      react: 19.3.1
-    transitivePeerDependencies:
-      - async-validator
-      - axios
-      - change-case
-      - drauu
-      - focus-trap
-      - fuse.js
-      - jwt-decode
-      - nprogress
-      - qrcode
-      - sortablejs
-      - universal-cookie
 
   dsh-taiwind@0.3.5:
     dependencies:
@@ -15161,7 +14996,8 @@ snapshots:
     dependencies:
       safer-buffer: 2.1.2
 
-  idb-keyval@6.3.0: {}
+  idb-keyval@6.3.0:
+    optional: true
 
   identifier-regex@1.1.0:
     dependencies:
