@@ -27,7 +27,6 @@
     "@tauri-apps/plugin-http": "catalog:tauri",
     "@tauri-apps/plugin-os": "catalog:",
     "@tauri-apps/plugin-store": "catalog:",
-    "dsh-pet-component": "catalog:runtime",
     "i18next": "catalog:runtime",
     "react": "catalog:runtime",
     "react-aria": "catalog:runtime",

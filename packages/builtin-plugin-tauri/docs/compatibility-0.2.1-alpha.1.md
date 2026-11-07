@@ -21,12 +21,10 @@
 | `dsh-tauri` | connection 闸门、webserver 注入行、账号 watch、preload carrier 与 host protocol | 10 份载体契约文件与 rc.2 blob 相同；保留现有鉴权、`protocolVersion: 1` 与 host protocol 4 |
 | `dsh-tauri-model` | `packages/client/ui-settings-models/src/` | 派生源码树未变；保留模型编辑器、账号/凭据隔离与 LiteLLM 目录 |
 | `dsh-tauri-extension` | `packages/skill/skill-filesystem/src/`、`packages/mcp/mcp-client/src/` | 源码未变；provider 配置、policy 与 MCP 子集不变 |
-| `dsh-tauri-pet` | official skill provider、account menu、workspace list、StateDot | 继续消费官方服务；动画重启修复随 re-export 生效，资产 pin 不变 |
 | `dsh-tauri-rightclick` | sessions / workspaces 与 primitives Menu | `startSession` 的新参数可选，不影响现有 open/archive/fork/pin 路径 |
 | `dsh-tauri-archive` | sidebar 菜单/行与 sessions / workspaces | sidebar 源码未变；保留适配层 open 路径与自有 archive 功能 |
 | `dsh-tauri-ui` | primitives、ui-layout、hero/settings slots | StateDot 修复由官方实现承接；新增 InlineEditor 与 `shell.bottom` 不要求本地新增 UI |
 | `dsh-tauri-worktree` | semantic draft 与 session input | 迁移及回滚完整 `{ text, references }`，保留引用身份、顺序、标点与换行；语义输入存在但暂取不到 snapshot 时，在建目标/清源前失败；旧内核保留文本动作 |
-| `dsh-tauri-scheduler` | agent / approval / session / llm 与 Web Schedule 默认值 | 更新官方 Schedule 默认启用的声明；两套 service、工具名与任务存储保持独立，不覆写上游默认值 |
 
 根 `THIRD_PARTY_NOTICES.md` 仅更新表格中的 Harness 版本与 hash。各包保留旧同步历史、许可证和其他上游 pin，并追加本轮兼容结论。`docs/specs/upstram.sync.md` 标为固定文档，本轮不改；当前基线以子模块、依赖、声明索引及本包日志为准。
 
@@ -48,7 +46,7 @@
 - 最终 lint 无 error/warning；65 个聚焦用例连续 5 次 shuffle seed（501–505）全部通过，新增保护默认仍推荐 rc.2 与语义捕获失败前不得清源。把语义草稿恢复变异为只写文本后，4 个回归用例失败，恢复实现后草稿/组件用例全部通过。
 - 新克隆无插件产物，当前会话还继承 `NODE_ENV=production`。本地验证使用独立 `DSH_HOME`、`NODE_ENV=test` 与临时源码 alias；该配置不提交，不替代产物验证。
 - 同配置源码单测：迁移前 3191 passed / 31 failed，首轮迁移后 3195 passed / 同一 31 failed。4 份既有失败文件为 AppImage shell、macOS toolchain、store persistence 与 SSH POSIX/权限测试；不把它们计为迁移回归，也不删除断言。
-- CI 保留 `0.1.5-rc.2` 旧内核车道，将 current core 钉到 `0.2.1-alpha.1`，新增宿主、模型、工作树与 Scheduler 的真实产物回归；既有官方插件、appearance 和移动设置仍按 5 个 shuffle seed 验证。
+- CI 保留 `0.1.5-rc.2` 旧内核车道，将 current core 钉到 `0.2.1-alpha.1`，新增宿主、模型与工作树的真实产物回归；既有官方插件、appearance 和移动设置仍按 5 个 shuffle seed 验证。
 - 本地遵守仓库不执行插件 build 的约束。构建、真实浏览器挂载及三平台原生产物由 PR CI 取证；模型凭据调用不包含在本地通过结论中。
 
 ## 回滚

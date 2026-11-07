@@ -24,9 +24,9 @@ describe('notification shell labels', () => {
     expect(isNotificationShellLabel('remote-beta')).toBe(true)
   })
 
-  it('rejects pet and guest windows', () => {
-    expect(isNotificationShellLabel('pet')).toBe(false)
+  it('rejects guest windows and unknown labels', () => {
     expect(isNotificationShellLabel('harness-1')).toBe(false)
+    expect(isNotificationShellLabel('popup')).toBe(false)
   })
 })
 

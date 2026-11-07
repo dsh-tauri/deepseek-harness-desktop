@@ -7,7 +7,7 @@ import { SlotOutlet } from '@deepseek-ai/dsh-client-ui-renderer'
 import { clamp, cn, isEmpty, useEventListener, useStore } from 'dsh-tauri/client'
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/icon'
-import { ArrowLeft, Cubes3Overlap, Database, Gear, Ghost, Globe, GraduationCap, LayoutSplitSideContentRight, PersonPencil, PlugConnection, Puzzle, Smartphone, Tray } from '../components/icons'
+import { ArrowLeft, Cubes3Overlap, Database, Gear, Globe, GraduationCap, LayoutSplitSideContentRight, PersonPencil, PlugConnection, Puzzle, Smartphone, Tray } from '../components/icons'
 import { Input } from '../components/official'
 import {
   RAIL_WIDTH_DEFAULT,
@@ -36,7 +36,6 @@ const Icons: Record<string, IconComponent | undefined> = {
   'dsh-tauri-archive': Tray,
   'plugins': Puzzle,
   'dsh-tauri-remote': Globe,
-  'dsh-tauri-pet-settings': Ghost,
   'better-sidebar': LayoutSplitSideContentRight,
 }
 
