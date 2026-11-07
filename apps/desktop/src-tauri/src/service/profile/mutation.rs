@@ -1,4 +1,5 @@
 use crate::service::{plugin, workflow};
+use futures_util::FutureExt;
 use tokio::sync::OwnedMutexGuard;
 
 pub(crate) struct MutationGuard {
@@ -8,14 +9,25 @@ pub(crate) struct MutationGuard {
 }
 
 pub(crate) async fn acquire() -> Result<MutationGuard, String> {
-    let transition = workflow::acquire_core_transition().await?;
-    let operation = plugin::acquire_operation_lock().await?;
-    let process = plugin::acquire_process_lock().await?;
-    Ok(MutationGuard {
-        _process: process,
-        _operation: operation,
-        _transition: transition,
-    })
+    loop {
+        let transition = workflow::acquire_core_transition().await?;
+        let mut plugin_locks = std::pin::pin!(async {
+            let operation = plugin::acquire_operation_lock().await?;
+            let process = plugin::acquire_process_lock().await?;
+            Ok::<_, String>((operation, process))
+        });
+        if let Some(result) = plugin_locks.as_mut().now_or_never() {
+            let (operation, process) = result?;
+            return Ok(MutationGuard {
+                _process: process,
+                _operation: operation,
+                _transition: transition,
+            });
+        }
+        // 等待插件时让出核心锁；就绪后释放试探锁，再按原顺序获取。
+        drop(transition);
+        drop(plugin_locks.await?);
+    }
 }
 
 impl MutationGuard {

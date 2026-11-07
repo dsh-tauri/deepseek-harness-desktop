@@ -632,6 +632,56 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn waiting_profile_mutation_leaves_core_transitions_available() {
+        let _test_guard = TEST_PROCESS_LOCK.lock().await;
+        for block_operation in [true, false] {
+            let held = if block_operation {
+                acquire_operation_lock().await.unwrap()
+            } else {
+                acquire_process_lock().await.unwrap()
+            };
+            let mut mutation = Box::pin(crate::service::profile::mutation::acquire());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), &mut mutation)
+                    .await
+                    .is_err()
+            );
+            let transition = tokio::time::timeout(
+                Duration::from_secs(1),
+                crate::service::workflow::acquire_core_transition(),
+            )
+            .await;
+            assert!(
+                transition.is_ok(),
+                "waiting for plugin operation={block_operation} must leave core transitions available"
+            );
+            let transition = transition.unwrap().unwrap();
+            drop(held);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), &mut mutation)
+                    .await
+                    .is_err()
+            );
+            let operation = tokio::time::timeout(Duration::from_secs(1), acquire_operation_lock())
+                .await
+                .expect("waiting to reacquire the core transition must release plugin locks")
+                .unwrap();
+            drop(operation);
+            drop(transition);
+            let mutation = tokio::time::timeout(Duration::from_secs(1), mutation)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), acquire_process_lock())
+                    .await
+                    .is_err()
+            );
+            drop(mutation);
+        }
+    }
+
+    #[tokio::test]
     async fn operation_preparation_waits_for_a_cancelled_process_to_exit() {
         let _test_guard = TEST_PROCESS_LOCK.lock().await;
         let scratch = tempfile::tempdir().unwrap();
