@@ -7,6 +7,7 @@ import { useLayoutEffect } from 'react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { Shell } from '@/layout/shell'
+import { shortcutsFeature } from '../../../../../packages/builtin-plugin-tauri/src/client/register/shortcuts'
 import { Navbar } from './navbar'
 
 const { store, userAgent, openOverlay, openUrl, toggleDevtools, emitEvent } = vi.hoisted(() => {
@@ -83,6 +84,12 @@ interface MenuEntry {
   shortcut: string | null
 }
 
+function CatalogRegistration({ onCommit }: { onCommit: () => void }) {
+  useDshShortcuts()
+  useLayoutEffect(onCommit)
+  return null
+}
+
 const listeners = new Map<number, Listener>()
 let menuEntries: MenuEntry[]
 const closedWindows: string[] = []
@@ -157,6 +164,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   document.body.replaceChildren()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -273,6 +281,53 @@ describe('native View menu state', () => {
       { id: 'sidebar.left.toggle', label: 'Changed sidebar', keys: ['⌘', 'B'], available: false },
       { id: 'terminal.new', label: 'Terminal', keys: ['⌘', 'J'], available: true },
     ])
+  })
+
+  it('settles shortcut registrations that publish transient empty catalogs during a render', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('isTauri', true)
+    emitEvent.mockImplementation((event: string, payload: unknown) => nativeEvent(event, payload))
+    const rows = [{ id: 'sidebar.left.toggle', label: 'Sidebar', keys: ['⌥', '⌘', 'B'], binding: { code: 'KeyB', modifiers: ['alt', 'meta'] } }]
+    let current = rows
+    let reports = 0
+    const subscribers = new Set<() => void>()
+    const catalog = {
+      getSnapshot: () => current,
+      subscribe: (listener: () => void) => {
+        subscribers.add(listener)
+        return () => subscribers.delete(listener)
+      },
+    }
+    const dispose = shortcutsFeature.call({ get: () => ({ catalog }) })
+    function rebindCatalog() {
+      reports++
+      if (reports > 60)
+        throw new Error('transient shortcut registrations caused render feedback')
+      current = []
+      for (const listener of subscribers) listener()
+      current = rows
+      for (const listener of subscribers) listener()
+    }
+    try {
+      render(
+        <>
+          <Shell />
+          <CatalogRegistration onCommit={rebindCatalog} />
+        </>,
+      )
+      reportShortcuts()
+      act(() => vi.advanceTimersByTime(20))
+      expect(reports).toBeLessThan(10)
+      expect(menuEntries.find(entry => entry.id === 'desktop-toggle-sidebar')).toEqual({
+        id: 'desktop-toggle-sidebar',
+        enabled: true,
+        shortcut: '⌥ ⌘ B',
+      })
+    }
+    finally {
+      act(dispose)
+      emitEvent.mockReset()
+    }
   })
 
   it('keeps the shortcut snapshot stable when the native catalog repeats unchanged rows', () => {
