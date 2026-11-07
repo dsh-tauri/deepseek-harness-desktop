@@ -177,7 +177,7 @@ fn running_appimage_from(
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn running_appimage() -> Option<std::path::PathBuf> {
+pub(crate) fn running_appimage() -> Option<std::path::PathBuf> {
     running_appimage_from(
         std::env::var("APPIMAGE").ok().as_deref(),
         std::env::var("APPDIR").ok().as_deref(),

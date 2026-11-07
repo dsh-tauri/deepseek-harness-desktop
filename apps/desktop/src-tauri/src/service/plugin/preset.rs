@@ -295,7 +295,154 @@ fn find_bundled_in_root(root: &std::path::Path, id: &str) -> Option<PathBuf> {
 /// git、无需构建期打包；仓库里不存在该 id 时回落随包目录，让开发与发布共用一套
 /// 兜底逻辑。
 pub(crate) fn bundled_plugin_dir(app_handle: &AppHandle, id: &str) -> Option<PathBuf> {
-    bundled_plugin_dir_from(app_handle.path().resource_dir().ok().as_deref(), id)
+    let resources = app_handle.path().resource_dir().ok();
+    if let Some(stable_root) = appimage_bundled_root(app_handle) {
+        if let Some(dir) = stable_bundled_dir(resources.as_deref(), &stable_root, id) {
+            return Some(dir);
+        }
+    }
+    bundled_plugin_dir_from(resources.as_deref(), id)
+}
+
+/// AppImage 内置插件稳定副本根：`<app_data>/internal-plugins/<版本>`。
+///
+/// 只有 AppImage 需要：镜像每次启动都挂载到新的临时目录，随包资源路径随之变化
+/// （issue #1411），直接拿它当 `link:` 目标会让启动自愈每次都判定路径失效、
+/// 把全部内置插件重装一遍。其余安装方式的资源目录跨启动稳定，行为保持不变。
+pub(crate) fn appimage_bundled_root(app_handle: &AppHandle) -> Option<PathBuf> {
+    appimage_bundled_root_at(&config::get_base_dir(app_handle))
+}
+
+/// [`appimage_bundled_root`] 的数据目录版本：启动进程链路只持有数据目录，
+/// 复用同一份门禁判定，不必再拿 AppHandle。
+pub(crate) fn appimage_bundled_root_at(base: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    let running = crate::service::update::version::running_appimage().is_some();
+    #[cfg(not(target_os = "linux"))]
+    let running = false;
+    appimage_bundled_root_from(running, base)
+}
+
+fn appimage_bundled_root_from(is_appimage: bool, base: &Path) -> Option<PathBuf> {
+    is_appimage.then(|| {
+        base.join(BUNDLED_PLUGINS_DIR)
+            .join(env!("CARGO_PKG_VERSION"))
+    })
+}
+
+/// 稳定副本命中即返回；副本缺失时先整棵复制随包部署树，再探测。
+///
+/// 复制失败只告警并返回 `None`：调用方回落到随包的挂载目录，本次启动照常可用，
+/// 下次启动会再试一次，绝不阻断启动。
+fn stable_bundled_dir(resources: Option<&Path>, stable_root: &Path, id: &str) -> Option<PathBuf> {
+    if let Some(dir) = stable_bundled_plugin_dir(stable_root, id) {
+        return Some(dir);
+    }
+    let source = bundled_node_modules_root(resources)?;
+    if let Err(error) = ensure_stable_bundled_root(stable_root, &source) {
+        log::warn!("{error}");
+        return None;
+    }
+    stable_bundled_plugin_dir(stable_root, id)
+}
+
+/// 随包部署树根：`<resource_dir>/resources/node_modules`（打包布局）优先，
+/// 其次扁平布局 `<resource_dir>/node_modules`。
+fn bundled_node_modules_root(resources: Option<&Path>) -> Option<PathBuf> {
+    let root = resources?;
+    [
+        root.join("resources").join("node_modules"),
+        root.join("node_modules"),
+    ]
+    .into_iter()
+    .find(|dir| dir.is_dir())
+}
+
+/// 稳定副本内某内置插件的目录：`<stable_root>/node_modules/<id>`。
+///
+/// 副本里必须保留 `node_modules` 这一层：插件目录的裸 import 依赖同级包解析
+/// （构建期 `pnpm deploy` 的 hoisted 布局），换一层目录名就解析不到依赖。
+fn stable_bundled_plugin_dir(stable_root: &Path, id: &str) -> Option<PathBuf> {
+    let dir = stable_root.join("node_modules").join(id);
+    dir.join("package.json").is_file().then_some(dir)
+}
+
+/// 确保 `stable_root` 下有一份可用的随包部署树副本（`source` 即部署树的
+/// `node_modules`）。
+///
+/// 先复制到 `<root>.tmp-<pid>` 再整体 rename：进程中途退出只会留下临时目录，
+/// 不会被判定为就绪副本；rename 前若已存在不完整的同名目录则先清掉，避免半成品
+/// 永久挡住重建。
+pub(crate) fn ensure_stable_bundled_root(stable_root: &Path, source: &Path) -> Result<(), String> {
+    if stable_root_ready(stable_root) {
+        return Ok(());
+    }
+    let Some(name) = stable_root.file_name() else {
+        return Err(format!(
+            "INTERNAL_PLUGINS_STABLE_COPY_FAILED: invalid stable root {}",
+            stable_root.display()
+        ));
+    };
+    let Some(parent) = stable_root.parent() else {
+        return Err(format!(
+            "INTERNAL_PLUGINS_STABLE_COPY_FAILED: invalid stable root {}",
+            stable_root.display()
+        ));
+    };
+    let staging = parent.join(format!(
+        "{}.tmp-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    std::fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "INTERNAL_PLUGINS_STABLE_COPY_FAILED: {}: {error}",
+            parent.display()
+        )
+    })?;
+    std::fs::remove_dir_all(&staging).ok();
+    let outcome = (|| {
+        if stable_root.exists() {
+            std::fs::remove_dir_all(stable_root)?;
+        }
+        copy_dir_all(source, &staging.join("node_modules"))?;
+        std::fs::rename(&staging, stable_root)
+    })();
+    if let Err(error) = outcome {
+        std::fs::remove_dir_all(&staging).ok();
+        return Err(format!(
+            "INTERNAL_PLUGINS_STABLE_COPY_FAILED: {} -> {}: {error}",
+            source.display(),
+            stable_root.display()
+        ));
+    }
+    log::info!(
+        "Stable bundled plugins copied: {} -> {}",
+        source.display(),
+        stable_root.display()
+    );
+    Ok(())
+}
+
+/// 副本是否就绪：复制只在 `<root>.tmp-<pid>` 完成后整体 rename，所以 `node_modules`
+/// 存在即代表上一次复制已完整落盘。
+fn stable_root_ready(stable_root: &Path) -> bool {
+    stable_root.join("node_modules").is_dir()
+}
+
+fn copy_dir_all(source: &Path, target: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = target.join(entry.file_name());
+        if std::fs::metadata(&from)?.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn bundled_plugin_dir_from(resources: Option<&Path>, id: &str) -> Option<PathBuf> {
@@ -349,24 +496,46 @@ fn package_json_description(raw: &str) -> Option<String> {
 }
 
 /// 删除旧版随包资源目录 `resources/preset-plugins` 与 `resources/internal-plugins`，
-/// 避免升级安装保留不再使用/已迁至 `resources/node_modules/<name>` 的内置插件副本。
-/// 仅处理 Tauri 运行时资源根下的目录，绝不删除源码 checkout；逐个尝试所有布局后
-/// 再汇总错误，避免一个被占用的旧目录阻碍其余目录清理。
+/// 避免升级安装保留不再使用/已迁至 `resources/node_modules/<name>` 的内置插件副本；
+/// 同时清掉数据目录下非当前版本的稳定副本根（见 [`appimage_bundled_root`]）。
+/// 仅处理随包资源根与数据目录，绝不删除源码 checkout；逐个尝试所有布局后再汇总
+/// 错误，避免一个被占用的旧目录阻碍其余目录清理。
 pub(crate) fn remove_legacy_bundled_plugins(app_handle: &AppHandle) -> Result<(), String> {
-    let Ok(root) = app_handle.path().resource_dir() else {
-        return Ok(());
-    };
-    let candidates = vec![
-        root.join(LEGACY_BUNDLED_PLUGINS_DIR),
-        root.join("resources").join(LEGACY_BUNDLED_PLUGINS_DIR),
-        root.join(BUNDLED_PLUGINS_DIR),
-        root.join("resources").join(BUNDLED_PLUGINS_DIR),
-    ];
+    let mut candidates = stale_stable_bundled_roots(
+        &config::get_base_dir(app_handle).join(BUNDLED_PLUGINS_DIR),
+        env!("CARGO_PKG_VERSION"),
+    );
+    if let Ok(root) = app_handle.path().resource_dir() {
+        candidates.extend([
+            root.join(LEGACY_BUNDLED_PLUGINS_DIR),
+            root.join("resources").join(LEGACY_BUNDLED_PLUGINS_DIR),
+            root.join(BUNDLED_PLUGINS_DIR),
+            root.join("resources").join(BUNDLED_PLUGINS_DIR),
+        ]);
+    }
     // resource_dir() 在不同平台可能返回安装根或 resources 根；若 root 本身即
     // resources，则上面的 `root/resources` 会误拼一个不存在的嵌套资源根，这里
     // 只删真正存在且含旧布局的目录（remove_legacy_candidates 本身也会跳过
     // 不存在的目录）。
     remove_legacy_candidates(candidates, |path| std::fs::remove_dir_all(path))
+}
+
+/// 稳定副本根下不属于当前版本的目录（升级残留与中断的 `.tmp-<pid>` 半成品）。
+///
+/// 版本目录只由当前版本使用，旧版本目录里的插件副本永远不会再被 `link:` 指向。
+fn stale_stable_bundled_roots(plugins_root: &Path, current_version: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(plugins_root) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.file_name()
+                .is_none_or(|name| name.to_string_lossy() != current_version)
+        })
+        .collect()
 }
 
 /// 对候选旧目录执行最佳努力清理；删除动作参数化是为了验证单项失败后仍继续处理。
@@ -1074,4 +1243,160 @@ mod tests {
         assert_eq!(package_json_description("not json"), None);
     }
 
+    fn write_bundled_package(root: &Path, id: &str, version: &str) -> PathBuf {
+        let dir = root.join(id);
+        std::fs::create_dir_all(&dir).expect("create bundled package dir");
+        std::fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name":"{id}","version":"{version}"}}"#),
+        )
+        .expect("write bundled package.json");
+        dir
+    }
+
+    #[test]
+    fn stable_copy_keeps_plugins_usable_after_the_bundle_disappears() {
+        let temp = tempfile::tempdir().unwrap();
+        let resources = temp.path().join("resource_dir");
+        let source = resources.join("resources").join("node_modules");
+        write_bundled_package(&source, "dsh-a", "1.0.0");
+        write_bundled_package(&source, "dsh-b", "1.0.0");
+        let stable_root = temp.path().join("app-data/internal-plugins/0.31.0");
+
+        let first = stable_bundled_dir(Some(&resources), &stable_root, "dsh-a");
+        assert_eq!(first, Some(stable_root.join("node_modules").join("dsh-a")));
+        std::fs::remove_dir_all(&resources).expect("remove mounted resources");
+
+        assert_eq!(
+            stable_bundled_plugin_dir(&stable_root, "dsh-a"),
+            Some(stable_root.join("node_modules").join("dsh-a"))
+        );
+        assert_eq!(
+            stable_bundled_plugin_dir(&stable_root, "dsh-b"),
+            Some(stable_root.join("node_modules").join("dsh-b"))
+        );
+        assert!(
+            std::fs::read_to_string(stable_root.join("node_modules/dsh-a/package.json"))
+                .expect("read copied package.json")
+                .contains("dsh-a")
+        );
+        let leftovers: Vec<String> = std::fs::read_dir(stable_root.parent().unwrap())
+            .expect("list stable plugins root")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(leftovers, vec![env!("CARGO_PKG_VERSION").to_string()]);
+        assert_eq!(stable_bundled_plugin_dir(&stable_root, "dsh-missing"), None);
+    }
+
+    #[test]
+    fn ensure_stable_bundled_root_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("node_modules");
+        write_bundled_package(&source, "dsh-a", "1.0.0");
+        let stable_root = temp.path().join("stable/0.31.0");
+
+        ensure_stable_bundled_root(&stable_root, &source).expect("first copy should succeed");
+        let marker = stable_root.join("node_modules/dsh-a/marker.txt");
+        std::fs::write(&marker, "kept").expect("write marker");
+
+        ensure_stable_bundled_root(&stable_root, &source).expect("second copy should succeed");
+        assert_eq!(
+            std::fs::read_to_string(&marker).ok().as_deref(),
+            Some("kept")
+        );
+    }
+
+    #[test]
+    fn ensure_stable_bundled_root_recopies_for_a_new_version_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("node_modules");
+        write_bundled_package(&source, "dsh-a", "1.0.0");
+        let old_root = temp.path().join("stable/0.30.0");
+        ensure_stable_bundled_root(&old_root, &source).expect("copy old version");
+
+        std::fs::write(
+            source.join("dsh-a/package.json"),
+            r#"{"name":"dsh-a","version":"2.0.0"}"#,
+        )
+        .expect("rewrite bundled package.json");
+        let new_root = temp.path().join("stable/0.31.0");
+        assert_eq!(
+            stable_bundled_dir(Some(temp.path()), &new_root, "dsh-a"),
+            Some(new_root.join("node_modules").join("dsh-a"))
+        );
+
+        let read = |root: &Path| {
+            std::fs::read_to_string(root.join("node_modules/dsh-a/package.json"))
+                .expect("read stable package.json")
+        };
+        assert!(read(&new_root).contains("2.0.0"));
+        assert!(read(&old_root).contains("1.0.0"));
+    }
+
+    #[test]
+    fn appimage_stable_root_is_gated_by_the_appimage_runtime() {
+        let base = Path::new("dsh-app-data");
+        assert_eq!(appimage_bundled_root_from(false, base), None);
+        assert_eq!(
+            appimage_bundled_root_from(true, base),
+            Some(
+                base.join(BUNDLED_PLUGINS_DIR)
+                    .join(env!("CARGO_PKG_VERSION"))
+            )
+        );
+    }
+
+    #[test]
+    fn stale_stable_bundled_roots_exclude_current_version_and_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins_root = temp.path().join(BUNDLED_PLUGINS_DIR);
+        for name in ["0.30.0", "0.31.0", "0.31.0.tmp-42"] {
+            std::fs::create_dir_all(plugins_root.join(name)).expect("create version dir");
+        }
+        std::fs::write(plugins_root.join("notes.txt"), "keep").expect("write stray file");
+
+        let mut stale: Vec<String> = stale_stable_bundled_roots(&plugins_root, "0.31.0")
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        stale.sort();
+        assert_eq!(
+            stale,
+            vec!["0.30.0".to_string(), "0.31.0.tmp-42".to_string()]
+        );
+        assert!(stale_stable_bundled_roots(&temp.path().join("absent"), "0.31.0").is_empty());
+    }
+
+    #[test]
+    fn stale_stable_bundled_roots_cleanup_continues_after_one_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins_root = temp.path().join(BUNDLED_PLUGINS_DIR);
+        for name in ["0.29.0", "0.30.0", "0.31.0"] {
+            std::fs::create_dir_all(plugins_root.join(name)).expect("create version dir");
+        }
+        let candidates = stale_stable_bundled_roots(&plugins_root, "0.31.0");
+        let locked = plugins_root.join("0.29.0");
+        let mut attempted = Vec::new();
+
+        let error = remove_legacy_candidates(candidates, |path| {
+            attempted.push(path.to_path_buf());
+            if path == locked {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "locked",
+                ))
+            } else {
+                std::fs::remove_dir_all(path)
+            }
+        })
+        .expect_err("one failed cleanup should be reported");
+
+        assert_eq!(attempted.len(), 2);
+        assert!(error.contains("LEGACY_PRESET_PLUGINS_REMOVE_FAILED"));
+        assert!(error.contains(&locked.display().to_string()));
+        assert!(locked.is_dir());
+        assert!(!plugins_root.join("0.30.0").exists());
+        assert!(plugins_root.join("0.31.0").is_dir());
+    }
 }

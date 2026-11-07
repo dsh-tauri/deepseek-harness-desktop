@@ -28,7 +28,7 @@ mod about;
 mod install;
 mod meta;
 mod pending;
-mod version;
+pub(crate) mod version;
 
 pub use about::{about, DesktopAboutInfo};
 // DesktopDownloadProgress 为对外公开的事件载荷类型（当前链路未直接引用，属有意保留）。

@@ -76,7 +76,8 @@ pub(crate) fn sync_layer_at(
     enabled: bool,
 ) -> Option<PathBuf> {
     let path = base.join(HMR_PATCH_FILENAME);
-    let roots = local_watch_roots_at(profile, resource_root);
+    let stable_root = super::preset::appimage_bundled_root_at(base);
+    let roots = local_watch_roots_at(profile, resource_root, stable_root.as_deref());
     let rendered = if enabled { render_layer(&roots) } else { None };
     let Some(rendered) = rendered else {
         remove_layer(&path);
@@ -117,18 +118,32 @@ fn hmr_enabled(app_handle: &AppHandle) -> bool {
 /// 需要热重载的本地插件源码目录：已装且已挂载（在 `dsh.profile.bundles` 里）、以
 /// `link:` / `file:` 声明、目录真实存在、且不属于随包分发的内置插件。
 pub(crate) fn local_watch_roots(app_handle: &AppHandle) -> Vec<PathBuf> {
+    let stable_root = super::preset::appimage_bundled_root(app_handle);
     local_watch_roots_at(
         &profile_dir(app_handle),
         app_handle.path().resource_dir().ok().as_deref(),
+        stable_root.as_deref(),
     )
 }
 
-pub(crate) fn local_watch_roots_at(profile: &Path, resource_root: Option<&Path>) -> Vec<PathBuf> {
+/// `stable_root` 是 AppImage 的内置插件稳定副本根（见
+/// [`super::preset::appimage_bundled_root`]）：内置插件在那里也有一份 `link:`
+/// 目标，不排除就会把 13 个副本目录全部变成 chokidar 的 watch root。
+pub(crate) fn local_watch_roots_at(
+    profile: &Path,
+    resource_root: Option<&Path>,
+    stable_root: Option<&Path>,
+) -> Vec<PathBuf> {
     let Some(manifest) = read_manifest(profile) else {
         return Vec::new();
     };
+    let stable_root = stable_root.and_then(|root| dunce::canonicalize(root).ok());
+    let bundled: Vec<&Path> = resource_root
+        .into_iter()
+        .chain(stable_root.as_deref())
+        .collect();
     watch_roots_in(profile, &manifest, |_name, dir| {
-        resource_root.is_some_and(|root| is_bundled(root, dir))
+        bundled.iter().any(|root| is_bundled(root, dir))
     })
 }
 
@@ -484,7 +499,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            local_watch_roots_at(&profile, Some(&resources)),
+            local_watch_roots_at(&profile, Some(&resources), None),
             vec![local.clone()]
         );
         assert_eq!(
@@ -514,6 +529,42 @@ mod tests {
         .unwrap();
         assert_eq!(sync_layer_at(&base, &profile, Some(&resources), true), None);
         assert!(!path.exists());
+    }
+
+    /// issue #1411：AppImage 的内置插件 `link:` 指向稳定副本目录，它和随包资源根
+    /// 一样不该进 watch root，否则 13 个副本目录全被 chokidar 递归监听。
+    #[test]
+    fn local_watch_roots_at_excludes_the_stable_bundled_copy_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let profile = plugin_dir(&root, "profile");
+        let resources = plugin_dir(&root, "resource-dir");
+        let stable = plugin_dir(&root, "app-data/internal-plugins/0.31.0");
+        let bundled = plugin_dir(&resources, "resources/node_modules/dsh-a");
+        let copied = plugin_dir(&stable, "node_modules/dsh-a");
+        let local = plugin_dir(&root, "local");
+        std::fs::write(
+            profile.join("package.json"),
+            serde_json::json!({
+                "dependencies": {
+                    "dsh-a": format!("link:{}", copied.display()),
+                    "dsh-b": format!("file:{}", bundled.display()),
+                    "local": format!("link:{}", local.display())
+                },
+                "dsh": { "profile": { "bundles": ["dsh-a", "dsh-b", "local"] } }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            local_watch_roots_at(&profile, Some(&resources), Some(&stable)),
+            vec![local.clone()]
+        );
+        assert_eq!(
+            local_watch_roots_at(&profile, Some(&resources), None),
+            vec![copied, local]
+        );
     }
 
     #[test]
