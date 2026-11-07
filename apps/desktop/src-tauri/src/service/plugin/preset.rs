@@ -367,6 +367,10 @@ fn stable_bundled_plugin_dir(stable_root: &Path, id: &str) -> Option<PathBuf> {
     dir.join("package.json").is_file().then_some(dir)
 }
 
+/// 稳定副本的复制与 rename 必须独占：插件安装目标解析与启动自愈可能在同一进程内
+/// 并发进入，共用同一个 `<root>.tmp-<pid>` 会互相删掉对方正在写的目录。
+static STABLE_COPY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 确保 `stable_root` 下有一份可用的随包部署树副本（`source` 即部署树的
 /// `node_modules`）。
 ///
@@ -374,6 +378,9 @@ fn stable_bundled_plugin_dir(stable_root: &Path, id: &str) -> Option<PathBuf> {
 /// 不会被判定为就绪副本；rename 前若已存在不完整的同名目录则先清掉，避免半成品
 /// 永久挡住重建。
 pub(crate) fn ensure_stable_bundled_root(stable_root: &Path, source: &Path) -> Result<(), String> {
+    let _guard = STABLE_COPY_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     if stable_root_ready(stable_root) {
         return Ok(());
     }

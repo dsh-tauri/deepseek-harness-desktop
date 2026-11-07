@@ -403,13 +403,15 @@ fn record_moved(state: &mut WindowState, position: PhysicalPosition<i32>) {
 
 /// 记一帧窗口缩放：只写内存缓存。
 ///
-/// 全屏切换也会派发 Resized，而全屏尺寸不是可恢复的普通窗口几何，此时丢弃样本。
+/// 全屏与最大化都会派发 Resized，而这些尺寸不是可恢复的普通窗口几何。丢样本是为了
+/// 让缓存留住最后一次普通尺寸：退出时 `update_state` 在最大化状态下同样跳过尺寸采样，
+/// 缓存里若已被最大化尺寸覆盖，取消最大化后窗口就再也回不到原来的大小。
 fn record_resized<R: Runtime>(
     window: &Window<R>,
     state: &mut WindowState,
     size: PhysicalSize<u32>,
 ) {
-    if window.is_fullscreen().unwrap_or(false) {
+    if window.is_fullscreen().unwrap_or(false) || window.is_maximized().unwrap_or(false) {
         return;
     }
     apply_resized(state, size, window.scale_factor().ok());
