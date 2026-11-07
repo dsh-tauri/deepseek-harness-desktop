@@ -1,0 +1,132 @@
+diff --git a/dist/private/overlays/ariaHideOutside.cjs b/dist/private/overlays/ariaHideOutside.cjs
+index b81041bbd3abe9251c1737df770e66f96d148bc2..32c6c864fd599906fd42050dab2162cb531ef4b5 100644
+--- a/dist/private/overlays/ariaHideOutside.cjs
++++ b/dist/private/overlays/ariaHideOutside.cjs
+@@ -136,7 +136,7 @@ function $3c73045d61be2d91$export$1c3ebcada18427bf(targets, options) {
+         childList: true,
+         subtree: true
+     });
+-    let shadowObservers = new Set();
++    let shadowObservers = new Map();
+     if ((0, $8F2D1$reactstatelyprivateflagsflags.shadowDOM)()) for (let shadowRoot of shadowRootsToWatch){
+         // Disconnect single target instead of all https://github.com/whatwg/dom/issues/126
+         let shadowObserver = new MutationObserver((changes)=>{
+@@ -164,7 +164,7 @@ function $3c73045d61be2d91$export$1c3ebcada18427bf(targets, options) {
+             childList: true,
+             subtree: true
+         });
+-        shadowObservers.add(shadowObserver);
++        shadowObservers.set(shadowRoot, shadowObserver);
+     }
+     let observerWrapper = {
+         visibleNodes: visibleNodes,
+@@ -174,15 +174,20 @@ function $3c73045d61be2d91$export$1c3ebcada18427bf(targets, options) {
+                 childList: true,
+                 subtree: true
+             });
++            for (let [shadowRoot, shadowObserver] of shadowObservers)shadowObserver.observe(shadowRoot, {
++                childList: true,
++                subtree: true
++            });
+         },
+         disconnect () {
+             observer.disconnect();
++            for (let shadowObserver of shadowObservers.values())shadowObserver.disconnect();
+         }
+     };
+     $3c73045d61be2d91$var$observerStack.push(observerWrapper);
+     return ()=>{
+         observer.disconnect();
+-        if ((0, $8F2D1$reactstatelyprivateflagsflags.shadowDOM)()) for (let shadowObserver of shadowObservers)shadowObserver.disconnect();
++        if ((0, $8F2D1$reactstatelyprivateflagsflags.shadowDOM)()) for (let shadowObserver of shadowObservers.values())shadowObserver.disconnect();
+         for (let node of hiddenNodes){
+             let count = $3c73045d61be2d91$var$refCountMap.get(node);
+             if (count == null) continue;
+diff --git a/dist/private/overlays/ariaHideOutside.js b/dist/private/overlays/ariaHideOutside.js
+index 88b97ab5d5200a25d92d877d03f279e04923d193..b1cf5d81d4371ca01f6ce2bd83c2c8cfe27befe7 100644
+--- a/dist/private/overlays/ariaHideOutside.js
++++ b/dist/private/overlays/ariaHideOutside.js
+@@ -131,7 +131,7 @@ function $20aa6983aa303ce6$export$1c3ebcada18427bf(targets, options) {
+         childList: true,
+         subtree: true
+     });
+-    let shadowObservers = new Set();
++    let shadowObservers = new Map();
+     if ((0, $han3A$shadowDOM)()) for (let shadowRoot of shadowRootsToWatch){
+         // Disconnect single target instead of all https://github.com/whatwg/dom/issues/126
+         let shadowObserver = new MutationObserver((changes)=>{
+@@ -159,7 +159,7 @@ function $20aa6983aa303ce6$export$1c3ebcada18427bf(targets, options) {
+             childList: true,
+             subtree: true
+         });
+-        shadowObservers.add(shadowObserver);
++        shadowObservers.set(shadowRoot, shadowObserver);
+     }
+     let observerWrapper = {
+         visibleNodes: visibleNodes,
+@@ -169,15 +169,20 @@ function $20aa6983aa303ce6$export$1c3ebcada18427bf(targets, options) {
+                 childList: true,
+                 subtree: true
+             });
++            for (let [shadowRoot, shadowObserver] of shadowObservers)shadowObserver.observe(shadowRoot, {
++                childList: true,
++                subtree: true
++            });
+         },
+         disconnect () {
+             observer.disconnect();
++            for (let shadowObserver of shadowObservers.values())shadowObserver.disconnect();
+         }
+     };
+     $20aa6983aa303ce6$var$observerStack.push(observerWrapper);
+     return ()=>{
+         observer.disconnect();
+-        if ((0, $han3A$shadowDOM)()) for (let shadowObserver of shadowObservers)shadowObserver.disconnect();
++        if ((0, $han3A$shadowDOM)()) for (let shadowObserver of shadowObservers.values())shadowObserver.disconnect();
+         for (let node of hiddenNodes){
+             let count = $20aa6983aa303ce6$var$refCountMap.get(node);
+             if (count == null) continue;
+diff --git a/dist/private/overlays/ariaHideOutside.mjs b/dist/private/overlays/ariaHideOutside.mjs
+index 01643c2cac3682e1c55ca80957b23e6db197661c..0f47b3a29473c97ad171f17edcd47b604c0319a7 100644
+--- a/dist/private/overlays/ariaHideOutside.mjs
++++ b/dist/private/overlays/ariaHideOutside.mjs
+@@ -129,7 +129,7 @@ function $58196c8d6a1f38fc$export$1c3ebcada18427bf(targets, options) {
+         childList: true,
+         subtree: true
+     });
+-    let shadowObservers = new Set();
++    let shadowObservers = new Map();
+     if ((0, $6UjbS$shadowDOM)()) for (let shadowRoot of shadowRootsToWatch){
+         // Disconnect single target instead of all https://github.com/whatwg/dom/issues/126
+         let shadowObserver = new MutationObserver((changes)=>{
+@@ -157,7 +157,7 @@ function $58196c8d6a1f38fc$export$1c3ebcada18427bf(targets, options) {
+             childList: true,
+             subtree: true
+         });
+-        shadowObservers.add(shadowObserver);
++        shadowObservers.set(shadowRoot, shadowObserver);
+     }
+     let observerWrapper = {
+         visibleNodes: visibleNodes,
+@@ -167,15 +167,20 @@ function $58196c8d6a1f38fc$export$1c3ebcada18427bf(targets, options) {
+                 childList: true,
+                 subtree: true
+             });
++            for (let [shadowRoot, shadowObserver] of shadowObservers)shadowObserver.observe(shadowRoot, {
++                childList: true,
++                subtree: true
++            });
+         },
+         disconnect () {
+             observer.disconnect();
++            for (let shadowObserver of shadowObservers.values())shadowObserver.disconnect();
+         }
+     };
+     $58196c8d6a1f38fc$var$observerStack.push(observerWrapper);
+     return ()=>{
+         observer.disconnect();
+-        if ((0, $6UjbS$shadowDOM)()) for (let shadowObserver of shadowObservers)shadowObserver.disconnect();
++        if ((0, $6UjbS$shadowDOM)()) for (let shadowObserver of shadowObservers.values())shadowObserver.disconnect();
+         for (let node of hiddenNodes){
+             let count = $58196c8d6a1f38fc$var$refCountMap.get(node);
+             if (count == null) continue;

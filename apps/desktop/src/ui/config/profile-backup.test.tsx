@@ -7,7 +7,7 @@ import { ConfigProfile } from './profile'
 const calls = vi.hoisted(() => ({ invoke: vi.fn(), switchProfile: vi.fn(), toast: vi.fn(), backedUp: [] as string[] }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: calls.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
-vi.mock('@overlastic/react', () => ({ useOverlay: () => [null, vi.fn()] }))
+vi.mock('@overlastic/react', () => ({ useOverlay: () => vi.fn() }))
 vi.mock('@/store', () => ({ store: { harness: { switchProfile: calls.switchProfile, restart: vi.fn() } } }))
 vi.mock('@/store/modules/harness', () => ({ waitForHarnessStopped: vi.fn() }))
 vi.mock('@/ui/dialog/profile-migrate', () => ({ ProfileMigrateDialog: () => null }))

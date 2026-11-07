@@ -27,7 +27,7 @@ function formatSize(bytes: number): string {
 export function ConfigBackup({ profileId, active, onBack }: ConfigBackupProps) {
   const { t } = useTranslation()
   const { backups, loading, error, createBackup, restoreBackup, deleteBackup, busy, creating, restoring, deleting, exporting, recoveryBackup, exportRecoveryBackup } = useBackups(profileId)
-  const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
+  const openDialog = useOverlay(Modal)
 
   const [includeCredentials, toggleIncludeCredentials] = useToggle()
 
@@ -305,7 +305,6 @@ export function ConfigBackup({ profileId, active, onBack }: ConfigBackupProps) {
         </If>
       </Panel.Loadable>
 
-      {dialogHolder}
     </div>
   )
 }

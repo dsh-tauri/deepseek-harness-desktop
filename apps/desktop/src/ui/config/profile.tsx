@@ -107,7 +107,7 @@ export function ConfigProfile() {
   /** 迁移入口的禁用条件：操作进行中、没有当前档案、或没有第二个档案可作来源 */
   const migrateBlocked = busy || !activeProfile || profiles.length < 2
 
-  const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
+  const openDialog = useOverlay(Modal)
 
   const { t } = useTranslation()
   const [creating, toggleCreating] = useToggle()
@@ -120,7 +120,7 @@ export function ConfigProfile() {
   const [cloneName, setCloneName] = useState('')
 
   // 迁移档案数据：来源档案在对话框内选择，目标恒为当前使用中的档案
-  const [migrateDialogHolder, openMigrateDialog] = useOverlay(ProfileMigrateDialog, { type: 'holder' })
+  const openMigrateDialog = useOverlay(ProfileMigrateDialog)
 
   /**
    * 档案名会直接当磁盘目录名与 CLI `--profile` 参数，只能用 ASCII 字母数字（`-`/`_`/空格
@@ -384,6 +384,7 @@ export function ConfigProfile() {
               </Switch.Content>
             </Switch>
             <Button
+              data-testid="dsh-profile-migrate-open"
               size="sm"
               variant="primary"
               isDisabled={migrateBlocked}
@@ -539,8 +540,6 @@ export function ConfigProfile() {
           </If>
         </div>
       </Panel.Loadable>
-      {dialogHolder}
-      {migrateDialogHolder}
 
       {/* 克隆档案：命名对话框（创建型，accent；可编辑建议名称） */}
       <AlertDialog

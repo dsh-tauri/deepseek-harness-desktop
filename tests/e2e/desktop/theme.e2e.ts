@@ -1,6 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import process from 'node:process'
 import { expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, completePreinstall, diagnose, invoke, SHELL_ROOT, startShellApp } from '../setup/shell'
 
@@ -78,13 +77,6 @@ for (const preference of ['light', 'dark'] as const) {
         const profile = path.join(home, 'home', '.dsh.dev', 'profiles', 'desktop')
         await mkdir(profile, { recursive: true })
         await writeFile(path.join(profile, 'cordis.patch.yml'), `- id: ui-theme\n  config:\n    preference: ${preference}\n`)
-        if (process.env.DSH_E2E_CORE_ROOT) {
-          await writeFile(path.join(home, 'download-cache', 'dependencies.json'), JSON.stringify({
-            dsh: path.resolve(process.env.DSH_E2E_CORE_ROOT),
-            pnpm: null,
-            git: null,
-          }))
-        }
       },
     })
     const page = app.window.page

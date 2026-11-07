@@ -138,7 +138,7 @@ function ensureHostRoot(): void {
   portal.id = PORTAL_ID
   portal.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483000'
   shadow.append(style, mount, portal)
-  root.append(host)
+  document.body.append(host)
   root.append(createDragNeutralizer())
   root.append(createOverlayInset())
   new MutationObserver(() => {

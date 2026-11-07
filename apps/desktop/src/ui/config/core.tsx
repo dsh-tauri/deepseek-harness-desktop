@@ -21,8 +21,8 @@ import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
 export function ConfigCore() {
-  const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
-  const [downloadDialogHolder, openDownloadDialog] = useOverlay(DownloadCoreDialog, { type: 'holder' })
+  const openDialog = useOverlay(Modal)
+  const openDownloadDialog = useOverlay(DownloadCoreDialog)
 
   const { t } = useTranslation()
 
@@ -475,8 +475,6 @@ export function ConfigCore() {
         </div>
       </Panel.Loadable>
 
-      {dialogHolder}
-      {downloadDialogHolder}
     </div>
   )
 }

@@ -4,7 +4,7 @@ import type { Browser, Page } from 'playwright'
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -38,6 +38,14 @@ export const HARNESS_READY = 'div[class$="_frame"], [data-testid="dsh-harness-we
 export const SHELL_HOST = '[data-dsh-shell-host]'
 export const NAVBAR_MENU_CONFIG = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-config"]`
 export const NAVBAR_MENU_POPOVER = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-popover"]`
+export const NAVBAR_ITEM_PROFILES = '[data-testid="dsh-navbar-item-profiles"]'
+export const CONFIG_DIALOG = '[data-testid="dsh-config-dialog"]'
+export const CONFIG_DIALOG_TITLE = '[data-testid="dsh-config-dialog-title"]'
+export const CONFIG_DIALOG_CLOSE = '[data-testid="dsh-config-dialog-close"]'
+export const CONFIG_NAV_APPLICATION = '[data-testid="dsh-config-nav-application"]'
+export const PROFILE_MIGRATE_OPEN = '[data-testid="dsh-profile-migrate-open"]'
+export const PROFILE_MIGRATE_DIALOG = '[data-testid="dsh-profile-migrate-dialog"]'
+export const PROFILE_MIGRATE_CANCEL = '[data-testid="dsh-profile-migrate-cancel"]'
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
@@ -180,7 +188,8 @@ export async function startShellApp(options: { downloadCacheDir?: string, prepar
 
   const home = await mkdtemp(path.join(tmpdir(), 'dsh-e2e-desktop-'))
   const appData = path.join(home, 'app-data')
-  const downloadCacheDir = options.downloadCacheDir ?? path.join(home, 'download-cache')
+  const coreRoot = process.env.DSH_E2E_CORE_ROOT
+  const downloadCacheDir = options.downloadCacheDir ?? (coreRoot ? path.join(home, 'download-cache') : path.join(ROOT, 'node_modules/.cache/dsh-e2e', process.platform, process.arch))
   let child: ChildProcess | undefined
   let browser: Browser | undefined
   let output = ''
@@ -212,6 +221,8 @@ export async function startShellApp(options: { downloadCacheDir?: string, prepar
   try {
     await mkdir(appData, { recursive: true })
     await mkdir(downloadCacheDir, { recursive: true })
+    if (coreRoot && !options.downloadCacheDir)
+      await writeFile(path.join(downloadCacheDir, 'dependencies.json'), JSON.stringify({ dsh: path.resolve(coreRoot), pnpm: null, git: null }))
     await mkdir(path.join(home, 'home'), { recursive: true })
     await mkdir(path.join(home, 'appdata'), { recursive: true })
     await mkdir(path.join(home, 'home', 'AppData', 'Roaming'), { recursive: true })
@@ -361,6 +372,8 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
   const deadline = Date.now() + timeoutMs
   let dismissed = false
   while (Date.now() < deadline) {
+    if (page.isClosed() || page.url().startsWith('chrome-error:'))
+      throw new Error(`首次装配页面加载失败：${page.url()}`)
     if (await page.locator(HARNESS_READY).count() > 0)
       return
     const skip = page.locator(SETUP_PREINSTALL_SKIP).first()

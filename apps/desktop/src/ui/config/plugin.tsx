@@ -102,7 +102,7 @@ export function ConfigPlugin() {
   const [upgradingAll, toggleUpgradingAll] = useToggle()
   const upgradable = managedPlugins.filter(plugin => (plugin.updateAvailable || plugin.error != null) && !rowBusy(plugin.id))
 
-  const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
+  const openDialog = useOverlay(Modal)
 
   const snapshot = useMutation({
     mutationFn: (id: string) => invoke<void>('snapshot_plugin', { id }),
@@ -804,7 +804,6 @@ export function ConfigPlugin() {
         </div>
       </Panel.Loadable>
 
-      {dialogHolder}
     </div>
   )
 }

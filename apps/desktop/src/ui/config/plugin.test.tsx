@@ -19,7 +19,7 @@ const { manager, openDialog, mocks, hmrStatus } = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hooks/use-plugins-manager', () => ({ useDshPluginsManager: () => manager }))
-vi.mock('@overlastic/react', () => ({ useOverlay: () => [null, openDialog] }))
+vi.mock('@overlastic/react', () => ({ useOverlay: () => openDialog }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 // useMutation 桩会真正执行传入的 mutationFn：命令名与参数由用例断言，而不是断言「调用了 mutate」。
 vi.mock('@tanstack/react-query', () => ({

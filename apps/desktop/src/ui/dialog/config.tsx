@@ -58,7 +58,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
           <Modal.Dialog data-testid="dsh-config-dialog" className="w-[840px] max-w-[calc(100vw-48px)] h-[min(720px,calc(100vh-96px))] pr-2.5">
             <Modal.CloseTrigger data-testid="dsh-config-dialog-close" />
             <Modal.Header className="mb-3">
-              <Modal.Heading>
+              <Modal.Heading data-testid="dsh-config-dialog-title">
                 {t('app.config')}
               </Modal.Heading>
             </Modal.Header>
