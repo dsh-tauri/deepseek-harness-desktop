@@ -5,7 +5,7 @@ const { Buffer } = require('node:buffer')
 const childProcess = require('node:child_process')
 const { once } = require('node:events')
 const fs = require('node:fs')
-const { createRequire } = require('node:module')
+const { createRequire, Module } = require('node:module')
 const path = require('node:path')
 const { test } = require('node:test')
 const { pathToFileURL } = require('node:url')
@@ -73,6 +73,45 @@ test('missing cache dependency falls back to archive without mixing a hoisted ve
   assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/outer/index.js')), false)
   assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/outer/node_modules/dep/index.js')), false)
 })
+
+test('deregister restores the CommonJS resolver and remains idempotent', (t) => {
+  const resolveFilename = Module._resolveFilename
+  const f = fixture(t)
+  assert.notEqual(Module._resolveFilename, resolveFilename)
+  assert.equal(f.load('node:fs'), fs)
+  f.hook.deregister()
+  assert.equal(Module._resolveFilename, resolveFilename)
+  f.hook.deregister()
+  assert.equal(Module._resolveFilename, resolveFilename)
+})
+
+for (const nested of [false, true]) {
+  test('HMR pre-resolution keeps ' + (nested ? 'nested' : 'hoisted') + ' dependencies on their archive parent', (t) => {
+    const f = fixture(t)
+    f.write('node_modules/dep/index.js', 'module.exports = "root"')
+    f.write('node_modules/dep/binding.node', 'not loaded')
+    f.write('node_modules/outer/index.js', 'module.exports = require("native")')
+    f.write('node_modules/outer/node_modules/native/index.js', 'module.exports = require("dep")')
+    f.write('node_modules/outer/node_modules/native/binding.node', 'not loaded')
+    if (nested)
+      f.write('node_modules/outer/node_modules/dep/index.js', 'module.exports = "nested"')
+    const load = Module._load
+    Module._load = function (request, parent, isMain, ...options) {
+      const filename = Module.isBuiltin(request) ? request : Module._resolveFilename(request, parent, isMain)
+      return load.call(this, filename, parent, isMain, ...options)
+    }
+    try {
+      if (nested)
+        assert.equal(f.load('dep'), 'root')
+      assert.equal(f.load('outer'), nested ? 'nested' : 'root')
+      assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/outer/index.js')), false)
+      assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/outer/node_modules/dep/index.js')), false)
+    }
+    finally {
+      Module._load = load
+    }
+  })
+}
 
 test('node-pty wrapper is materialized before it calculates helper directories', (t) => {
   const f = fixture(t)
@@ -325,6 +364,41 @@ if (process.env.DSH_ASAR_NATIVE_INTEGRATION === '1') {
   const hook = register(archive, cache)
   require('node:test').after(() => hook.deregister())
 
+  for (const target of ['session koffi', 'sharp']) {
+    test(`HMR pre-resolution loads real archived ${target} from a cold cache`, { timeout: 30000 }, () => {
+      const coldCache = fs.mkdtempSync(path.join(scratch, 'hmr-real-'))
+      const result = childProcess.spawnSync(process.execPath, ['--require', require.resolve('./asar-native.cjs'), '-e', `
+        const assert = require('node:assert/strict')
+        const { createRequire, Module } = require('node:module')
+        const path = require('node:path')
+        const archive = process.env.DSH_CORE_ARCHIVE
+        const load = createRequire(path.join(archive, 'probe.cjs'))
+        const nativeLoad = Module._load
+        Module._load = function (request, parent, isMain, ...options) {
+          const filename = Module.isBuiltin(request) ? request : Module._resolveFilename(request, parent, isMain)
+          return nativeLoad.call(this, filename, parent, isMain, ...options)
+        }
+        ;(async () => {
+          if (process.env.DSH_ASAR_TEST_TARGET === 'session koffi') {
+            const sessionLoad = createRequire(path.join(archive, 'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/probe.cjs'))
+            const koffi = sessionLoad('koffi')
+            const library = koffi.load(process.platform === 'win32' ? 'kernel32.dll' : process.platform === 'darwin' ? 'libSystem.B.dylib' : 'libc.so.6')
+            assert.equal(library.func(process.platform === 'win32' ? 'uint32_t __stdcall GetCurrentProcessId()' : 'int getpid()')(), process.pid)
+            return
+          }
+          const sharp = load('sharp')
+          const png = await sharp({ create: { width: 3, height: 2, channels: 4, background: '#ff0000' } }).png().toBuffer()
+          assert.equal(png.subarray(1, 4).toString(), 'PNG')
+          const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true })
+          assert.equal(info.width, 3)
+          assert.equal(info.height, 2)
+          assert.deepEqual([...data.subarray(0, 4)], [255, 0, 0, 255])
+        })().catch(error => { console.error(error); process.exitCode = 1 })
+      `], { encoding: 'utf8', timeout: 25000, env: { ...process.env, DSH_CORE_ARCHIVE: archive, DSH_CORE_NATIVE_CACHE: coldCache, DSH_ASAR_TEST_TARGET: target } })
+      assert.equal(result.status, 0, result.stderr)
+    })
+  }
+
   test('real asar directory links retain their resource target during materialization', (t) => {
     const f = fixture(t)
     const linkedArchive = path.join(fs.mkdtempSync(path.join(scratch, 'asar-link-')), 'linked.asar')
@@ -378,8 +452,8 @@ if (process.env.DSH_ASAR_NATIVE_INTEGRATION === '1') {
   test('real nested koffi keeps its own native version beside the root package', () => {
     const nestedRoot = path.join(archive, 'node_modules/@deepseek-ai/dsh-fs-local/node_modules')
     const nested = createRequire(path.join(nestedRoot, 'probe.cjs'))('koffi')
-    assert.equal(load('koffi').version, '3.3.6')
-    assert.equal(nested.version, '3.1.1')
+    assert.equal(load('koffi').version, JSON.parse(fs.readFileSync(path.join(archive, 'node_modules/koffi/package.json'), 'utf8')).version)
+    assert.equal(nested.version, JSON.parse(fs.readFileSync(path.join(nestedRoot, 'koffi/package.json'), 'utf8')).version)
     const library = nested.load(process.platform === 'win32' ? 'kernel32.dll' : process.platform === 'darwin' ? 'libSystem.B.dylib' : 'libc.so.6')
     assert.equal(library.func(process.platform === 'win32' ? 'uint32_t __stdcall GetCurrentProcessId()' : 'int getpid()')(), process.pid)
   })
