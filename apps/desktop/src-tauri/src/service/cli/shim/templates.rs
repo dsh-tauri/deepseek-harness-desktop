@@ -31,7 +31,7 @@ if not defined DSH_NODE goto :skip_dsh_node
 set "NODE=%DSH_NODE%"
 rem Windows canonical paths may carry a \\\\?\\ verbatim prefix that cmd.exe
 rem cannot launch directly; strip it before checking/using the path.
-if "%NODE:~0,4%"=="\\\\?\\" set "NODE=%NODE:~4%"
+if "%NODE:~0,4%"=="\\?\" set "NODE=%NODE:~4%"
 if exist "%NODE%" goto :launch
 :skip_dsh_node
 if not exist "%NODE_BIN%" goto :no_node
