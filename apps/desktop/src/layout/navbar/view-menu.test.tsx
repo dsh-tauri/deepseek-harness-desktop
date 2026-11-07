@@ -3,6 +3,7 @@ import type { EventTarget } from '@tauri-apps/api/event'
 import type { ComponentProps } from 'react'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { useLayoutEffect } from 'react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { Shell } from '@/layout/shell'
@@ -232,6 +233,46 @@ describe('native View menu state', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Local' }))
     expect(screen.getByTestId('dsh-hosted-document')).not.toBeNull()
     expect(screen.queryByTestId('dsh-harness-webview')).toBeNull()
+  })
+
+  it('settles equivalent catalogs whose registration order changes during rendering', () => {
+    let reports = 0
+    const rows = [
+      { id: 'sidebar.left.toggle', label: 'Sidebar', keys: ['⌥', '⌘', 'B'], available: true },
+      { id: 'terminal.new', label: 'Terminal', keys: ['⌘', 'J'], available: true },
+    ]
+    function ReorderedCatalog() {
+      useDshShortcuts()
+      useLayoutEffect(() => {
+        reports++
+        if (reports > 60)
+          throw new Error('equivalent reordered shortcut catalogs caused render feedback')
+        nativeEvent('dsh://shortcuts', { rows: reports % 2 ? rows : [...rows].reverse() })
+      })
+      return null
+    }
+    render(
+      <>
+        <Shell />
+        <ReorderedCatalog />
+      </>,
+    )
+    reportShortcuts()
+    expect(reports).toBeLessThan(10)
+  })
+
+  it('retains meaningful shortcut catalog updates after normalizing registration order', () => {
+    render(<Shell />)
+    const shortcuts = renderHook(useDshShortcuts)
+    reportShortcuts()
+    act(() => nativeEvent('dsh://shortcuts', { rows: [
+      { id: 'terminal.new', label: 'Terminal', keys: ['⌘', 'J'], available: true },
+      { id: 'sidebar.left.toggle', label: 'Changed sidebar', keys: ['⌘', 'B'], available: false },
+    ] }))
+    expect(shortcuts.result.current[0].rows).toEqual([
+      { id: 'sidebar.left.toggle', label: 'Changed sidebar', keys: ['⌘', 'B'], available: false },
+      { id: 'terminal.new', label: 'Terminal', keys: ['⌘', 'J'], available: true },
+    ])
   })
 
   it('keeps the shortcut snapshot stable when the native catalog repeats unchanged rows', () => {
