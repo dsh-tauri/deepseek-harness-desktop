@@ -69,8 +69,8 @@ catalogs:
       specifier: 0.2.1
       version: 0.2.1
     dsh-taiwind:
-      specifier: ^0.3.5
-      version: 0.3.5
+      specifier: ^0.3.6
+      version: 0.3.6
     fake-indexeddb:
       specifier: ^6.2.6
       version: 6.2.7
@@ -673,7 +673,7 @@ importers:
         version: 9.0.0
       dsh-taiwind:
         specifier: 'catalog:'
-        version: 0.3.5
+        version: 0.3.6
       eslint:
         specifier: catalog:lint
         version: 10.14.0(jiti@2.7.0)
@@ -1027,7 +1027,7 @@ importers:
     dependencies:
       dsh-taiwind:
         specifier: 'catalog:'
-        version: 0.3.5
+        version: 0.3.6
       dsh-tauri:
         specifier: workspace:*
         version: link:../builtin-plugin-tauri
@@ -5518,8 +5518,8 @@ packages:
       typescript:
         optional: true
 
-  dsh-taiwind@0.3.5:
-    resolution: {integrity: sha512-lfhlKssqsEmqrknGIC5ELBxISKA0MhAG7RtVtpiWRd1GvdB9xsyPuxEKyGPR+/ykfRmIp05SNoHWpGK+mwo5Xw==}
+  dsh-taiwind@0.3.6:
+    resolution: {integrity: sha512-PuU52dwCI3pQTLb9NEI0CBC7WiyG01xcioz0DuWs4VjIuriRvI3IYMFSe/BjOx+jQvGAOBJ70q3VffZBkSoqQw==}
     engines: {dsh: '>=0.2.1-alpha.1', node: '>=22.18.0'}
 
   dts-resolver@2.1.3:
@@ -13851,7 +13851,7 @@ snapshots:
       - crossws
       - ocache
 
-  dsh-taiwind@0.3.5:
+  dsh-taiwind@0.3.6:
     dependencies:
       '@tailwindcss/oxide': 4.3.3
       postcss: 8.5.20
