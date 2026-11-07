@@ -384,6 +384,7 @@ export function ConfigProfile() {
               </Switch.Content>
             </Switch>
             <Button
+              data-testid="dsh-profile-migrate-open"
               size="sm"
               variant="primary"
               isDisabled={migrateBlocked}

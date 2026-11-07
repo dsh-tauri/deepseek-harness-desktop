@@ -38,6 +38,14 @@ export const HARNESS_READY = 'div[class$="_frame"], [data-testid="dsh-harness-we
 export const SHELL_HOST = '[data-dsh-shell-host]'
 export const NAVBAR_MENU_CONFIG = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-config"]`
 export const NAVBAR_MENU_POPOVER = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-popover"]`
+export const NAVBAR_ITEM_PROFILES = '[data-testid="dsh-navbar-item-profiles"]'
+export const CONFIG_DIALOG = '[data-testid="dsh-config-dialog"]'
+export const CONFIG_DIALOG_TITLE = '[data-testid="dsh-config-dialog-title"]'
+export const CONFIG_DIALOG_CLOSE = '[data-testid="dsh-config-dialog-close"]'
+export const CONFIG_NAV_APPLICATION = '[data-testid="dsh-config-nav-application"]'
+export const PROFILE_MIGRATE_OPEN = '[data-testid="dsh-profile-migrate-open"]'
+export const PROFILE_MIGRATE_DIALOG = '[data-testid="dsh-profile-migrate-dialog"]'
+export const PROFILE_MIGRATE_CANCEL = '[data-testid="dsh-profile-migrate-cancel"]'
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
@@ -361,6 +369,8 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
   const deadline = Date.now() + timeoutMs
   let dismissed = false
   while (Date.now() < deadline) {
+    if (page.isClosed() || page.url().startsWith('chrome-error:'))
+      throw new Error(`首次装配页面加载失败：${page.url()}`)
     if (await page.locator(HARNESS_READY).count() > 0)
       return
     const skip = page.locator(SETUP_PREINSTALL_SKIP).first()

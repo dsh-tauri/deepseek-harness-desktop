@@ -135,6 +135,7 @@ overrides:
 patchedDependencies:
   '@tauri-apps/plugin-http@2.6.0': patches/@tauri-apps__plugin-http@2.6.0.patch
   bumpp: patches/bumpp.patch
+  react-aria@3.53.1: patches/react-aria@3.53.1.patch
 
 allowBuilds:
   '@google/genai': false

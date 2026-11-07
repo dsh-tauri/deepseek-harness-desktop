@@ -166,7 +166,7 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
     <AlertDialog onOpenChange={disclosure.cancel} isOpen={disclosure.visible}>
       <AlertDialog.Backdrop>
         <AlertDialog.Container>
-          <AlertDialog.Dialog className="sm:max-w-[560px]">
+          <AlertDialog.Dialog data-testid="dsh-profile-migrate-dialog" className="sm:max-w-[560px]">
             <AlertDialog.CloseTrigger />
             <AlertDialog.Header>
               <AlertDialog.Icon status="accent" />
@@ -371,7 +371,7 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
 
             <AlertDialog.Footer className="justify-end">
               <div className="flex flex-row items-center gap-2">
-                <Button variant="tertiary" isDisabled={busy} onPress={disclosure.cancel}>
+                <Button data-testid="dsh-profile-migrate-cancel" variant="tertiary" isDisabled={busy} onPress={disclosure.cancel}>
                   {t('buttons.cancel')}
                 </Button>
                 <Button variant="primary" isDisabled={!canSubmit} onPress={() => handleMigrate()}>

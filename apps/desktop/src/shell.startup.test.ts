@@ -29,6 +29,7 @@ it('defers the real shell entry until the document root exists', () => {
   }
   document.dispatchEvent(new Event('DOMContentLoaded'))
   expect(root.dataset.theme).toBe('light')
+  expect(document.body.querySelector('[data-dsh-shell-host]')).not.toBeNull()
   expect(document.querySelector('[data-dsh-shell-host]')?.shadowRoot?.getElementById('dsh-shell-root')).not.toBeNull()
   expect(boundary.createRoot).toHaveBeenCalledTimes(1)
   expect(boundary.render).toHaveBeenCalledTimes(1)
