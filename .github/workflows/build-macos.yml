@@ -176,7 +176,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$inner_app"
           codesign --display --entitlements :- "$inner_app" > "$RUNNER_TEMP/electron-entitlements.plist"
           python3 -c 'import plistlib, sys; e = plistlib.load(open(sys.argv[1], "rb")); assert all(e.get(key) is True for key in ("com.apple.security.cs.allow-jit", "com.apple.security.cs.disable-library-validation")), e' "$RUNNER_TEMP/electron-entitlements.plist"
-          npm install --prefix "$RUNNER_TEMP/native-addon-smoke" --no-audit --no-fund node-addon-require-builtin@0.1.9
+          npm install --prefix "$RUNNER_TEMP/native-addon-smoke" --cache "$RUNNER_TEMP/native-addon-smoke/npm-cache" --no-audit --no-fund node-addon-require-builtin@0.1.9
           inner_binary=("$inner_app"/Contents/MacOS/*)
           ELECTRON_RUN_AS_NODE=1 NARB_NATIVE_CACHE_DIR="$RUNNER_TEMP/native-addon-smoke/cache" "${inner_binary[0]}" --eval 'const { createRequire } = require("node:module"); const { resolve } = require("node:path"); const addon = createRequire(resolve(process.argv[1], "package.json"))("node-addon-require-builtin"); require("node:assert/strict").equal(typeof addon.requireBuiltin("internal/modules/esm/loader").getOrInitializeCascadedLoader, "function"); console.log(addon.getBindingInfo());' "$RUNNER_TEMP/native-addon-smoke"
           codesign --verify --deep --strict --verbose=2 "$app_path"
