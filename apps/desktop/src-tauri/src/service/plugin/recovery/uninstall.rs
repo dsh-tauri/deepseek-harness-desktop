@@ -524,7 +524,7 @@ mod tests {
         )
         .unwrap();
 
-        strip_cordis_patch_for(profile.path(), "dsh-old");
+        strip_cordis_patch_for(profile.path(), "dsh-old").unwrap();
 
         let rendered = std::fs::read_to_string(&patch).unwrap();
         assert!(!rendered.contains("dsh-old"), "{rendered}");
@@ -542,7 +542,7 @@ mod tests {
         )
         .unwrap();
 
-        strip_cordis_patch_for(profile.path(), "dsh-old");
+        strip_cordis_patch_for(profile.path(), "dsh-old").unwrap();
 
         let rendered = std::fs::read_to_string(&patch).unwrap();
         assert!(!rendered.contains("dsh-old"), "{rendered}");
@@ -559,7 +559,7 @@ mod tests {
         )
         .unwrap();
 
-        strip_cordis_patch_for(profile.path(), "dsh-better-sidebar");
+        strip_cordis_patch_for(profile.path(), "dsh-better-sidebar").unwrap();
 
         assert_eq!(
             std::fs::read_to_string(&patch).unwrap(),

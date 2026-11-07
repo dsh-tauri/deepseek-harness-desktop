@@ -19,6 +19,22 @@
   -webkit-app-region: drag;
 }
 
+/* 壳层导航栏与 DSH 的 Windows 标题拖拽带几何重叠。Electron 的 app-region 按几何
+   合成而非命中测试，重叠起来就会把整条导航栏算成拖拽区——鼠标按得下、抬不起来，
+   click 永不触发（拖拽区吞掉 mouseup）。导航栏整体先声明 no-drag 把自己从那条带
+   里减掉，内部 `[data-tauri-drag-region]` 拖拽块再自己加回来。 */
+@utility app-region-none {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+/* 弹层容器铺满视口但不拦截点击，可交互性交给它承载的浮层：`pointer-events` 会
+   向下继承，容器设 none 后菜单项既 hover 不到也点不到，点击还会穿透出去被当成
+   「点了外面」直接把菜单收掉。这里把直接子层重新打开。 */
+#dsh-shell-portal > * {
+  pointer-events: auto;
+}
+
 @theme inline {
   --radius-xl: calc(var(--radius) * 1.25);
   --radius-2xl: calc(var(--radius) * 1.5);

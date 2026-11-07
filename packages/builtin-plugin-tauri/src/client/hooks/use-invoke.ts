@@ -1,5 +1,6 @@
 import type { InvokeArgs, InvokeOptions } from '../service/tauri'
-import { useEffect, useRef, useState } from 'react'
+import { useAsync } from '@reause/core'
+import { useRef } from 'react'
 import { invoke } from '../service/tauri'
 
 export interface UseInvokeResult<T> {
@@ -9,44 +10,27 @@ export interface UseInvokeResult<T> {
 }
 
 export function useInvoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): UseInvokeResult<T> {
-  const [data, setData] = useState<T | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const argsRef = useRef(args)
-  const optionsRef = useRef(options)
-  argsRef.current = args
-  optionsRef.current = options
-
   const argsKey = args === undefined ? '' : JSON.stringify(args)
-
-  useEffect(() => {
+  const requestRef = useRef({ cmd, argsKey })
+  if (requestRef.current.cmd !== cmd || requestRef.current.argsKey !== argsKey)
+    requestRef.current = { cmd, argsKey }
+  const request = requestRef.current
+  const state = useAsync(async (onCancel): Promise<{ request: object | null, data: T | null, error: string | null }> => {
     let cancelled = false
-    setLoading(true)
-    setError(null)
-
-    invoke<T>(cmd, argsRef.current, optionsRef.current)
-      .then((value) => {
-        if (cancelled)
-          return
-        setData(value)
-      })
-      .catch((reason: unknown) => {
-        if (cancelled)
-          return
-        const message = reason instanceof Error ? reason.message : String(reason)
-        console.error(`[useInvoke] ${cmd} failed:`, reason)
-        setError(message)
-      })
-      .finally(() => {
-        if (!cancelled)
-          setLoading(false)
-      })
-
-    return () => {
+    onCancel(() => {
       cancelled = true
+    })
+    try {
+      const data = await invoke<T>(cmd, args, options)
+      return { request, data, error: null }
     }
-  }, [cmd, argsKey])
+    catch (reason: unknown) {
+      if (!cancelled)
+        console.error(`[useInvoke] ${cmd} failed:`, reason)
+      return { request, data: state.data, error: reason instanceof Error ? reason.message : String(reason) }
+    }
+  }, { request: null, data: null, error: null }, { deps: [request] })
 
-  return { data, loading, error }
+  const loading = state.request !== request
+  return { data: state.data, loading, error: loading ? null : state.error }
 }

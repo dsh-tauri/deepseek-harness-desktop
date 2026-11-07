@@ -1,0 +1,61 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "hosted-shell",
+  "description": "文档即 DSH：主窗口直接加载本机 DSH 服务页面，壳层 UI 注入其上，需要同一套 IPC 权限。仅对回环开放。",
+  "local": false,
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*"
+    ]
+  },
+  "windows": [],
+  "permissions": [
+    "allow-shell-commands",
+    "allow-harness-commands",
+    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:event:allow-emit-to",
+    "core:app:allow-version",
+    "core:app:allow-default-window-icon",
+    "core:window:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-set-decorations",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-cursor-position",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:webview:allow-set-webview-zoom",
+    "notification:default",
+    "notifications:default",
+    "opener:default",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
+    "opener:allow-reveal-item-in-dir",
+    "store:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://*.githubusercontent.com/*"
+        }
+      ]
+    }
+  ],
+  "webviews": [
+    "main",
+    "window-*",
+    "remote-*"
+  ]
+}

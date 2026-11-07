@@ -37,9 +37,11 @@ use windows_sys::Win32::System::JobObjects::{
 };
 use windows_sys::Win32::System::Pipes::{CreatePipe, PeekNamedPipe};
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, GetExitCodeProcess, ResumeThread, TerminateProcess, WaitForSingleObject,
-    CREATE_NEW_CONSOLE, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
-    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW,
+    CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, ResumeThread, TerminateProcess, UpdateProcThreadAttribute,
+    WaitForSingleObject, CREATE_NEW_CONSOLE, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+    EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
@@ -347,14 +349,57 @@ fn spawn_with_hidden_console_inner(
                 .chain(std::iter::once(0))
                 .collect::<Vec<u16>>()
         });
-        let startup_info = STARTUPINFOW {
-            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-            dwFlags: STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES,
-            wShowWindow: SW_HIDE as u16,
-            hStdInput: stdin_handle.as_raw_handle(),
-            hStdOutput: stdout_write.as_raw_handle(),
-            hStdError: stderr_write.as_raw_handle(),
-            ..Default::default()
+        let mut attribute_bytes = 0;
+        InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attribute_bytes);
+        if attribute_bytes == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut attribute_storage =
+            vec![0usize; attribute_bytes.div_ceil(std::mem::size_of::<usize>())];
+        if InitializeProcThreadAttributeList(
+            attribute_storage.as_mut_ptr().cast(),
+            1,
+            0,
+            &mut attribute_bytes,
+        ) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        struct AttributeList(Vec<usize>);
+        impl Drop for AttributeList {
+            fn drop(&mut self) {
+                unsafe { DeleteProcThreadAttributeList(self.0.as_mut_ptr().cast()) };
+            }
+        }
+        let mut attributes = AttributeList(attribute_storage);
+        let inherited_handles = [
+            stdin_handle.as_raw_handle(),
+            stdout_write.as_raw_handle(),
+            stderr_write.as_raw_handle(),
+        ];
+        if UpdateProcThreadAttribute(
+            attributes.0.as_mut_ptr().cast(),
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+            inherited_handles.as_ptr().cast(),
+            std::mem::size_of_val(&inherited_handles),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+        ) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let startup_info = STARTUPINFOEXW {
+            StartupInfo: STARTUPINFOW {
+                cb: std::mem::size_of::<STARTUPINFOEXW>() as u32,
+                dwFlags: STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES,
+                wShowWindow: SW_HIDE as u16,
+                hStdInput: stdin_handle.as_raw_handle(),
+                hStdOutput: stdout_write.as_raw_handle(),
+                hStdError: stderr_write.as_raw_handle(),
+                ..Default::default()
+            },
+            lpAttributeList: attributes.0.as_mut_ptr().cast(),
         };
         let mut process_info = PROCESS_INFORMATION::default();
         if CreateProcessW(
@@ -365,13 +410,14 @@ fn spawn_with_hidden_console_inner(
             1,
             CREATE_NEW_CONSOLE
                 | CREATE_UNICODE_ENVIRONMENT
+                | EXTENDED_STARTUPINFO_PRESENT
                 | if job.is_some() { CREATE_SUSPENDED } else { 0 },
             env_block.as_ptr() as *const core::ffi::c_void,
             current_dir_wide
                 .as_ref()
                 .map(|wide| wide.as_ptr())
                 .unwrap_or(std::ptr::null()),
-            &startup_info,
+            &startup_info.StartupInfo,
             &mut process_info,
         ) == 0
         {
@@ -671,6 +717,52 @@ mod tests {
         assert!(
             output.contains("HAS_CONSOLE_VISIBLE=False"),
             "expected grandchildren to inherit a hidden console, got: {output:?} stderr: {error:?}"
+        );
+    }
+
+    #[test]
+    fn unrelated_pipe_reaches_eof_while_spawned_child_is_running() {
+        let attrs = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: std::ptr::null_mut(),
+            bInheritHandle: 1,
+        };
+        let (unrelated_read, unrelated_write) = create_output_pipe(&attrs).unwrap();
+        let mut unrelated_read = File::from(unrelated_read);
+        let root = tempfile::tempdir().unwrap();
+        let job = ProcessJob::new().unwrap();
+        let node = find_node_on_path().expect("node.exe required for pipe inheritance test");
+        let (_stdout, _stderr, _, handle) = spawn_with_hidden_console_in_job(
+            &node,
+            &["-e".into(), "setTimeout(() => {}, 30000)".into()],
+            Some(root.path()),
+            &isolated_node_env(root.path()),
+            &job,
+        )
+        .unwrap();
+        let process = unsafe { OwnedHandle::from_raw_handle(handle) };
+        drop(unrelated_write);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            sender
+                .send(unrelated_read.read_to_end(&mut output))
+                .unwrap();
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(1));
+        let child_status = unsafe { WaitForSingleObject(process.as_raw_handle(), 0) };
+        job.terminate().unwrap();
+        assert_eq!(
+            unsafe { WaitForSingleObject(process.as_raw_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+        reader.join().unwrap();
+        assert_eq!(child_status, WAIT_TIMEOUT);
+        assert_eq!(
+            result
+                .expect("unrelated output pipe must reach EOF without terminating the child")
+                .unwrap(),
+            0
         );
     }
 

@@ -11,10 +11,10 @@ use tauri::Runtime;
 use super::SHIM_PS1_NAME;
 #[cfg(not(windows))]
 #[allow(unused_imports)] // debug 构建 dsh shim 不写入；测试仍引用
-use super::build::build_sh_shim;
+use super::build::{build_node_sh_shim, build_sh_shim};
 #[allow(unused_imports)] // 构建函数在 debug 构建/异平台下由 cfg 裁剪，测试仍引用
 use super::build::{
-    ShimPaths, build_cmd_shim, build_node_cmd_shim, build_node_sh_shim, build_npm_cmd_shim,
+    ShimPaths, build_cmd_shim, build_node_cmd_shim, build_npm_cmd_shim,
     build_npx_cmd_shim, build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim,
     build_ps1_shim,
 };

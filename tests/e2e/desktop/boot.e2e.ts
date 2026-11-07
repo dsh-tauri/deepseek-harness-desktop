@@ -1,8 +1,8 @@
 import type { Page } from 'playwright'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { beforeAll, describe, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, HARNESS_WEBVIEW, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, diagnose, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 interface RuntimeInfo {
   app_version: string
@@ -24,10 +24,100 @@ interface HealthCheck {
   boot_html?: string
 }
 
-const app = shellAppScope()
+interface BrowserReservation {
+  lease: string
+  partition: string
+}
+
+const app = shellAppScope({ electronArgs: ['--inspect=127.0.0.1:0'] })
+
+async function nativeTransport(expression: string): Promise<unknown> {
+  const endpoint = app.get().output().split('Debugger listening on ')[1]?.split(/\r?\n/)[0]
+  if (!endpoint)
+    throw new Error('缺少隔离 Electron 主进程调试地址')
+  const socket = new WebSocket(endpoint)
+  const timeout = setTimeout(() => socket.close(), 5_000)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener('open', () => resolve(), { once: true })
+      socket.addEventListener('error', () => reject(new Error('Electron 主进程诊断连接失败')), { once: true })
+      socket.addEventListener('close', () => reject(new Error('Electron 主进程诊断连接关闭')), { once: true })
+    })
+    const result = new Promise<unknown>((resolve, reject) => {
+      socket.addEventListener('message', (event) => {
+        const response = JSON.parse(String(event.data))
+        if (response.id !== 1)
+          return
+        if (response.result?.exceptionDetails)
+          reject(new Error('Electron 主进程诊断求值失败'))
+        else resolve(response.result?.result?.value)
+      })
+      socket.addEventListener('close', () => reject(new Error('Electron 主进程诊断响应超时')), { once: true })
+    })
+    socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }))
+    return await result
+  }
+  finally {
+    clearTimeout(timeout)
+    socket.close()
+  }
+}
+
+async function dumpTransport(): Promise<void> {
+  try {
+    console.error('[e2e-transport]', JSON.stringify(await nativeTransport('globalThis.__dshBootTransport ?? []')))
+  }
+  catch (error) {
+    console.error('[e2e-transport] 诊断不可用', String(error))
+  }
+}
+
+afterEach(async (context) => {
+  if ((context.task.result?.errors?.length ?? 0) > 0)
+    await dumpTransport()
+})
 
 beforeAll(async () => {
-  await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
+  try {
+    await nativeTransport(`(() => {
+      const channel = process.getBuiltinModule('diagnostics_channel')
+      const trace = [], requests = new WeakMap(), sockets = new WeakMap()
+      let nextRequest = 1, nextSocket = 1
+      for (const event of ['request:create', 'client:sendHeaders', 'request:headers', 'request:trailers', 'request:error']) {
+        channel.channel('undici:' + event).subscribe(message => {
+          const reused = message.socket ? sockets.has(message.socket) : false
+          if (message.socket && !reused) sockets.set(message.socket, nextSocket++)
+          const request = message.request
+          if (!request || request.method !== 'GET') return
+          const url = new URL(request.path, request.origin)
+          if (url.pathname !== '/') return
+          if (!requests.has(request)) requests.set(request, nextRequest++)
+          const row = { time: Date.now(), event, request: requests.get(request), url: url.origin + url.pathname }
+          if (message.socket) {
+            const socket = message.socket
+            Object.assign(row, { socket: sockets.get(socket), reused, localPort: socket.localPort, remotePort: socket.remotePort })
+          }
+          if (message.response) row.status = message.response.statusCode
+          if (message.error) { row.error = message.error.code; row.errorName = message.error.name }
+          if (trace.length === 128) trace.shift()
+          trace.push(row)
+        })
+      }
+      globalThis.__dshBootTransport = trace
+      return true
+    })()`)
+    await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
+  }
+  catch (error) {
+    await dumpTransport()
+    try {
+      console.error(`[e2e-assembly] ${await diagnose(app.get())}`)
+    }
+    catch (diagnosticError) {
+      console.error('[e2e-assembly] 诊断不可用', String(diagnosticError))
+    }
+    throw error
+  }
 }, ASSEMBLY_TIMEOUT_MS)
 
 /**
@@ -39,6 +129,21 @@ beforeAll(async () => {
  * 这里只做一件事——核心进程已退出时立刻失败，不把崩溃耗成超时。
  */
 async function waitHealthy(page: Page): Promise<HealthCheck> {
+  let documentState: { protocol: string, readyState: DocumentReadyState } | undefined
+  await expect.poll(async () => {
+    try {
+      documentState = await page.evaluate(() => ({ protocol: location.protocol, readyState: document.readyState }))
+    }
+    catch (error) {
+      if (String(error).includes('Execution context was destroyed, most likely because of a navigation'))
+        return false
+      throw error
+    }
+    return documentState.protocol === 'chrome-error:' || documentState.readyState === 'complete'
+  }, { timeout: WINDOW_TIMEOUT_MS, message: '顶层 Harness 文档必须完成加载后才能调用原生命令' }).toBe(true)
+  if (documentState?.protocol === 'chrome-error:')
+    throw new Error('Harness 顶层导航进入 chrome-error，禁止继续等待原生命令')
+  expect(documentState?.readyState, '顶层 Harness 文档必须完成加载后才能调用原生命令').toBe('complete')
   let serviceUrl = ''
   await expect.poll(async () => {
     const info = await invoke<RuntimeInfo>(page, 'get_runtime_info')
@@ -55,7 +160,10 @@ async function waitHealthy(page: Page): Promise<HealthCheck> {
     const health = await invoke<HealthCheck>(page, 'proxy_health_check')
     return health.status.startsWith('healthy')
   }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
-  return { service_url: serviceUrl, status: `healthy - ${new URL(serviceUrl).origin}` }
+  const origin = new URL(serviceUrl).origin
+  await expect.poll(() => new URL(page.url()).origin, { timeout: WINDOW_TIMEOUT_MS, message: '产品必须自行导航至所属核心文档' }).toBe(origin)
+  await page.locator('div[class$="_frame"]').waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
+  return { service_url: serviceUrl, status: `healthy - ${origin}` }
 }
 
 describe('desktop boot and profile lifecycle', () => {
@@ -81,6 +189,8 @@ describe('desktop boot and profile lifecycle', () => {
     const shell = app.get()
     const health = await waitHealthy(shell.window.page)
     const origin = new URL(health.service_url).origin
+    const processes = await invoke<{ pid: number, kind: string }[]>(shell.window.page, 'get_task_manager_processes')
+    expect(processes.some(process => process.kind === 'desktop'), '托管壳层任务管理器必须可读取本应用进程').toBe(true)
     let harness: Page | undefined
     await expect.poll(() => {
       harness = shell.browser.contexts().flatMap(context => context.pages()).find(page => page.url().startsWith(`${origin}/`))
@@ -95,7 +205,31 @@ describe('desktop boot and profile lifecycle', () => {
     }), '无宿主路径的文件必须回落为空串，而不是抛错').toBe('')
   })
 
-  it.runIf(process.platform !== 'darwin')('preserves the native Harness backdrop for Windows/Linux shell popovers without reloading', async () => {
+  it('acquires and releases a Browser guest partition through the native bridge', async () => {
+    const main = app.get().window.page
+    await waitHealthy(main)
+    const workspace = `e2e-${randomUUID()}`
+    const reservation = await main.evaluate(async (value) => {
+      const bridge = (window as Window & { dshDesktop?: { browser?: { acquire: (workspace: string) => Promise<BrowserReservation>, release: (lease: string) => Promise<void> } } }).dshDesktop?.browser
+      if (!bridge)
+        throw new Error('Native Browser bridge is unavailable')
+      return await bridge.acquire(value)
+    }, workspace)
+    try {
+      expect(reservation.lease, '原生 Browser bridge 必须返回 guest lease').toMatch(/^[0-9a-f-]{36}$/i)
+      expect(reservation.partition, '原生 Browser bridge 必须返回隔离 session partition').toMatch(/^electron-browser-[0-9a-f-]{36}$/i)
+    }
+    finally {
+      await main.evaluate(async (lease) => {
+        const bridge = (window as Window & { dshDesktop?: { browser?: { release: (lease: string) => Promise<void> } } }).dshDesktop?.browser
+        if (!bridge)
+          throw new Error('Native Browser bridge disappeared before release')
+        await bridge.release(lease)
+      }, reservation.lease)
+    }
+  })
+
+  it.runIf(process.platform !== 'darwin')('keeps the hosted DSH document intact while shell popovers open and close', async () => {
     const shell = app.get()
     const main = shell.window.page
     await installErrorCollector(main)
@@ -117,46 +251,21 @@ describe('desktop boot and profile lifecycle', () => {
     }, nonce)
     expect(viewport.width, '原生页面必须具有真实视口宽度').toBeGreaterThan(100)
     expect(viewport.height, '原生页面必须具有真实视口高度').toBeGreaterThan(100)
-    const backdrop = main.locator(HARNESS_WEBVIEW).locator('img')
-    expect(await backdrop.count(), '菜单打开前不应残留截图背景').toBe(0)
+    await expect.poll(() => main.locator(NAVBAR_MENU_CONFIG).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '壳层菜单必须可见' }).toBe(true)
 
     try {
       await main.locator(NAVBAR_MENU_CONFIG).click({ timeout: WINDOW_TIMEOUT_MS })
       await expect.poll(() => main.locator(NAVBAR_MENU_POPOVER).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '必须打开真实的壳层菜单' }).toBe(true)
-      await expect.poll(() => backdrop.count(), { timeout: WINDOW_TIMEOUT_MS, message: '菜单打开后必须显示原生页面截图' }).toBe(1)
-      await expect.poll(() => backdrop.evaluate(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0), { timeout: WINDOW_TIMEOUT_MS, message: '截图必须完成图片解码' }).toBe(true)
-      const capture = await backdrop.evaluate((element) => {
-        const image = element as HTMLImageElement
-        const canvas = document.createElement('canvas')
-        canvas.width = 64
-        canvas.height = 64
-        const context = canvas.getContext('2d')!
-        context.drawImage(image, 0, 0, canvas.width, canvas.height)
-        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-        const colors = new Set<string>()
-        let nonWhitePixels = 0
-        for (let index = 0; index < pixels.length; index += 4) {
-          if (pixels[index + 3] === 0)
-            continue
-          colors.add(`${pixels[index]},${pixels[index + 1]},${pixels[index + 2]}`)
-          if (Math.min(pixels[index], pixels[index + 1], pixels[index + 2]) < 250)
-            nonWhitePixels++
-        }
-        return { width: image.naturalWidth, height: image.naturalHeight, colors: colors.size, nonWhitePixels }
-      })
-      expect(capture.width / viewport.width, '截图宽度必须覆盖真实视口，不能是 1×1 占位图').toBeGreaterThanOrEqual(0.9)
-      expect(capture.height / viewport.height, '截图高度必须覆盖真实视口，不能是 1×1 占位图').toBeGreaterThanOrEqual(0.9)
-      expect(capture.width / viewport.width, '截图宽度必须符合视口与显示缩放范围').toBeLessThanOrEqual(Math.max(1, viewport.scale) * 1.1)
-      expect(capture.height / viewport.height, '截图高度必须符合视口与显示缩放范围').toBeLessThanOrEqual(Math.max(1, viewport.scale) * 1.1)
-      expect(Math.abs(capture.width / capture.height - viewport.width / viewport.height), '截图宽高比必须与原生视口一致').toBeLessThan(0.05)
-      expect(capture.nonWhitePixels, '截图不能是全白或全透明背景').toBeGreaterThan(0)
-      expect(capture.colors, '截图必须包含真实页面的多种颜色').toBeGreaterThan(4)
+      await main.locator('[data-testid="dsh-navbar-item-application"]').click()
+      await expect.poll(() => main.locator('[data-testid="dsh-config-dialog"]').isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '点击 Application 菜单项必须打开设置对话框' }).toBe(true)
+      expect(main.url().startsWith(origin), '打开壳层菜单不得把主窗口导航走').toBe(true)
+      await main.locator('[data-testid="dsh-config-dialog-close"]').click()
+      await expect.poll(() => main.locator('[data-testid="dsh-config-dialog"]').isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '关闭设置对话框必须执行实际关闭动作' }).toBe(false)
     }
     finally {
       await main.keyboard.press('Escape')
     }
     await expect.poll(() => main.locator(NAVBAR_MENU_POPOVER).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: 'Escape 必须关闭壳层菜单' }).toBe(false)
-    await expect.poll(() => backdrop.count(), { timeout: WINDOW_TIMEOUT_MS, message: '关闭菜单后必须移除截图并恢复原生页面' }).toBe(0)
     expect(native.url(), '菜单开关不得导航原生页面').toBe(url)
     const preservedNonce = await native.evaluate(() => {
       const host = window as Window & { __dshE2eMenuNonce?: string }
@@ -165,7 +274,7 @@ describe('desktop boot and profile lifecycle', () => {
       return value
     })
     expect(preservedNonce, '菜单开关不得重载或替换原生页面').toBe(nonce)
-    expect(await pageErrors(main), '菜单截图切换不应产生壳层页面异常').toEqual([])
+    expect(await pageErrors(main), '菜单开关不应产生壳层页面异常').toEqual([])
   })
 
   it('reuses same-profile cores and isolates cloned-profile windows', async () => {
@@ -178,6 +287,7 @@ describe('desktop boot and profile lifecycle', () => {
     let cloneId: string | undefined
     let second: Awaited<ReturnType<typeof shell.openWindow>> | undefined
     let third: Awaited<ReturnType<typeof shell.openWindow>> | undefined
+    const failures: unknown[] = []
     try {
       const clone = await invoke<{ id: string }>(main, 'clone_profile', {
         sourceId: originalConfig.active_profile,
@@ -192,6 +302,9 @@ describe('desktop boot and profile lifecycle', () => {
 
       await invoke(second.page, 'set_active_profile', { id: cloneId })
       await invoke(second.page, 'launch_harness')
+      await expect.poll(async () => (await invoke<HealthCheck>(second!.page, 'proxy_health_check')).status.startsWith('healthy'), { timeout: WINDOW_TIMEOUT_MS }).toBe(true)
+      const targetRuntime = await invoke<RuntimeInfo>(second.page, 'get_runtime_info')
+      await invoke(second.page, 'host_harness_document', { url: targetRuntime.service_url })
       const clonedRuntime = await waitHealthy(second.page)
       expect((await invoke<AppConfig>(second.page, 'get_app_config')).active_profile, '切换后窗口必须绑定克隆档案').toBe(cloneId)
       expect(clonedRuntime.service_url, '克隆档案必须使用独立核心服务地址').not.toBe(originalRuntime.service_url)
@@ -209,27 +322,33 @@ describe('desktop boot and profile lifecycle', () => {
       second = undefined
       expect((await waitHealthy(main)).service_url, '关闭克隆档案窗口不得影响原档案核心').toBe(originalRuntime.service_url)
     }
+    catch (error) {
+      failures.push(error)
+    }
     finally {
-      try {
-        if (third)
-          await shell.closeWindow(third.label)
-      }
-      finally {
+      for (const opened of [third, second]) {
+        if (!opened)
+          continue
         try {
-          if (second) {
-            try {
-              await invoke(second.page, 'set_active_profile', { id: originalConfig.active_profile })
-            }
-            finally {
-              await shell.closeWindow(second.label)
-            }
-          }
+          await shell.closeWindow(opened.label)
         }
-        finally {
-          if (cloneId)
-            await invoke(main, 'remove_profile', { id: cloneId })
+        catch (error) {
+          failures.push(error)
+        }
+      }
+      if (cloneId) {
+        try {
+          await expect.poll(
+            () => invoke(main, 'remove_profile', { id: cloneId }).then(() => 'removed', error => String(error)),
+            { timeout: WINDOW_TIMEOUT_MS, message: '关闭克隆档案窗口后其档案应可删除' },
+          ).toBe('removed')
+        }
+        catch (error) {
+          failures.push(error)
         }
       }
     }
+    if (failures.length > 0)
+      throw new AggregateError(failures, '档案窗口生命周期失败（首项为原始异常）')
   })
 })

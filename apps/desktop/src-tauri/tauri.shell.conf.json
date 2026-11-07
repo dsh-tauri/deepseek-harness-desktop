@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm watch:shell",
+    "frontendDist": "../dist"
+  }
+}

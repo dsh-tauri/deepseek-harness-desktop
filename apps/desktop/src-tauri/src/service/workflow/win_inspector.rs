@@ -247,11 +247,6 @@ mod imp {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(super) fn apply_at(_profile: &std::path::Path) -> Result<(), String> {
-        Ok(())
-    }
-
     /// 非 Windows 无 Git Bash bin 目录。
     pub fn git_bash_bin_dirs() -> Vec<std::path::PathBuf> {
         Vec::new()
@@ -261,12 +256,6 @@ mod imp {
 /// 清理 profile 中遗留的 Windows 终端检查插件注入行（仅 Windows 生效，幂等）。
 pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     imp::apply(app_handle)
-}
-
-#[cfg(any(windows, test))]
-#[cfg_attr(not(test), allow(dead_code))] // early 启动路径专用
-pub(crate) fn apply_at(profile: &std::path::Path) -> Result<(), String> {
-    imp::apply_at(profile)
 }
 
 /// 本机 Git Bash 的 bin 目录（供服务 PATH 注入）。

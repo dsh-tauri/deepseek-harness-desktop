@@ -5,6 +5,9 @@ description = "Desktop application for DeepSeek Harness (dsh)"
 authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2024"
 
+[features]
+dsh-shell-dev = []
+
 [lib]
 name = "main"
 crate-type = [
@@ -33,7 +36,7 @@ tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runt
   "tauri",
   "devtools"
 ] }
-electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "ad46785bdced1bfd48bde25cb6d9313193ceb273" }
+electron-rs = { git = "https://github.com/hairyf/electron-rs.git", rev = "f8e5f46fec327f30e7a0b2ab500524e49955fbe3" }
 tauri-plugin-single-instance = { version = "2", features = [ "deep-link" ] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"

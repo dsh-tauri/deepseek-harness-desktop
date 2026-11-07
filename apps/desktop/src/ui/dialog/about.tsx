@@ -32,9 +32,9 @@ export function DesktopAboutDialog(props: DesktopAboutDialogProps) {
     <Modal isOpen={disclosure.visible} onOpenChange={disclosure.cancel}>
       <Modal.Backdrop>
         <Modal.Container size="xs">
-          <Modal.Dialog>
+          <Modal.Dialog className="max-h-[calc(100vh-96px)]">
             <Modal.CloseTrigger />
-            <Modal.Body className="space-y-3">
+            <Modal.Body className="space-y-3 overflow-y-auto">
               <div className="flex flex-col items-center gap-2 pt-1 text-center">
                 <img src="/favicon.svg" alt={t('about.title')} className="w-12 h-12 rounded-md" />
 
@@ -55,8 +55,10 @@ export function DesktopAboutDialog(props: DesktopAboutDialogProps) {
                     size="sm"
                     className="h-8"
                     onPress={() => {
-                      if (about?.repo)
+                      if (about?.repo) {
                         void invoke('open_external_url', { url: about.repo })
+                          .catch(error => console.error('[About] open repo failed:', error))
+                      }
                     }}
                   >
                     {t('about.github')}

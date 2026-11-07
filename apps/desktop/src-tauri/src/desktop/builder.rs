@@ -69,7 +69,10 @@ pub fn setup(app_handle: crate::AppHandle) {
 
     crate::service::profile::ensure_desktop_profile(&app_handle);
 
-    crate::service::workflow::instances::window_profile(&app_handle, MAIN_WINDOW_LABEL);
+    crate::service::workflow::instances::bind_window(
+        MAIN_WINDOW_LABEL,
+        &crate::service::profile::active_profile(&app_handle),
+    );
     crate::service::scheduler::start(&app_handle);
 
     #[cfg(not(debug_assertions))]
@@ -748,6 +751,15 @@ fn shell_frame_for(transparent: bool) -> bool {
     transparent && (cfg!(target_os = "linux") || cfg!(windows))
 }
 
+struct NativeNotificationsAvailable(bool);
+
+pub(super) fn native_notifications_script(app: &crate::AppHandle<ElectronRuntime>) -> String {
+    format!(
+        "window.__DSH_NOTIFICATIONS_AVAILABLE__ = {};",
+        app.state::<NativeNotificationsAvailable>().inner().0
+    )
+}
+
 fn with_shell_chrome<'a>(
     app: &'a crate::AppHandle<ElectronRuntime>,
     builder: WebviewWindowBuilder<'a, ElectronRuntime, crate::AppHandle<ElectronRuntime>>,
@@ -760,6 +772,7 @@ fn with_shell_chrome<'a>(
     let live_transparency = cfg!(target_os = "linux");
     let builder = builder
         .transparent(transparent)
+        .initialization_script(native_notifications_script(app))
         .initialization_script(format!(
             "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_FRAME__ = {frame}; \
              window.__DSH_LIVE_TRANSPARENCY__ = {live_transparency}; window.__DSH_STORE_FILE__ = {};",
@@ -818,6 +831,20 @@ fn with_shell_chrome<'a>(
     Ok(builder)
 }
 
+/// 主窗口壳层注入的初始主题：显式偏好直接取；跟随系统时按窗口拿到的系统外观折算。
+fn main_shell_theme(
+    app: &crate::AppHandle<ElectronRuntime>,
+    system: Option<tauri::Theme>,
+) -> crate::desktop::shell::Theme {
+    use crate::desktop::shell::Theme;
+    match crate::config::get_dsh_theme(app) {
+        crate::config::DshTheme::Light => Theme::Light,
+        crate::config::DshTheme::Dark => Theme::Dark,
+        crate::config::DshTheme::System if system == Some(tauri::Theme::Dark) => Theme::Dark,
+        crate::config::DshTheme::System => Theme::Light,
+    }
+}
+
 pub fn build_main_window(
     app: &crate::AppHandle<ElectronRuntime>,
 ) -> tauri::Result<crate::WebviewWindow<ElectronRuntime>> {
@@ -825,9 +852,25 @@ pub fn build_main_window(
 
     let _geometry_restore = crate::config::GeometryRestoreGuard::begin();
 
-    let webview_builder =
+    let _host_paths =
+        tauri_runtime_electron::WebviewSetup::new(MAIN_WINDOW_LABEL)
+            .authenticated_web_host_session()
+            .browser_host()
+            .preload_script(include_str!("preload.js.inc"));
+
+    let mut webview_builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
-            .title(crate::desktop::product_name(app));
+            .title(crate::desktop::product_name(app))
+            .initialization_script(include_str!("browser.js.inc"));
+    if let Some(injection) = (!cfg!(debug_assertions)
+        || cfg!(feature = "dsh-shell-dev")
+        || app.config().build.dev_url.is_none())
+        .then(|| crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None)))
+        .flatten()
+    {
+        webview_builder = webview_builder.initialization_script(injection.source().to_owned());
+    }
+
 
     #[cfg(windows)]
     let webview_builder = webview_builder.visible(false);
@@ -841,6 +884,7 @@ pub fn build_main_window(
             _ => tauri::webview::PermissionResponse::Default,
         })
         .build()?;
+    crate::desktop::window::connect_browser_events(webview_window.as_ref())?;
     tauri_runtime_electron::on_new_window(webview_window.as_ref(), move |url, features| {
         crate::desktop::window::on_new_window(app_handle.clone(), url, features)
     })?;
@@ -888,10 +932,25 @@ pub fn build_shell_window(
 ) -> tauri::Result<crate::WebviewWindow<ElectronRuntime>> {
     let app_handle = app.clone();
 
-    let webview_builder = with_shell_chrome(
+    let _setup = tauri_runtime_electron::WebviewSetup::new(&label)
+        .authenticated_web_host_session()
+        .browser_host()
+        .preload_script(include_str!("preload.js.inc"));
+    let mut webview_builder = with_shell_chrome(
         app,
-        WebviewWindowBuilder::new(app, label, WebviewUrl::App(path)).title(title),
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App(path))
+            .title(title)
+            .initialization_script(include_str!("browser.js.inc")),
     )?;
+    if let Some(injection) = (!cfg!(debug_assertions)
+        || cfg!(feature = "dsh-shell-dev")
+        || app.config().build.dev_url.is_none())
+        .then(|| crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None)))
+        .flatten()
+    {
+        webview_builder = webview_builder.initialization_script(injection.source().to_owned());
+    }
+
     let webview_builder = match navigation_script {
         Some(script) => webview_builder.initialization_script_for_all_frames(script),
         None => webview_builder,
@@ -904,6 +963,7 @@ pub fn build_shell_window(
             _ => tauri::webview::PermissionResponse::Default,
         })
         .build()?;
+    crate::desktop::window::connect_browser_events(window.as_ref())?;
     tauri_runtime_electron::on_new_window(window.as_ref(), move |url, features| {
         crate::desktop::window::on_new_window(app_handle.clone(), url, features)
     })?;
@@ -978,7 +1038,7 @@ mod shell_nav_tests {
     #[test]
     fn shell_nav_height_matches_navbar_height_class() {
         let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/layout/components/navbar.tsx");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/layout/navbar/navbar.tsx");
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {} failed: {error}", path.display()));
 
@@ -1096,11 +1156,33 @@ mod security_tests {
         serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap()
     }
 
+    /// 主窗口把 DSH 作为自身文档加载，而 DSH 由本机 HTTP 服务提供（`http://127.0.0.1:PORT`），
+    /// 不属于 Tauri 本地协议，必须由单独的 `hosted-shell` 能力开放——否则 DSH 文档里的壳层
+    /// 调不动任何 IPC（`event.emit_to is not allowed on ...`）。那份能力只允许本机回环；
+    /// 默认能力保持纯本地，不向任何 URL 开放。
     #[test]
-    fn shell_capability_excludes_remote_origins() {
-        let capability = capability();
-        assert!(capability.get("remote").is_none());
-        assert_eq!(capability["local"], true);
+    fn shell_capability_only_trusts_loopback_origins() {
+        let default = capability();
+        assert_eq!(default["local"], true);
+        assert!(
+            default.get("remote").is_none(),
+            "默认能力只服务本地页面，不得开放给任何 URL"
+        );
+
+        let hosted: Value =
+            serde_json::from_str(include_str!("../../capabilities/hosted-shell.json")).unwrap();
+        assert_eq!(hosted["local"], false, "hosted-shell 只对回环页面生效");
+        let urls = hosted["remote"]["urls"]
+            .as_array()
+            .expect("hosted-shell 必须声明 remote.urls");
+        assert!(!urls.is_empty(), "文档即 DSH 时壳层需要在本机 HTTP 源上调 IPC");
+        for url in urls {
+            let pattern = url.as_str().expect("remote.urls 的元素必须是字符串");
+            assert!(
+                pattern.starts_with("http://127.0.0.1:") || pattern.starts_with("http://localhost:"),
+                "remote.urls 只允许本机回环，实际是 {pattern}"
+            );
+        }
     }
 
     #[test]
@@ -1212,10 +1294,15 @@ mod macos_bundle_tests {
 
 pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'static {
     let handler: fn(Invoke<ElectronRuntime>) -> bool = tauri::generate_handler![
+        crate::desktop::window::host_harness_document,
+        crate::desktop::window::begin_harness_restart,
+        crate::desktop::window::get_harness_restart,
+        crate::desktop::window::prepare_harness_restart,
+        crate::desktop::window::resume_harness_restart,
+        crate::desktop::window::finish_harness_restart,
         crate::desktop::window::prepare_harness_webview,
         crate::desktop::window::release_harness_webview,
         crate::desktop::window::update_harness_webview,
-        crate::desktop::window::capture_harness_webview,
         crate::desktop::window::acquire_browser_guest,
         crate::desktop::window::release_browser_guest,
         crate::bridge::install_dependencies,
@@ -1345,6 +1432,8 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::list_preset_pets,
         crate::desktop::pet_mouse::start_pet_mouse_stream,
         crate::bridge::remote::remote,
+        crate::bridge::remote::navigate_remote_harness,
+        crate::bridge::remote::get_remote_shell_state,
         crate::bridge::remote_bridge_ping,
         crate::bridge::remote_open_window,
     ];
@@ -1409,6 +1498,7 @@ fn guest_command_scope_preserves_plugin_actions_and_blocks_shell_control() {
     assert!(guest_command_allowed("write_clipboard_text"));
     assert!(guest_command_allowed("report_plugin_error"));
     for command in [
+        "host_harness_document",
         "prepare_harness_webview",
         "release_harness_webview",
         "update_harness_webview",
@@ -1657,10 +1747,11 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
         .unwrap_or(false);
     #[cfg(not(target_os = "macos"))]
     let in_app_bundle = true;
+    let builder = builder.manage(NativeNotificationsAvailable(in_app_bundle));
     let builder = if in_app_bundle {
         builder.plugin(tauri_plugin_notifications::init())
     } else {
-        log::warn!(
+        log::info!(
             "未运行在 .app 包内，跳过 tauri-plugin-notifications：macOS 的系统通知需要 .app 包，\
              打包后自动生效"
         );

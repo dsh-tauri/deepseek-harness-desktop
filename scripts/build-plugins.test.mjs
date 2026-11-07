@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apply } from 'dsh-taiwind'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { pruneDeployment, pruneForeignLibcBindings, verifyRemoteNativeBindings } from './build-plugins.ts'
 
 const roots = []
@@ -29,6 +29,7 @@ function fixture(name = '@tailwindcss/oxide', source = optionalWasi, file = 'ind
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true })
 })
@@ -56,13 +57,14 @@ it('compiles declared Tailwind CSS from pruned release resources', async () => {
   writeFileSync(join(dir, 'src/development.ts'), 'export const unused = true')
   writeFileSync(join(dir, 'dist/client.cjs'), 'module.exports = "flex bg-release-accent"')
   pruneDeployment(root, names)
+  vi.stubEnv('DSH_HOME', join(root, 'home'))
   const cleanups = []
   const warnings = []
   let route
   try {
     await apply({
       clientModules: {
-        graph: () => ({ entries: [{ id: 'styled-plugin' }] }),
+        graph: () => ({ entries: [{ id: 'styled-plugin', rev: 'release' }] }),
         clientPath: () => join(dir, 'dist/client.cjs'),
         onGraphChanged: () => () => {},
         onRebuilt: () => () => {},
@@ -80,10 +82,13 @@ it('compiles declared Tailwind CSS from pruned release resources', async () => {
     })
     let status
     let css
-    route.handler({ method: 'GET', headers: {} }, {
+    await route.handler({ method: 'GET', headers: {} }, {
       setHeader() {},
       writeHead: (value) => { status = value },
       end: (value) => { css = value },
+    })
+    await vi.waitFor(() => {
+      expect(existsSync(join(root, 'home/taiwind/styles.css'))).toBe(true)
     })
     expect(warnings).toEqual([])
     expect(status).toBe(200)
