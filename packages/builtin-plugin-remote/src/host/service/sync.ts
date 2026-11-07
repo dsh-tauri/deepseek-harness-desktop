@@ -17,8 +17,17 @@ export const sync = defineService({
   async apply(machineId: MachineId, plugins: readonly SyncPluginRef[], skills: readonly SyncSkillRef[]): Promise<SyncApplyResult> {
     const deps = syncRuntimeDeps()
     const items: SyncItemResult[] = []
-    const uniquePlugins = dedupeBy(plugins, ref => ref.spec)
+    const uniquePlugins = dedupeBy(plugins, ref => JSON.stringify([ref.name, ref.spec]))
     const uniqueSkills = dedupeBy(skills, ref => `${ref.root}:${ref.name}`)
+    const names = new Set<string>()
+    for (const skill of uniqueSkills) {
+      if (skill.name === '' || skill.name === '.' || skill.name === '..' || /[/\\\0]/u.test(skill.name))
+        throw new Error(`invalid skill name: ${JSON.stringify(skill.name)}`)
+      const destination = skill.name.normalize('NFC').toLowerCase()
+      if (names.has(destination))
+        throw new Error(`skill "${skill.name}" conflicts with another selected name; select only one skill root or rename the conflicting skill before syncing`)
+      names.add(destination)
+    }
     if (uniquePlugins.length === 0 && uniqueSkills.length === 0)
       return { items }
     await machine.syncProfiles()
@@ -125,12 +134,8 @@ async function applySkills(
     if (requested.length === 0)
       continue
     const known = new Set(entry.names)
-    const transferable: SyncSkillRef[] = []
     for (const skill of requested) {
-      if (known.has(skill.name)) {
-        transferable.push(skill)
-      }
-      else {
+      if (!known.has(skill.name)) {
         items.push({
           kind: 'skill',
           name: skill.name,
@@ -139,28 +144,24 @@ async function applySkills(
           error: `not found under the local "${root}" skill root (it may have been removed)`,
         })
         progress.settled += 1
+        continue
       }
-    }
-    if (transferable.length === 0)
-      continue
-    announceItem(machineId, progress, transferable[0]!.name)
-    let tar: Buffer
-    try {
-      tar = await deps.packSkills(entry.dir, transferable.map(skill => skill.name))
-    }
-    catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      for (const skill of transferable)
+      announceItem(machineId, progress, skill.name)
+      let tar: Buffer
+      try {
+        tar = await deps.packSkills(entry.dir, [skill.name])
+      }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
         items.push({ kind: 'skill', name: skill.name, root, ok: false, error: message })
-      progress.settled += transferable.length
-      continue
-    }
-    const result = await session.exec(skillExtractCommand(), {
-      stdinData: tar,
-      ...deps.commandTimeoutMs === undefined ? {} : { timeoutMs: deps.commandTimeoutMs },
-    })
-    const log = result.code === 0 ? undefined : failureLogOf(result.stdout, result.stderr)
-    for (const skill of transferable) {
+        progress.settled += 1
+        continue
+      }
+      const result = await session.exec(skillExtractCommand(skill.name), {
+        stdinData: tar,
+        ...deps.commandTimeoutMs === undefined ? {} : { timeoutMs: deps.commandTimeoutMs },
+      })
+      const log = result.code === 0 ? undefined : failureLogOf(result.stdout, result.stderr)
       items.push(
         result.code === 0
           ? { kind: 'skill', name: skill.name, root, ok: true }
@@ -173,7 +174,7 @@ async function applySkills(
               ...log === undefined ? {} : { log },
             },
       )
+      progress.settled += 1
     }
-    progress.settled += transferable.length
   }
 }

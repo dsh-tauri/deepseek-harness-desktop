@@ -203,7 +203,7 @@ pub fn active_source<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> CoreSource
 ///
 /// 供服务启动（workflow::launch）与插件操作（plugin::install 等）统一取用，
 /// 本地核心解析在调用瞬间失效时回退预打包入口。
-pub fn active_dsh_binary(app_handle: &AppHandle) -> PathBuf {
+pub fn active_dsh_binary<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     match active_source(app_handle) {
         CoreSource::Local => local_core(app_handle)
             .map(|c| c.bin)

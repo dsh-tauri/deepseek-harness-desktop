@@ -1,4 +1,5 @@
 use crate::{AppHandle, Window};
+#[cfg(any(windows, target_os = "linux"))]
 use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
