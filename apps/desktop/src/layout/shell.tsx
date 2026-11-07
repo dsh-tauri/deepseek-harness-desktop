@@ -239,5 +239,5 @@ function parseShortcutRows(rows: unknown): DshShortcutRow[] {
       available: entry.available === true,
     })
   }
-  return out
+  return out.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
 }
