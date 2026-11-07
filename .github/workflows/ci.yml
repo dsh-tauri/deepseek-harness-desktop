@@ -422,6 +422,7 @@ jobs:
           pids=()
 
           rust_lane() {
+            cargo test --manifest-path crates/tauri-runtime-electron/tools/macos-sign/Cargo.toml --locked || return 1
             ( cd apps/desktop/src-tauri && cargo test --all-features --locked ) || return 1
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features || return 1
