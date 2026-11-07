@@ -38,7 +38,8 @@
         "conflicts": [],
         "replaces": [],
         "postInstallScript": "templates/linux/postinst.sh",
-        "postRemoveScript": "templates/linux/postrm.sh"
+        "postRemoveScript": "templates/linux/postrm.sh",
+        "desktopTemplate": "templates/linux/main.desktop"
       }
     },
     "windows": {
