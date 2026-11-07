@@ -67,6 +67,8 @@
       "dsh-tauri-running-changes",
       "dsh-tauri-kernel",
       "dsh-tauri-mobile-ui",
+      "dsh-tauri-scheduler",
+      "dsh-tauri-pet",
       "dsh-tauri-worktree"
     ],
     "built-in": [
@@ -95,22 +97,10 @@
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-extension"
       },
       {
-        "id": "dsh-tauri-scheduler",
-        "spec": "dsh-tauri-scheduler",
-        "name": "DSH Tauri Scheduler",
-        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-scheduler"
-      },
-      {
         "id": "dsh-tauri-archive",
         "spec": "dsh-tauri-archive",
         "name": "DSH Tauri Archive",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-archive"
-      },
-      {
-        "id": "dsh-tauri-pet",
-        "spec": "dsh-tauri-pet",
-        "name": "DSH Tauri Pet",
-        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-pet"
       },
       {
         "id": "dsh-tauri-rightclick",
@@ -146,12 +136,7 @@
         "repo": "https://github.com/HuanLinOTO/dsh-neartoken",
         "recommended": true,
         "checked": true,
-        "version": [
-          {
-            "version": "latest",
-            "dsh": "^0.2.1-alpha.5"
-          }
-        ]
+        "version": "latest"
       },
       {
         "id": "dsh-better-sidebar",
@@ -161,12 +146,7 @@
         "repo": "https://github.com/omdsh-dev/DSH-better-sidebar",
         "recommended": true,
         "checked": true,
-        "version": [
-          {
-            "version": "latest",
-            "dsh": "^0.2.0-rc.1"
-          }
-        ]
+        "version": "latest"
       },
       {
         "id": "dsh-rewind-plugin",
@@ -176,12 +156,7 @@
         "repo": "https://github.com/SiriLee/dsh-rewind",
         "recommended": true,
         "checked": true,
-        "version": [
-          {
-            "version": "latest",
-            "dsh": "^0.2.0-rc.1"
-          }
-        ]
+        "version": "latest"
       },
       {
         "id": "dsh-office-kit",
@@ -191,12 +166,7 @@
         "repo": "https://github.com/hairyf/dsh-office-kit",
         "recommended": true,
         "checked": false,
-        "version": [
-          {
-            "version": "latest",
-            "dsh": "^0.2.1-rc.1"
-          }
-        ]
+        "version": "latest"
       },
       {
         "id": "dsh-ops",
@@ -228,6 +198,16 @@
         "version": "latest"
       },
       {
+        "id": "dsh-pet-lite",
+        "spec": "dsh-pet-lite",
+        "name": "DSH Pet Lite",
+        "description": "轻量桌宠插件：设置页分区、会话活动驱动的动画，以及一个透明置顶的桌宠窗口。 ｜ Lightweight desktop pet with a settings section, session-activity animations, and a transparent always-on-top window.",
+        "repo": "https://github.com/hairyf/dsh-pet-lite",
+        "recommended": true,
+        "checked": false,
+        "version": "latest"
+      },
+      {
         "id": "@xmanrui/dsh-im",
         "spec": "@xmanrui/dsh-im",
         "name": "DSH IM",
@@ -235,12 +215,7 @@
         "repo": "https://github.com/xmanrui/dsh-im",
         "recommended": false,
         "checked": false,
-        "version": [
-          {
-            "version": "latest",
-            "dsh": "^0.2.0-rc.1"
-          }
-        ]
+        "version": "latest"
       },
       {
         "id": "@changfenhuang/dsh-genui",
@@ -271,44 +246,6 @@
         "recommended": false,
         "checked": false,
         "version": "latest"
-      }
-    ]
-  },
-  "pets": {
-    "built-in": [
-      {
-        "id": "maid-deepseek-whale",
-        "name": "Maid DeepSeek Whale",
-        "desc": "一只小小的迷你蓝头发的鲸鱼女仆，穿着海军蓝裙子，白色褶边，蓝眼睛，侧鳍和鲸鱼尾巴。",
-        "image": "https://raw.githubusercontent.com/PC2005-cloud/dsh-pet/e1ff8c1e4001878cbb80441262d530e16541f138/dsh-pet/assets/preview/daiji-huxi-xiuxian.gif",
-        "kind": "dsh",
-        "size": 220,
-        "config": "https://raw.githubusercontent.com/PC2005-cloud/dsh-pet/e1ff8c1e4001878cbb80441262d530e16541f138/dsh-pet/assets/config.jsonc",
-        "uri": {
-          "default": "https://raw.githubusercontent.com/PC2005-cloud/dsh-pet/e1ff8c1e4001878cbb80441262d530e16541f138/dsh-pet/assets/webm",
-          "mac": "https://raw.githubusercontent.com/dsh-tauri-desk/dsh-pet-mov/be0f3bb494cb71a4c73f916c0b92d25a3ab4d002/mov"
-        },
-        "ext": {
-          "default": "webm",
-          "mac": "mov"
-        }
-      },
-      {
-        "id": "dsh-chan-sticker-pet",
-        "name": "Maid DeepSeek Sticker",
-        "desc": "157 个贴纸动作与透明待机动画。",
-        "image": "https://raw.githubusercontent.com/hairyf/dsh-pet-sticker/6634e0de9cace37ac6b747a960c833209ad015a3/preview/preview.gif",
-        "kind": "dsh",
-        "size": 220,
-        "config": "https://raw.githubusercontent.com/hairyf/dsh-pet-sticker/6634e0de9cace37ac6b747a960c833209ad015a3/config.jsonc",
-        "uri": {
-          "default": "https://raw.githubusercontent.com/hairyf/dsh-pet-sticker/6634e0de9cace37ac6b747a960c833209ad015a3/webm",
-          "mac": "https://raw.githubusercontent.com/hairyf/dsh-pet-sticker/6634e0de9cace37ac6b747a960c833209ad015a3/mov"
-        },
-        "ext": {
-          "default": "webm",
-          "mac": "mov"
-        }
       }
     ]
   }

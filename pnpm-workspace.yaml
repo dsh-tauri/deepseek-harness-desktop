@@ -3,7 +3,6 @@ minimumReleaseAgeExcludePrune: true
 inject-workspace-packages: true
 
 minimumReleaseAgeExclude:
-  - dsh-pet-component@0.2.5
   - dsh-taiwind
   - '@deepseek-ai/cordis-plugin-group@1.1.0'
   - '@deepseek-ai/cordis-plugin-include@1.1.0'
@@ -134,7 +133,6 @@ overrides:
 patchedDependencies:
   '@tauri-apps/plugin-http@2.6.0': patches/@tauri-apps__plugin-http@2.6.0.patch
   bumpp: patches/bumpp.patch
-  dsh-pet-component@0.2.5: patches/dsh-pet-component@0.2.5.patch
 
 allowBuilds:
   '@google/genai': false
@@ -262,7 +260,6 @@ catalogs:
     '@overlastic/react': ^0.9.0
     '@reause/core': ^0.1.7
     '@tanstack/react-query': ^5.101.4
-    dsh-pet-component: ^0.2.5
     i18next: ^26.3.6
     react: ^19.2.8
     react-aria: ^3.53.1
@@ -307,7 +304,6 @@ catalogs:
     dompurify: ^3.4.13
     marked: ^18.0.10
   utils:
-    cron-schedule: ^6.0.0
     date-fns: ^4.4.0
     hookable: ^6.1.1
     lodash-es: ^4.18.1

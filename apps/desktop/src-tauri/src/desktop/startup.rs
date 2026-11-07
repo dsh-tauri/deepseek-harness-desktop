@@ -20,24 +20,6 @@ fn force_xwayland_args(args: &str) -> String {
     format!("{args} --ozone-platform=x11")
 }
 
-#[cfg(any(target_os = "linux", test))]
-pub(crate) fn pet_overlay_supported(wayland: bool, args: &str) -> bool {
-    let mut platform = None;
-    let mut args = args.split_whitespace();
-    while let Some(arg) = args.next() {
-        if arg == "--ozone-platform" {
-            platform = args.next();
-        } else if let Some(value) = arg.strip_prefix("--ozone-platform=") {
-            platform = Some(value);
-        }
-    }
-    match platform {
-        Some("x11") => true,
-        Some("wayland") => false,
-        _ => !wayland,
-    }
-}
-
 pub(crate) fn verify() -> Result<(), String> {
     crate::config::e2e_app_data_dir()?;
     #[cfg(windows)]
@@ -208,16 +190,6 @@ mod tests {
             forced,
             "--remote-debugging-port=9123 --ozone-platform=wayland --ozone-platform=x11"
         );
-        assert!(pet_overlay_supported(true, &forced));
-        assert!(!pet_overlay_supported(true, ""));
-        assert!(pet_overlay_supported(false, ""));
-        assert!(!pet_overlay_supported(false, existing));
-        assert!(!pet_overlay_supported(false, "--ozone-platform wayland"));
-        assert!(!pet_overlay_supported(
-            true,
-            "--ozone-platform=x11 --ozone-platform=wayland"
-        ));
-        assert!(pet_overlay_supported(true, "--ozone-platform x11"));
     }
 
     fn initialize_http(

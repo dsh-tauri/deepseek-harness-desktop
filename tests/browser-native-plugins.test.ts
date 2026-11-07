@@ -1,12 +1,11 @@
 import type { ClientContext } from 'dsh-tauri/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { apply as notification } from '../packages/builtin-plugin-notification/src/client'
-import { apply as pet } from '../packages/builtin-plugin-pet/src/client'
 import { apply as desktop } from '../packages/builtin-plugin-tauri/src/client/apply'
 
 afterEach(() => vi.unstubAllGlobals())
 
-it.each([desktop, pet, notification])('skips desktop-only plugin effects in an ordinary browser', (apply) => {
+it.each([desktop, notification])('skips desktop-only plugin effects in an ordinary browser', (apply) => {
   vi.stubGlobal('window', {})
   vi.stubGlobal('document', {})
   vi.stubGlobal('isTauri', false)
@@ -15,7 +14,7 @@ it.each([desktop, pet, notification])('skips desktop-only plugin effects in an o
   expect(effect).not.toHaveBeenCalled()
 })
 
-it.each([[desktop, 9], [pet, 4], [notification, 3]] as const)('registers desktop-only plugin effects in the native carrier', (apply, count) => {
+it.each([[desktop, 9], [notification, 3]] as const)('registers desktop-only plugin effects in the native carrier', (apply, count) => {
   vi.stubGlobal('window', {})
   vi.stubGlobal('document', {})
   vi.stubGlobal('isTauri', true)
