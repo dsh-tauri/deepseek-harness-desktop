@@ -1,5 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import process from 'node:process'
 import { expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, completePreinstall, diagnose, invoke, MAIN_LABEL, NAVBAR_MENU_CONFIG, SHELL_HOST, SHELL_ROOT, startShellApp } from '../setup/shell'
@@ -54,15 +52,7 @@ function observeRestart() {
 }
 
 it('restarts through the local shell before stopping DSH and reports success only for the new ready document', async () => {
-  const app = await startShellApp({
-    prepareHome: async (home) => {
-      if (!process.env.DSH_E2E_CORE_ROOT)
-        return
-      const cache = path.join(home, 'download-cache')
-      await mkdir(cache, { recursive: true })
-      await writeFile(path.join(cache, 'dependencies.json'), JSON.stringify({ dsh: path.resolve(process.env.DSH_E2E_CORE_ROOT), node: null, pnpm: null, git: null }))
-    },
-  })
+  const app = await startShellApp()
   const page = app.window.page
   const bootstrapUrl = page.url()
   const observations: RestartObservation[] = []

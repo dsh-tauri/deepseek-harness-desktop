@@ -4,7 +4,7 @@ import type { Browser, Page } from 'playwright'
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -188,7 +188,8 @@ export async function startShellApp(options: { downloadCacheDir?: string, prepar
 
   const home = await mkdtemp(path.join(tmpdir(), 'dsh-e2e-desktop-'))
   const appData = path.join(home, 'app-data')
-  const downloadCacheDir = options.downloadCacheDir ?? path.join(home, 'download-cache')
+  const coreRoot = process.env.DSH_E2E_CORE_ROOT
+  const downloadCacheDir = options.downloadCacheDir ?? (coreRoot ? path.join(home, 'download-cache') : path.join(ROOT, 'node_modules/.cache/dsh-e2e', process.platform, process.arch))
   let child: ChildProcess | undefined
   let browser: Browser | undefined
   let output = ''
@@ -220,6 +221,8 @@ export async function startShellApp(options: { downloadCacheDir?: string, prepar
   try {
     await mkdir(appData, { recursive: true })
     await mkdir(downloadCacheDir, { recursive: true })
+    if (coreRoot && !options.downloadCacheDir)
+      await writeFile(path.join(downloadCacheDir, 'dependencies.json'), JSON.stringify({ dsh: path.resolve(coreRoot), pnpm: null, git: null }))
     await mkdir(path.join(home, 'home'), { recursive: true })
     await mkdir(path.join(home, 'appdata'), { recursive: true })
     await mkdir(path.join(home, 'home', 'AppData', 'Roaming'), { recursive: true })

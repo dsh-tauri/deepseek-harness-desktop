@@ -106,7 +106,7 @@ describe('desktop boot and profile lifecycle', () => {
     expect(info.node_version, '运行时必须返回 Node 版本').toBeTruthy()
     expect(info.service_url, '运行时必须返回 Harness 服务地址').toBe(health.service_url)
     expect(info.data_dir, '运行时必须返回隔离数据目录').toContain(shell.home)
-    expect(info.log_path, '运行时必须返回服务日志路径').toContain(shell.home)
+    expect(info.log_path, '运行时必须返回服务日志路径').toContain(shell.downloadCacheDir)
     expect(info.platform, '运行时必须返回平台').toBe(process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux')
     expect(info.arch, '运行时必须返回架构').toBeTruthy()
     expect(await pageErrors(shell.window.page), '启动过程不应产生页面异常').toEqual([])
