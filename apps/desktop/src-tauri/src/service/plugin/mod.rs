@@ -83,8 +83,11 @@ pub(crate) use preset::{
     current_preset_hash, load_presets, preinstall_pending, remove_legacy_bundled_plugins,
 };
 pub(crate) use process::{
-    acquire_operation_lock, is_internal_plugin_startup_failure, is_process_cleanup_failure,
+    acquire_operation_lock, acquire_process_lock, is_internal_plugin_startup_failure,
+    is_process_cleanup_failure,
 };
+#[cfg(test)]
+pub(crate) use process::TEST_PROCESS_LOCK;
 pub use recovery::{
     PluginRecoveryInfo, detect as detect_recovery, uninstall as uninstall_recovery,
 };

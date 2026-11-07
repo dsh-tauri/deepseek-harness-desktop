@@ -69,6 +69,7 @@ fn record_missing(app_handle: &AppHandle, ids: &[String], detail: &str) {
 /// 启动前调用：核对并修复预装插件完整性。普通失败只告警并记录错误标记，返回 Ok；
 /// 仅进程清理/协调器失败会以 Err 上抛，交由调用方终止本次启动（见下文）。
 pub(crate) async fn ensure_preset_plugins(app_handle: &AppHandle) -> Result<(), String> {
+    let _operation = super::process::acquire_operation_lock().await?;
     let presets = load_presets(app_handle);
     if presets.is_empty() {
         return Ok(());

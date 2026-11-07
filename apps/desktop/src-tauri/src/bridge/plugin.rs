@@ -133,6 +133,7 @@ pub async fn allow_plugin_policy_versions(
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile, async {
         plugin::allow_policy_versions(&app_handle, &versions, expected_profile.as_deref())
+            .await
     })
     .await
 }
@@ -279,67 +280,81 @@ pub fn detect_plugin_recovery(
 }
 
 #[tauri::command]
-pub fn recover_plugin(
+pub async fn recover_plugin(
     app_handle: AppHandle,
     window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || {
+    let mutation = crate::service::profile::mutation::acquire().await?;
+    mutation.spawn_blocking(profile, move || {
         plugin::uninstall_recovery(&app_handle, &id)?;
         plugin::watch::force_emit(&app_handle);
         Ok(())
     })
+    .await
+    .map_err(|e| format!("PLUGIN_RECOVERY_TASK: {e}"))?
 }
 
 #[tauri::command]
-pub fn disable_dsh_plugin(
+pub async fn disable_dsh_plugin(
     app_handle: AppHandle,
     window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || {
-        plugin::disable(&app_handle, &id)?;
-        plugin::watch::force_emit(&app_handle);
-        Ok(())
-    })
+    run_plugin_toggle(profile, move || plugin::disable(&app_handle, &id)).await
 }
 
 #[tauri::command]
-pub fn enable_dsh_plugin(
+pub async fn enable_dsh_plugin(
     app_handle: AppHandle,
     window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || {
-        plugin::enable(&app_handle, &id)?;
-        plugin::watch::force_emit(&app_handle);
-        Ok(())
-    })
+    run_plugin_toggle(profile, move || plugin::enable(&app_handle, &id)).await
+}
+
+async fn run_plugin_toggle(
+    profile: String,
+    action: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || instances::scope_sync(profile, action))
+        .await
+        .map_err(|error| format!("PLUGIN_TOGGLE_TASK: {error}"))?
 }
 
 #[tauri::command]
-pub fn snapshot_plugin(
+pub async fn snapshot_plugin(
     app_handle: AppHandle,
     window: Window,
     id: String,
 ) -> Result<plugin::snapshot::SnapshotInfo, String> {
     let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || plugin::snapshot::create(&app_handle, &id))
+    let operation = plugin::acquire_operation_lock().await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = operation;
+        instances::scope_sync(profile, || plugin::snapshot::create(&app_handle, &id))
+    })
+    .await
+    .map_err(|e| format!("SNAPSHOT_CREATE_TASK: {e}"))?
 }
 
 #[tauri::command]
-pub fn snapshot_plugins(
+pub async fn snapshot_plugins(
     app_handle: AppHandle,
     window: Window,
     ids: Vec<String>,
 ) -> Result<Vec<plugin::snapshot::SnapshotResult>, String> {
     let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || {
-        Ok(plugin::snapshot::create_many(&app_handle, &ids))
+    let operation = plugin::acquire_operation_lock().await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = operation;
+        instances::scope_sync(profile, || plugin::snapshot::create_many(&app_handle, &ids))
     })
+    .await
+    .map_err(|e| format!("SNAPSHOT_CREATE_TASK: {e}"))
 }
 
 #[tauri::command]
@@ -404,11 +419,75 @@ pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<Strin
 }
 
 #[tauri::command]
-pub fn delete_plugin_backup(
+pub async fn delete_plugin_backup(
     app_handle: AppHandle,
     window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || plugin::snapshot::delete(&app_handle, &id))
+    let operation = plugin::acquire_operation_lock().await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = operation;
+        instances::scope_sync(profile, || plugin::snapshot::delete(&app_handle, &id))
+    })
+    .await
+    .map_err(|e| format!("SNAPSHOT_DELETE_TASK: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn plugin_toggle_waits_off_dispatch_thread_with_captured_profile() {
+        let _test_guard = plugin::TEST_PROCESS_LOCK.lock().await;
+        let scratch = tempfile::tempdir().unwrap();
+        let first = scratch.path().join("profile-a");
+        let second = scratch.path().join("profile-b");
+        for profile in [&first, &second] {
+            std::fs::create_dir(profile).unwrap();
+            std::fs::write(
+                profile.join("package.json"),
+                r#"{"dependencies":{"dsh-better-sidebar":"1.0.0"}}"#,
+            )
+            .unwrap();
+        }
+        let operation = plugin::acquire_operation_lock().await.unwrap();
+        let dispatch_thread = std::thread::current().id();
+        let root = scratch.path().to_path_buf();
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let mut toggle = Box::pin(run_plugin_toggle("profile-a".into(), move || {
+            assert_ne!(std::thread::current().id(), dispatch_thread);
+            entered.send(()).unwrap();
+            let _operation = tauri::async_runtime::block_on(plugin::acquire_operation_lock())?;
+            let profile = instances::current_profile().unwrap();
+            plugin::disable::disable_plugin_at(&root.join(profile), "dsh-better-sidebar")
+        }));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut toggle)
+                .await
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_secs(5), started)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!first.join("cordis.patch.yml").exists());
+        assert!(!second.join("cordis.patch.yml").exists());
+        instances::scope("profile-b".into(), async {
+            drop(operation);
+            tokio::time::timeout(Duration::from_secs(5), toggle)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(instances::current_profile().as_deref(), Some("profile-b"));
+        })
+        .await;
+        assert!(plugin::disable::has_patch_disable(
+            &first,
+            "dsh-better-sidebar"
+        ));
+        assert!(!second.join("cordis.patch.yml").exists());
+    }
 }

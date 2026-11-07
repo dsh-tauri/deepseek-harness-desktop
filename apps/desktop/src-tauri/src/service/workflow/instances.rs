@@ -104,7 +104,7 @@ pub fn profiles() -> Vec<String> {
         .collect()
 }
 
-pub fn window_profile(app: &crate::AppHandle, label: &str) -> String {
+pub fn window_profile<R: tauri::Runtime>(app: &crate::AppHandle<R>, label: &str) -> String {
     let profile = registry()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
