@@ -1,7 +1,7 @@
 import type { Page } from 'playwright'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, diagnose, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 interface RuntimeInfo {
@@ -29,87 +29,14 @@ interface BrowserReservation {
   partition: string
 }
 
-const app = shellAppScope({ electronArgs: ['--inspect=127.0.0.1:0'] })
-
-async function nativeTransport(expression: string): Promise<unknown> {
-  const endpoint = app.get().output().split('Debugger listening on ')[1]?.split(/\r?\n/)[0]
-  if (!endpoint)
-    throw new Error('缺少隔离 Electron 主进程调试地址')
-  const socket = new WebSocket(endpoint)
-  const timeout = setTimeout(() => socket.close(), 5_000)
-  try {
-    await new Promise<void>((resolve, reject) => {
-      socket.addEventListener('open', () => resolve(), { once: true })
-      socket.addEventListener('error', () => reject(new Error('Electron 主进程诊断连接失败')), { once: true })
-      socket.addEventListener('close', () => reject(new Error('Electron 主进程诊断连接关闭')), { once: true })
-    })
-    const result = new Promise<unknown>((resolve, reject) => {
-      socket.addEventListener('message', (event) => {
-        const response = JSON.parse(String(event.data))
-        if (response.id !== 1)
-          return
-        if (response.result?.exceptionDetails)
-          reject(new Error('Electron 主进程诊断求值失败'))
-        else resolve(response.result?.result?.value)
-      })
-      socket.addEventListener('close', () => reject(new Error('Electron 主进程诊断响应超时')), { once: true })
-    })
-    socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }))
-    return await result
-  }
-  finally {
-    clearTimeout(timeout)
-    socket.close()
-  }
-}
-
-async function dumpTransport(): Promise<void> {
-  try {
-    console.error('[e2e-transport]', JSON.stringify(await nativeTransport('globalThis.__dshBootTransport ?? []')))
-  }
-  catch (error) {
-    console.error('[e2e-transport] 诊断不可用', String(error))
-  }
-}
-
-afterEach(async (context) => {
-  if ((context.task.result?.errors?.length ?? 0) > 0)
-    await dumpTransport()
-})
+const app = shellAppScope()
 
 beforeAll(async () => {
   try {
-    await nativeTransport(`(() => {
-      const channel = process.getBuiltinModule('diagnostics_channel')
-      const trace = [], requests = new WeakMap(), sockets = new WeakMap()
-      let nextRequest = 1, nextSocket = 1
-      for (const event of ['request:create', 'client:sendHeaders', 'request:headers', 'request:trailers', 'request:error']) {
-        channel.channel('undici:' + event).subscribe(message => {
-          const reused = message.socket ? sockets.has(message.socket) : false
-          if (message.socket && !reused) sockets.set(message.socket, nextSocket++)
-          const request = message.request
-          if (!request || request.method !== 'GET') return
-          const url = new URL(request.path, request.origin)
-          if (url.pathname !== '/') return
-          if (!requests.has(request)) requests.set(request, nextRequest++)
-          const row = { time: Date.now(), event, request: requests.get(request), url: url.origin + url.pathname }
-          if (message.socket) {
-            const socket = message.socket
-            Object.assign(row, { socket: sockets.get(socket), reused, localPort: socket.localPort, remotePort: socket.remotePort })
-          }
-          if (message.response) row.status = message.response.statusCode
-          if (message.error) { row.error = message.error.code; row.errorName = message.error.name }
-          if (trace.length === 128) trace.shift()
-          trace.push(row)
-        })
-      }
-      globalThis.__dshBootTransport = trace
-      return true
-    })()`)
     await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
   }
   catch (error) {
-    await dumpTransport()
+    console.error('[e2e-assembly] 原始错误', error)
     try {
       console.error(`[e2e-assembly] ${await diagnose(app.get())}`)
     }
