@@ -1,5 +1,6 @@
+import process from 'node:process'
 import { beforeAll, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, completePreinstall, CONFIG_DIALOG, CONFIG_DIALOG_CLOSE, CONFIG_DIALOG_TITLE, CONFIG_NAV_APPLICATION, installErrorCollector, invoke, NAVBAR_ITEM_PROFILES, NAVBAR_MENU_CONFIG, pageErrors, PROFILE_MIGRATE_CANCEL, PROFILE_MIGRATE_DIALOG, PROFILE_MIGRATE_OPEN, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, completePreinstall, CONFIG_DIALOG, CONFIG_DIALOG_CLOSE, CONFIG_DIALOG_TITLE, CONFIG_NAV_APPLICATION, installErrorCollector, invoke, MAIN_LABEL, NAVBAR_ITEM_PROFILES, NAVBAR_MENU_CONFIG, pageErrors, PROFILE_MIGRATE_CANCEL, PROFILE_MIGRATE_DIALOG, PROFILE_MIGRATE_OPEN, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 const app = shellAppScope()
 
@@ -13,8 +14,13 @@ it('nested profile dialog blocks the parent and restores interaction after closi
   const config = await invoke<{ active_profile: string }>(page, 'get_app_config')
   const clone = await invoke<{ id: string }>(page, 'clone_profile', { sourceId: config.active_profile, name: 'nested-dialog-source' })
   try {
-    await page.locator(NAVBAR_MENU_CONFIG).click({ timeout: WINDOW_TIMEOUT_MS })
-    await page.locator(NAVBAR_ITEM_PROFILES).click({ timeout: WINDOW_TIMEOUT_MS })
+    if (process.platform === 'darwin') {
+      await invoke(page, 'plugin:event|emit_to', { target: { kind: 'Window', label: MAIN_LABEL }, event: 'macos-menu-action', payload: 'desktop-profiles' })
+    }
+    else {
+      await page.locator(NAVBAR_MENU_CONFIG).click({ timeout: WINDOW_TIMEOUT_MS })
+      await page.locator(NAVBAR_ITEM_PROFILES).click({ timeout: WINDOW_TIMEOUT_MS })
+    }
     const outer = page.locator(CONFIG_DIALOG)
     await outer.waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
     const title = page.locator(CONFIG_DIALOG_TITLE)
