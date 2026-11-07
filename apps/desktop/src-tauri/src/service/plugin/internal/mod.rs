@@ -932,7 +932,7 @@ async fn ensure_inner(
     // 复用常规安装编排（环境准备/补齐 pnpm/`dsh plugin add file:<dir>`）；
     // 启动阶段无持有进程，install 内部不会停服务。失败同样交给调用方告警。
     let install_result = install_internal(app_handle, &ids, cancel, owner, &operation).await;
-    let _process = super::process::acquire_process_lock().await?;
+    let (_process, install_result) = finish_internal_install(install_result).await?;
     if let Err(e) = install_result {
         // 即使 pnpm 失败也清掉旧 fallback，下一次重试必须从干净入口开始。
         remove_legacy_profile_module_fallback_best_effort(&profile);
@@ -1005,6 +1005,19 @@ async fn ensure_inner(
     }
 
     Ok(())
+}
+
+async fn finish_internal_install(
+    result: Result<(), String>,
+) -> Result<(tokio::sync::OwnedMutexGuard<()>, Result<(), String>), String> {
+    let process = super::process::acquire_process_lock().await?;
+    if result.as_ref().is_err_and(|reason| {
+        reason.starts_with("PLUGIN_OPERATION_CANCELLED:")
+            || reason.starts_with("INTERNAL_PLUGIN_INSTALL_CANCELLED:")
+    }) {
+        return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
+    }
+    Ok((process, result))
 }
 
 /// 安装后仍未真实落盘的内置插件入口（`node_modules/<name>/package.json` 不可读）。
@@ -1439,6 +1452,87 @@ mod tests {
             manifest
         );
         drop(operation);
+    }
+
+    #[tokio::test]
+    async fn cancelled_installation_waits_for_cleanup_and_reports_cancelled() {
+        use std::time::Duration;
+
+        let _test_guard = super::super::process::TEST_PROCESS_LOCK.lock().await;
+        for reason in [
+            "PLUGIN_OPERATION_CANCELLED: plugin operation was cancelled",
+            "INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled",
+        ] {
+            let process = super::super::process::acquire_process_lock().await.unwrap();
+            let mut finishing = Box::pin(finish_internal_install(Err(reason.to_string())));
+            assert!(tokio::time::timeout(Duration::from_millis(30), &mut finishing)
+                .await
+                .is_err());
+            let (cancel_tx, mut cancel) = tokio::sync::watch::channel(true);
+            assert!(*cancel.borrow_and_update());
+            let mut phases = Vec::new();
+            drop(process);
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                wait_for_ensure_operation(
+                    async {
+                        let (_process, result) = finishing.await?;
+                        result
+                    },
+                    1,
+                    new_process_owner(),
+                    cancel_tx,
+                    cancel,
+                    |phase, detail, completed| {
+                        phases.push(
+                            serde_json::to_value(InternalPluginsPhase {
+                                phase,
+                                detail,
+                                completed,
+                                total: 1,
+                            })
+                            .unwrap(),
+                        );
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+            let error = result.unwrap_err();
+            assert!(error.starts_with("INTERNAL_PLUGIN_INSTALL_CANCELLED:"));
+            assert!(super::super::process::is_internal_plugin_startup_failure(&error));
+            assert_eq!(
+                phases,
+                vec![serde_json::json!({
+                    "phase": "done",
+                    "detail": "cancelled",
+                    "completed": 0,
+                    "total": 1,
+                })]
+            );
+            let process = tokio::time::timeout(
+                Duration::from_secs(5),
+                super::super::process::acquire_process_lock(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            drop(process);
+        }
+        for expected in [Ok(()), Err("PLUGIN_POLICY_BLOCKED: untrusted".to_string())] {
+            let (process, result) = finish_internal_install(expected.clone()).await.unwrap();
+            assert_eq!(result, expected);
+            let mut next = Box::pin(super::super::process::acquire_process_lock());
+            assert!(tokio::time::timeout(Duration::from_millis(30), &mut next)
+                .await
+                .is_err());
+            drop(process);
+            let process = tokio::time::timeout(Duration::from_secs(5), next)
+                .await
+                .unwrap()
+                .unwrap();
+            drop(process);
+        }
     }
 
     fn builtin(id: &str) -> PreinstallPluginInfo {
