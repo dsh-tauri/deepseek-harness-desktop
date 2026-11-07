@@ -1261,7 +1261,10 @@ mod tests {
         let source = resources.join("resources").join("node_modules");
         write_bundled_package(&source, "dsh-a", "1.0.0");
         write_bundled_package(&source, "dsh-b", "1.0.0");
-        let stable_root = temp.path().join("app-data/internal-plugins/0.31.0");
+        let stable_root = temp
+            .path()
+            .join("app-data/internal-plugins")
+            .join(env!("CARGO_PKG_VERSION"));
 
         let first = stable_bundled_dir(Some(&resources), &stable_root, "dsh-a");
         assert_eq!(first, Some(stable_root.join("node_modules").join("dsh-a")));
