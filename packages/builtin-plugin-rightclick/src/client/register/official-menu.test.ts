@@ -3,11 +3,17 @@ import type { OfficialSelectOptions } from './context-menu.types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { officialSelect } from './official-menu'
 
+const pending = new Set<ReturnType<typeof setTimeout>>()
+
 function options(failures: string[]): OfficialSelectOptions {
   return {
     workspace: true,
     schedule: (fn, ms) => {
-      setTimeout(fn, ms)
+      const timer = setTimeout(() => {
+        pending.delete(timer)
+        fn()
+      }, ms)
+      pending.add(timer)
     },
     onFailure: message => failures.push(message),
   }
@@ -23,6 +29,8 @@ function workspaceRow(label: string): Element {
 }
 
 afterEach(() => {
+  for (const timer of pending) clearTimeout(timer)
+  pending.clear()
   document.body.replaceChildren()
 })
 
@@ -35,7 +43,11 @@ describe('officialSelect', () => {
     const clicked = vi.fn()
     item.addEventListener('click', clicked)
     row.querySelector('button')?.addEventListener('click', () => {
-      setTimeout(() => document.body.append(item), 40)
+      const timer = setTimeout(() => {
+        pending.delete(timer)
+        document.body.append(item)
+      }, 40)
+      pending.add(timer)
     })
     const failures: string[] = []
     await officialSelect(row, [/^重命名/], 'unavailable', options(failures))
