@@ -203,7 +203,7 @@
         "name": "DSH Pet Lite",
         "description": "轻量桌宠插件：设置页分区、会话活动驱动的动画，以及一个透明置顶的桌宠窗口。 ｜ Lightweight desktop pet with a settings section, session-activity animations, and a transparent always-on-top window.",
         "repo": "https://github.com/hairyf/dsh-pet-lite",
-        "recommended": true,
+        "recommended": false,
         "checked": false,
         "version": "latest"
       },

@@ -9,6 +9,7 @@ const { createRequire, Module } = require('node:module')
 const path = require('node:path')
 const { test } = require('node:test')
 const { pathToFileURL } = require('node:url')
+const { promisify } = require('node:util')
 const { Worker } = require('node:worker_threads')
 const register = require('./asar-native.cjs')
 
@@ -355,6 +356,29 @@ test('ordinary Node eval child receives no preload argument', (t) => {
   const result = childProcess.spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(process.execArgv))'], { encoding: 'utf8', timeout: 10000 })
   assert.equal(result.status, 0, result.stderr)
   assert.deepEqual(JSON.parse(result.stdout), ['-e', 'process.stdout.write(JSON.stringify(process.execArgv))'])
+})
+
+test('promisified execFile retains stdout, stderr and the child process', async (t) => {
+  fixture(t)
+  const pending = promisify(childProcess.execFile)(process.execPath, ['-e', 'process.stdout.write("cloudflared version 2026.10.7\\n"); process.stderr.write("diagnostic")'], { timeout: 5000 })
+  assert.equal(typeof pending.child.pid, 'number')
+  assert.deepEqual(await pending, { stdout: 'cloudflared version 2026.10.7\n', stderr: 'diagnostic' })
+})
+
+test('promisified execFile preserves failure output and exit status', async (t) => {
+  fixture(t)
+  const pending = promisify(childProcess.execFile)(process.execPath, ['-e', 'process.stdout.write("out"); process.stderr.write("err"); process.exitCode = 7'], { timeout: 5000 })
+  await assert.rejects(pending, { code: 7, stdout: 'out', stderr: 'err' })
+})
+
+test('promisified execFile redirects archived Node children through the bridge', async (t) => {
+  const f = fixture(t)
+  f.write('node_modules/native/index.js', 'module.exports = __dirname')
+  f.write('node_modules/native/binding.node', 'not loaded')
+  const entry = f.write('child.cjs', 'process.stdout.write(require("native"))')
+  const result = await promisify(childProcess.execFile)(process.execPath, [entry], { timeout: 5000 })
+  assert.equal(result.stdout, path.join(f.cache, 'node_modules/native'))
+  assert.equal(result.stderr, '')
 })
 
 if (process.env.DSH_ASAR_NATIVE_INTEGRATION === '1') {
