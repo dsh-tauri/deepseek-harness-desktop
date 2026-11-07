@@ -67,6 +67,10 @@ pub fn fix_recursive_permissions(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// 解压产物里不允许被「上提」压缩的目录：这些名字本身就是安装根的内容。
+///
+/// asar 核心解压后根下只有一个归档文件（不是目录），`flatten_directory` 因此原样
+/// 跳过；这里额外保护目录形态的核心产物（历史目录核心与手动解包的归档）。
 const PRESERVE_DIRS: &[&str] = &["node_modules", ".git"];
 
 pub fn flatten_directory(dest: &PathBuf) -> Result<(), String> {

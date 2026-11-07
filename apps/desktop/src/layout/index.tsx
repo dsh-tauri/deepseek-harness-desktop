@@ -8,13 +8,14 @@ import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { queryKeys } from '@/config/query-keys'
 import { useListen } from '@/hooks/use-listen'
+import { useRestartToast } from '@/hooks/use-restart-toast'
 import { useThemeAdaptive } from '@/hooks/use-theme-adaptive'
 import { useWakelockRelease } from '@/hooks/use-wakelock-release'
+import { useFrameChrome } from '@/hooks/use-window-chrome'
 import { toast } from '@/utils/toast'
 import { store } from '../store'
 import { Recovery } from '../ui/plugin/recovery'
-import { Webview } from './components/webview'
-import { useFrameChrome } from './components/window-chrome'
+import { Shell } from './shell'
 import '../i18n'
 
 const DESKTOP_UPDATE_POLL_INTERVAL = 10 * 60_000
@@ -37,6 +38,7 @@ export function App() {
   const { updateInfo, updating } = useStore(store.harnessUpdater)
 
   useWakelockRelease()
+  useRestartToast()
   useThemeAdaptive()
   useFrameChrome()
 
@@ -66,7 +68,9 @@ export function App() {
     }
   })
 
-  useMount(() => store.harness.startup())
+  useMount(() => {
+    store.harness.startup()
+  })
 
   const autoCheckUpdate = settingReady && autoUpdate
   function checkDesktopUpdate() {
@@ -119,8 +123,10 @@ export function App() {
   }, { immediate: true })
 
   return (
-    <div className="flex h-screen w-screen" data-testid="dsh-shell-root">
-      <Webview />
+    // 根容器铺满视口，自身不拦截点击：可交互性由 `Shell` 的内容容器按「DSH 主框架是否
+    // 已渲染」决定——启动/预装/恢复页可点，文档即 DSH 时穿透给背后的页面。
+    <div className="flex h-screen w-screen pointer-events-none" data-testid="dsh-shell-root">
+      <Shell />
       {}
       <If cond={status === 'ready'}>
         <Recovery />

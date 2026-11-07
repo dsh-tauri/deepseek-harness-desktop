@@ -31,27 +31,27 @@
 //! - [`diagnose`]：失败输出解析（网络 / git 传输层 / ANSI 清洗与消息挑选）
 //! - [`artifact`]：安装产物落盘核验（防「假成功」）+ 声明入口就地补构建
 
-use crate::{AppHandle, Window};
 use crate::service::cli;
 use crate::service::core;
 use crate::service::profile::{
     active_profile, allow_profile_release_age, profile_dir_of, release_age_excludes_at,
 };
+use crate::{AppHandle, Window, config};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
-use tauri::{ Emitter};
+use tauri::Emitter;
 
 // plugin 兄弟模块的再导出：子模块经 `super::` 统一从这里取，跨模块边界只在此定义。
 pub(crate) use super::ensure_profile_npmrc;
 pub(crate) use super::errors;
 pub(crate) use super::installed::{installed_name, is_installed, profile_dir};
 pub(crate) use super::preset::{
-    bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo,
+    PreinstallPluginInfo, bundled_dep_spec, bundled_plugin_dir, load_presets,
 };
 pub(crate) use super::process::{
-    acquire_operation_lock, acquire_process_lock, new_process_owner, run_plugin_process, PidGuard,
-    PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT,
+    PREINSTALL_LOG_EVENT, PidGuard, PreinstallLogPayload, ProcessOwner, acquire_operation_lock,
+    acquire_process_lock, new_process_owner, run_plugin_process,
 };
 pub(crate) use super::recovery::is_actionable_plugin_ref;
 pub(crate) use super::uninstall_recovery;
@@ -390,7 +390,7 @@ async fn install_with_guard(
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
-    if !dsh_bin.exists() {
+    if !config::core_entry_exists(&dsh_bin) {
         return Err("HARNESS_NOT_FOUND: dsh CLI missing".to_string());
     }
 
@@ -420,13 +420,21 @@ async fn install_with_guard(
     // 拼装命令行参数
     let profile = active_profile(app_handle);
     let profile_path = profile_dir_of(app_handle, &profile);
-    let mut args = vec![
+    let mut args = Vec::new();
+    if config::asar_ancestor(&dsh_bin).is_some() {
+        args.extend([
+            OsString::from("--require"),
+            core::prepare_native_bridge(&cli::get_bin_dir(app_handle))?.into_os_string(),
+        ]);
+        args.extend(crate::service::profile::carrier_node_args(false));
+    }
+    args.extend([
         dsh_bin.as_os_str().to_os_string(),
         OsString::from("plugin"),
         OsString::from("--profile"),
         OsString::from(&profile),
         OsString::from("add"),
-    ];
+    ]);
     args.extend(specs.iter().map(OsString::from));
 
     let cwd = crate::service::core::active_core_dir(app_handle);
@@ -675,7 +683,7 @@ pub async fn allow_version_exemptions(
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
-    if !dsh_bin.exists() {
+    if !config::core_entry_exists(&dsh_bin) {
         return Err("HARNESS_NOT_FOUND: dsh CLI missing".to_string());
     }
 
@@ -687,7 +695,15 @@ pub async fn allow_version_exemptions(
     let owner = new_process_owner();
     let mut failures: Vec<String> = Vec::new();
     for entry in versions {
-        let mut args = vec![dsh_bin.as_os_str().to_os_string()];
+        let mut args = Vec::new();
+        if config::asar_ancestor(&dsh_bin).is_some() {
+            args.extend([
+                OsString::from("--require"),
+                core::prepare_native_bridge(&cli::get_bin_dir(app_handle))?.into_os_string(),
+            ]);
+            args.extend(crate::service::profile::carrier_node_args(false));
+        }
+        args.push(dsh_bin.as_os_str().to_os_string());
         args.extend(single_plugin_args(
             &profile,
             "allow-version",

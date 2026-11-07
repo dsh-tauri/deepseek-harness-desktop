@@ -18,10 +18,6 @@ Derived (upstream → this package):
 - `packages/host/webserver` — structured index-injection rows (`global`, `script`, `script-src`, …) → `src/host/types/harness.ts` (`IndexInjectRow`; upstream exports the same union as `IndexInjection`).
 - `apps/desktop/src/main.ts` — `app.setAsDefaultProtocolClient('dsh')` + `open-url` handling that focuses the primary window for `dsh://open` → `src-tauri/src/desktop/deep_link.rs` (app shell).
 
-Not derived:
-
-- `src/host/service/gate.ts` adapts this repo's embedded-WebView authentication constraints; upstream only defines the `connection` gate semantics it overrides.
-
 Note:
 
 - The account-stream carrier gate and the sidebar/DOM contracts mirrored here survived `0.2.0-rc.1` → `0.2.0-rc.2` unchanged; `dshDesktop` still reports `protocolVersion: 1` with the optional `deviceInfo` member, and `DESKTOP_HOST_PROTOCOL_VERSION` stays `4`.

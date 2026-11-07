@@ -12,7 +12,7 @@ import { locale } from '../locales'
  * 所以本包只贡献条目内容、不画页面骨架，也不进左侧导航——条目不带 `label`。
  *
  * 槽位名与组件都用 `as never` 收窄：槽位表由官方 UI 包做声明合并，
- * 本包不依赖它们的类型（与 `dsh-tauri-pet` 的做法一致）。
+ * 本包不依赖它们的类型。
  */
 export const settingsFeature = defineRegister<ClientContext>((controller, ctx) => {
   controller.add(ctx.slots.inject(SETTINGS_GENERAL_ITEM_SLOT as never, () => ctx.slots.register({

@@ -87,7 +87,7 @@ export async function checkHealthViaProxy(): Promise<ReadinessProbeResult> {
         reason: message,
       }
     }
-    if (message.includes('not listening yet')) {
+    if (message.includes('HARNESS_NOT_READY')) {
       return {
         healthy: false,
         notOwned: false,

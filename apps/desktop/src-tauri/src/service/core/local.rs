@@ -3,12 +3,12 @@
 //! 只基于文件系统与 PATH 探测，不派生子进程。核心来源判定见
 //! [`crate::service::core`] 模块头的说明。
 
-use crate::{AppHandle};
+use crate::AppHandle;
 use crate::service::cli;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use tauri::Manager;
-use tauri::{ Runtime};
+use tauri::Runtime;
 
 /// 解析出的本地核心信息
 pub(super) struct LocalCore {
@@ -385,7 +385,7 @@ pub async fn update_local_core<R: Runtime>(app_handle: AppHandle<R>) -> Result<S
     let minimum = crate::config::manifest::minimum_dsh_version(&app_handle)
         .as_deref()
         .and_then(|version| semver::Version::parse(version).ok());
-    if !crate::config::get_dsh_binary_path(&app_handle).is_file()
+    if !crate::config::core_entry_exists(&crate::config::get_dsh_binary_path(&app_handle))
         || !managed_version
             .zip(minimum)
             .is_some_and(|(version, minimum)| version >= minimum)

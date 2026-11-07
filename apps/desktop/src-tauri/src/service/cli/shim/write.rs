@@ -1,29 +1,29 @@
 //! shim 落盘：生成标记识别、悬空符号链接处理、用户文件保留、按外部解析方的
 //! 代码页编码（cmd 用系统代码页、ps1 用带 BOM 的 UTF-8）与写入编排。
 
-use crate::{AppHandle};
+use crate::AppHandle;
 use crate::config;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{ Runtime};
+use tauri::Runtime;
 
+#[cfg(all(windows, not(debug_assertions)))]
+use super::SHIM_PS1_NAME;
 #[cfg(not(windows))]
 #[allow(unused_imports)] // debug 构建 dsh shim 不写入；测试仍引用
-use super::build::build_sh_shim;
+use super::build::{build_node_sh_shim, build_sh_shim};
 #[allow(unused_imports)] // 构建函数在 debug 构建/异平台下由 cfg 裁剪，测试仍引用
 use super::build::{
-    build_cmd_shim, build_node_cmd_shim, build_node_sh_shim, build_npm_cmd_shim,
+    ShimPaths, build_cmd_shim, build_node_cmd_shim, build_npm_cmd_shim,
     build_npx_cmd_shim, build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim,
-    build_ps1_shim, ShimPaths,
+    build_ps1_shim,
 };
 #[cfg(windows)]
 use super::build::{build_npm_ps1_shim, build_npx_ps1_shim};
-#[cfg(all(windows, not(debug_assertions)))]
-use super::SHIM_PS1_NAME;
 #[cfg(windows)]
 use super::{
-    NODE_SHIM_CMD_NAME, NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME,
-    NPX_SHIM_PS1_NAME, PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME,
+    NODE_SHIM_CMD_NAME, NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME, NPX_SHIM_PS1_NAME,
+    PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME,
 };
 #[cfg(not(windows))]
 use super::{NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME, SHIM_SH_NAME};
@@ -193,13 +193,13 @@ pub fn write_shims<R: Runtime>(app_handle: &AppHandle<R>, bin_dir: &Path) -> Res
 ///
 /// 生产入口从 `ElectronClient` 解析运行时，而单元测试没有该状态；测试需要验证
 /// 「落盘编排是否接线」，因此把路径解析与落盘拆开。
-pub fn write_shims_at(
-    bin_dir: &Path,
-    paths: &ShimPaths,
-    dsh_home: &Path,
-) -> Result<(), String> {
+pub fn write_shims_at(bin_dir: &Path, paths: &ShimPaths, dsh_home: &Path) -> Result<(), String> {
     fs::create_dir_all(bin_dir)
         .map_err(|e| format!("SHIM_MKDIR_FAILED: create bin dir failed: {e}"))?;
+
+    if config::asar_ancestor(&paths.dsh_bin).is_some() {
+        crate::service::core::prepare_native_bridge(bin_dir)?;
+    }
 
     // 写入单个 shim：若目标已存在且非本应用生成，则跳过不覆盖（保留用户文件）。
     macro_rules! write_if_ours {
@@ -273,6 +273,46 @@ pub fn write_shims_at(
 mod tests {
     use super::super::test_util::{sample_dsh_home, sample_shim_paths, shim_paths_for};
     use super::*;
+
+    #[test]
+    fn write_shims_at_writes_runtime_shims_for_directory_core_when_bridge_is_unwritable() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        let bridge = bin_dir.join("asar-native.cjs");
+        std::fs::create_dir_all(&bridge).unwrap();
+        let paths = shim_paths_for(&dir.path().join("app"));
+
+        write_shims_at(&bin_dir, &paths, &dir.path().join("home")).unwrap();
+
+        #[cfg(windows)]
+        let names = [NODE_SHIM_CMD_NAME, PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME];
+        #[cfg(not(windows))]
+        let names = [NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME];
+        for name in names {
+            let path = bin_dir.join(name);
+            assert!(is_generated_shim(&path), "{name} was not written");
+            let content = std::fs::read_to_string(path).unwrap();
+            assert!(!content.contains("--require"), "{name}: {content}");
+            assert!(!content.contains("asar-native.cjs"), "{name}: {content}");
+        }
+        assert!(bridge.is_dir());
+    }
+
+    #[test]
+    fn write_shims_at_fails_for_asar_core_when_bridge_is_unwritable() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        std::fs::create_dir_all(bin_dir.join("asar-native.cjs")).unwrap();
+        let mut paths = shim_paths_for(&dir.path().join("app"));
+        paths.dsh_bin = dir.path().join("core.asar/lib/bin.js");
+
+        let error = write_shims_at(&bin_dir, &paths, &dir.path().join("home")).unwrap_err();
+
+        assert!(
+            error.starts_with("CORE_NATIVE_BOOTSTRAP_WRITE_FAILED:"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn foreign_file_detection() {
@@ -494,15 +534,20 @@ mod tests {
     fn ps1_shim_with_non_ascii_path_gets_utf8_bom() {
         let dir = temp_dir("non-ascii-ps1");
         let target = dir.join("pnpm.ps1");
-        let content =
-            "# DeepSeek Harness Desktop - pnpm command shim (generated)\r\n$pnpmBin = 'C:\\Users\\小蔡\\pnpm.cjs'\r\n";
+        let content = "# DeepSeek Harness Desktop - pnpm command shim (generated)\r\n$pnpmBin = 'C:\\Users\\小蔡\\pnpm.cjs'\r\n";
 
         write_shim_file(&target, content).unwrap();
 
         let bytes = std::fs::read(&target).unwrap();
-        assert_eq!(&bytes[..3], &[0xEF, 0xBB, 0xBF], "ps1 shim needs a utf-8 bom");
         assert_eq!(
-            std::fs::read_to_string(&target).unwrap().trim_start_matches('\u{feff}'),
+            &bytes[..3],
+            &[0xEF, 0xBB, 0xBF],
+            "ps1 shim needs a utf-8 bom"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target)
+                .unwrap()
+                .trim_start_matches('\u{feff}'),
             content
         );
         assert!(!is_foreign_file(&target));
@@ -528,7 +573,8 @@ mod tests {
     fn code_page_encoded_shim_stays_overwritable() {
         let dir = temp_dir("codepage-overwrite");
         let target = dir.join("pnpm.cmd");
-        let header = "@echo off\r\nrem DeepSeek Harness Desktop - pnpm command shim (generated)\r\n";
+        let header =
+            "@echo off\r\nrem DeepSeek Harness Desktop - pnpm command shim (generated)\r\n";
         write_shim_file(&target, &format!("{header}rem C:\\Users\\小蔡\r\n")).unwrap();
         assert!(!is_foreign_file(&target));
 

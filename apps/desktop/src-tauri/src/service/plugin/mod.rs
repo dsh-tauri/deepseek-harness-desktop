@@ -57,34 +57,30 @@ pub(crate) use crate::service::profile::ensure_profile_pnpm_policy;
 pub use cancel::cancel;
 pub(crate) use cancel::terminate_active_installs_blocking;
 pub use disable::{disable, enable};
-pub(crate) use hmr::sync_layer_at as local_plugin_hmr_sync_at;
 pub use hmr::LocalHmrStatus;
+pub(crate) use hmr::sync_layer_at as local_plugin_hmr_sync_at;
 pub(crate) use hmr::{status as local_plugin_hmr_status, sync_layer as local_plugin_hmr_sync};
 pub(crate) use install::harness_prefer_bundled_pnpm_from;
 pub(crate) use install::local_spec_from_path;
 pub(crate) use install::packument;
 pub use install::{
-    allow_policy_versions, allow_version_exemptions, inspect_specs, install, install_specs,
-    remove_many, update_many, IncompatibleVersion, PolicyBlockedVersion,
+    IncompatibleVersion, PolicyBlockedVersion, allow_policy_versions, allow_version_exemptions,
+    inspect_specs, install, install_specs, remove_many, update_many,
 };
-pub(crate) use installed::{
-    declared_packages, ensure_profile_npmrc, installed_name, profile_dir, ProfilePackageJson,
-};
-pub use installed::{list, PreinstallPlugin};
+pub use installed::{PreinstallPlugin, list};
+pub(crate) use installed::{ProfilePackageJson, ensure_profile_npmrc, profile_dir};
 pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
-pub(crate) use internal::{internal_plugin_entry_is_ready, skip_unavailable_plugins};
-pub(crate) use patch_entries::{strip_active_unresolved_entries, PatchEntryStripReport};
+pub(crate) use patch_entries::{PatchEntryStripReport, strip_active_unresolved_entries};
 pub(crate) use patch_guard::preflight_at as preflight_patch_entries_at;
 pub(crate) use patch_guard::{
-    patch_layer_paths, quarantine_active_patch_layers, quarantine_failure_message,
-    PatchQuarantineReport,
+    PatchQuarantineReport, patch_layer_paths, quarantine_active_patch_layers,
+    quarantine_failure_message,
 };
 pub(crate) use patch_yaml::{parse_patch_layer, render_patch_layer};
 pub use preset::repo_url_of;
 pub(crate) use preset::{
-    bundled_plugin_dir, current_preset_hash, load_presets, preinstall_pending,
-    remove_legacy_bundled_plugins,
+    current_preset_hash, load_presets, preinstall_pending, remove_legacy_bundled_plugins,
 };
 pub(crate) use process::{
     acquire_operation_lock, acquire_process_lock, is_internal_plugin_startup_failure,
@@ -92,9 +88,9 @@ pub(crate) use process::{
 };
 #[cfg(test)]
 pub(crate) use process::TEST_PROCESS_LOCK;
-pub(crate) use retire::uninstall as retire_deprecated_plugins;
 pub use recovery::{
-    detect as detect_recovery, uninstall as uninstall_recovery, PluginRecoveryInfo,
+    PluginRecoveryInfo, detect as detect_recovery, uninstall as uninstall_recovery,
 };
+pub(crate) use retire::uninstall as retire_deprecated_plugins;
 pub(crate) use verify::ensure_preset_plugins;
 pub use watch::DshPlugin;

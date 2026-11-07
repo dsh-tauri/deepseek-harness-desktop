@@ -1,5 +1,5 @@
 import type { NativeNotificationInput } from '../types'
-import { getCurrentWindow, invoke, listen } from 'dsh-tauri/client'
+import { getCurrentWindow, invoke, isNativeNotificationAvailable, listen } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 
 interface ClickedPayload {
@@ -107,6 +107,8 @@ async function registerActions(input: NativeNotificationInput): Promise<string |
 }
 
 export async function showNativeNotification(input: NativeNotificationInput): Promise<boolean> {
+  if (!isNativeNotificationAvailable())
+    return false
   const deliveryKey = input.deliveryKey === undefined ? undefined : JSON.stringify([location.origin, input.deliveryKey])
   remember(input.tag, { sessionId: input.sessionId, deliveryKey, onClick: input.onClick, onAction: input.onAction })
   ensureSubscription()

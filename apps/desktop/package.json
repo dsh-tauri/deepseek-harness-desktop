@@ -5,10 +5,15 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && pnpm build:shell",
     "preview": "vite preview",
     "tauri": "tauri",
-    "icons": "tauri icon public/deepseek-harness-desktop-tauri.svg --output src-tauri/icons && tauri icon public/deepseek-harness-desktop-tauri-nightly.svg --output src-tauri/icons/nightly --ios-color \"#000000\" && tsx scripts/rebuild-macos-icon.ts"
+    "icons": "tauri icon public/deepseek-harness-desktop-tauri.svg --output src-tauri/icons && tauri icon public/deepseek-harness-desktop-tauri-nightly.svg --output src-tauri/icons/nightly --ios-color \"#000000\" && tsx scripts/rebuild-macos-icon.ts",
+    "build:shell": "vite build --config vite.shell.config.ts",
+    "watch:shell": "vite build --watch --config vite.shell.config.ts",
+    "dev:desktop": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "dev:shell:desktop": "tauri dev --config src-tauri/tauri.shell.conf.json --features dsh-shell-dev",
+    "build:desktop": "tauri build"
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-notifications-api": "catalog:",
@@ -22,12 +27,13 @@
     "@tauri-apps/plugin-http": "catalog:tauri",
     "@tauri-apps/plugin-os": "catalog:",
     "@tauri-apps/plugin-store": "catalog:",
-    "dsh-pet-component": "catalog:runtime",
     "i18next": "catalog:runtime",
     "react": "catalog:runtime",
+    "react-aria": "catalog:runtime",
     "react-dom": "catalog:runtime",
     "react-i18next": "catalog:runtime",
     "react-if-lite": "catalog:runtime",
+    "react-stately": "catalog:runtime",
     "semver": "catalog:runtime",
     "tailwind-variants": "catalog:runtime",
     "tauri-runtime-electron": "catalog:",
@@ -43,6 +49,7 @@
     "@vitejs/plugin-react": "catalog:build",
     "tsx": "catalog:build",
     "typescript": "catalog:cli",
-    "vite": "catalog:build"
+    "vite": "catalog:build",
+    "vite-plugin-tailwind-shadowdom": "catalog:build"
   }
 }

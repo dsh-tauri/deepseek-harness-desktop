@@ -3,6 +3,8 @@
 //! 孤儿服务实例（各平台都按入口路径清扫：Windows 需穿过垫片的 `cmd.exe /C node`
 //! 转发层判断持有者，Unix 的匹配与父进程状态无关，转发层自身也会被命中）。
 
+#[cfg(test)]
+use crate::AppHandle;
 use crate::config;
 use std::fs;
 #[cfg(windows)]
@@ -13,8 +15,6 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-#[cfg(test)]
-use crate::AppHandle;
 
 use super::status;
 use super::sweep::harness_pid_path;
@@ -96,7 +96,14 @@ fn register_owned_process_at<T>(
     {
         return Ok(None);
     }
-    let (owned, value) = spawn()?;
+    instance.reset_launch_url();
+    let (owned, value) = match spawn() {
+        Ok(spawned) => spawned,
+        Err(error) => {
+            instance.reset_launch_url();
+            return Err(error);
+        }
+    };
     *guard = Some(owned);
     Ok(Some(value))
 }
@@ -105,6 +112,7 @@ fn take_owned_process() -> Option<OwnedProcess> {
     let instance = super::instances::instance();
     let mut guard = instance.process.lock().unwrap_or_else(|e| e.into_inner());
     instance.launching.store(false, Ordering::SeqCst);
+    instance.reset_launch_url();
     guard.take()
 }
 
@@ -211,6 +219,7 @@ pub(super) fn on_owned_process_exit_at(
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let owned = take_owned_process_if_matching(&mut guard, pid)?;
+        instance.reset_launch_url();
         // issue #1075：报告路径落盘前不让健康探测观察到 ownership 丢失。
         let exit_code = exit_code(&owned);
         *instance
@@ -900,15 +909,14 @@ pub(super) fn terminate_windows_process(
     }
     // issue #1074：taskkill 失败后只升级已确认的句柄，不重新按裸 PID 打开进程。
     log::warn!("Harness process {pid} survived taskkill; terminating the retained handle");
-    if unsafe { TerminateProcess(handle, 1) } == 0
-        && unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0
-    {
-        return Err(format!(
-            "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
+    let termination_error =
+        (unsafe { TerminateProcess(handle, 1) } == 0).then(std::io::Error::last_os_error);
     if unsafe { WaitForSingleObject(handle, 5000) } != WAIT_OBJECT_0 {
+        if let Some(error) = termination_error {
+            return Err(format!(
+                "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {error}"
+            ));
+        }
         return Err(format!(
             "HARNESS_CLEANUP_FAILED: process {pid} did not exit"
         ));
@@ -1233,7 +1241,7 @@ pub(super) fn warn_if_inotify_watch_limit_low() {
 }
 
 /// 停止 Harness 服务
-pub async fn stop(app_handle: crate::AppHandle) -> Result<(), String> {
+pub async fn stop<R: tauri::Runtime>(app_handle: crate::AppHandle<R>) -> Result<(), String> {
     let profile = super::instances::current_profile()
         .unwrap_or_else(|| crate::service::profile::active_profile(&app_handle));
     super::instances::scope(profile.clone(), async move {
@@ -1242,7 +1250,7 @@ pub async fn stop(app_handle: crate::AppHandle) -> Result<(), String> {
         // 进程终止涉及 WaitForSingleObject（至多 5s）与 taskkill/kill 等同步阻塞
         // 调用，移出 Tokio 执行线程避免卡住其他并发任务（WARN-7/P2-#20）。
         launch_guard().store(false, Ordering::SeqCst);
-        tauri::async_runtime::spawn_blocking(move || {
+        let terminated = tauri::async_runtime::spawn_blocking(move || {
             super::instances::scope_sync(profile, terminate_owned_process)
         })
         .await
@@ -1257,12 +1265,11 @@ pub async fn stop(app_handle: crate::AppHandle) -> Result<(), String> {
         let profile = super::instances::current_profile().unwrap();
         tauri::async_runtime::spawn_blocking(move || {
             super::instances::scope_sync(profile, || -> Result<(), String> {
-                if !wait_for_port_release(port, PORT_RELEASE_WAIT) {
-                    #[cfg(windows)]
-                    {
-                        reclaim_orphan_port(&entry, port)?;
-                    }
+                if terminated && wait_for_port_release(port, PORT_RELEASE_WAIT) {
+                    return Ok(());
                 }
+                #[cfg(windows)]
+                reclaim_orphan_port(&entry, port)?;
                 Ok(())
             })
         })
@@ -1351,38 +1358,139 @@ pub fn stop_on_exit(app_handle: &crate::AppHandle) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn stop_keeps_all_instance_effects_in_resolved_profile_scope() {
-        let source = include_str!("process.rs");
-        let stop = source
-            .split("pub async fn stop(")
-            .nth(1)
-            .unwrap()
-            .split("/// 交付安装包前")
-            .next()
-            .unwrap();
-        let scope = stop
-            .find("super::instances::scope(profile.clone(), async move {")
-            .unwrap();
-        for effect in [
-            "launch_guard().store",
-            "spawn_blocking",
-            "harness_pid_path",
-            "super::instances::port",
-            "status::set_status",
-            "status::emit_status",
-        ] {
+    #[tokio::test]
+    async fn stop_keeps_instance_effects_scoped_without_waiting_for_another_profiles_port() {
+        use crate::service::{profile, workflow::instances};
+        use tauri::utils::config::AppDirectoriesOverride;
+
+        const CHILD: &str = "DSH_TEST_STOP_PROFILE";
+        if std::env::var_os(CHILD).is_none() {
+            let scratch = tempfile::tempdir().unwrap();
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "service::workflow::process::tests::stop_keeps_instance_effects_scoped_without_waiting_for_another_profiles_port", "--nocapture"])
+                .env(CHILD, scratch.path())
+                .env("HOME", scratch.path())
+                .env("USERPROFILE", scratch.path())
+                .env("APPDATA", scratch.path().join("AppData/Roaming"))
+                .env("LOCALAPPDATA", scratch.path().join("AppData/Local"))
+                .env("XDG_DATA_HOME", scratch.path().join(".local/share"))
+                .env("DSH_HOME", scratch.path().join(".dsh"))
+                .env("DSH_E2E_HOME", scratch.path())
+                .env("TAURI_WEBDRIVER_PORT", "4445")
+                .env_remove("DSH_CLI_PATH")
+                .kill_on_drop(true);
+            #[cfg(unix)]
+            command.process_group(0);
+            #[cfg(windows)]
+            command.creation_flags(0x08000000);
+            let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+                .await
+                .expect("isolated stop regression timed out")
+                .unwrap();
             assert!(
-                stop.find(effect).unwrap() > scope,
-                "{effect} must run inside resolved profile scope"
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
             );
+            return;
         }
-        assert!(
-            stop.chars()
-                .filter(|character| !character.is_whitespace())
-                .collect::<String>()
-                .ends_with("}).await}")
-        );
+
+        let root = std::path::PathBuf::from(std::env::var_os(CHILD).unwrap());
+        for directory in ["AppData/Roaming", "AppData/Local", ".local/share"] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Root(root.join("store")));
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(context)
+            .unwrap();
+        let app = app.handle();
+        for id in ["profile-a", "profile-b"] {
+            fs::create_dir_all(profile::profile_dir_of(app, id)).unwrap();
+        }
+        profile::set_active(app, "profile-a").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        config::update_store_dat_setting(app, |setting| setting.port = port);
+        let owned = OwnedProcess {
+            pid: std::process::id(),
+            #[cfg(windows)]
+            handle: {
+                use std::os::windows::io::FromRawHandle;
+                use windows_sys::Win32::System::Threading::{
+                    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+                    PROCESS_TERMINATE,
+                };
+                let handle = unsafe {
+                    OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE,
+                        0,
+                        std::process::id(),
+                    )
+                };
+                assert!(!handle.is_null(), "{}", std::io::Error::last_os_error());
+                Arc::new(unsafe { OwnedHandle::from_raw_handle(handle) })
+            },
+        };
+        let marker_a = instances::scope_sync("profile-a".into(), || {
+            *instances::instance().process.lock().unwrap() = Some(owned);
+            *instances::instance().port.lock().unwrap() = Some(port);
+            launch_guard().store(true, Ordering::SeqCst);
+            status::set_status(status::Status::Running);
+            harness_pid_path(app)
+        });
+        fs::write(&marker_a, "profile-a marker").unwrap();
+
+        for explicit_scope in [true, false] {
+            if !explicit_scope {
+                profile::set_active(app, "profile-b").unwrap();
+            }
+            let marker_b = instances::scope_sync("profile-b".into(), || {
+                assert!(!has_owned_process());
+                assert_eq!(*instances::instance().port.lock().unwrap(), None);
+                assert_eq!(instances::port(app), port);
+                launch_guard().store(true, Ordering::SeqCst);
+                status::set_status(status::Status::Starting);
+                harness_pid_path(app)
+            });
+            fs::write(&marker_b, "profile-b marker").unwrap();
+            let deadline = std::time::Duration::from_secs(if cfg!(windows) { 10 } else { 1 });
+            tokio::time::timeout(deadline, async {
+                if explicit_scope {
+                    instances::scope("profile-b".into(), stop(app.clone())).await
+                } else {
+                    stop(app.clone()).await
+                }
+            })
+            .await
+            .expect("unowned profile stop waited for another profile's occupied port")
+            .unwrap();
+
+            assert!(!marker_b.exists());
+            instances::scope_sync("profile-b".into(), || {
+                assert!(!has_owned_process());
+                assert!(!launch_guard().load(Ordering::SeqCst));
+                assert_eq!(status::get_status(), status::Status::Stopped);
+            });
+            assert_eq!(fs::read_to_string(&marker_a).unwrap(), "profile-a marker");
+            instances::scope_sync("profile-a".into(), || {
+                assert_eq!(owned_process_pid(), Some(std::process::id()));
+                assert!(launch_guard().load(Ordering::SeqCst));
+                assert_eq!(status::get_status(), status::Status::Running);
+                assert_eq!(instances::port(app), port);
+            });
+            let connection =
+                std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).unwrap();
+            drop(listener.accept().unwrap());
+            drop(connection);
+        }
+        instances::scope_sync("profile-a".into(), || {
+            instances::instance().process.lock().unwrap().take();
+        });
     }
 
     #[test]
@@ -1471,6 +1579,204 @@ mod tests {
     #[cfg(not(windows))]
     fn test_owned(pid: u32) -> OwnedProcess {
         OwnedProcess { pid }
+    }
+
+    #[test]
+    fn owned_ready_url_comes_from_real_process_stdout_without_http_probes() {
+        use std::time::{Duration, Instant};
+        let Some(node) = crate::service::workflow::test_runtime_executable() else {
+            return;
+        };
+        let root = tempfile::tempdir().unwrap();
+        let mut child = Command::new(node)
+            .args(["-e", r#"process.stderr.write('dsh web: http://127.0.0.1:41010/?token=stderr\n'); process.stdout.write('Starting plugins...\ndsh web: http://127.0.0.1:41010/?token=owned-ready\r\n')"#])
+            .env("DSH_E2E_HOME", root.path())
+            .env("ELECTRON_RUN_AS_NODE", "1")
+            .env("NODE_OPTIONS", "")
+            .env("NODE_PATH", "")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn().unwrap();
+        super::super::instances::scope_sync("owned-stdout-ready".into(), || {
+            let instance = super::super::instances::instance();
+            super::super::instances::set_port(41010);
+            instance.launching.store(true, Ordering::SeqCst);
+            register_owned_process(None, || {
+                let signature = super::super::utils::spawn_output_readers(
+                    child.stdout.take(),
+                    child.stderr.take(),
+                    root.path().join("stdout.log"),
+                )
+                .unwrap();
+                Ok((test_owned(child.id()), signature))
+            })
+            .unwrap()
+            .unwrap();
+            child.wait().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while super::super::auth::launch_url(41010).is_err() && Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            assert_eq!(
+                super::super::auth::launch_url(41010).unwrap(),
+                "http://127.0.0.1:41010/?token=owned-ready"
+            );
+            assert!(
+                super::super::auth::launch_url(41011)
+                    .unwrap_err()
+                    .starts_with("HARNESS_NOT_READY")
+            );
+            super::super::instances::scope_sync("owned-stdout-other-profile".into(), || {
+                assert!(
+                    super::super::auth::launch_url(41010)
+                        .unwrap_err()
+                        .starts_with("HARNESS_NOT_OWNED")
+                );
+            });
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let health = runtime
+                .block_on(super::super::health::proxy_health_check(41010))
+                .unwrap();
+            assert_eq!(health.status, "healthy - Harness process ready");
+            assert_eq!(health.boot_html, "");
+            assert_eq!(health.service_url, "http://127.0.0.1:41010");
+            on_owned_process_exit_at(child.id(), |_| Some(0), |_| {}).unwrap();
+            assert!(
+                super::super::auth::launch_url(41010)
+                    .unwrap_err()
+                    .starts_with("HARNESS_NOT_OWNED")
+            );
+        });
+    }
+
+    #[test]
+    fn old_logs_and_stderr_cannot_replace_the_current_stdout_ready_signal() {
+        use std::io::Cursor;
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join("dsh-web.log");
+        fs::write(&log, "dsh web: http://127.0.0.1:41013/?token=old-log\n").unwrap();
+        fs::write(
+            root.path().join("dsh-web.log.1"),
+            "dsh web: http://127.0.0.1:41013/?token=old-rotated\n",
+        )
+        .unwrap();
+        super::super::instances::scope_sync("stdout-ready-required".into(), || {
+            let instance = super::super::instances::instance();
+            super::super::instances::set_port(41013);
+            instance.launching.store(true, Ordering::SeqCst);
+            let drained = register_owned_process(None, || {
+                let drained = super::super::utils::spawn_output_readers(
+                    Some(Cursor::new(b"Starting plugins...\n".to_vec())),
+                    Some(Cursor::new(
+                        b"dsh web: http://127.0.0.1:41013/?token=stderr\n".to_vec(),
+                    )),
+                    log,
+                )
+                .unwrap();
+                Ok((test_owned(43), drained))
+            })
+            .unwrap()
+            .unwrap();
+            assert!(
+                !drained
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap()
+            );
+            assert!(
+                super::super::auth::launch_url(41013)
+                    .unwrap_err()
+                    .starts_with("HARNESS_NOT_READY")
+            );
+            take_owned_process().unwrap();
+        });
+    }
+
+    #[test]
+    fn late_stdout_cannot_ready_or_replace_a_new_process_generation() {
+        use std::io::{Cursor, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::time::{Duration, Instant};
+        let root = tempfile::tempdir().unwrap();
+        super::super::instances::scope_sync("late-stdout-generation".into(), || {
+            let instance = super::super::instances::instance();
+            super::super::instances::set_port(41012);
+            instance.launching.store(true, Ordering::SeqCst);
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut output = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (stdout, _) = listener.accept().unwrap();
+            register_owned_process(None, || {
+                super::super::utils::spawn_output_readers(
+                    Some(stdout),
+                    None::<Cursor<Vec<u8>>>,
+                    root.path().join("old.log"),
+                )
+                .unwrap();
+                Ok((test_owned(41), ()))
+            })
+            .unwrap()
+            .unwrap();
+            let previous_generation = instance.launch_url.lock().unwrap().clone();
+            register_owned_process(Some(41), || {
+                assert!(
+                    instance
+                        .launch_url
+                        .lock()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .is_none()
+                );
+                Ok((test_owned(42), ()))
+            })
+            .unwrap()
+            .unwrap();
+            output
+                .write_all(b"dsh web: http://127.0.0.1:41012/?token=stale\n")
+                .unwrap();
+            drop(output);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while previous_generation.lock().unwrap().is_none() && Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            assert_eq!(
+                previous_generation.lock().unwrap().as_ref().unwrap().1,
+                "http://127.0.0.1:41012/?token=stale"
+            );
+            assert!(
+                super::super::auth::launch_url(41012)
+                    .unwrap_err()
+                    .starts_with("HARNESS_NOT_READY")
+            );
+            super::super::utils::spawn_output_readers(
+                Some(Cursor::new(
+                    b"dsh web: http://127.0.0.1:41012/?token=current\n".to_vec(),
+                )),
+                None::<Cursor<Vec<u8>>>,
+                root.path().join("current.log"),
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while super::super::auth::launch_url(41012).is_err() && Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            assert_eq!(
+                super::super::auth::launch_url(41012).unwrap(),
+                "http://127.0.0.1:41012/?token=current"
+            );
+            assert!(on_owned_process_exit_at(41, |_| Some(0), |_| {}).is_none());
+            assert_eq!(
+                super::super::auth::launch_url(41012).unwrap(),
+                "http://127.0.0.1:41012/?token=current"
+            );
+            take_owned_process().unwrap();
+            assert!(
+                super::super::auth::launch_url(41012)
+                    .unwrap_err()
+                    .starts_with("HARNESS_NOT_OWNED")
+            );
+        });
     }
 
     /// 退出监视线程只能清掉「与自己 PID 匹配」的登记，不许误清刚启动的新进程，
@@ -2051,7 +2357,12 @@ setTimeout(() => process.exit(0), 60000);
                     }
                     assert!(fs::rename(&core, case.join("renamed")).is_err());
                 } else {
-                    assert_eq!(selected.len(), 1);
+                    assert_eq!(
+                        selected.len(),
+                        1,
+                        "{mode}: shim={shim_pid}, listener={listener}, snapshot={}",
+                        String::from_utf8_lossy(&snapshot)
+                    );
                     assert_eq!(
                         selected[0].0, shim_pid,
                         "{mode}: select the top shim, not just the listener"
@@ -2291,6 +2602,41 @@ setTimeout(() => process.exit(0), 60000);
             .unwrap_err()
             .starts_with("HARNESS_CLEANUP_FAILED:")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn denied_termination_waits_for_the_retained_process_to_exit() {
+        use std::io::Write;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+
+        let mut child = Command::new("node.exe")
+            .args([
+                "-e",
+                "require('fs').readSync(0,Buffer.alloc(1),0,1,null);setTimeout(()=>process.exit(0),1500)",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x08000000)
+            .spawn()
+            .unwrap();
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, child.id()) };
+        assert!(!handle.is_null());
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        let result = terminate_windows_process(child.id(), handle.as_raw_handle(), |_| {
+            child.stdin.take().unwrap().write_all(b"x").unwrap();
+        });
+        let stopped = child.try_wait().unwrap().is_some();
+        let exit = child.wait().unwrap();
+        result.expect("cleanup must confirm exit after a denied termination request");
+        assert!(
+            stopped,
+            "cleanup must wait for the retained process to exit"
+        );
+        assert!(exit.success());
     }
 
     #[cfg(windows)]
@@ -2837,12 +3183,22 @@ setTimeout(() => process.exit(0), 60000);
     fn windows_harness_command_line_matches_only_the_active_core_service() {
         let carrier = crate::service::profile::carrier_node_args(true);
         let bin = r"C:\sandbox\dsh\lib\bin.js";
-        let command = format!(r#"node.exe {} "{}" "{bin}" --profile desktop --patch "C:\data path\patch.yml" --port 3080 --no-open"#, carrier[0].to_string_lossy(), carrier[1].to_string_lossy());
+        let command = format!(
+            r#"node.exe {} "{}" "{bin}" --profile desktop --patch "C:\data path\patch.yml" --port 3080 --no-open"#,
+            carrier[0].to_string_lossy(),
+            carrier[1].to_string_lossy()
+        );
         assert!(is_windows_harness_command_line(&command, bin));
         let arguments = windows_harness_arguments(&command, bin).unwrap();
         assert_eq!(arguments[0], carrier[0].to_string_lossy());
-        assert!(is_windows_harness_command_line(&command.replace("3080", "3081"), bin));
-        assert!(!is_windows_harness_command_line(&command.replace("--profile desktop", "plugin --profile desktop"), bin));
+        assert!(is_windows_harness_command_line(
+            &command.replace("3080", "3081"),
+            bin
+        ));
+        assert!(!is_windows_harness_command_line(
+            &command.replace("--profile desktop", "plugin --profile desktop"),
+            bin
+        ));
         let bin = r"C:\Users\Example User\AppData\Roaming\dsh-tauri\dev\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js";
         let command = format!(r#""C:\node.exe" "{bin}" --profile web --port 3081 --no-open"#);
         assert!(is_windows_harness_command_line(&command, bin));

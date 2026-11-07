@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { showNativeNotification } from './native'
+
+let showNativeNotification: typeof import('./native').showNativeNotification
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => true),
@@ -10,16 +11,31 @@ const mocks = vi.hoisted(() => ({
   }),
 }))
 
-vi.mock('dsh-tauri/client', () => ({
+vi.mock('dsh-tauri/client', async () => ({
+  isNativeNotificationAvailable: (await import('../../../../builtin-plugin-tauri/src/client/service/tauri')).isNativeNotificationAvailable,
   getCurrentWindow: () => ({ label: 'window-2' }),
   invoke: mocks.invoke,
   listen: mocks.listen,
 }))
 
-beforeEach(() => vi.stubGlobal('location', { origin: 'http://127.0.0.1:3081' }))
+beforeEach(async () => {
+  vi.resetModules()
+  ;({ showNativeNotification } = await import('./native'))
+  mocks.clicked = null
+  vi.stubGlobal('location', { origin: 'http://127.0.0.1:3081' })
+  vi.stubGlobal('__DSH_NOTIFICATIONS_AVAILABLE__', true)
+})
 afterEach(() => {
   vi.clearAllMocks()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+it.each([false, undefined])('declines native delivery before any IPC when availability is %s', async (available) => {
+  vi.stubGlobal('__DSH_NOTIFICATIONS_AVAILABLE__', available)
+  expect(await showNativeNotification({ title: 'Finished', body: 'Turn complete', tag: 'unavailable', sessionId: 'session-1', actions: [{ id: 'approve', title: 'Approve' }] })).toBe(false)
+  expect(mocks.invoke).not.toHaveBeenCalled()
+  expect(mocks.listen).not.toHaveBeenCalled()
 })
 
 it('rejects an old action when the same tag now refers to a different interaction', async () => {

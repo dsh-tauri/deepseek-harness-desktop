@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -14,159 +14,8 @@ fn dsh_log_lock() -> &'static Mutex<()> {
     DSH_LOG_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// 构造仅用于回环地址探测的 HTTP 客户端。
-///
-/// 生命周期探测访问的是本机 dsh，不能继承 `HTTP_PROXY` / `ALL_PROXY`：部分代理
-/// 不尊重回环地址直连，或应用进程没有 `NO_PROXY`，会把健康检查转发到外部代理，
-/// 造成端口已经监听但持续误报未就绪。
-///
-/// 建连单独限时（[`crate::config::LOOPBACK_CONNECT_TIMEOUT`]）：TUN 式网络过滤器
-/// 会把**失败**的回环 `connect` 拖到约 2s。`timeout` 是整体请求截止时间（建连开始到
-/// 响应体读完），5s 的余量足以容纳这段阻塞，端口尚未监听的每一轮探测都会因此白等
-/// 2s；只有对建连阶段单独限时才能把它截断。
-pub(super) fn loopback_http_client(timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(crate::config::LOOPBACK_CONNECT_TIMEOUT)
-        .timeout(timeout)
-        .build()
-}
-
-/// 旧版客户端插件 bundle 探测地址。
-///
-/// SPA `/` 在 webServer 绑定后立刻 200，此时连接桥与 Loader 图往往还没就绪；
-/// WebView 若在这个窗口加载，会永久停在官方 boot 页 “Loading plugins…”。
-/// 旧版没有可读取的启动图时，保留这两个稳定入口作为兼容兜底。
-///
-/// 兜底地址只在**解析不出启动图**时生效，因此必须挑在全部受支持核心上都存在的
-/// 模块：`dsh-client-runtime` 是 0.1.2 时代的旧包名，0.1.6 起上游已不再发布，
-/// 用它会让新核心必然 N/N 不齐；`dsh-client-modules` 从 0.1.5 起一直存在，且每个
-/// boot 页面都会预加载它，是更可靠的第二个探针。
-pub(super) fn health_probe_plugin_urls(port: u16) -> Vec<String> {
-    vec![
-        format!("http://127.0.0.1:{port}/plugins/@deepseek-ai/dsh-client-ui-layout/client.js"),
-        format!("http://127.0.0.1:{port}/plugins/@deepseek-ai/dsh-client-modules/client.js"),
-    ]
-}
-
-/// 从新版 Harness 首页的 `__DSH_BOOT__` 启动图提取客户端 bundle 地址。
-///
-/// alpha 版不再保证桌面端旧适配器中的功能包名称存在，首页注入的启动图才是
-/// WebView 实际会加载的唯一模块清单。这里不猜测替代包名，而是复用该清单中的
-/// `entries`，同时加入 HTML 中预加载的 modules/runtime 两个入口。
-pub(super) fn client_urls_from_boot_html(port: u16, html: &str) -> Option<Vec<String>> {
-    let marker = "globalThis[\"__DSH_BOOT__\"] = ";
-    let start = html.find(marker)? + marker.len();
-    let end = html[start..].find("</script>")? + start;
-    let json = html[start..end].trim().trim_end_matches(';').trim();
-    let boot: serde_json::Value = serde_json::from_str(json).ok()?;
-    let entries = boot.get("entries")?.as_array()?;
-    let mut paths = Vec::new();
-
-    // 预加载脚本不一定重复出现在 entries 的 url 中（例如老的 boot 页面），因此
-    // 两类地址都收集后去重；只接受同源相对的插件 client.js 路径。
-    for script in html.split("<script").skip(1) {
-        let Some(src_start) = script.find("src=\"") else {
-            continue;
-        };
-        let rest = &script[src_start + 5..];
-        let Some(src_end) = rest.find('\"') else {
-            continue;
-        };
-        let src = decode_html_attribute(&rest[..src_end]);
-        if is_client_bundle_path(&src) {
-            paths.push(src);
-        }
-    }
-    for entry in entries {
-        let Some(url) = entry.get("url").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let url = decode_html_attribute(url);
-        if is_client_bundle_path(&url) {
-            paths.push(url);
-        }
-    }
-    paths.sort();
-    paths.dedup();
-    if paths.is_empty() {
-        return None;
-    }
-    Some(
-        paths
-            .into_iter()
-            .map(|path| format!("http://127.0.0.1:{port}/{}", path.trim_start_matches('/')))
-            .collect(),
-    )
-}
-
-/// 还原 boot HTML 属性/JSON 中的有限命名实体。
-///
-/// alpha 核心的 combo URL 使用 `&rev=...`，HTML 注入后会变成 `&amp;rev=...`；
-/// 解析前还原它，否则 reqwest 会把实体名当成真实查询参数的一部分。
-fn decode_html_attribute(value: &str) -> String {
-    value
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-}
-
-fn is_client_bundle_path(path: &str) -> bool {
-    // alpha combo 路由合法地使用 `/plugins/??<package>/client.js&rev=...`：
-    // 第一个 `?` 是路由约定，第二个是 combo payload 的起始标记，不能把它拼成
-    // `/plugins/??` 再交给 URL 解析器时丢掉一个问号。
-    //
-    // 0.1.7 起 boot 首页改为 `<base href="./">`，同一批地址在 HTML 里是**相对**
-    // 形式（`plugins/...`，无前导 `/`），JSON 里也照抄。只认绝对形式会让解析直接
-    // 落空、退回硬编码兜底，而兜底地址在新核心上必然 404（核心不再提供该模块），
-    // 于是健康检查永远卡在 0/N。这里两种形式都接受，拼接时统一补前导 `/`。
-    let path = path.trim_start_matches("./");
-    (path.starts_with("plugins/") || path.starts_with("/plugins/")) && path.contains("client.js")
-}
-
-/// 判断健康检查响应是不是可用的插件 bundle。
-///
-/// 未知 `/plugins/...` 路径会被 SPA fallback 成 `index.html`（仍是 200），
-/// 绝不能当成插件已就绪。
-pub(super) fn looks_like_plugin_bundle(ok_status: bool, body: &str) -> bool {
-    if !ok_status {
-        return false;
-    }
-    let trimmed = body.trim_start();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("<!doctype") || lower.starts_with("<html") {
-        return false;
-    }
-    true
-}
-
-/// 检查 Harness 是否真正在运行（探测指定端口，随配置端口联动）
 pub async fn is_dsh_running(port: u16) -> bool {
-    let client = loopback_http_client(Duration::from_secs(2)).ok(); // 将 Result 转为 Option
-
-    // 如果 client 创建失败，直接返回 false
-    let client = match client {
-        Some(c) => c,
-        None => return false,
-    };
-
-    let url = format!("{}/", crate::config::get_dsh_service_url(port));
-
-    // 发送请求并判断是否就绪
-    let check_status = async {
-        let resp = client.get(&url).send().await.ok()?;
-        if resp.status() != reqwest::StatusCode::OK {
-            return None;
-        }
-        Some(true)
-    };
-
-    check_status.await.unwrap_or(false)
+    super::auth::launch_url(port).is_ok()
 }
 
 /// 有界等待端口回落为空闲；端口本来就空闲时立即返回。
@@ -238,10 +87,29 @@ where
 {
     if let Some(stdout) = stdout {
         let log_path = log_path.clone();
+        let instance = super::instances::instance();
+        let generation = instance
+            .launch_url
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let port = *instance
+            .port
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         #[cfg(test)]
         check_output_reader_spawn()?;
         thread::Builder::new().spawn(move || {
-            drain_subprocess_output(BufReader::new(stdout), log_path, log::Level::Info, |_| {});
+            drain_subprocess_output(BufReader::new(stdout), log_path, log::Level::Info, |line| {
+                if let Some((port, url)) = port
+                    .and_then(|port| super::auth::launch_url_in(line, port).map(|url| (port, url)))
+                {
+                    let mut output = generation.lock().unwrap_or_else(|error| error.into_inner());
+                    if output.is_none() {
+                        *output = Some((port, url));
+                    }
+                }
+            });
         })?;
     }
 
@@ -537,67 +405,19 @@ mod tests {
 
         // 最后一次循环后：当前为空、.1 = start 4、.2 = start 3
         assert_eq!(fs::read_to_string(&log).unwrap_or_default(), "");
-        assert!(fs::read_to_string(dir.join("dsh-web.log.1"))
-            .unwrap()
-            .contains("start 4"));
-        assert!(fs::read_to_string(dir.join("dsh-web.log.2"))
-            .unwrap()
-            .contains("start 3"));
+        assert!(
+            fs::read_to_string(dir.join("dsh-web.log.1"))
+                .unwrap()
+                .contains("start 4")
+        );
+        assert!(
+            fs::read_to_string(dir.join("dsh-web.log.2"))
+                .unwrap()
+                .contains("start 3")
+        );
         assert!(!dir.join("dsh-web.log.3").exists());
 
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn boot_html_uses_declared_client_graph() {
-        let html = r#"<script src="/plugins/@deepseek-ai/dsh-client-modules/client.js?rev=one"></script><script>globalThis["__DSH_BOOT__"] = {"rev":"graph","entries":[{"id":"@deepseek-ai/dsh-client-ui-layout","url":"/plugins/@deepseek-ai/dsh-client-ui-layout/client.js?rev=two","rev":"two"}]}</script>"#;
-        let urls = client_urls_from_boot_html(3099, html).expect("boot graph");
-        assert_eq!(urls.len(), 2);
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-modules/client.js")));
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-ui-layout/client.js")));
-        assert!(urls
-            .iter()
-            .all(|url| url.starts_with("http://127.0.0.1:3099/plugins/")));
-    }
-
-    #[test]
-    fn boot_html_rejects_missing_or_external_graph_entries() {
-        assert!(client_urls_from_boot_html(3099, "<html></html>").is_none());
-        let html = r#"<script>globalThis[\"__DSH_BOOT__\"] = {\"entries\":[{\"url\":\"https://example.test/client.js\"}]}</script>"#;
-        assert!(client_urls_from_boot_html(3099, html).is_none());
-    }
-
-    /// alpha combo bundle 的 script src 位于 HTML 属性时，`&rev=` 会编码为
-    /// `&amp;rev=`；探测 URL 必须先还原实体，否则服务端收到错误资源地址并返回 404。
-    #[test]
-    fn boot_html_decodes_combo_bundle_attribute_url() {
-        let html = r#"<script src="/plugins/??@deepseek-ai/dsh-client-modules/client.js&amp;rev=cddf5581d5d5"></script><script>globalThis["__DSH_BOOT__"] = {"entries":[]}</script>"#;
-        let urls = client_urls_from_boot_html(3081, html).expect("boot graph");
-        assert_eq!(urls, vec!["http://127.0.0.1:3081/plugins/??@deepseek-ai/dsh-client-modules/client.js&rev=cddf5581d5d5"]);
-    }
-
-    /// 回归（0.1.7）：boot 首页改用 `<base href="./">`，同一批插件地址在 HTML 与
-    /// `__DSH_BOOT__` 里都是相对形式（`plugins/...`，无前导 `/`）。若只认绝对形式，
-    /// 解析会整体落空并退回硬编码兜底，而兜底地址在新核心上 404，健康检查就永久
-    /// 停在 0/N（表现为「一直没能心跳检测成功」）。
-    #[test]
-    fn boot_html_accepts_relative_bundle_paths() {
-        let html = r#"<script src="plugins/??@deepseek-ai/dsh-client-modules/client.js&amp;rev=f584d378985b"></script><script>globalThis["__DSH_BOOT__"] = {"rev":"g","entries":[{"id":"@deepseek-ai/dsh-client-ui-layout","url":"plugins/??@deepseek-ai/dsh-client-ui-layout/client.js&rev=f26b875a92b6","rev":"f26b875a92b6"}]}</script>"#;
-        let urls = client_urls_from_boot_html(3081, html).expect("boot graph");
-        assert_eq!(urls.len(), 2);
-        assert!(urls
-            .iter()
-            .all(|url| url.starts_with("http://127.0.0.1:3081/plugins/")));
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-modules/client.js&rev=f584d378985b")));
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-ui-layout/client.js&rev=f26b875a92b6")));
     }
 
     /// 被占用时等到预算耗尽才返回 false；端口回落为空闲后立即返回 true，
@@ -640,44 +460,6 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         assert!(!is_port_in_use(port), "a released port must read as free");
-    }
-
-    #[test]
-    fn health_probe_plugin_urls_target_client_bundles_not_spa_root() {
-        let urls = health_probe_plugin_urls(3080);
-        assert!(urls.iter().all(|u| u.contains("/plugins/")));
-        assert!(urls
-            .iter()
-            .all(|u| !u.ends_with("3080/") && !u.ends_with("://127.0.0.1:3080")));
-        assert!(urls
-            .iter()
-            .any(|u| u.contains("dsh-client-ui-layout/client.js")));
-        // `dsh-client-runtime` 在 0.1.6 起已不存在，兜底不能继续引用它。
-        assert!(urls.iter().all(|u| !u.contains("dsh-client-runtime")));
-        assert!(urls
-            .iter()
-            .any(|u| u.contains("dsh-client-modules/client.js")));
-    }
-
-    #[test]
-    fn spa_html_fallback_is_not_a_plugin_bundle() {
-        assert!(!looks_like_plugin_bundle(
-            true,
-            "<!doctype html><html lang=\"en\"><body>HARNESS Loading plugins...</body></html>"
-        ));
-        assert!(!looks_like_plugin_bundle(
-            true,
-            "<html><head></head></html>"
-        ));
-        assert!(!looks_like_plugin_bundle(true, "   "));
-        assert!(!looks_like_plugin_bundle(
-            false,
-            "window.__ModuleLoader__={}"
-        ));
-        assert!(looks_like_plugin_bundle(
-            true,
-            "window.__ModuleLoader__.load({id:\"@deepseek-ai/dsh-client-ui-layout\"})"
-        ));
     }
 
     /// keep=0 时把当前日志也删掉。

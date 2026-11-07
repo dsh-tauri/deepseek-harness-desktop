@@ -17,12 +17,21 @@ export const session = defineService({
       ?? null
   },
 
-  remove(ids: readonly string[]): string[] {
-    const sessions = getServerContext<SessionHost>(server).sessions
-    const live = ids.filter(id => sessions.get?.(id) && id)
-    if (live.length > 0 && !sessions.remove)
-      throw new Error('宿主未提供 SessionStore.remove，请先更新桌面壳')
-    return live.filter(id => !sessions.remove?.(id))
+  async dispose(ids: readonly string[]): Promise<string[]> {
+    const host = getServerContext<SessionHost>(server)
+    const stillLive: string[] = []
+    for (const id of ids) {
+      const agent = host.agents?.get?.(id)
+      if (agent === undefined)
+        continue
+      if (typeof agent.cancel !== 'function') {
+        stillLive.push(id)
+        continue
+      }
+      agent.cancel({ kind: 'disposed' })
+      await agent.whenIdle?.()
+    }
+    return stillLive
   },
 
   getDir(id: string): string | null {

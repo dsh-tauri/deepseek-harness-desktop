@@ -21,20 +21,18 @@ use std::path::{Path, PathBuf};
 
 use super::cancel::terminate_owned_install;
 use super::install::{install_internal, trust_policy_rejection};
-use super::installed::{installed_name, profile_dir, ProfilePackageJson};
-use super::preset::{
-    bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo,
-};
-use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
+use super::installed::{ProfilePackageJson, installed_name, profile_dir};
+use super::preset::{PreinstallPluginInfo, bundled_dep_spec, bundled_plugin_dir, load_presets};
+use super::process::{PREINSTALL_LOG_EVENT, PreinstallLogPayload, ProcessOwner, new_process_owner};
 use crate::config;
 
+use manifest::internal_plugin_entry_is_ready;
 use manifest::{
     collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec,
     remove_duplicate_bundle_entries_from_patch, remove_internal_plugins_from_manifest,
     remove_stale_plugin_entry, write_profile_manifest,
 };
-pub(crate) use manifest::{internal_plugin_entry_is_ready, skip_unavailable_plugins};
-use materialize::{materialize_links, OfflineLink};
+use materialize::{OfflineLink, materialize_links};
 
 mod manifest;
 mod materialize;
@@ -292,7 +290,7 @@ fn repair_loader_state(
             return Err(format!(
                 "INTERNAL_PLUGIN_ROOT_READ_FAILED: {}: {error}",
                 root.display()
-            ))
+            ));
         }
     };
     if existing.as_deref() != Some(EMPTY_ROOT) && profile.is_dir() {
@@ -426,9 +424,9 @@ async fn subscribe_or_start(
 
                     if !wait_for_owner_release(owner, ENSURE_OWNER_DRAIN_TIMEOUT).await {
                         let reason = format!(
-                        "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
-                        ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
-                    );
+                            "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
+                            ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
+                        );
                         log::error!("{reason}");
                         outcome = Err(reason.clone());
                         let _ = result_tx.send(Some(outcome));
@@ -520,8 +518,8 @@ async fn receive_flight_result(
 /// 取消共享的内置插件安装并等待拥有者完成清理，确保 Retry 不会叠加新进程。
 pub(crate) async fn cancel() -> Result<(), String> {
     let mut result = {
-        let profile =
-            crate::service::workflow::instances::current_profile().unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
+        let profile = crate::service::workflow::instances::current_profile()
+            .unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
         let lock = ensure_lock(&profile);
         let mut coordinator = lock.lock().await;
         let Some(active) = &coordinator.active else {
@@ -710,7 +708,9 @@ fn prepare_internal_plugins(
         let link_ok = internal_plugin_entry_is_ready(&entry);
         let bundled = resolve_bundle(&preset.id);
         let Some(bundled) = bundled.filter(|source| internal_plugin_entry_is_ready(source)) else {
-            log::warn!("INTERNAL_PLUGIN_SOURCE_MISSING: {name}: bundled manifest or host entry unavailable, skipping repair (installed_ready={link_ok})");
+            log::warn!(
+                "INTERNAL_PLUGIN_SOURCE_MISSING: {name}: bundled manifest or host entry unavailable, skipping repair (installed_ready={link_ok})"
+            );
             sources_ready = false;
             if !link_ok {
                 skipped.insert(name);
@@ -726,10 +726,6 @@ fn prepare_internal_plugins(
             .get(&name)
             .is_some_and(|actual| dep_matches_spec(actual, &expected));
 
-        // ③ 挂载登记：`dsh.profile.bundles` 缺项时插件从不挂载——宿主插件的 apply
-        // （含 dsh-tauri 的载体鉴权 gate）不运行，索引恒 401、健康检查永远
-        // `boot page returned 401`。这种「依赖在、bundle 没登记」的半残状态必须判为
-        // 需重装：只按 deps/link 判定会把它当成就绪，装过一次后永远修不回来。
         let bundle_ok = manifest
             .as_ref()
             .and_then(|value| value.pointer("/dsh/profile/bundles"))
@@ -786,7 +782,11 @@ fn require_running_plugins_ready(
     {
         return Err(format!(
             "INTERNAL_PLUGIN_RESTART_REQUIRED: 内置插件需要修复；请停止当前服务后通过正常启动重试（need={:?}, orphans={:?}, migration={}, sources_ready={}, fallback={}）。",
-            check.need.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>(),
+            check
+                .need
+                .iter()
+                .map(|(id, _, _)| id.as_str())
+                .collect::<Vec<_>>(),
             check.orphans,
             check.migration_pending,
             check.sources_ready,
@@ -834,7 +834,12 @@ async fn ensure_inner(
         return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
     }
     let (operation, profile, check) = prepare_internal_plugins_for_install(
-        || (profile_dir(app_handle), config::get_dsh_data_path(app_handle)),
+        || {
+            (
+                profile_dir(app_handle),
+                config::get_dsh_data_path(app_handle),
+            )
+        },
         internal,
         &cancel,
         |id| bundled_plugin_dir(app_handle, id),
@@ -1359,9 +1364,11 @@ mod tests {
                 .unwrap()
                 .unwrap();
         });
-        assert!(tokio::time::timeout(Duration::from_millis(30), &mut reset)
-            .await
-            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut reset)
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "installed");
         release.send(()).unwrap();
         let (operation, _, check) = tokio::time::timeout(Duration::from_secs(5), preparation)
@@ -1370,9 +1377,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(check.need.len(), 1);
-        assert!(tokio::time::timeout(Duration::from_millis(30), &mut reset)
-            .await
-            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut reset)
+                .await
+                .is_err()
+        );
         drop(operation);
         tokio::time::timeout(Duration::from_secs(5), reset)
             .await
@@ -1465,9 +1474,11 @@ mod tests {
         ] {
             let process = super::super::process::acquire_process_lock().await.unwrap();
             let mut finishing = Box::pin(finish_internal_install(Err(reason.to_string())));
-            assert!(tokio::time::timeout(Duration::from_millis(30), &mut finishing)
-                .await
-                .is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), &mut finishing)
+                    .await
+                    .is_err()
+            );
             let (cancel_tx, mut cancel) = tokio::sync::watch::channel(true);
             assert!(*cancel.borrow_and_update());
             let mut phases = Vec::new();
@@ -1500,7 +1511,9 @@ mod tests {
             .unwrap();
             let error = result.unwrap_err();
             assert!(error.starts_with("INTERNAL_PLUGIN_INSTALL_CANCELLED:"));
-            assert!(super::super::process::is_internal_plugin_startup_failure(&error));
+            assert!(super::super::process::is_internal_plugin_startup_failure(
+                &error
+            ));
             assert_eq!(
                 phases,
                 vec![serde_json::json!({
@@ -1523,9 +1536,11 @@ mod tests {
             let (process, result) = finish_internal_install(expected.clone()).await.unwrap();
             assert_eq!(result, expected);
             let mut next = Box::pin(super::super::process::acquire_process_lock());
-            assert!(tokio::time::timeout(Duration::from_millis(30), &mut next)
-                .await
-                .is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), &mut next)
+                    .await
+                    .is_err()
+            );
             drop(process);
             let process = tokio::time::timeout(Duration::from_secs(5), next)
                 .await
@@ -1824,16 +1839,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("package.json"), serde_json::json!({
             "dependencies": {"dsh-tauri": "link:/resources/dsh-tauri", "dsh-tauri-ui": "link:/resources/dsh-tauri-ui"},
-            "dsh": {"profile": {"bundles": ["dsh-tauri", "dsh-tauri-pet", "community-plugin"]}}
+            "dsh": {"profile": {"bundles": ["dsh-tauri", "dsh-tauri-archive", "community-plugin"]}}
         }).to_string()).unwrap();
         assert_eq!(
             presets_missing_from_manifest(
                 root.path(),
-                &need_entries(&["dsh-tauri", "dsh-tauri-ui", "dsh-tauri-pet"])
+                &need_entries(&["dsh-tauri", "dsh-tauri-ui", "dsh-tauri-archive"])
             ),
             Some(vec![
                 "dsh-tauri-ui".to_string(),
-                "dsh-tauri-pet".to_string()
+                "dsh-tauri-archive".to_string()
             ])
         );
         assert_eq!(
@@ -1865,8 +1880,8 @@ mod tests {
     fn link_materialization_failure_detects_uv_unknown_readback() {
         let error = "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN  UNKNOWN: \
                      unknown error, open 'C:\\Users\\w00012491\\.dsh\\profiles\\tauri\\node_modules\\\
-                     dsh-tauri-scheduler\\package.json'";
-        let need = need_entries(&["dsh-tauri-scheduler"]);
+                     dsh-tauri-ui\\package.json'";
+        let need = need_entries(&["dsh-tauri-ui"]);
         assert!(is_link_materialization_failure(error, &need));
         // pnpm / Node 的措辞随版本变化，判定大小写不敏感
         assert!(is_link_materialization_failure(
@@ -1888,8 +1903,7 @@ mod tests {
     /// `cannot resolve profile bundle` 点名了本轮待装入口，同样必须走离线自建链接兜底。
     #[test]
     fn link_materialization_failure_detects_unresolved_internal_bundle() {
-        let error =
-            "PREINSTALL_FAILED: dsh plugin exited with code 1: throw new Error(`${binName}: \
+        let error = "PREINSTALL_FAILED: dsh plugin exited with code 1: throw new Error(`${binName}: \
                      cannot resolve profile bundle ${JSON.stringify(packageName)} ...`);\n\
                      Error: dsh: cannot resolve profile bundle \"dsh-tauri\" from the dsh \
                      installation or C:\\Users\\A1\\.dsh\\profiles\\web; run 'dsh plugin --profile \
@@ -1998,7 +2012,7 @@ mod tests {
                      someone-else-plugin\\package.json'";
         assert!(!is_link_materialization_failure(
             error,
-            &need_entries(&["dsh-tauri-scheduler"])
+            &need_entries(&["dsh-tauri-ui"])
         ));
     }
 
@@ -2008,7 +2022,7 @@ mod tests {
     fn link_materialization_failure_rejects_unattributed_diagnostic() {
         let error = "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN: cannot \
                      materialize node_modules entry";
-        let need = need_entries(&["dsh-tauri-scheduler"]);
+        let need = need_entries(&["dsh-tauri-ui"]);
 
         assert!(!is_link_materialization_failure(error, &need));
         assert!(is_untraceable_link_readback_failure(error));

@@ -1,6 +1,6 @@
 name: Prepare offline bundle resources
 description: >-
-  Download and unpack the Node.js runtime, the packaged dsh core and pnpm into
+  Download and unpack the Electron asar dsh core and pnpm into
   apps/desktop/src-tauri/resources, then rewrite manifest.jsonc so every bundled dependency
   resolves through `$Resources/...`. The resulting `tauri build` produces an
   installer that needs no download on first launch.
@@ -87,7 +87,6 @@ runs:
           mkdir -p "$dest"
           case "$archive" in
             *.zip)
-              # Windows 的 Git Bash 不一定带 unzip；Windows 10+ 自带的 bsdtar 能解 zip。
               if command -v unzip >/dev/null 2>&1; then
                 (cd "$dest" && unzip -q "$archive")
               else
@@ -100,8 +99,6 @@ runs:
           esac
         }
 
-        # 与 Rust `download::utils::flatten_directory` 一致：解压结果只有唯一一层
-        # 子目录时把内容上提，保证 resources/<name> 就是运行时目录本身。
         flatten() {
           local dir="$1" entries=()
           while IFS= read -r entry; do entries+=("$entry"); done < <(find "$dir" -mindepth 1 -maxdepth 1)
@@ -120,30 +117,15 @@ runs:
           cp -a "$from/." "$to/"
         }
 
-        # 刻意不用关联数组：macOS runner 的 /bin/bash 是 3.2（`declare -A` 需要 bash 4），
-        # 而 `shell: bash` 会解析到它，用了会让 macOS 离线包构建在下载前就失败。
-        while IFS='|' read -r key name url sha sha_url; do
+        assets="$(node scripts/bundle-metadata.mjs --assets --platform "$PLATFORM" --arch "$ARCH" $git_flag)"
+        while IFS='|' read -r key name url sha; do
           [ -n "${key:-}" ] || continue
           case "$key" in
-            node) node_name="$name"; node_url="$url"; node_sha_url="$sha_url" ;;
             dsh) dsh_name="$name"; dsh_url="$url" ;;
             pnpm) pnpm_name="$name"; pnpm_url="$url"; pnpm_sha="$sha" ;;
             git) git_name="$name"; git_url="$url"; git_sha="$sha" ;;
           esac
-        done < <(node scripts/bundle-metadata.mjs --assets --platform "$PLATFORM" --arch "$ARCH" $git_flag)
-
-        # Node.js 运行时：摘要取自官方 SHASUMS256.txt，与 assets 同源同版本。
-        fetch "$node_url" "${workdir}/${node_name}"
-        fetch "$node_sha_url" "${workdir}/SHASUMS256.txt"
-        verify "${workdir}/${node_name}" \
-          "$(awk -v asset="${node_name}" '$2 == asset { print $1 }' "${workdir}/SHASUMS256.txt")" \
-          "Node.js ${node_name}"
-        extract "${workdir}/${node_name}" "${workdir}/node"
-        flatten "${workdir}/node"
-        install_tree "${workdir}/node" "apps/desktop/src-tauri/resources/node"
-
-        # dsh 内核：摘要来自同一 release 的 GitHub API，缺失即中止（无法校验完整性的
-        # 内容不进离线包）。
+        done <<< "$assets"
         fetch "$dsh_url" "${workdir}/${dsh_name}"
         dsh_digest="$(gh api "repos/dsh-tauri-desk/deepseek-harness-pkg/releases/tags/${DSH_TAG}" \
           --jq ".assets[] | select(.name == \"${dsh_name}\") | .digest" 2>/dev/null \
@@ -152,16 +134,11 @@ runs:
         extract "${workdir}/${dsh_name}" "${workdir}/dsh"
         flatten "${workdir}/dsh"
         install_tree "${workdir}/dsh" "apps/desktop/src-tauri/resources/dsh"
-
-        # pnpm：纯 JS 发行，摘要取自 constants.rs 的固定值。
         fetch "$pnpm_url" "${workdir}/${pnpm_name}"
         verify "${workdir}/${pnpm_name}" "$pnpm_sha" "pnpm ${pnpm_name}"
         extract "${workdir}/${pnpm_name}" "${workdir}/pnpm"
         flatten "${workdir}/pnpm"
         install_tree "${workdir}/pnpm" "apps/desktop/src-tauri/resources/pnpm"
-
-        # MinGit：默认不随包（`bundle-git: true` 才下载）。启动 dsh 不需要 Git，
-        # 只有 git 托管的能力（worktree、`github:` 插件）依赖它。
         if [ -n "${git_name:-}" ]; then
           fetch "$git_url" "${workdir}/${git_name}"
           verify "${workdir}/${git_name}" "$git_sha" "MinGit ${git_name}"
@@ -176,17 +153,11 @@ runs:
       shell: bash
       env:
         PLATFORM: ${{ inputs.platform }}
+        ARCH: ${{ inputs.arch }}
       run: |
         set -euo pipefail
-        # 入口路径必须与清单 `dependencies.<key>.entry` 一致：解压层级（flatten）
-        # 或资产布局变化会让应用在启动时判定「依赖缺失」并转去联网下载。
-        entries="pnpm/bin/pnpm.cjs dsh/node_modules/@deepseek-ai/dsh/lib/bin.js"
-        if [ "$PLATFORM" != "windows" ]; then
-          entries="node/bin/node $entries"
-        else
-          entries="node/node.exe $entries"
-        fi
-        # 清单没有指向 `$Resources/git` 时不能要求它存在（默认就不随包 MinGit）。
+        dsh_archive="$(node scripts/bundle-metadata.mjs --archive-name --platform "$PLATFORM" --arch "$ARCH")"
+        entries="pnpm/bin/pnpm.cjs dsh/${dsh_archive}"
         if grep -q '"managedRoot": "$Resources/git"' apps/desktop/src-tauri/resources/manifest.jsonc; then
           entries="$entries git/cmd/git.exe"
         fi
@@ -201,6 +172,6 @@ runs:
 
         grep -q '"$Resources/' apps/desktop/src-tauri/resources/manifest.jsonc
         echo "--- bundled resources ---"
-        du -sh apps/desktop/src-tauri/resources/node apps/desktop/src-tauri/resources/dsh apps/desktop/src-tauri/resources/pnpm 2>/dev/null || true
+        du -sh apps/desktop/src-tauri/resources/dsh apps/desktop/src-tauri/resources/pnpm 2>/dev/null || true
         [ -d apps/desktop/src-tauri/resources/git ] && du -sh apps/desktop/src-tauri/resources/git || true
         sed -n '/"dependencies"/,/^  }/p' apps/desktop/src-tauri/resources/manifest.jsonc

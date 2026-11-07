@@ -23,16 +23,21 @@ const BINARIES = [
   'target/debug/deepseek-harness-desktop',
 ]
 
-const SHELL_PAGE = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost|http:\/\/localhost:1420)/
-
 export const MAIN_LABEL = 'main'
 export const APP_TITLE = 'DeepSeek Harness'
 
 export const SHELL_ROOT = '[data-testid="dsh-shell-root"]'
-export const SHELL_WEBVIEW = '[data-testid="dsh-shell-webview"]'
-export const HARNESS_WEBVIEW = '[data-testid="dsh-harness-webview"]'
-export const NAVBAR_MENU_CONFIG = '[data-testid="dsh-navbar-menu-config"]'
-export const NAVBAR_MENU_POPOVER = '[data-testid="dsh-navbar-menu-popover"]'
+/**
+ * 「壳层已经承载起内部页面」的判据。
+ *
+ * 生产路径下 DSH 就是主文档本身，没有子视图，就绪标志是 DSH 的主框架
+ * `div[class$="_frame"]` 出现；dev 的独立壳层页用 `<webview>` 标签承载，判据是它出现。
+ */
+export const HARNESS_READY = 'div[class$="_frame"], [data-testid="dsh-harness-webview"]'
+/** 壳层 UI 渲染在注入的 Shadow root 内，选择器必须带穿透段。 */
+export const SHELL_HOST = '[data-dsh-shell-host]'
+export const NAVBAR_MENU_CONFIG = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-config"]`
+export const NAVBAR_MENU_POPOVER = `${SHELL_HOST} >> [data-testid="dsh-navbar-menu-popover"]`
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
@@ -94,7 +99,7 @@ ${tail()}`)
 
     try {
       const targets = await targetsOf(port)
-      if (targets.some(target => target.type === 'page' && SHELL_PAGE.test(target.url)))
+      if (targets.some(target => target.type === 'page'))
         return
       lastError = `targets=${JSON.stringify(targets.map(target => target.url))}`
     }
@@ -111,8 +116,6 @@ async function windowsOf(browser: Browser): Promise<ShellWindow[]> {
   const windows: ShellWindow[] = []
   for (const context of browser.contexts()) {
     for (const page of context.pages()) {
-      if (!SHELL_PAGE.test(page.url()))
-        continue
       const label = await page.evaluate(() => (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? '').catch(() => '')
       if (label)
         windows.push({ label, page })
@@ -166,11 +169,11 @@ export async function diagnose(app: ShellApp): Promise<string> {
     '--- 进程',
     ps,
     '--- 主进程输出',
-    app.output().slice(-20000),
+    app.output(),
   ].join('\n')
 }
 
-export async function startShellApp(options: { downloadCacheDir?: string } = {}): Promise<ShellApp> {
+export async function startShellApp(options: { downloadCacheDir?: string, prepareHome?: (home: string) => Promise<void>, electronArgs?: string[] } = {}): Promise<ShellApp> {
   const candidates = process.env.DSH_E2E_BINARY ? [process.env.DSH_E2E_BINARY] : BINARIES
   const binary = candidates.map(candidate => path.resolve(ROOT, candidate)).find(existsSync)
   expect(binary, `缺少 debug 产物：${candidates.join(' 或 ')}；先执行 pnpm --filter dsh-desktop build 与 cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml`).toBeTruthy()
@@ -214,6 +217,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     await mkdir(path.join(home, 'home', 'AppData', 'Roaming'), { recursive: true })
     await mkdir(path.join(home, 'home', 'AppData', 'Local'), { recursive: true })
 
+    await options.prepareHome?.(home)
     const port = await freePort()
     child = spawn(binary!, [], {
       cwd: ROOT,
@@ -233,12 +237,12 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
         XDG_STATE_HOME: path.join(home, 'state'),
         TAURI_WEBDRIVER_PORT: '4445',
         TAURI_RUNTIME_ELECTRON_OWNER: path.basename(home),
-        TAURI_RUNTIME_ELECTRON_ARGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${port}`,
+        TAURI_RUNTIME_ELECTRON_ARGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${port} ${(options.electronArgs ?? []).join(' ')}`,
       },
     })
 
     const collect = (chunk: string | Uint8Array): void => {
-      output = (output + chunk.toString()).slice(-60000)
+      output += chunk.toString()
     }
     child.stdout?.on('data', collect)
     child.stderr?.on('data', collect)
@@ -250,10 +254,15 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     const connected = browser
     const context = connected.contexts()[0]
     expect(context, '未获取到 Electron 默认上下文').toBeTruthy()
-    const host = context!.pages().find(candidate => SHELL_PAGE.test(candidate.url()))
-    expect(host, `未找到壳层渲染页，现有 page：${context!.pages().map(page => page.url()).join(', ')}`).toBeTruthy()
-
-    const shellWindow: ShellWindow = { label: MAIN_LABEL, page: host! }
+    let host: ShellWindow | undefined
+    const deadline = Date.now() + WINDOW_TIMEOUT_MS
+    while (Date.now() < deadline && !host) {
+      host = (await windowsOf(connected)).find(candidate => candidate.label === MAIN_LABEL)
+      if (!host)
+        await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    expect(host, 'CDP 页面必须暴露主 Electron 窗口元数据').toBeTruthy()
+    const shellWindow: ShellWindow = { label: MAIN_LABEL, page: host!.page }
 
     return {
       binary: binary!,
@@ -276,11 +285,18 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
         throw new Error(`原生窗口未在 ${WINDOW_TIMEOUT_MS}ms 内创建（command=${command}）`)
       },
       closeWindow: async (label: string) => {
-        const target = (await windowsOf(connected)).find(entry => entry.label === label)
-        if (!target)
-          return
-        await target.page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close')).catch(() => undefined)
-        await expect.poll(() => target.page.isClosed(), { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 的 CDP 页面必须销毁` }).toBe(true)
+        let target: ShellWindow | undefined
+        await expect.poll(
+          async () => {
+            target = (await windowsOf(connected)).find(entry => entry.label === label)
+            return Boolean(target)
+          },
+          { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 必须可通过窗口元数据识别` },
+        ).toBe(true)
+        const controller = (await windowsOf(connected)).find(entry => entry.label !== label)
+        expect(controller, `关闭 ${label} 的命令必须由另一个存活窗口发出`).toBeTruthy()
+        await controller!.page.evaluate(label => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), label)
+        await expect.poll(() => target!.page.isClosed(), { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 的 CDP 页面必须销毁` }).toBe(true)
       },
       output: () => output,
       stop,
@@ -333,24 +349,25 @@ export async function installErrorCollector(page: Page): Promise<void> {
 }
 
 export async function pageErrors(page: Page): Promise<string[]> {
-  const errors = await page.evaluate(readPageErrors) as string[]
-  return process.platform === 'darwin' ? errors.filter(error => !error.includes('notifications.registerListener not allowed')) : errors
+  return await page.evaluate(readPageErrors) as string[]
 }
 
 async function pageText(page: Page): Promise<string> {
   return await page.evaluate(() => (document.body.textContent ?? '').slice(0, 1500)).catch(() => '')
 }
 
-/** 若出现预装引导则跳过，直到壳层内嵌页面被拉起。 */
+/** 若出现预装引导则跳过，直到壳层承载起内部页面。 */
 export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs
+  let dismissed = false
   while (Date.now() < deadline) {
-    if (await page.locator(SHELL_WEBVIEW).count() > 0)
+    if (await page.locator(HARNESS_READY).count() > 0)
       return
     const skip = page.locator(SETUP_PREINSTALL_SKIP).first()
-    if (await skip.count() > 0 && await skip.isVisible()) {
-      await skip.click()
-      return
+    if (!dismissed && await skip.count() > 0 && await skip.isVisible()) {
+      await skip.click({ noWaitAfter: true })
+      dismissed = true
+      continue
     }
     if (await page.locator(SETUP_ERROR).count() > 0)
       throw new Error(`首次装配失败：${await pageText(page)}`)

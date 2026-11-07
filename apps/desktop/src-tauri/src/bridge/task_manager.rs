@@ -34,24 +34,8 @@ fn monitor() -> &'static Mutex<Monitor> {
 }
 
 fn ensure_shell(webview: &crate::Webview) -> Result<(), String> {
-    let url = webview
-        .url()
-        .map_err(|error| format!("TASK_MANAGER_ORIGIN: {error}"))?;
-    let packaged = matches!(url.scheme(), "tauri" | "http" | "https")
-        && matches!(url.host_str(), Some("tauri.localhost" | "localhost"))
-        && (url.scheme() == "tauri" || url.host_str() == Some("tauri.localhost"));
-    let dev = cfg!(debug_assertions)
-        && webview
-            .config()
-            .build
-            .dev_url
-            .as_ref()
-            .is_some_and(|dev| dev.origin() == url.origin());
-    if webview.label() != "pet" && (packaged || dev) {
-        Ok(())
-    } else {
-        Err("TASK_MANAGER_ORIGIN: only the desktop shell can manage processes".into())
-    }
+    crate::desktop::window::require_shell(webview)
+        .map_err(|error| format!("TASK_MANAGER_ORIGIN: {error}"))
 }
 
 fn descends_from(pid: u32, root: u32, parents: &HashMap<u32, (Option<u32>, u64)>) -> bool {

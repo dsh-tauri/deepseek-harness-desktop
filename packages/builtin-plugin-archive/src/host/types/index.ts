@@ -13,7 +13,15 @@ export interface SessionLike {
 export interface SessionStoreSurface {
   get?: (sessionId: string) => SessionLike | undefined
   list?: () => SessionLike[]
-  remove?: (sessionId: string) => boolean
+}
+
+export interface AgentLike {
+  cancel?: (cause: { kind: 'disposed' }) => void
+  whenIdle?: () => Promise<void>
+}
+
+export interface AgentRegistrySurface {
+  get?: (sessionId: string) => AgentLike | undefined
 }
 
 export interface ArchiveTableSurface {
@@ -39,6 +47,7 @@ export interface ArchiveRegistrySurface {
 
 export interface SessionHost {
   sessions: SessionStoreSurface
+  agents?: AgentRegistrySurface
   workspaceRegistry: ArchiveRegistrySurface
   logger?: {
     info?: (message: string) => void

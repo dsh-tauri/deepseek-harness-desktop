@@ -1,6 +1,7 @@
 import type { PluginListener } from '@tauri-apps/api/core'
 import { onAction } from '@choochmeque/tauri-plugin-notifications-api'
 import { useEffect, useRef } from 'react'
+import { isNativeNotificationAvailable } from '../../../../packages/builtin-plugin-tauri/src/client/service/tauri'
 
 export interface NotificationExtra {
   sessionId?: string
@@ -22,7 +23,10 @@ export function useNotificationAction(handler: (event: NotificationActionEvent) 
   const handlerRef = useRef(handler)
   handlerRef.current = handler
 
+  // keep:effect 原生通知监听需要卸载与异步注册的竞态清理。
   useEffect(() => {
+    if (!isNativeNotificationAvailable())
+      return
     let listener: PluginListener | undefined
     let disposed = false
 

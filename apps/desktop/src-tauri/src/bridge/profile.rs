@@ -47,6 +47,9 @@ pub async fn set_active_profile(
     };
     selected.active = true;
     crate::service::workflow::instances::bind_window(window.label(), &id);
+    if old != id {
+        crate::desktop::window::forget_harness_restart(&app_handle, window.label());
+    }
     if old != id && !crate::service::workflow::instances::is_attached(&old) {
         crate::service::workflow::instances::scope(old, crate::service::workflow::stop(app_handle))
             .await?;

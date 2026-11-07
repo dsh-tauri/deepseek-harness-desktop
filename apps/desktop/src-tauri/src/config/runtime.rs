@@ -7,7 +7,7 @@ use tauri::{Manager, Runtime};
 
 use super::constants::*;
 use super::dependencies;
-use super::{detect_region, Region};
+use super::{Region, detect_region};
 
 /// 获取当前构建专用的 AppData 基础目录。
 ///
@@ -46,15 +46,53 @@ pub fn legacy_node_root<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     get_base_dir(app_handle).join(LEGACY_NODE_ROOT_DIR)
 }
 
-/// Harness 发行版资产文件名（按平台与架构）
-fn dsh_pkg_asset_filename(os: &str, arch: &str) -> Result<String, String> {
+fn dsh_pkg_asset_stem(os: &str, arch: &str) -> Result<String, String> {
     match (os, arch) {
-        ("windows", _) => Ok("deepseek-harness-pkg-windows.zip".to_string()),
-        ("macos", "aarch64") => Ok("deepseek-harness-pkg-macos-arm64.zip".to_string()),
-        ("macos", "x86_64") => Ok("deepseek-harness-pkg-macos-x64.zip".to_string()),
-        ("linux", "x86_64") => Ok("deepseek-harness-pkg-linux.zip".to_string()),
-        ("linux", "aarch64") => Ok("deepseek-harness-pkg-linux-arm64.zip".to_string()),
+        ("windows", "x86_64") => Ok("deepseek-harness-pkg-windows".to_string()),
+        ("windows", "aarch64") => Ok("deepseek-harness-pkg-windows-arm64".to_string()),
+        ("macos", "aarch64") => Ok("deepseek-harness-pkg-macos-arm64".to_string()),
+        ("macos", "x86_64") => Ok("deepseek-harness-pkg-macos-x64".to_string()),
+        ("linux", "x86_64") => Ok("deepseek-harness-pkg-linux".to_string()),
+        ("linux", "aarch64") => Ok("deepseek-harness-pkg-linux-arm64".to_string()),
         _ => Err(format!("Unsupported platform: {} {}", os, arch)),
+    }
+}
+
+/// Harness 发行版下载资产文件名（`.asar.zip`：归档外层再套一层 zip，回传体积约 140 MiB）。
+fn dsh_pkg_asset_filename(os: &str, arch: &str) -> Result<String, String> {
+    Ok(format!("{}.asar.zip", dsh_pkg_asset_stem(os, arch)?))
+}
+
+/// 解压后落在托管根里的核心归档文件名（`deepseek-harness-pkg-<平台>.asar`）。
+pub fn dsh_core_asar_filename() -> Result<String, String> {
+    Ok(format!(
+        "{}.asar",
+        dsh_pkg_asset_stem(env::consts::OS, env::consts::ARCH)?
+    ))
+}
+
+pub fn core_archive_in(core_root: &Path) -> Option<PathBuf> {
+    let name = dsh_core_asar_filename().ok()?;
+    let archive = core_root.join(name);
+    archive.is_file().then_some(archive)
+}
+
+/// 路径上的第一个 asar 归档祖先（普通磁盘路径返回 `None`）。
+///
+/// asar 只读、只有 Electron 的 `fs` 能穿越，`std::fs` 对归档内部一律 ENOENT。
+pub fn asar_ancestor(path: &Path) -> Option<&Path> {
+    path.ancestors().find(|candidate| {
+        candidate
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("asar"))
+    })
+}
+
+// issue #1377：std::fs 无法穿越 asar，按归档索引检查入口。
+pub fn core_entry_exists(path: &Path) -> bool {
+    match asar_ancestor(path) {
+        Some(_) => super::asar::contains(path),
+        None => path.exists(),
     }
 }
 
@@ -199,6 +237,11 @@ pub fn get_dsh_install_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
 /// dsh CLI 入口
 pub fn get_dsh_binary_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     dependencies::binary_path(app_handle, dependencies::DEP_DSH)
+}
+
+/// 指定核心根下的 dsh CLI 入口（槽位与随包内核等非生效根使用）。
+pub fn dsh_binary_at<R: Runtime>(root: &Path, app_handle: &AppHandle<R>) -> PathBuf {
+    dependencies::binary_path_at(app_handle, root, dependencies::DEP_DSH)
 }
 
 /// pnpm 安装目录
@@ -368,7 +411,20 @@ pub fn git_runtime_ready<R: Runtime>(_app_handle: &AppHandle<R>) -> bool {
 
 /// Harness 发行版清单路径
 pub fn get_dsh_package_json_path<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
-    get_dsh_install_path(app_handle).join(DSH_MANIFEST_RELATIVE)
+    manifest_in(&get_dsh_install_path(app_handle))
+}
+
+/// 托管根里的发行版清单路径：asar 核心的清单在归档内部。
+///
+/// 目录型核心读 `<根>/package.json`；asar 核心读 `<根>/<核心>.asar/package.json`。
+/// 归档不存在（尚未下载 / 旧的目录核心）时退回目录形态，让未安装与诊断路径不变。
+pub fn manifest_in(core_root: &Path) -> PathBuf {
+    match dsh_core_asar_filename() {
+        Ok(name) if core_root.join(&name).is_file() => {
+            core_root.join(name).join(DSH_MANIFEST_RELATIVE)
+        }
+        _ => core_root.join(DSH_MANIFEST_RELATIVE),
+    }
 }
 
 /// 用户主目录（Windows 取 `%USERPROFILE%`，Unix 取 `$HOME`）。
@@ -451,8 +507,11 @@ pub fn get_dsh_version<R: Runtime>(app_handle: &AppHandle<R>) -> Option<String> 
 }
 
 pub(crate) fn dsh_version_at(manifest_path: &Path) -> Option<String> {
+    // 归档内的路径必须经 asar 解析：`std::fs` 对 `<核心>.asar/node_modules/...` 一律
+    // ENOENT，直接读会让每次版本判定都落到 tag 兜底，甚至误报「版本未安装」。
     let read = |path: &Path| {
-        serde_json::from_slice::<serde_json::Value>(&fs::read(path).ok()?).ok()
+        super::asar::read_json(path)
+            .or_else(|| serde_json::from_slice::<serde_json::Value>(&fs::read(path).ok()?).ok())
     };
     let manifest = read(manifest_path);
     if let Some(package) = manifest.as_ref().filter(|package| {
@@ -472,7 +531,11 @@ pub(crate) fn dsh_version_at(manifest_path: &Path) -> Option<String> {
                 .get("dependencies")?
                 .get("@deepseek-ai/dsh")?
                 .as_str()
-                .map(|value| value.trim_start_matches(['^', '~', '=', '>', '<']).to_string())
+                .map(|value| {
+                    value
+                        .trim_start_matches(['^', '~', '=', '>', '<'])
+                        .to_string()
+                })
         })
 }
 
@@ -919,15 +982,19 @@ mod tests {
 
     #[test]
     fn dsh_pkg_asset_filename_matches_linux_architecture() {
+        // 分发的资产是 asar 归档（外层再套一层 zip），解压得到同名 .asar。
         assert_eq!(
             dsh_pkg_asset_filename("linux", "x86_64").unwrap(),
-            "deepseek-harness-pkg-linux.zip"
+            "deepseek-harness-pkg-linux.asar.zip"
         );
         assert_eq!(
             dsh_pkg_asset_filename("linux", "aarch64").unwrap(),
-            "deepseek-harness-pkg-linux-arm64.zip"
+            "deepseek-harness-pkg-linux-arm64.asar.zip"
+        );
+        assert_eq!(
+            dsh_pkg_asset_stem("linux", "aarch64").unwrap(),
+            "deepseek-harness-pkg-linux-arm64"
         );
         assert!(dsh_pkg_asset_filename("linux", "riscv64").is_err());
     }
-
 }

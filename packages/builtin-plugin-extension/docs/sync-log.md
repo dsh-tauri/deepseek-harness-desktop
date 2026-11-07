@@ -60,6 +60,7 @@
 - MCP 管理继续写入当前扩展约定的 profile / DSH home 路径。
 - 不移植上游设置页的“技能与 MCP”一级标题。
 - 不移植上游 Market（技能市场 / MCP 市场）模块，扩展面板也不再提供「市场」标签页：原标签页直接消费 `dshmarket` 经 `ctx.provide('market')` 发布的 `render()` 面板，已随 #1167 移除（市场插件自行挂到左侧边栏，桌面端无需接管）。
+- 技能与 MCP 不再是侧栏「插件扩展」面板，而是设置页「模型」下方的两个一级入口「技能」「MCP」；官方插件页与官方侧栏入口完全交还核心，本插件不再隐藏或改写它。
 - 技能仓库仍沿用侧栏扩展的精简“导入仓库”流程。
 - 侧栏扩展既有的 JSON / 表单双模式 MCP 编辑器保留。
 
@@ -75,7 +76,7 @@
 | `bed6c6d` docs: cut the README roughly in half | 文档 | 不采纳 | 纯文档（§2.2） |
 | `3724844` docs: shrink screenshots | 文档 | 不采纳 | 纯文档（§2.2） |
 
-**已登记的失效模式**（本次唯一沉淀）：`52e3f66` 描述的是宿主 ModuleLoader 经 CJS require 解析依赖时，缺失的导出名得到 `undefined` 而非链接错误 → 入口与注册流程照常成功，首次调用才抛错，整棵子树卸载，表现为**面板空白且控制台零输出**。若未来内核升级导致 `dsh-tauri-ui/client` 的导出被改名，本插件会以同一形态静默失败，排查时优先怀疑 `src/client/register/extension-panel.tsx` 与各 tab 的具名导入。
+**已登记的失效模式**（本次唯一沉淀）：`52e3f66` 描述的是宿主 ModuleLoader 经 CJS require 解析依赖时，缺失的导出名得到 `undefined` 而非链接错误 → 入口与注册流程照常成功，首次调用才抛错，整棵子树卸载，表现为**面板空白且控制台零输出**。若未来内核升级导致 `dsh-tauri-ui/client` 的导出被改名，本插件会以同一形态静默失败，排查时优先怀疑 `src/client/register/skills-section.ts`、`src/client/register/mcp-section.ts` 与各 tab 的具名导入。
 
 ## 后续同步流程
 

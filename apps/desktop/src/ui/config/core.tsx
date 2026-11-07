@@ -88,8 +88,6 @@ export function ConfigCore() {
   const localCore = cores.find(c => c.source === 'local')
   const currentRows = rows.filter(core => !core.orphaned)
   const orphanRows = rows.filter(core => core.orphaned)
-  // 低于最低支持基线的旧版本统一排到最后，收进默认折叠的「不兼容版本」分组：它们无法
-  // 加载随包内置插件（issue #596），与可用版本并列只会让用户误选。
   const orderedRows = [...currentRows, ...orphanRows]
   const incompatibleRows = orderedRows.filter(core => isUnsupportedCore(core))
   const displayRows = [...orderedRows.filter(core => !isUnsupportedCore(core)), ...incompatibleRows]
@@ -119,10 +117,8 @@ export function ConfigCore() {
   }
 
   async function onActivate(core: HarnessCore) {
-    if (core.active || busy || !core.present)
+    if (core.active || busy || !core.present || isUnavailableApp(core))
       return
-    // 低于最低支持基线的本地核心无法加载随包插件（issue #596）：桌面端此时使用
-    // 预打包核心，激活入口改为给出可操作提示，而不是切过去再撞一次启动失败。
     if (isUnsupportedLocal(core)) {
       toast(t('core.local_unsupported_toast'), {
         variant: 'warning',
@@ -347,7 +343,14 @@ export function ConfigCore() {
               </If>
               <Item
                 className={!showIncompatible && isUnsupportedCore(core) ? 'hidden' : undefined}
-                onClick={core.present && !core.active ? () => onActivate(core) : undefined}
+                onClick={core.present && !core.active && !isUnavailableApp(core) ? () => onActivate(core) : undefined}
+                footer={(
+                  <If cond={core.source === 'app' && !!core.error}>
+                    <Description className="text-xs text-danger">
+                      {t(core.error === 'CORE_VERSION_LEGACY_DIRECTORY' || core.error?.startsWith('CORE_VERSION_LEGACY_DIRECTORY:') ? 'core.legacy_directory_hint' : 'core.unavailable_hint')}
+                    </Description>
+                  </If>
+                )}
                 left={(
                   <>
                     <Label className="min-w-0 truncate font-mono text-sm font-medium text-ink">
@@ -370,7 +373,6 @@ export function ConfigCore() {
                         {t('core.preview')}
                       </Chip>
                     </If>
-                    {/* 低于最低支持基线的本地核心：桌面端改用预打包核心，激活会被拒绝并给出更新提示 */}
                     <If cond={isUnsupportedLocal(core)}>
                       <Chip size="sm" variant="soft" color="danger" className="shrink-0 font-medium">
                         {t('core.local_unsupported')}
@@ -405,7 +407,7 @@ export function ConfigCore() {
                     <If cond={core.present}>
                       <Checkbox
                         isSelected={core.active}
-                        isDisabled={busy}
+                        isDisabled={busy || isUnavailableApp(core)}
                         onChange={() => onActivate(core)}
                         aria-label={core.version || core.id}
                         className="shrink-0"
@@ -484,14 +486,14 @@ function displayVersion(version: HarnessCore): string {
   return version.version || (version.source === 'local' ? 'local' : 'app')
 }
 
+function isUnavailableApp(core: HarnessCore): boolean {
+  return core.source === 'app' && (!!core.error || isUnsupportedCore(core))
+}
+
 function isUnsupportedLocal(core: HarnessCore): boolean {
   return core.source === 'local' && core.present && isUnsupportedCore(core)
 }
 
-/**
- * 核心是否低于最低支持基线（按版本判定，与来源无关）。低于基线的旧版本无法加载随包
- * 内置插件（issue #596），核心列表把它们收进默认折叠的「不兼容版本」分组。
- */
 function isUnsupportedCore(core: HarnessCore): boolean {
   return isCoreUnsupported(core.version || core.tag)
 }

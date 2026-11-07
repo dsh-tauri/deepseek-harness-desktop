@@ -1,10 +1,12 @@
 import type { GetApiTauriRemoteMachinesResponse } from '@/apis/remote.types'
 import { useEventListener, useUnmount, useWatch } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useRef, useState } from 'react'
 import { getMachines, getMachinesEvents, postMachinesConnect, postMachinesDisconnect } from '@/apis/remote'
 import { queryKeys } from '@/config/query-keys'
+import { isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
 
 type RemoteMachineListItem = NonNullable<GetApiTauriRemoteMachinesResponse['items']>[number]
 type RemoteConnectionState = NonNullable<RemoteMachineListItem['state']>
@@ -26,6 +28,8 @@ function initialMachineId(): string | null {
   const machineId = parameters.get('remoteMachineId')
   if (machineId)
     return machineId
+  if (isHostedServiceDocument())
+    return location.origin
   const label = getCurrentWindow().label
   if (label.startsWith('remote-'))
     return label.slice('remote-'.length) || null
@@ -116,6 +120,22 @@ export function useRemote() {
     setTargets(previous => reconcileSwitcher(previous, machines))
   }, { immediate: true })
 
+  const navigationRef = useRef<string | null>(null)
+  useWatch([targets.activeId, targets.activeTunnelUrl], () => {
+    if (!isHostedDocument() || targets.activeId === null || !targets.activeTunnelUrl)
+      return
+    if (new URL(targets.activeTunnelUrl).origin === location.origin)
+      return
+    if (navigationRef.current === targets.activeTunnelUrl)
+      return
+    navigationRef.current = targets.activeTunnelUrl
+    void invoke('navigate_remote_harness', { machineId: targets.activeId })
+      .catch((error) => {
+        navigationRef.current = null
+        console.error('[remote] navigation failed:', error)
+      })
+  })
+
   const phase = machines.find(machine => machine.id === trackedId)?.progress?.phase
   useWatch([phase, trackedId], () => {
     if (phase !== undefined)
@@ -141,7 +161,7 @@ export function useRemote() {
     if (machinesQuery.isSuccess) {
       outageLoggedRef.current = false
     }
-    else if (machinesQuery.isError && !outageLoggedRef.current) {
+    else if (machinesQuery.isError && !outageLoggedRef.current && !String(machinesQuery.error).startsWith('HARNESS_NOT_READY:') && !String(machinesQuery.error).startsWith('HARNESS_NOT_OWNED:')) {
       outageLoggedRef.current = true
       console.warn('[remote] ssh api unreachable:', String(machinesQuery.error))
     }
@@ -180,6 +200,12 @@ export function useRemote() {
   }
 
   function backToLocal() {
+    if (isHostedServiceDocument()) {
+      void invoke<{ machineId: string } | null>('get_remote_shell_state').then((state) => {
+        if (state !== null)
+          return invoke('navigate_remote_harness', { machineId: null })
+      }).catch(error => console.error('[remote] local navigation failed:', error))
+    }
     epochRef.current += 1
     setBootId(null)
     setTargets({ activeId: null, pendingId: null, activeTunnelUrl: '' })
