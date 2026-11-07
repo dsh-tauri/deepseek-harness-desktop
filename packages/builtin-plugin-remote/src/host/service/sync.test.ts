@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearHostRuntime, setSyncDeps } from '../config/runtime'
@@ -47,7 +47,7 @@ async function exec(command: string, options?: RemoteExecOptions): Promise<Remot
     return { code: result.status, stdout: result.stdout, stderr: result.stderr }
   }
   if (command.includes('REMOTE_DSH_PACKAGE'))
-    return { code: 0, stdout: JSON.stringify({ version: '0.2.1-rc.5' }), stderr: '' }
+    return { code: 0, stdout: JSON.stringify({ version: '0.2.2-rc.1' }), stderr: '' }
   if (command.includes('printf \'%s\\n\''))
     return { code: 0, stdout: '/remote/dsh/bin.js\n', stderr: '' }
   return { code: 0, stdout: '', stderr: '' }
@@ -268,12 +268,15 @@ describe('remote selection sync', () => {
     const stages = readdirSync(dirname(target)).filter(name => name.startsWith('.dsh-sync.'))
     expect(stages).toHaveLength(1)
     const backup = join(dirname(target), stages[0]!, 'previous', 'example')
+    const remoteHome = spawnSync('sh', ['-c', 'printf "%s" "$HOME"'], { env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 5000 })
+    expect(remoteHome.status).toBe(0)
+    const remoteBackup = posix.join(remoteHome.stdout, '.dsh', 'skills', stages[0]!, 'previous', 'example')
     expect(result.items).toEqual([expect.objectContaining({
       kind: 'skill',
       root: 'dsh',
       name: 'example',
       ok: false,
-      error: expect.stringContaining(backup),
+      error: expect.stringContaining(remoteBackup),
     })])
     expect(readFileSync(join(backup, 'SKILL.md'), 'utf8')).toBe('original')
     expect(existsSync(join(home, '.dsh', '.skills-sync.lock'))).toBe(false)
