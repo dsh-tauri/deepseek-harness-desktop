@@ -34,9 +34,6 @@ fn monitor() -> &'static Mutex<Monitor> {
 }
 
 fn ensure_shell(webview: &crate::Webview) -> Result<(), String> {
-    if webview.label() == "pet" {
-        return Err("TASK_MANAGER_ORIGIN: only the desktop shell can manage processes".into());
-    }
     crate::desktop::window::require_shell(webview)
         .map_err(|error| format!("TASK_MANAGER_ORIGIN: {error}"))
 }

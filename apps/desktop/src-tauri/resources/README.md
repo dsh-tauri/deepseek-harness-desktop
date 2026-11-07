@@ -47,7 +47,7 @@ neither read nor deleted.
 Every runtime resource catalog now lives in a single `manifest.jsonc` (JSONC:
 `//` and `/* */` comments plus trailing commas are tolerated). It is parsed at
 runtime by `src-tauri/src/config/manifest.rs` — **no Rust code change is needed
-to add a preset, a built-in plugin, a deprecated id, a pet, or a dependency
+to add a preset, a built-in plugin, a deprecated id, or a dependency
 mapping entry**.
 
 ```jsonc
@@ -61,8 +61,7 @@ mapping entry**.
       "overridable": true
     }
   },
-  "plugins": { "depercated": [], "built-in": [], "preset": [] },
-  "pets": { "built-in": [] }
+  "plugins": { "depercated": [], "built-in": [], "preset": [] }
 }
 ```
 
@@ -85,7 +84,6 @@ relative path).
 | `plugins.preset` | Community preset list shown by the first-run wizard / sidebar |
 | `plugins.built-in` | Plugins shipped *with* the installer (auto-installed and auto-healed at startup) |
 | `plugins.depercated` | Package names no longer offered that get uninstalled before launch (key spelling is kept for compatibility) |
-| `pets.built-in` | Preset pet catalog |
 
 ### Dependency mapping
 

@@ -9,10 +9,8 @@
     "dsh-tauri-extension": "workspace:*",
     "dsh-tauri-model": "workspace:*",
     "dsh-tauri-notification": "workspace:*",
-    "dsh-tauri-pet": "workspace:*",
     "dsh-tauri-remote": "workspace:*",
     "dsh-tauri-rightclick": "workspace:*",
-    "dsh-tauri-scheduler": "workspace:*",
     "dsh-tauri-ui": "workspace:*"
   }
 }

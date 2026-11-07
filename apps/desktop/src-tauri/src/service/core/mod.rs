@@ -16,7 +16,7 @@ pub use source::{
 };
 pub(crate) use source::{
     app_core_meets_baseline, app_core_version, core_supports_bundled_plugins,
-    ensure_app_core_supported, retires_bundled_adapters,
+    ensure_app_core_supported,
 };
 pub use version::{download_version, has_installed_version, list, remove_version, set_active};
 // 目录链接实现（Windows 符号链接 → 无特权时的 junction 回退）供插件模块复用：

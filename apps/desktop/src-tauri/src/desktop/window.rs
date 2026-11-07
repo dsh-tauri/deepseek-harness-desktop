@@ -1081,7 +1081,7 @@ fn application_capabilities_separate_shell_and_harness_commands() {
         assert!(allowed(command, "main", &Origin::Local), "{command}");
         assert!(!allowed(command, "harness-1", &guest), "{command}");
     }
-    for command in ["acquire_browser_guest", "release_browser_guest", "open_external_url", "get_pet_status", "get_pet_overlay_supported", "get_force_xwayland", "set_force_xwayland", "set_pet_size", "read_clipboard_text", "write_clipboard_text"] {
+    for command in ["acquire_browser_guest", "release_browser_guest", "open_external_url", "get_force_xwayland", "set_force_xwayland", "read_clipboard_text", "write_clipboard_text"] {
         assert!(allowed(command, "harness-1", &guest), "{command}");
         assert!(!allowed(command, "harness-2", &guest), "{command}");
         assert!(!allowed(command, "harness-1", &wrong_origin), "{command}");
@@ -1118,7 +1118,7 @@ const PRESENTATION_FULL_SIDEBAR: &str = "full-sidebar";
 /// 该档案的服务；缺省沿用发起窗口的档案。
 ///
 /// 异步命令（不占用主线程）是唯一安全的调用侧：`WebviewWindowBuilder::build()`
-/// 需要主线程事件循环回包，主线程调用会死锁（与 `pet::ensure_pet_window` 同约束）。
+/// 需要主线程事件循环回包，主线程调用会死锁（与窗口创建路径同约束）。
 #[tauri::command]
 pub async fn create_app_window(
     app_handle: AppHandle<tauri_runtime_electron::ElectronRuntime>,

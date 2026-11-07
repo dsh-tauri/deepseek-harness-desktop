@@ -1339,8 +1339,8 @@ mod tests {
         let manifest = serde_json::json!({
             "name": "dsh-profile-tauri",
             "private": true,
-            "dependencies": { "dsh-tauri-pet": "link:C:/app/resources/node_modules/dsh-tauri-pet" },
-            "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "dsh-tauri-pet", "dsh-better-sidebar"] } }
+            "dependencies": { "dsh-tauri-archive": "link:C:/app/resources/node_modules/dsh-tauri-archive" },
+            "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "dsh-tauri-archive", "dsh-better-sidebar"] } }
         });
         std::fs::write(
             dir.join("package.json"),
@@ -1360,15 +1360,15 @@ mod tests {
                 "@deepseek-ai/dsh-base",
                 "@deepseek-ai/dsh-web-app",
                 "@deepseek-ai/dsh-experimental-tool-worktree",
-                "dsh-tauri-pet",
+                "dsh-tauri-archive",
                 "dsh-better-sidebar"
             ])
         );
         // 依赖声明、名称等其它字段原样保留
         assert_eq!(repaired["name"], "dsh-profile-tauri");
         assert_eq!(
-            repaired["dependencies"]["dsh-tauri-pet"],
-            "link:C:/app/resources/node_modules/dsh-tauri-pet"
+            repaired["dependencies"]["dsh-tauri-archive"],
+            "link:C:/app/resources/node_modules/dsh-tauri-archive"
         );
 
         // 幂等：已含核心层的档案不再写盘（内容逐字节不变）
@@ -1391,7 +1391,7 @@ mod tests {
                 "@deepseek-ai/dsh-base",
                 "@deepseek-ai/dsh-web-app",
                 "@deepseek-ai/dsh-experimental-tool-worktree",
-                "dsh-tauri-scheduler",
+                "dsh-tauri-archive",
                 "user-plugin",
                 "@deepseek-ai/dsh-experimental-schedule-bundle"
             ]),
@@ -1399,7 +1399,7 @@ mod tests {
                 "@deepseek-ai/dsh-base",
                 "@deepseek-ai/dsh-web-app",
                 "@deepseek-ai/dsh-experimental-schedule-bundle",
-                "dsh-tauri-scheduler",
+                "dsh-tauri-archive",
                 "user-plugin",
                 "@deepseek-ai/dsh-experimental-schedule-bundle"
             ]),
@@ -1418,7 +1418,7 @@ mod tests {
                 "@deepseek-ai/dsh-base",
                 "@deepseek-ai/dsh-web-app",
                 "@deepseek-ai/dsh-experimental-tool-worktree",
-                "dsh-tauri-scheduler",
+                "dsh-tauri-archive",
                 "user-plugin"
             ]);
 

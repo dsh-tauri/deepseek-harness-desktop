@@ -520,9 +520,6 @@ fn help_menu_window_label<'a>(
 ) -> Option<&'a str> {
     let mut main_window = None;
     for (label, focused) in windows {
-        if label == crate::desktop::pet::PET_WINDOW_LABEL {
-            continue;
-        }
         if focused {
             return Some(label);
         }
@@ -540,8 +537,8 @@ mod help_menu_tests {
     #[test]
     fn help_links_prefer_the_focused_shell_window() {
         for windows in [
-            [("main", false), ("window-1", true), ("pet", false)],
-            [("window-1", true), ("main", false), ("pet", false)],
+            [("main", false), ("window-1", true)],
+            [("window-1", true), ("main", false)],
         ] {
             assert_eq!(help_menu_window_label(windows), Some("window-1"));
         }
@@ -552,29 +549,18 @@ mod help_menu_tests {
     }
 
     #[test]
-    fn help_links_fall_back_to_main_when_only_the_pet_is_focused() {
-        assert_eq!(
-            help_menu_window_label([("main", false), ("window-1", false), ("pet", true)]),
-            Some("main")
-        );
-    }
-
-    #[test]
     fn help_links_fall_back_to_main_when_all_windows_are_unfocused() {
         for windows in [
-            [("main", false), ("window-1", false), ("pet", false)],
-            [("window-1", false), ("pet", false), ("main", false)],
+            [("main", false), ("window-1", false)],
+            [("window-1", false), ("main", false)],
         ] {
             assert_eq!(help_menu_window_label(windows), Some("main"));
         }
     }
 
     #[test]
-    fn help_links_never_fall_back_to_a_pet_or_an_arbitrary_extra_window() {
-        assert_eq!(
-            help_menu_window_label([("window-1", false), ("pet", true)]),
-            None
-        );
+    fn help_links_never_fall_back_to_an_arbitrary_extra_window() {
+        assert_eq!(help_menu_window_label([("window-1", false)]), None);
         assert_eq!(help_menu_window_label([]), None);
     }
 }
@@ -593,9 +579,7 @@ pub fn sync_view_menu(
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        if window.label() == crate::desktop::pet::PET_WINDOW_LABEL
-            || !window.is_focused().unwrap_or(false)
-        {
+        if !window.is_focused().unwrap_or(false) {
             return Ok(());
         }
         let Some(menu) = window.app_handle().menu() else {
@@ -643,9 +627,7 @@ pub fn sync_view_menu(
 
 #[cfg(target_os = "macos")]
 fn sync_macos_fullscreen_menu(window: &crate::Window<ElectronRuntime>) {
-    if window.label() == crate::desktop::pet::PET_WINDOW_LABEL
-        || !window.is_focused().unwrap_or(false)
-    {
+    if !window.is_focused().unwrap_or(false) {
         return;
     }
     let Ok(is_fullscreen) = window.is_fullscreen() else {
@@ -1080,15 +1062,10 @@ mod shell_frame_tests {
 #[cfg(test)]
 mod menu_tests {
     use super::{fullscreen_menu_label_key, menu_action_window_label};
-    use crate::desktop::pet::PET_WINDOW_LABEL;
 
     #[test]
     fn menu_actions_prefer_the_focused_shell_window_in_any_iteration_order() {
-        let windows = [
-            ("main", false),
-            ("window-1", true),
-            (PET_WINDOW_LABEL, false),
-        ];
+        let windows = [("main", false), ("window-1", true)];
         assert_eq!(menu_action_window_label(windows), Some("window-1"));
         assert_eq!(
             menu_action_window_label(windows.into_iter().rev()),
@@ -1100,18 +1077,6 @@ mod menu_tests {
     fn menu_actions_target_main_when_it_is_focused() {
         assert_eq!(
             menu_action_window_label([("main", true), ("window-1", false)]),
-            Some("main")
-        );
-    }
-
-    #[test]
-    fn menu_actions_fall_back_to_main_when_only_the_pet_is_focused() {
-        assert_eq!(
-            menu_action_window_label([
-                (PET_WINDOW_LABEL, true),
-                ("window-1", false),
-                ("main", false)
-            ]),
             Some("main")
         );
     }
@@ -1134,10 +1099,7 @@ mod menu_tests {
 
     #[test]
     fn menu_actions_have_no_target_without_a_focused_shell_or_main() {
-        assert_eq!(
-            menu_action_window_label([(PET_WINDOW_LABEL, true), ("window-1", false)]),
-            None
-        );
+        assert_eq!(menu_action_window_label([("window-1", false)]), None);
         assert_eq!(menu_action_window_label([]), None);
     }
 
@@ -1204,7 +1166,7 @@ mod security_tests {
     }
 
     #[test]
-    fn pet_http_scope_is_limited_to_remote_asset_hosts() {
+    fn http_scope_is_limited_to_remote_asset_hosts() {
         let capability = capability();
         let permissions = capability["permissions"]
             .as_array()
@@ -1405,32 +1367,8 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::desktop::window::quit_app,
         crate::desktop::window::toggle_devtools,
         crate::bridge::log_frontend,
-        crate::bridge::get_pet_status,
-        crate::bridge::pet_show_main_window,
-        crate::bridge::pet_show_context_menu,
-        crate::bridge::get_pet_overlay_supported,
-        crate::bridge::get_pet_accessibility,
-        crate::bridge::request_pet_accessibility,
         crate::bridge::get_force_xwayland,
         crate::bridge::set_force_xwayland,
-        crate::bridge::set_pet_enabled,
-        crate::bridge::set_active_pet,
-        crate::bridge::set_pet_size,
-        crate::bridge::set_pet_throw_enabled,
-        crate::bridge::push_pet_session,
-        crate::bridge::move_pet_window,
-        crate::bridge::persist_pet_window_position,
-        crate::bridge::set_pet_ignore_cursor_events,
-        crate::bridge::set_pet_input_region,
-        crate::bridge::list_pets,
-        crate::bridge::import_pet,
-        crate::bridge::delete_pet,
-        crate::bridge::import_pet_repository,
-        crate::bridge::check_pet_updates,
-        crate::bridge::update_pet_repository,
-        crate::bridge::get_pet_asset,
-        crate::bridge::list_preset_pets,
-        crate::desktop::pet_mouse::start_pet_mouse_stream,
         crate::bridge::remote::remote,
         crate::bridge::remote::navigate_remote_harness,
         crate::bridge::remote::get_remote_shell_state,
@@ -1461,23 +1399,8 @@ fn guest_command_allowed(command: &str) -> bool {
             | "release_browser_guest"
             | "open_external_url"
             | "open_in_app"
-            | "get_pet_status"
-            | "get_pet_overlay_supported"
             | "get_force_xwayland"
             | "set_force_xwayland"
-            | "set_pet_enabled"
-            | "set_active_pet"
-            | "set_pet_size"
-            | "set_pet_throw_enabled"
-            | "push_pet_session"
-            | "list_pets"
-            | "import_pet"
-            | "delete_pet"
-            | "import_pet_repository"
-            | "check_pet_updates"
-            | "update_pet_repository"
-            | "get_pet_asset"
-            | "list_preset_pets"
             | "remote_bridge_ping"
             | "remote_open_window"
             | "create_app_window"
@@ -1515,9 +1438,6 @@ fn menu_action_window_label<'a>(
 ) -> Option<&'a str> {
     let mut main = None;
     for (label, focused) in windows {
-        if label == crate::desktop::pet::PET_WINDOW_LABEL {
-            continue;
-        }
         if focused {
             return Some(label);
         }
@@ -1534,7 +1454,6 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
         .plugin(tauri_runtime_electron::window::init());
 
     let builder = builder
-        .manage(crate::desktop::pet_mouse::PetMouseStreamState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
             crate::desktop::autostart::init(&app_handle)?;
@@ -1545,21 +1464,10 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             #[cfg(target_os = "macos")]
             install_macos_menu(&app_handle)?;
             tray(&app_handle)?;
-            crate::desktop::pet::init_pet_window(&app_handle);
             setup(app_handle.clone());
-            crate::bridge::pet::sync_pet_session_stream(
-                &app_handle,
-                crate::bridge::pet::pet_stream_wanted(&app_handle),
-            );
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "pet-show-main-window" => show_main_window(app),
-            "pet-close" => {
-                if let Err(error) = crate::bridge::set_pet_enabled(app.clone(), false) {
-                    log::error!("PET_CLOSE_FAILED: {error}");
-                }
-            }
             "desktop-toggle-sidebar"
             | "desktop-toggle-right-panel"
             | "desktop-open-terminal"
@@ -1568,10 +1476,11 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             | "desktop-zoom-out"
             | "desktop-zoom-reset"
             | "desktop-task-manager" => {
-                if let Some(window) = app.windows().into_values().find(|window| {
-                    window.label() != crate::desktop::pet::PET_WINDOW_LABEL
-                        && window.is_focused().unwrap_or(false)
-                }) {
+                if let Some(window) = app
+                    .windows()
+                    .into_values()
+                    .find(|window| window.is_focused().unwrap_or(false))
+                {
                     if let Err(error) =
                         app.emit_to(window.label(), "macos-menu-action", event.id().as_ref())
                     {
@@ -1597,10 +1506,11 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             }
             #[cfg(target_os = "macos")]
             "desktop-fullscreen" => {
-                if let Some(window) = app.windows().into_values().find(|window| {
-                    window.label() != crate::desktop::pet::PET_WINDOW_LABEL
-                        && window.is_focused().unwrap_or(false)
-                }) {
+                if let Some(window) = app
+                    .windows()
+                    .into_values()
+                    .find(|window| window.is_focused().unwrap_or(false))
+                {
                     if let Err(error) = window
                         .is_fullscreen()
                         .and_then(|is_fullscreen| window.set_fullscreen(!is_fullscreen))
@@ -1641,14 +1551,6 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
-                if window.label() == crate::desktop::pet::PET_WINDOW_LABEL {
-                    api.prevent_close();
-                    let handle = window.app_handle().clone();
-                    if let Err(error) = crate::bridge::pet::set_pet_enabled(handle, false) {
-                        log::warn!("[pet] PET_WINDOW_DESTROY_FAILED: {error}");
-                    }
-                    return;
-                }
                 if window.label() != MAIN_WINDOW_LABEL {
                     return;
                 }
@@ -1694,24 +1596,17 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                     });
                 }
             }
-            tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                if window.label() == crate::desktop::pet::PET_WINDOW_LABEL {
-                    crate::desktop::pet::apply_pet_size(window.app_handle());
-                }
-            }
+            tauri::WindowEvent::ScaleFactorChanged { .. } => {}
             // 只用事件自带的坐标/尺寸：在 Electron 运行时里，任何
             // outer_position()/inner_size() 都是一次同步 IPC 往返，而拖动时每秒有
             // 数百个 move —— 逐事件再问一次会把主线程和 RPC 队列一起拖住
-            // （桌宠跟手发滞、主窗口拖动卡顿都源于此）。
-            tauri::WindowEvent::Moved(position) => match window.label() {
-                label if label == crate::desktop::pet::PET_WINDOW_LABEL => {
-                    crate::desktop::pet::record_pet_window_moved(window, *position);
+            // （主窗口拖动卡顿即源于此）。
+            tauri::WindowEvent::Moved(position) => {
+                if window.label() == MAIN_WINDOW_LABEL {
+                    crate::config::record_moved(*position);
                 }
-                label if label == MAIN_WINDOW_LABEL => crate::config::record_moved(*position),
-                _ => {}
-            },
+            }
             tauri::WindowEvent::Resized(size) => {
-                // 桌宠尺寸由前端按宠物比例设定，与位置记录无关；只记主窗口。
                 if window.label() == MAIN_WINDOW_LABEL {
                     crate::config::record_resized(window, *size);
                 }

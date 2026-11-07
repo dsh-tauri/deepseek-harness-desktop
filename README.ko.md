@@ -52,7 +52,7 @@
 - 🗂️ **프로필 구성** — 프로필별로 플러그인과 설정을 분리하고, 클릭 한 번으로 프로필 데이터를 이전, 백업, 복제할 수 있습니다.
 - 💽 **데이터 디렉터리** — 설치 시 데이터 저장 위치를 선택하고(Windows), 나중에 Windows, macOS, Linux의 설정에서 이전하거나 되돌릴 수 있습니다.
 - ⌨️ **CLI 통합** — npm을 통한 전역 코어 설치가 아니라, 관리형 shim을 통해 `dsh` / `pnpm` 명령어를 제공합니다.
-- 🐾 **데스크톱 펫** — Pets / Codex 리소스, 팩 가져오기, 대화 활동 표시를 지원합니다. 사전 설정된 미디어는 원격 호스트에서 가져옵니다.
+- 🐾 **데스크톱 펫** — `dsh-pet-lite` 프리셋 플러그인이 제공합니다. 아래 프리셋 플러그인을 참고하세요.
 - 🎨 **개인화** — 8가지 색상 팔레트, 로컬 UI 배율 조정, 터미널 모드, 불투명도 조절, 선택적 반투명 블러 효과를 제공합니다.
 
 ## 내장 플러그인
@@ -61,12 +61,10 @@
 
 - [DSH Tauri](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri) — 핵심 플러그인: 데스크톱과 Harness 간 통신, 버전 어댑터, 플러그인 의존성 관리
 - [DSH Tauri UI](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-ui) — 데스크톱 설정 UI, 네이티브 코어 구성 요소, 테마, 색상 팔레트
-- [DSH Tauri Mobile UI](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-mobile-ui) — 터치 레이아웃과 모바일 환경 설정
 - [DSH Tauri Worktree](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-worktree) — 세션 단위 Git 워크트리와 체크아웃
 - [DSH Tauri Extension](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-extension) — 공식 플러그인 관리자, 플러그인 마켓, Skills, MCP
-- [DSH Tauri Scheduler](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-scheduler) — 예약 작업과 실행 기록
 - [DSH Tauri Archive](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-archive) — 대화 보관과 복원
-- [DSH Tauri Pet](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-pet) — 데스크톱 펫과 활동 상태 설정
+- [DSH Pet Lite](https://github.com/hairyf/dsh-pet-lite) — 가벼운 데스크톱 펫 프리셋 플러그인, 플러그인 페이지에서 설치
 - [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-rightclick) — 세션, 작업 공간, 텍스트의 컨텍스트 메뉴
 - [DSH Tauri Model](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-model) — 모델 선택, 매개변수, 자동 구성
 - [DSH Tauri Remote](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-remote) — SSH를 통한 원격 Harness 연결 및 동기화, LAN 또는 공개 터널을 통한 로컬 Harness 공유
@@ -184,7 +182,7 @@ Windows에서 시작에 실패하면 네이티브 대화 상자에 원인 오류
 - [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) — 업스트림 `dsh` 에이전트 플랫폼
 - [deepseek-harness-pkg](https://github.com/dsh-tauri/deepseek-harness-pkg) — 사전 빌드된 Harness 배포판과 다운로드 소스
 - [electron-rs](https://github.com/hairyf/electron-rs) · [tauri-runtime-electron](https://github.com/hairyf/tauri-runtime-electron) — Electron Rust 및 Tauri 2용 Electron 런타임
-- [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-mov](https://github.com/dsh-tauri/dsh-pet-mov) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — 펫 리소스와 렌더러
+- [dsh-pet-lite](https://github.com/hairyf/dsh-pet-lite) · [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — 펫 플러그인, 리소스와 렌더러
 - [dsh-plugin-codex-pets](https://github.com/Skylarking/dsh-plugin-codex-pets) · [BongoCat](https://github.com/ayangweb/BongoCat) · [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) · [codex-to-dsh-pet](https://github.com/Signalight/codex-to-dsh-pet) — 펫 참고 프로젝트
 
 ## 기여자
