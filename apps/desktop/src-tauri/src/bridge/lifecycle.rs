@@ -330,14 +330,14 @@ pub async fn check_dsh_update(
     // 最新 release 的版本号已经在已装核心列表里（含 active 和非 active
     // 槽位），就不提示更新。避免「老版本激活 + 新版已下载但未切换」场景下白点一次
     // 「立即更新」做整包重下——版本号（用户视角的版本）已经在那了，没必要再拉一遍。
-    if let Some(version) = download::parse_version_from_tag(&latest.tag) {
-        if core::has_installed_version(&app_handle, &version).await {
-            log::info!(
-                "Suppressing dsh update toast because latest version is already installed: {}",
-                version
-            );
-            return Ok(None);
-        }
+    if let Some(version) = download::parse_version_from_tag(&latest.tag)
+        && core::has_installed_version(&app_handle, &version).await
+    {
+        log::info!(
+            "Suppressing dsh update toast because latest version is already installed: {}",
+            version
+        );
+        return Ok(None);
     }
 
     // latest 不高于当前运行核心时不提示。pkg 仓库的「Current latest」

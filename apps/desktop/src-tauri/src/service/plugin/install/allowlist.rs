@@ -26,12 +26,11 @@ pub(super) fn parse_allowlist_keys(output: &str) -> Vec<String> {
     // 1) git 托管插件的允许键：跟随 `allowBuilds:` 示例行后的缩进 `<key>: true`。
     //    pnpm 11 的报错（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`）建议按此形式放行。
     for (idx, line) in lines.iter().enumerate() {
-        if line.trim() == "allowBuilds:" {
-            if let Some(next) = lines.get(idx + 1) {
-                if let Some(key) = extract_allow_line_key(next) {
-                    push_unique(&mut keys, key);
-                }
-            }
+        if line.trim() == "allowBuilds:"
+            && let Some(next) = lines.get(idx + 1)
+            && let Some(key) = extract_allow_line_key(next)
+        {
+            push_unique(&mut keys, key);
         }
     }
 
@@ -362,10 +361,10 @@ fn collapse_allow_builds_duplicates(content: &str) -> String {
     // 每个键只保留最后一个出现行，其余标记删除
     let mut keep: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for key in &order {
-        if let Some(idxs) = key_indexes.get(key) {
-            if let Some(&last) = idxs.last() {
-                keep.insert(last);
-            }
+        if let Some(idxs) = key_indexes.get(key)
+            && let Some(&last) = idxs.last()
+        {
+            keep.insert(last);
         }
     }
     let mut out: Vec<&str> = Vec::with_capacity(lines.len());

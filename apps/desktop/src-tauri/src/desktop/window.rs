@@ -102,11 +102,19 @@ pub(crate) fn require_shell(webview: &Webview) -> Result<(), String> {
         && matches!(url.scheme(), "http" | "https")
         && (crate::service::workflow::instances::dsh_service_origin(webview)
             .is_some_and(|service| service.origin() == url.origin())
-            || webview.app_handle().try_state::<HostedOrigins>().is_some_and(|origins|
-                origins.0.lock().unwrap_or_else(|error| error.into_inner())
-                    .get(webview.label()).is_some_and(|origin| origin == &url.origin().ascii_serialization())));
+            || webview
+                .app_handle()
+                .try_state::<HostedOrigins>()
+                .is_some_and(|origins| {
+                    origins
+                        .0
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .get(webview.label())
+                        .is_some_and(|origin| origin == &url.origin().ascii_serialization())
+                }));
     let remote = webview.label() == webview.window().label()
-        && remote_shell_state(&webview.app_handle(), webview.window().label())
+        && remote_shell_state(webview.app_handle(), webview.window().label())
             .is_some_and(|state| state.trusted_origin == url.origin().ascii_serialization());
     if webview.label() != webview.window().label() || !(packaged || dev || hosted || remote) {
         return Err("HARNESS_WEBVIEW_SHELL_REQUIRED".into());
@@ -276,10 +284,11 @@ impl HarnessRestarts {
     }
 
     fn bind_target(&mut self, window: &str, profile: &str, id: &str, url: &Url) {
-        if let Some(restart) = self.current(window, profile) {
-            if restart.operation.id == id && restart.operation.phase == HarnessRestartPhase::Loading {
-                restart.target_url = Some(url.clone());
-            }
+        if let Some(restart) = self.current(window, profile)
+            && restart.operation.id == id
+            && restart.operation.phase == HarnessRestartPhase::Loading
+        {
+            restart.target_url = Some(url.clone());
         }
     }
 
@@ -501,26 +510,41 @@ pub async fn host_harness_document(
     require_shell(&webview)?;
     let url = harness_guest_url(&url)?;
     remember_harness_bootstrap(&app, &webview)?;
-    let profile = crate::service::workflow::instances::window_profile(&app, webview.window().label());
+    let profile =
+        crate::service::workflow::instances::window_profile(&app, webview.window().label());
     let restart = app.try_state::<HarnessRestartState>().and_then(|state| {
-        state.0.lock().unwrap_or_else(|error| error.into_inner())
+        state
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
             .get(webview.window().label(), &profile)
     });
     let host = authenticate_harness_host(&app, &webview, &url).await?;
-    if crate::service::workflow::instances::window_profile(&app, webview.window().label()) != profile {
+    if crate::service::workflow::instances::window_profile(&app, webview.window().label())
+        != profile
+    {
         forget_harness_restart(&app, webview.window().label());
         return Err("HARNESS_DOCUMENT_PROFILE_CHANGED".into());
     }
     tauri_runtime_electron::bind_authenticated_web_host(&webview, &host)
         .map_err(|error| format!("HARNESS_AUTH_BIND_FAILED: {error}"))?;
     app.manage(HostedOrigins::default());
-    app.state::<HostedOrigins>().0.lock().unwrap_or_else(|error| error.into_inner())
-        .insert(webview.label().to_owned(), url.origin().ascii_serialization());
-    if let Some(operation) = restart {
-        if let Some(state) = app.try_state::<HarnessRestartState>() {
-            state.0.lock().unwrap_or_else(|error| error.into_inner())
-                .bind_target(webview.window().label(), &profile, &operation.id, &url);
-        }
+    app.state::<HostedOrigins>()
+        .0
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(
+            webview.label().to_owned(),
+            url.origin().ascii_serialization(),
+        );
+    if let Some(operation) = restart
+        && let Some(state) = app.try_state::<HarnessRestartState>()
+    {
+        state
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .bind_target(webview.window().label(), &profile, &operation.id, &url);
     }
     webview.navigate(url).map_err(|error| error.to_string())
 }
@@ -584,6 +608,10 @@ fn track_harness_document(app: &AppHandle, guest: &Webview, owner: &str, url: &U
 }
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments mirror the documented invoke payload, so folding them into a struct would only add a mirror type"
+)]
 pub async fn update_harness_webview(
     app: AppHandle,
     webview: Webview,
@@ -807,18 +835,21 @@ pub async fn release_harness_webview(
         }
         guest.close().map_err(|error| error.to_string())?;
     }
-    if let Some(documents) = app.try_state::<HarnessDocuments>() {
-        if let Some(document) = documents.0.lock().unwrap().remove(&label) {
-            document.lock().unwrap().closed = true;
-        }
+    if let Some(documents) = app.try_state::<HarnessDocuments>()
+        && let Some(document) = documents.0.lock().unwrap().remove(&label)
+    {
+        document.lock().unwrap().closed = true;
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod harness_restart_tests {
-    use super::{HarnessRestartOperation, HarnessRestartPhase, HarnessRestarts, Url, harness_bootstrap_origin};
     use super::HarnessRestartOutcome::{Error, Success};
+    use super::{
+        HarnessRestartOperation, HarnessRestartPhase, HarnessRestarts, Url,
+        harness_bootstrap_origin,
+    };
 
     fn source() -> Url {
         Url::parse("http://127.0.0.1:3080/?startup=1").unwrap()

@@ -181,25 +181,24 @@ fn log_level_name(level: log::Level) -> &'static str {
 pub(super) fn append_log(log_path: &PathBuf, line: &str) {
     // 与 `logger` 的 `desktop.log` / `desktop.frontdesk.log` 保持一致：5MiB × 3 轮转
     let _guard = dsh_log_lock().lock().unwrap_or_else(|e| e.into_inner());
-    if let Ok(meta) = std::fs::metadata(log_path) {
-        if meta
+    if let Ok(meta) = std::fs::metadata(log_path)
+        && meta
             .len()
             .saturating_add(line.len() as u64)
             .saturating_add(1)
             > DSH_MAX_LOG_BYTES
-        {
-            let _ = std::fs::remove_file(indexed_log_path(log_path, DSH_MAX_BACKUPS));
-            for i in (1..DSH_MAX_BACKUPS).rev() {
-                let from = indexed_log_path(log_path, i);
-                let to = indexed_log_path(log_path, i + 1);
-                if from.exists() {
-                    let _ = std::fs::remove_file(&to);
-                    let _ = std::fs::rename(&from, &to);
-                }
+    {
+        let _ = std::fs::remove_file(indexed_log_path(log_path, DSH_MAX_BACKUPS));
+        for i in (1..DSH_MAX_BACKUPS).rev() {
+            let from = indexed_log_path(log_path, i);
+            let to = indexed_log_path(log_path, i + 1);
+            if from.exists() {
+                let _ = std::fs::remove_file(&to);
+                let _ = std::fs::rename(&from, &to);
             }
-            if log_path.exists() {
-                let _ = std::fs::rename(log_path, indexed_log_path(log_path, 1));
-            }
+        }
+        if log_path.exists() {
+            let _ = std::fs::rename(log_path, indexed_log_path(log_path, 1));
         }
     }
     if let Ok(mut file) = std::fs::OpenOptions::new()

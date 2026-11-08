@@ -190,10 +190,10 @@ pub fn uninstall(app_handle: &AppHandle, id: &str) -> Result<(), String> {
 
     remove_plugin_dir(&profile, id);
     // 清掉 lockfile，让 pnpm 重装时重建干净依赖图（best-effort）。
-    if let Err(e) = std::fs::remove_file(profile.join("pnpm-lock.yaml")) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            log::warn!("failed to remove pnpm-lock.yaml during recovery: {e}");
-        }
+    if let Err(e) = std::fs::remove_file(profile.join("pnpm-lock.yaml"))
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("failed to remove pnpm-lock.yaml during recovery: {e}");
     }
     if let Err(e) = errors::clear(app_handle, id) {
         log::warn!("failed to clear plugin error for {id} during recovery: {e}");

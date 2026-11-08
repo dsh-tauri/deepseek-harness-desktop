@@ -224,13 +224,13 @@ fn repair_loader_state(
 ) -> Result<bool, String> {
     let bundle_ids: HashSet<&str> = internal.iter().map(|preset| preset.id.as_str()).collect();
     let mut pending = false;
-    if let Some(manifest) = manifest.as_mut() {
-        if dedupe_profile_bundles(manifest) {
-            if prepare {
-                write_profile_manifest(&profile.join("package.json"), manifest)?;
-            } else {
-                pending = true;
-            }
+    if let Some(manifest) = manifest.as_mut()
+        && dedupe_profile_bundles(manifest)
+    {
+        if prepare {
+            write_profile_manifest(&profile.join("package.json"), manifest)?;
+        } else {
+            pending = true;
         }
     }
 
@@ -699,8 +699,8 @@ fn prepare_internal_plugins(
     let mut skipped = HashSet::new();
     for preset in internal {
         let name = installed_name(preset);
-        if super::disable::has_patch_disable(&profile, &preset.id)
-            || super::disable::has_patch_disable(&profile, name)
+        if super::disable::has_patch_disable(profile, &preset.id)
+            || super::disable::has_patch_disable(profile, name)
         {
             continue;
         }
@@ -746,13 +746,13 @@ fn prepare_internal_plugins(
             need.push((preset.id.clone(), name, entry));
         }
     }
-    if let Some(value) = manifest.as_mut() {
-        if manifest::remove_internal_plugin_bundles(value, &skipped) {
-            if prepare {
-                write_profile_manifest(&manifest_path, value)?;
-            } else {
-                migration_pending = true;
-            }
+    if let Some(value) = manifest.as_mut()
+        && manifest::remove_internal_plugin_bundles(value, &skipped)
+    {
+        if prepare {
+            write_profile_manifest(&manifest_path, value)?;
+        } else {
+            migration_pending = true;
         }
     }
     orphans.sort();

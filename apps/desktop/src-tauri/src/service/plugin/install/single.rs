@@ -347,17 +347,17 @@ fn update_failure_payload(failures: Vec<UpdateFailure>) -> Option<String> {
         // 版本兼容性拒绝照原样提升到顶层：前端只认这一行里的载荷来挂「授权后重跑」的按钮，
         // 落进下面的逐项失败里用户就只能看着一条纯文本，无从授权（与批量安装路径同形状）。
         // 载荷里的版本是 dsh 自己解析出来的那个，不改写——用户授权的是他看得见的东西。
-        if let Some(payload) = failure.message.strip_prefix(INCOMPATIBLE_PREFIX) {
-            if let Ok(entries) = serde_json::from_str::<Vec<IncompatibleVersion>>(payload) {
-                push_incompatible(entries, &mut incompatible);
-                continue;
-            }
+        if let Some(payload) = failure.message.strip_prefix(INCOMPATIBLE_PREFIX)
+            && let Ok(entries) = serde_json::from_str::<Vec<IncompatibleVersion>>(payload)
+        {
+            push_incompatible(entries, &mut incompatible);
+            continue;
         }
-        if let Some(payload) = failure.message.strip_prefix(POLICY_BLOCKED_PREFIX) {
-            if let Ok(entries) = serde_json::from_str::<Vec<PolicyBlockedVersion>>(payload) {
-                push_blocked(entries, &mut blocked);
-                continue;
-            }
+        if let Some(payload) = failure.message.strip_prefix(POLICY_BLOCKED_PREFIX)
+            && let Ok(entries) = serde_json::from_str::<Vec<PolicyBlockedVersion>>(payload)
+        {
+            push_blocked(entries, &mut blocked);
+            continue;
         }
         let policy = policy_blocked_versions(&failure.message);
         if !policy.is_empty() {
@@ -724,10 +724,11 @@ async fn run_plugin_command(
             log::warn!("failed to clear plugin error for {id}: {e}");
         }
     }
-    if action == "remove" && ids.iter().any(|id| id == "dsh-win-terminal-inspector") {
-        if let Err(e) = workflow::win_inspector::apply(app_handle) {
-            log::warn!("win inspector patch prune failed after remove: {e}");
-        }
+    if action == "remove"
+        && ids.iter().any(|id| id == "dsh-win-terminal-inspector")
+        && let Err(e) = workflow::win_inspector::apply(app_handle)
+    {
+        log::warn!("win inspector patch prune failed after remove: {e}");
     }
     log::info!("dsh plugin {action} succeeded for {ids:?}");
     Ok(())
@@ -745,9 +746,9 @@ async fn run_plugin_command(
 ///    退出且**不打印任何说明**——实测 bundled pnpm 11.7.0 在 `^2.10.15` 上
 ///    `update --latest` 静默停在 2.10.15。用户授权该精确版本后，档案豁免让
 ///    解析与 lockfile 校验放行该版本。因此这条消息不能只归因于 catalog 钉死。
-/// 必须如实报「没升级」——报成功会让用户以为已在新版本上（与 [`remove_many`] 的
-/// 「卸载后核验」同理）；但**不**记进插件错误：插件没坏，记了会让列表挂上
-/// 「可能已损坏或与当前环境不兼容」的误导标记（安装/升级真失败各有记录点）。
+///    必须如实报「没升级」——报成功会让用户以为已在新版本上（与 [`remove_many`] 的
+///    「卸载后核验」同理）；但**不**记进插件错误：插件没坏，记了会让列表挂上
+///    「可能已损坏或与当前环境不兼容」的误导标记（安装/升级真失败各有记录点）。
 ///
 /// 入口核验与安装一致：git 托管插件升级后同样可能停在「prepare 未构建 → 声明
 /// 入口缺失」坏态，若不拦截，下一次启动即崩溃（见 [`ensure_plugin_entry_built`]）。
@@ -825,26 +826,23 @@ fn update_verify_step(
     let reached = expected.is_some_and(|expected| {
         installed_package_version(profile, id).as_deref() == Some(expected)
     });
-    if !reached {
-        if let Some(before) = before {
-            if dependency_fingerprint(profile, id).as_deref() == Some(before) {
-                let detail =
-                    installed_package_version(profile, id).unwrap_or_else(|| before.to_string());
-                // 目标版本优先用本次请求带来的版本（面板显示的那个），探测缓存只在没有时
-                // 兜底：缓存没命中会让 `latest` 为空，用户点升级就只剩一句「没有变化」。
-                let latest = expected
-                    .filter(|expected| *expected != detail && is_registry_version(expected))
-                    .map(str::to_string)
-                    .or_else(|| {
-                        known_latest()
-                            .filter(|latest| latest != &detail && is_registry_version(latest))
-                    });
-                log::warn!(
-                    "dsh plugin update made no change for {id}, still at {detail}, newest {latest:?}"
-                );
-                return UpdateVerifyStep::Hold { detail, latest };
-            }
-        }
+    if !reached
+        && let Some(before) = before
+        && dependency_fingerprint(profile, id).as_deref() == Some(before)
+    {
+        let detail = installed_package_version(profile, id).unwrap_or_else(|| before.to_string());
+        // 目标版本优先用本次请求带来的版本（面板显示的那个），探测缓存只在没有时
+        // 兜底：缓存没命中会让 `latest` 为空，用户点升级就只剩一句「没有变化」。
+        let latest = expected
+            .filter(|expected| *expected != detail && is_registry_version(expected))
+            .map(str::to_string)
+            .or_else(|| {
+                known_latest().filter(|latest| latest != &detail && is_registry_version(latest))
+            });
+        log::warn!(
+            "dsh plugin update made no change for {id}, still at {detail}, newest {latest:?}"
+        );
+        return UpdateVerifyStep::Hold { detail, latest };
     }
     UpdateVerifyStep::Entry
 }

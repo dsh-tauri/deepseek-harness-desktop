@@ -85,10 +85,10 @@ fn bundle_owns_package(profile: &Path, bundle: &str, package: &str) -> bool {
     if meta.deps.iter().any(|d| d == package) || meta.optional_deps.iter().any(|d| d == package) {
         return true;
     }
-    if let Some(patch) = &meta.patch_path {
-        if let Ok(content) = fs::read_to_string(dir.join(patch)) {
-            return content.contains(package);
-        }
+    if let Some(patch) = &meta.patch_path
+        && let Ok(content) = fs::read_to_string(dir.join(patch))
+    {
+        return content.contains(package);
     }
     false
 }
@@ -97,15 +97,14 @@ fn bundle_owns_package(profile: &Path, bundle: &str, package: &str) -> bool {
 /// UI 包」的归属）。
 fn plugin_references_packages(profile: &Path, plugin: &str, packages: &HashSet<String>) -> bool {
     let dir = profile.join("node_modules").join(plugin);
-    if let Some(meta) = read_plugin_meta(&dir) {
-        if meta
+    if let Some(meta) = read_plugin_meta(&dir)
+        && meta
             .deps
             .iter()
             .chain(meta.optional_deps.iter())
             .any(|d| packages.contains(d))
-        {
-            return true;
-        }
+    {
+        return true;
     }
     for file in [
         "cordis.patch.yml",
@@ -113,10 +112,10 @@ fn plugin_references_packages(profile: &Path, plugin: &str, packages: &HashSet<S
         "lib/index.js",
         "dist/index.js",
     ] {
-        if let Ok(content) = fs::read_to_string(dir.join(file)) {
-            if packages.iter().any(|p| content.contains(p)) {
-                return true;
-            }
+        if let Ok(content) = fs::read_to_string(dir.join(file))
+            && packages.iter().any(|p| content.contains(p))
+        {
+            return true;
         }
     }
     false
@@ -149,14 +148,12 @@ fn plugin_declares_loader_entry(profile: &Path, plugin: &str, entry_id: &str) ->
 /// 无 `dsh` 段即不命中。其余文件保持内容匹配。
 fn plugin_matches_slot(profile: &Path, plugin: &str, slot: &str) -> bool {
     let dir = profile.join("node_modules").join(plugin);
-    if let Ok(content) = fs::read_to_string(dir.join("package.json")) {
-        if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(dsh) = manifest.get("dsh") {
-                if value_contains_slot(dsh, slot) {
-                    return true;
-                }
-            }
-        }
+    if let Ok(content) = fs::read_to_string(dir.join("package.json"))
+        && let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(dsh) = manifest.get("dsh")
+        && value_contains_slot(dsh, slot)
+    {
+        return true;
     }
     for file in [
         "cordis.patch.yml",
@@ -167,10 +164,10 @@ fn plugin_matches_slot(profile: &Path, plugin: &str, slot: &str) -> bool {
         "lib/index.js",
         "dist/index.js",
     ] {
-        if let Ok(content) = fs::read_to_string(dir.join(file)) {
-            if content.contains(slot) {
-                return true;
-            }
+        if let Ok(content) = fs::read_to_string(dir.join(file))
+            && content.contains(slot)
+        {
+            return true;
         }
     }
     false
@@ -201,11 +198,11 @@ fn packages_providing_slot(profile: &Path, slot: &str) -> Vec<String> {
         let package = format!("@deepseek-ai/{name}");
         let dir = entry.path();
         for file in ["client.js", "lib/client.js", "dist/client.js"] {
-            if let Ok(content) = fs::read_to_string(dir.join(file)) {
-                if content.contains(slot) {
-                    out.push(package);
-                    break;
-                }
+            if let Ok(content) = fs::read_to_string(dir.join(file))
+                && content.contains(slot)
+            {
+                out.push(package);
+                break;
             }
         }
     }

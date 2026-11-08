@@ -21,8 +21,10 @@ struct Catalog {
 
 const CATALOG_CACHE_LIMIT: usize = 4;
 
-static CATALOGS: Mutex<Option<HashMap<PathBuf, (u64, u64, std::sync::Arc<Catalog>)>>> =
-    Mutex::new(None);
+type CachedCatalog = (u64, u64, std::sync::Arc<Catalog>);
+type CatalogCache = Mutex<Option<HashMap<PathBuf, CachedCatalog>>>;
+
+static CATALOGS: CatalogCache = Mutex::new(None);
 
 fn stamp(path: &Path) -> Option<(u64, u64)> {
     let meta = std::fs::metadata(path).ok()?;
@@ -93,10 +95,10 @@ fn catalog(path: &Path) -> Option<std::sync::Arc<Catalog>> {
     let key = stamp(path)?;
     let mut guard = CATALOGS.lock().unwrap_or_else(|error| error.into_inner());
     let cache = guard.get_or_insert_with(HashMap::new);
-    if let Some((length, modified, catalog)) = cache.get(path) {
-        if (*length, *modified) == key {
-            return Some(catalog.clone());
-        }
+    if let Some((length, modified, catalog)) = cache.get(path)
+        && (*length, *modified) == key
+    {
+        return Some(catalog.clone());
     }
     let catalog = std::sync::Arc::new(parse(path)?);
     if cache.len() >= CATALOG_CACHE_LIMIT {

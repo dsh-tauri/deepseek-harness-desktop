@@ -219,13 +219,11 @@ pub(crate) fn active_root_from(
     let overridable = manifest
         .and_then(|manifest| manifest.dependencies.get(key))
         .is_none_or(|spec| spec.overridable);
-    if overridable {
-        if let Some(Some(recorded)) = mapping.get(key) {
-            let resolved =
-                manifest::resolve_location_from(base, resources, &recorded.to_string_lossy());
-            if resolved.exists() {
-                return resolved;
-            }
+    if overridable && let Some(Some(recorded)) = mapping.get(key) {
+        let resolved =
+            manifest::resolve_location_from(base, resources, &recorded.to_string_lossy());
+        if resolved.exists() {
+            return resolved;
         }
     }
     managed_root_from(base, resources, manifest, key)
@@ -265,10 +263,10 @@ pub fn binary_path<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
 
 pub fn binary_path_at<R: Runtime>(app: &AppHandle<R>, root: &Path, key: &str) -> PathBuf {
     let entry = entry_relative(app, key);
-    if key == DEP_DSH {
-        if let Ok(name) = super::runtime::dsh_core_asar_filename() {
-            return root.join(name).join(entry);
-        }
+    if key == DEP_DSH
+        && let Ok(name) = super::runtime::dsh_core_asar_filename()
+    {
+        return root.join(name).join(entry);
     }
     root.join(entry)
 }

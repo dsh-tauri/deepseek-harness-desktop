@@ -309,10 +309,8 @@ fn rows_with_release_catalog<R: tauri::Runtime>(
         version_tags.iter().map(|(v, _, _)| v.clone()).collect();
     let known_tags: HashSet<String> = version_tags.iter().map(|(_, tag, _)| tag.clone()).collect();
     let mut seen_tags = known_tags.clone();
-    if !bundled_active {
-        if let Some(v) = &installed_release {
-            seen_versions.insert(v.clone());
-        }
+    if !bundled_active && let Some(v) = &installed_release {
+        seen_versions.insert(v.clone());
     }
     if let Ok(entries) = std::fs::read_dir(dependencies_dir(app_handle)) {
         for entry in entries.flatten() {
@@ -674,24 +672,24 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
             })?;
     }
 
-    if active_dir.exists() {
-        if let Err(e) = rename_active_with_resweep(app_handle, &active_dir, &backup_dir).await {
-            if holding.exists() {
-                let _ = download::rename_with_retry(&holding, &backup_dir).await;
-            }
-            let holders = workflow::core_dir_holders(&active_dir);
-            log::error!("CORE_SWITCH_HOLDERS: {holders:?}");
-            let holders = if holders.is_empty() {
-                "no holders detected (diagnostic may be incomplete)".to_string()
-            } else {
-                holders.join("; ")
-            };
-            return Err(format!(
-                "CORE_SWITCH_FAILED: {} -> {}: {e} (holders: {holders})",
-                active_dir.display(),
-                backup_dir.display()
-            ));
+    if active_dir.exists()
+        && let Err(e) = rename_active_with_resweep(app_handle, &active_dir, &backup_dir).await
+    {
+        if holding.exists() {
+            let _ = download::rename_with_retry(&holding, &backup_dir).await;
         }
+        let holders = workflow::core_dir_holders(&active_dir);
+        log::error!("CORE_SWITCH_HOLDERS: {holders:?}");
+        let holders = if holders.is_empty() {
+            "no holders detected (diagnostic may be incomplete)".to_string()
+        } else {
+            holders.join("; ")
+        };
+        return Err(format!(
+            "CORE_SWITCH_FAILED: {} -> {}: {e} (holders: {holders})",
+            active_dir.display(),
+            backup_dir.display()
+        ));
     }
 
     if let Err(e) = download::rename_with_retry(&target_dir, &active_dir).await {
@@ -856,10 +854,10 @@ pub async fn remove_version(app_handle: &AppHandle, id: &str) -> Result<(), Stri
     }
 
     // 慢路径：目录仍被句柄锁定（可能是上一份激活副本的残留进程加载着它）。
-    if workflow::has_owned_process() {
-        if let Err(e) = workflow::stop(app_handle.clone()).await {
-            log::warn!("failed to stop harness before core removal: {e}");
-        }
+    if workflow::has_owned_process()
+        && let Err(e) = workflow::stop(app_handle.clone()).await
+    {
+        log::warn!("failed to stop harness before core removal: {e}");
     }
     if !download::remove_dir_with_retry(&dir).await {
         return Err(format!(

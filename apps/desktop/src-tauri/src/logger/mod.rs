@@ -362,10 +362,10 @@ pub fn log_frontend(level: FrontendLevel, target: &str, message: &str) {
         }
     };
     let bytes = formatted.as_bytes();
-    if let Some(w) = FRONTDESK_WRITER.get() {
-        if let Ok(g) = w.lock() {
-            let _ = g.append_bytes(bytes);
-        }
+    if let Some(w) = FRONTDESK_WRITER.get()
+        && let Ok(g) = w.lock()
+    {
+        let _ = g.append_bytes(bytes);
     }
 }
 

@@ -61,15 +61,15 @@ pub(super) fn materialize_links(profile: &Path, links: &[OfflineLink]) -> Result
         }
         // 预设显式声明 scoped `package`（如 `@scope/name`）时入口位于
         // `node_modules/@scope/name`：父目录不存在会直接让建链失败，先补齐。
-        if let Some(parent) = link.entry.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                failures.push(format!(
-                    "{}: 建立入口父目录失败 {}: {e}",
-                    link.id,
-                    parent.display()
-                ));
-                continue;
-            }
+        if let Some(parent) = link.entry.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            failures.push(format!(
+                "{}: 建立入口父目录失败 {}: {e}",
+                link.id,
+                parent.display()
+            ));
+            continue;
         }
         if let Err(e) = crate::service::core::create_directory_link(&link.bundled, &link.entry) {
             failures.push(format!(

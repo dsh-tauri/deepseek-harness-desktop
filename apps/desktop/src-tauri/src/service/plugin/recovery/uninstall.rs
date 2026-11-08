@@ -16,10 +16,9 @@ pub(super) fn remove_plugin_from_manifest(manifest: &mut serde_json::Value, id: 
     if let Some(deps) = manifest
         .get_mut("dependencies")
         .and_then(|d| d.as_object_mut())
+        && deps.remove(id).is_some()
     {
-        if deps.remove(id).is_some() {
-            modified = true;
-        }
+        modified = true;
     }
     remove_bundle(manifest, id) || modified
 }
@@ -99,26 +98,26 @@ pub(super) fn remove_plugin_dir(profile: &Path, id: &str) {
         );
         return;
     }
-    if let Err(e) = remove_plugin_entry(&entry) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            log::warn!("failed to remove plugin dir {}: {e}", entry.display());
-        }
+    if let Err(e) = remove_plugin_entry(&entry)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("failed to remove plugin dir {}: {e}", entry.display());
     }
     if let Some(scope) = id
         .starts_with('@')
         .then(|| id.split('/').next().unwrap_or_default())
+        && !scope.is_empty()
+        && scope != id
     {
-        if !scope.is_empty() && scope != id {
-            let scope_entry = node_modules.join(scope);
-            if scope_entry.is_dir()
-                && scope_entry
-                    .read_dir()
-                    .map(|mut d| d.next().is_none())
-                    .unwrap_or(false)
-                && fs_guard::ensure_within(&scope_entry, &node_modules_root).is_ok()
-            {
-                let _ = remove_plugin_entry(&scope_entry);
-            }
+        let scope_entry = node_modules.join(scope);
+        if scope_entry.is_dir()
+            && scope_entry
+                .read_dir()
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false)
+            && fs_guard::ensure_within(&scope_entry, &node_modules_root).is_ok()
+        {
+            let _ = remove_plugin_entry(&scope_entry);
         }
     }
 }

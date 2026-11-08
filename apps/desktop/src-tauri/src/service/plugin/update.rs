@@ -481,10 +481,10 @@ fn immutable_commit(reference: &str) -> Option<String> {
 
 /// GitHub 跟踪目标的提交 SHA（API 限流/429/网络错误均返回 None）。
 async fn fetch_target_sha(client: &reqwest::Client, target: &GitHubTarget) -> Option<String> {
-    if let GitReference::Named(reference) = &target.reference {
-        if let Some(commit) = immutable_commit(reference) {
-            return Some(commit);
-        }
+    if let GitReference::Named(reference) = &target.reference
+        && let Some(commit) = immutable_commit(reference)
+    {
+        return Some(commit);
     }
     let url = github_commit_url(target)?;
     let v = fetch_json(client, url.as_str()).await?;
@@ -551,11 +551,11 @@ pub fn apply_cache(app_handle: &AppHandle, plugins: &mut [DshPlugin]) {
     for p in plugins.iter_mut() {
         let spec = specs.get(&p.id).cloned().unwrap_or_default();
         let key = cache_key(&p.id, &spec, &p.version, &locked, &proxy_url);
-        if let Some(entry) = cache.get(&key) {
-            if now.duration_since(entry.at) < UPDATES_TTL {
-                p.update_available = entry.info.update_available;
-                p.latest_version = entry.info.latest.clone();
-            }
+        if let Some(entry) = cache.get(&key)
+            && now.duration_since(entry.at) < UPDATES_TTL
+        {
+            p.update_available = entry.info.update_available;
+            p.latest_version = entry.info.latest.clone();
         }
     }
 }
@@ -590,12 +590,12 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
         for (idx, p) in plugins.iter_mut().enumerate() {
             let spec = specs.get(&p.id).cloned().unwrap_or_default();
             let key = cache_key(&p.id, &spec, &p.version, &locked, &proxy_url);
-            if let Some(entry) = cache.get(&key) {
-                if now.duration_since(entry.at) < UPDATES_TTL {
-                    p.update_available = entry.info.update_available;
-                    p.latest_version = entry.info.latest.clone();
-                    continue;
-                }
+            if let Some(entry) = cache.get(&key)
+                && now.duration_since(entry.at) < UPDATES_TTL
+            {
+                p.update_available = entry.info.update_available;
+                p.latest_version = entry.info.latest.clone();
+                continue;
             }
             tasks.push(Task {
                 idx,

@@ -80,12 +80,10 @@ fn plugin_target_names(profile: &Path, id: &str) -> Vec<String> {
     let mut names = vec![id.to_string()];
     if let Ok(content) =
         fs::read_to_string(profile.join("node_modules").join(id).join("package.json"))
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(name) = json.get("name").and_then(|n| n.as_str())
     {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
-                names.push(name.to_string());
-            }
-        }
+        names.push(name.to_string());
     }
     names
 }

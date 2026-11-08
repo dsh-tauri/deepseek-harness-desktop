@@ -27,40 +27,6 @@ pub(super) fn harness_pid_path<R: tauri::Runtime>(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::harness_pid_path;
-    use tauri::test::{mock_builder, mock_context, noop_assets};
-
-    #[test]
-    fn harness_markers_are_isolated_by_profile() {
-        let app = mock_builder().build(mock_context(noop_assets())).unwrap();
-        let a = super::super::instances::scope_sync("marker-profile-a".into(), || {
-            harness_pid_path(app.handle())
-        });
-        let b = super::super::instances::scope_sync("marker-profile-b".into(), || {
-            harness_pid_path(app.handle())
-        });
-        assert_ne!(a, b);
-        assert_eq!(a.parent().unwrap().file_name().unwrap(), "marker-profile-a");
-        assert_eq!(a.file_name(), b.file_name());
-    }
-
-    #[test]
-    fn harness_pid_marker_is_isolated_by_channel() {
-        for (identifier, marker) in [
-            ("dsh-tauri", ".harness.pid"),
-            ("dsh-tauri-nightly", ".harness-nightly.pid"),
-        ] {
-            let mut context = mock_context(noop_assets());
-            context.config_mut().identifier = identifier.into();
-            let app = mock_builder().build(context).unwrap();
-            let path = harness_pid_path(app.handle());
-            assert_eq!(path.file_name().unwrap(), marker);
-        }
-    }
-}
-
 /// 启动前清扫上次崩溃残留的孤儿 Harness。Unix 标记回收经端口与 PID 双重确认：
 /// - 标记进程已死 → 仅清理陈旧标记；
 /// - 端口占用者正是标记中的 PID → 本应用残留，结束其进程树并清标记；
@@ -229,6 +195,40 @@ pub(super) fn relaunch_via_shell_escape(app_handle: &crate::AppHandle) {
             log::warn!(
                 "RedirectionGuard(448) detected but explorer spawn failed ({e}), falling back"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::harness_pid_path;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn harness_markers_are_isolated_by_profile() {
+        let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+        let a = super::super::instances::scope_sync("marker-profile-a".into(), || {
+            harness_pid_path(app.handle())
+        });
+        let b = super::super::instances::scope_sync("marker-profile-b".into(), || {
+            harness_pid_path(app.handle())
+        });
+        assert_ne!(a, b);
+        assert_eq!(a.parent().unwrap().file_name().unwrap(), "marker-profile-a");
+        assert_eq!(a.file_name(), b.file_name());
+    }
+
+    #[test]
+    fn harness_pid_marker_is_isolated_by_channel() {
+        for (identifier, marker) in [
+            ("dsh-tauri", ".harness.pid"),
+            ("dsh-tauri-nightly", ".harness-nightly.pid"),
+        ] {
+            let mut context = mock_context(noop_assets());
+            context.config_mut().identifier = identifier.into();
+            let app = mock_builder().build(context).unwrap();
+            let path = harness_pid_path(app.handle());
+            assert_eq!(path.file_name().unwrap(), marker);
         }
     }
 }

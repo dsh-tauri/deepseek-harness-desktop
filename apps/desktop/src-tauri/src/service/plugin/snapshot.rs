@@ -351,16 +351,14 @@ fn resolve_spec(app_handle: &AppHandle, id: &str) -> String {
         return preset.spec.clone();
     }
     let manifest_path = profile_dir(app_handle).join("package.json");
-    if let Ok(text) = fs::read_to_string(&manifest_path) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(spec) = value
-                .get("dependencies")
-                .and_then(|d| d.get(id))
-                .and_then(|v| v.as_str())
-            {
-                return spec.to_string();
-            }
-        }
+    if let Ok(text) = fs::read_to_string(&manifest_path)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+        && let Some(spec) = value
+            .get("dependencies")
+            .and_then(|d| d.get(id))
+            .and_then(|v| v.as_str())
+    {
+        return spec.to_string();
     }
     id.to_string()
 }
@@ -668,10 +666,10 @@ pub async fn restore(app_handle: &AppHandle, id: &str) -> Result<(), String> {
     verify_archive_integrity(&archive_path, &manifest)?;
 
     // 操作锁 + 停止服务（与安装/卸载一致，还原期间避免资源竞争）
-    if crate::service::workflow::has_owned_process() {
-        if let Err(e) = crate::service::workflow::stop(app_handle.clone()).await {
-            log::warn!("failed to stop harness before plugin restore: {e}");
-        }
+    if crate::service::workflow::has_owned_process()
+        && let Err(e) = crate::service::workflow::stop(app_handle.clone()).await
+    {
+        log::warn!("failed to stop harness before plugin restore: {e}");
     }
 
     let profile = profile_dir(app_handle);
@@ -713,11 +711,9 @@ pub async fn restore(app_handle: &AppHandle, id: &str) -> Result<(), String> {
 
     // 阶段 3：切换（dest → backup，staging/package → dest），失败反转已做步骤
     let dest_existed = fs::symlink_metadata(&dest).is_ok();
-    if dest_existed {
-        if let Err(e) = fs::rename(&dest, &backup) {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(format!("SNAPSHOT_SWITCH_BACKUP: {e}"));
-        }
+    if dest_existed && let Err(e) = fs::rename(&dest, &backup) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(format!("SNAPSHOT_SWITCH_BACKUP: {e}"));
     }
     if let Err(e) = fs::rename(&staged_pkg, &dest) {
         // 反转：清掉可能的半成品落点，备份还原回原位
@@ -746,10 +742,10 @@ pub async fn restore(app_handle: &AppHandle, id: &str) -> Result<(), String> {
     if !is_installed(app_handle, id) {
         write_back_manifest_refs(app_handle, id, &manifest.spec);
     }
-    if let Err(e) = fs::remove_file(profile.join("pnpm-lock.yaml")) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            log::warn!("failed to remove pnpm-lock.yaml after plugin restore: {e}");
-        }
+    if let Err(e) = fs::remove_file(profile.join("pnpm-lock.yaml"))
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("failed to remove pnpm-lock.yaml after plugin restore: {e}");
     }
     Ok(())
 }

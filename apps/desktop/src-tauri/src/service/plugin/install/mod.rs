@@ -242,19 +242,18 @@ fn spec_targets(app_handle: &AppHandle, specs: &[String]) -> Result<Vec<InstallT
         if let Some(preset) = presets
             .iter()
             .find(|preset| preset.id == spec || preset.spec == spec)
-        {
-            if let Ok(raw) = preset_spec_for_install(
+            && let Ok(raw) = preset_spec_for_install(
                 preset,
                 bundled_dir_of(app_handle, preset),
                 core_version.as_deref(),
-            ) {
-                targets.push(InstallTarget {
-                    id: preset.id.clone(),
-                    name: Some(installed_name(preset).to_string()),
-                    spec: normalize_git_spec(&raw),
-                });
-                continue;
-            }
+            )
+        {
+            targets.push(InstallTarget {
+                id: preset.id.clone(),
+                name: Some(installed_name(preset).to_string()),
+                spec: normalize_git_spec(&raw),
+            });
+            continue;
         }
         let raw = normalize_git_spec(spec);
         let name = spec::package_name_of_spec(&raw, &base);
@@ -1126,7 +1125,7 @@ mod tests {
         };
 
         assert_eq!(
-            locked_release_age_exemptions(&dir, &[locked.clone()]),
+            locked_release_age_exemptions(&dir, std::slice::from_ref(&locked)),
             Some(vec!["dshmarket@2.12.0".to_string()])
         );
         let transitive = PolicyBlockedVersion {

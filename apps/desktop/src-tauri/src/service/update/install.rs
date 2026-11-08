@@ -971,6 +971,13 @@ mod tests {
         }
     }
 
+    async fn read_http_request<S: tokio::io::AsyncRead + Unpin>(socket: &mut S) {
+        use tokio::io::AsyncReadExt;
+        let mut request = [0; 4096];
+        let read = socket.read(&mut request).await.unwrap();
+        assert!(read > 0, "mock server received an empty request");
+    }
+
     fn download_cache_files(dir: &std::path::Path) -> Vec<PathBuf> {
         let mut files: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -986,7 +993,7 @@ mod tests {
     async fn download_removes_stale_parts_without_touching_other_entries() {
         let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            use tokio::io::AsyncWriteExt;
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("installer.AppImage");
             let stale = dir.path().join(".installer-stale.part");
@@ -1009,8 +1016,7 @@ mod tests {
             ));
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = [0; 4096];
-                socket.read(&mut request).await.unwrap();
+                read_http_request(&mut socket).await;
                 socket
                     .write_all(
                         b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
@@ -1052,7 +1058,7 @@ mod tests {
     #[tokio::test]
     async fn download_waits_for_another_process_and_recovers_its_crash_leftover() {
         let _download = TEST_DOWNLOAD_LOCK.lock().await;
-        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         const CHILD: &str = "DSH_TEST_INSTALLER_DOWNLOAD_CHILD";
         const URL: &str = "DSH_TEST_INSTALLER_DOWNLOAD_URL";
         const READY: &str = "INSTALLER_DOWNLOAD_PARTIAL_READY";
@@ -1089,8 +1095,7 @@ mod tests {
             command.creation_flags(0x08000000);
             let mut child = command.spawn().unwrap();
             let (mut first_socket, _) = listener.accept().await.unwrap();
-            let mut request = [0; 4096];
-            first_socket.read(&mut request).await.unwrap();
+            read_http_request(&mut first_socket).await;
             first_socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabc").await.unwrap();
             let mut output = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
             loop {
@@ -1135,7 +1140,7 @@ mod tests {
             drop(first_socket);
 
             let (mut socket, _) = listener.accept().await.unwrap();
-            socket.read(&mut request).await.unwrap();
+            read_http_request(&mut socket).await;
             socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nxyz").await.unwrap();
             next.await.unwrap().unwrap();
             assert_eq!(std::fs::read(&path).unwrap(), b"xyz");
@@ -1148,7 +1153,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_lock_waiter_leaves_cache_untouched() {
         use std::future::Future;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
         let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
             let dir = tempfile::tempdir().unwrap();
@@ -1192,8 +1197,7 @@ mod tests {
 
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = [0; 4096];
-                socket.read(&mut request).await.unwrap();
+                read_http_request(&mut socket).await;
                 socket
                     .write_all(
                         b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
@@ -1216,7 +1220,7 @@ mod tests {
     async fn concurrent_downloads_publish_one_complete_installer() {
         let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            use tokio::io::AsyncWriteExt;
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("installer.AppImage");
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1242,8 +1246,7 @@ mod tests {
                 }
             });
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0; 4096];
-            socket.read(&mut request).await.unwrap();
+            read_http_request(&mut socket).await;
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabc")
                 .await
@@ -1294,7 +1297,7 @@ mod tests {
     async fn cancelled_download_removes_partial_file() {
         let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            use tokio::io::AsyncWriteExt;
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("installer.AppImage");
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1315,8 +1318,7 @@ mod tests {
                 }
             });
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0; 4096];
-            socket.read(&mut request).await.unwrap();
+            read_http_request(&mut socket).await;
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabc")
                 .await
@@ -1352,7 +1354,7 @@ mod tests {
     async fn failed_integrity_check_never_publishes_an_installer() {
         let _download = TEST_DOWNLOAD_LOCK.lock().await;
         tokio::time::timeout(Duration::from_secs(15), async {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            use tokio::io::AsyncWriteExt;
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("installer.AppImage");
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1363,8 +1365,7 @@ mod tests {
             release.digest = Some("0".repeat(64));
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = [0; 4096];
-                socket.read(&mut request).await.unwrap();
+                read_http_request(&mut socket).await;
                 socket
                     .write_all(
                         b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
@@ -1584,7 +1585,7 @@ mod tests {
         for i in 0..8 {
             assert_eq!(
                 dir.path().join(format!("installer-{i}.exe")).exists(),
-                i < 2 || i >= 5,
+                !(2..5).contains(&i),
                 "{i}"
             );
         }

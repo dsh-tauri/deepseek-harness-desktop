@@ -171,16 +171,16 @@ fn git_https_isolation_env(app_handle: &AppHandle) -> HashMap<String, String> {
         return HashMap::new();
     };
     let mut envs = HashMap::new();
-    if git_scope_has_github_ssh_rewrite(&git, &["--global"]) {
-        if let Some(config) = empty_git_config_file() {
-            log::info!(
-                "git config rewrites GitHub HTTPS to SSH (global); isolating GIT_CONFIG_GLOBAL to force HTTPS"
-            );
-            envs.insert(
-                "GIT_CONFIG_GLOBAL".to_string(),
-                config.to_string_lossy().into_owned(),
-            );
-        }
+    if git_scope_has_github_ssh_rewrite(&git, &["--global"])
+        && let Some(config) = empty_git_config_file()
+    {
+        log::info!(
+            "git config rewrites GitHub HTTPS to SSH (global); isolating GIT_CONFIG_GLOBAL to force HTTPS"
+        );
+        envs.insert(
+            "GIT_CONFIG_GLOBAL".to_string(),
+            config.to_string_lossy().into_owned(),
+        );
     }
     if git_scope_has_github_ssh_rewrite(&git, &["--system"]) {
         log::info!(

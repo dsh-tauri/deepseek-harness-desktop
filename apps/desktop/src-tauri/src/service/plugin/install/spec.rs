@@ -142,14 +142,12 @@ pub(super) fn package_name_of_spec(spec: &str, base: &Path) -> Option<String> {
 
 /// 本地目录的包名：优先读其 `package.json`，回落目录名。
 pub(super) fn local_package_name(path: &Path) -> Option<String> {
-    if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
-                if !name.is_empty() {
-                    return Some(name.to_string());
-                }
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(path.join("package.json"))
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(name) = value.get("name").and_then(|v| v.as_str())
+        && !name.is_empty()
+    {
+        return Some(name.to_string());
     }
     path.file_name().map(|s| s.to_string_lossy().into_owned())
 }
