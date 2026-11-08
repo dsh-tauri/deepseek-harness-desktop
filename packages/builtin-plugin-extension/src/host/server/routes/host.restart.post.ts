@@ -21,9 +21,5 @@ export default defineEventHandler((event) => {
     return { error: 'untrusted origin' }
   }
   const outcome = restart.start()
-  if (outcome.owned) {
-    event.res.status = 409
-    return { error: 'restart is owned by the desktop shell' }
-  }
   return { ok: true, pid: outcome.pid, replacementPid: outcome.replacementPid, logOut: outcome.logOut }
 })
