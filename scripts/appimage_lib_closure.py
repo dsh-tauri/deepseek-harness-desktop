@@ -207,6 +207,48 @@ def _matches(name, patterns):
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
 
+def _inside_tree(root, candidate):
+    root_text = os.path.normpath(str(root))
+    candidate_text = os.path.normpath(str(candidate))
+    if candidate_text == root_text:
+        return Path(candidate_text)
+    try:
+        if os.path.commonpath([root_text, candidate_text]) != root_text:
+            return None
+    except ValueError:
+        return None
+    return Path(candidate_text)
+
+
+def _absolute_target(raw):
+    return raw.startswith(('/', '\\')) or os.path.isabs(raw)
+
+
+def resolve_link_target(root, link, raw):
+    target = Path(raw)
+    if _absolute_target(raw):
+        parts = [part for part in target.parts if part not in (target.anchor, '/', '\\')]
+        return _inside_tree(root, Path(root).joinpath(*parts))
+    return _inside_tree(root, link.parent / target)
+
+
+def resolve_link(root, path, limit=40):
+    current = Path(path)
+    for _ in range(limit):
+        if not current.is_symlink():
+            return current
+        raw = os.readlink(current)
+        resolved = resolve_link_target(root, current, raw)
+        if resolved is None:
+            return None
+        if not resolved.exists():
+            if _absolute_target(raw):
+                return None
+            raise ValueError(f'symbolic link target is missing: {raw}')
+        current = resolved
+    raise ValueError(f'symbolic link chain is deeper than {limit}')
+
+
 def check_tree(root, host_libs=HOST_LIBS, host_owned=HOST_OWNED, allow_host_owned=False):
     root = Path(root)
     if not root.is_dir():
@@ -224,7 +266,14 @@ def check_tree(root, host_libs=HOST_LIBS, host_owned=HOST_OWNED, allow_host_owne
             if not allow_host_owned and _matches(name, host_owned):
                 problems.append(f'ELF_CLOSURE_HOST_OWNED_BUNDLED: {rel} must be provided by the host, not bundled')
             try:
-                info = parse_elf(path)
+                target = resolve_link(root, path) if path.is_symlink() else path
+            except (OSError, ValueError) as error:
+                problems.append(f'ELF_CLOSURE_UNREADABLE: {rel}: {error}')
+                continue
+            if target is None:
+                continue
+            try:
+                info = parse_elf(target)
             except (OSError, ValueError, struct.error) as error:
                 problems.append(f'ELF_CLOSURE_UNREADABLE: {rel}: {error}')
                 continue

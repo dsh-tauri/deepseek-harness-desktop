@@ -27,6 +27,16 @@ VERNEED_ENTRY = 40
 VERDEF_ENTRY = 28
 
 
+def make_symlink(link, target):
+    """建真实符号链接；Windows 非管理员且未开开发者模式时无法创建，跳过该用例。"""
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if sys.platform == 'win32':
+            raise unittest.SkipTest(f'cannot create symlink on this Windows host: {error}') from error
+        raise
+
+
 def build_elf(needed=(), soname=None, requires=(), provides=(), elf_class=2, dynamic=True):
     """按真实 ELF 布局拼出最小可解析镜像。
 
@@ -173,14 +183,59 @@ class ClosureTest(unittest.TestCase):
                 self.assertEqual(problems, [])
                 self.assertEqual(stats.host_needed, 1)
 
-    @unittest.skipIf(sys.platform == 'win32', 'Windows 建符号链接需管理员权限，由 Linux CI 覆盖')
     def test_symlink_chain_provides_soname(self):
         self.write('usr/lib/libfoo.so.1.2.3', build_elf(soname='libfoo.so.1'))
-        (self.root / 'usr/lib/libfoo.so.1').symlink_to('libfoo.so.1.2.3')
+        make_symlink(self.root / 'usr/lib/libfoo.so.1', 'libfoo.so.1.2.3')
         self.write('usr/bin/app', build_elf(needed=('libfoo.so.1',)))
         problems, stats = check_tree(self.root, host_owned=())
         self.assertEqual(problems, [])
         self.assertEqual(stats.host_needed, 0)
+
+    def test_absolute_symlink_resolves_inside_install_root(self):
+        self.write('opt/app/lib/libfoo.so.1.2.3', build_elf(soname='libfoo.so.1'))
+        make_symlink(self.root / 'opt/app/lib/libfoo.so.1', '/opt/app/lib/libfoo.so.1.2.3')
+        self.write('opt/app/bin/app', build_elf(needed=('libfoo.so.1',)))
+        problems, stats = check_tree(self.root, host_owned=())
+        self.assertEqual(problems, [])
+        self.assertEqual(stats.elf_files, 2)
+        self.assertEqual(stats.host_needed, 0)
+
+    def test_absolute_symlink_escaping_install_root_is_ignored(self):
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__('shutil').rmtree(outside, ignore_errors=True))
+        (outside / 'libescape.so.1').write_bytes(build_elf(soname='libescape.so.1'))
+        self.write('usr/bin/app', build_elf(needed=('libescape.so.1',)))
+        make_symlink(self.root / 'usr/lib/libescape.so.1', str(outside / 'libescape.so.1'))
+        problems, stats = check_tree(self.root, host_owned=())
+        self.assertEqual(len(problems), 1)
+        self.assertIn('ELF_CLOSURE_UNRESOLVED_NEEDED: usr/bin/app needs libescape.so.1', problems[0])
+        self.assertEqual(stats.elf_files, 1)
+
+    def test_relative_symlink_escaping_install_root_is_ignored(self):
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__('shutil').rmtree(outside, ignore_errors=True))
+        (outside / 'libescape.so.1').write_bytes(build_elf(soname='libescape.so.1'))
+        self.write('usr/bin/app', build_elf(needed=('libescape.so.1',)))
+        make_symlink(self.root / 'usr/lib/libescape.so.1', '../../../' + outside.name + '/libescape.so.1')
+        problems, stats = check_tree(self.root, host_owned=())
+        self.assertEqual(len(problems), 1)
+        self.assertIn('ELF_CLOSURE_UNRESOLVED_NEEDED', problems[0])
+        self.assertEqual(stats.elf_files, 1)
+
+    def test_relative_symlink_with_missing_target_is_unreadable(self):
+        self.write('usr/bin/app', build_elf())
+        make_symlink(self.root / 'usr/lib/libmissing.so.1', 'libabsent.so.1.2')
+        problems, stats = check_tree(self.root, host_owned=())
+        self.assertEqual(len(problems), 1)
+        self.assertIn('ELF_CLOSURE_UNREADABLE: usr/lib/libmissing.so.1', problems[0])
+
+    def test_absolute_symlink_without_in_tree_target_is_ignored(self):
+        self.write('usr/bin/app', build_elf(needed=('libmissing.so.1',)))
+        make_symlink(self.root / 'usr/lib/libmissing.so.1', '/opt/absent/libmissing.so.1')
+        problems, stats = check_tree(self.root, host_owned=())
+        self.assertEqual(len(problems), 1)
+        self.assertIn('ELF_CLOSURE_UNRESOLVED_NEEDED: usr/bin/app needs libmissing.so.1', problems[0])
+        self.assertEqual(stats.elf_files, 1)
 
     def test_soname_free_dependency_resolves_by_file_name(self):
         self.write('usr/lib/libfoo.so.5', build_elf())
