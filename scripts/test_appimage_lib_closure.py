@@ -8,7 +8,26 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name('appimage_lib_closure.py')
 sys.path.insert(0, str(SCRIPT.parent))
 
-from appimage_lib_closure import HOST_LIBS, HOST_OWNED, check_tree, parse_elf  # noqa: E402
+from appimage_lib_closure import (  # noqa: E402
+    DEB_PACKAGE_LIBS, HOST_LIBS, HOST_OWNED, check_tree, deb_host_libs, parse_depends, parse_elf,
+)
+
+DEB_DEPENDS = 'zenity, libudev1, libappindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0'
+GTK_DESKTOP_LIBS = (
+    'libgtk-3.so.0',
+    'libgdk-3.so.0',
+    'libgdk_pixbuf-2.0.so.0',
+    'libatk-1.0.so.0',
+    'libatk-bridge-2.0.so.0',
+    'libatspi.so.0',
+    'libcairo.so.2',
+    'libpango-1.0.so.0',
+    'libXcomposite.so.1',
+    'libXdamage.so.1',
+    'libXext.so.6',
+    'libXfixes.so.3',
+    'libXrandr.so.2',
+)
 
 ET_DYN = 3
 PT_LOAD = 1
@@ -29,6 +48,7 @@ VERDEF_ENTRY = 28
 
 def make_symlink(link, target):
     """建真实符号链接；Windows 非管理员且未开开发者模式时无法创建，跳过该用例。"""
+    link.parent.mkdir(parents=True, exist_ok=True)
     try:
         link.symlink_to(target)
     except OSError as error:
@@ -331,6 +351,88 @@ class ClosureTest(unittest.TestCase):
     def test_missing_root_is_reported(self):
         with self.assertRaises(ValueError):
             check_tree(self.root / 'absent')
+
+
+class DebHostAllowlistTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def write(self, relative, data):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return path
+
+    def desktop_tree(self, needed):
+        self.write('usr/bin/deepseek-harness-desktop', build_elf(needed=needed))
+        self.write('usr/lib/dsh/runtime/DSH Tauri', build_elf(needed=needed))
+        return self.root
+
+    def test_deb_tree_accepts_gtk_stack_declared_by_depends(self):
+        self.desktop_tree(('libgtk-3.so.0', 'libgdk-3.so.0', 'libgdk_pixbuf-2.0.so.0',
+                          'libatk-1.0.so.0', 'libatk-bridge-2.0.so.0', 'libatspi.so.0',
+                          'libcairo.so.2', 'libpango-1.0.so.0', 'libudev.so.1',
+                          'libXcomposite.so.1', 'libXdamage.so.1', 'libXext.so.6',
+                          'libXfixes.so.3', 'libXrandr.so.2'))
+        host_libs = HOST_LIBS + deb_host_libs(DEB_DEPENDS)
+        problems, stats = check_tree(self.root, host_libs=host_libs, allow_host_owned=True)
+        self.assertEqual(problems, [])
+        self.assertEqual(stats.needed, 28)
+        self.assertEqual(stats.host_needed, 28)
+
+    def test_every_gtk_package_library_is_covered(self):
+        self.assertEqual(set(GTK_DESKTOP_LIBS), set(DEB_PACKAGE_LIBS['libgtk-3-0']))
+        host_libs = deb_host_libs('libgtk-3-0')
+        for name in GTK_DESKTOP_LIBS:
+            with self.subTest(name=name):
+                self.assertIn(name, host_libs)
+
+    def test_gtk_stack_is_not_assumed_without_depends(self):
+        self.desktop_tree(('libgtk-3.so.0', 'libatk-1.0.so.0', 'libcairo.so.2'))
+        problems, _ = check_tree(self.root, allow_host_owned=True)
+        self.assertEqual(len(problems), 6)
+        for problem in problems:
+            self.assertIn('ELF_CLOSURE_UNRESOLVED_NEEDED', problem)
+
+    def test_undeclared_gtk_package_fails(self):
+        self.desktop_tree(('libgtk-3.so.0', 'libcairo.so.2'))
+        host_libs = HOST_LIBS + deb_host_libs('zenity, libappindicator3-1, libwebkit2gtk-4.1-0')
+        problems, _ = check_tree(self.root, host_libs=host_libs, allow_host_owned=True)
+        self.assertEqual(len(problems), 4)
+        self.assertTrue(all('libgtk-3.so.0' in problem or 'libcairo.so.2' in problem for problem in problems), problems)
+
+    def test_deb_depends_never_whitelists_unpackaged_crypto_or_print_libs(self):
+        added = set(deb_host_libs(DEB_DEPENDS)) - set(HOST_LIBS)
+        self.assertEqual(added, set(DEB_PACKAGE_LIBS['libgtk-3-0']) | set(DEB_PACKAGE_LIBS['libudev1']))
+        for name in ('libgcrypt.so.20', 'libprintbackend-cups.so', 'libgpg-error.so.0'):
+            with self.subTest(name=name):
+                self.assertNotIn(name, added)
+
+    def test_libgcrypt_is_still_rejected_with_gtk_depends(self):
+        host_libs = HOST_LIBS + deb_host_libs(DEB_DEPENDS)
+        self.desktop_tree(('libgcrypt.so.20',))
+        problems, _ = check_tree(self.root, host_libs=host_libs, allow_host_owned=True)
+        self.assertEqual(len(problems), 2)
+        self.assertIn('ELF_CLOSURE_UNRESOLVED_NEEDED', problems[0])
+        self.assertIn('libgcrypt.so.20', problems[0])
+
+    def test_empty_depends_declares_nothing(self):
+        self.desktop_tree(('libgtk-3.so.0',))
+        self.assertEqual(deb_host_libs(''), ())
+        problems, stats = check_tree(self.root, host_libs=HOST_LIBS + deb_host_libs(''), allow_host_owned=True)
+        self.assertEqual(len(problems), 2)
+        self.assertEqual(stats.host_needed, 0)
+
+    def test_parse_depends_strips_versions_and_skips_alternatives(self):
+        self.assertEqual(parse_depends('zenity, libgtk-3-0 (>= 3.24), libudev1:amd64'),
+                         ('zenity', 'libgtk-3-0', 'libudev1'))
+        self.assertEqual(parse_depends('libfoo1 | libbar1, libcups2'), ('libcups2',))
+        self.assertEqual(parse_depends(''), ())
+        self.assertEqual(parse_depends('zenity,\n libgtk-3-0'), ('zenity', 'libgtk-3-0'))
 
 
 class CommandLineTest(unittest.TestCase):

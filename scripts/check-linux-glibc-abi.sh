@@ -95,6 +95,11 @@ elf_versions() {
   rm -f "$report"
 }
 
+# control 的 Depends 是 deb 对宿主的全部承诺，闭合性判定必须读它而不是另抄一份白名单。
+deb_depends() {
+  dpkg-deb --field "$1" Depends 2>/dev/null || true
+}
+
 is_elf() {
   [ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
 }
@@ -178,9 +183,10 @@ scan_elf_tree() {
 # 两者都不满足就是极简系统上的 cannot open shared object file。复用上面已解包的树，不重复解压。
 # AppImage 额外要求宿主接口库不得被打包；deb 只查闭合性，因为它本来就没跑过剔除脚本。
 check_closure() {
-  local root="$1" kind="$2" mode="$3"
+  local root="$1" kind="$2"
+  shift 2
   [ -d "$root" ] || return 0
-  if ! python3 -B "$script_dir/appimage_lib_closure.py" --root "$root" $mode; then
+  if ! python3 -B "$script_dir/appimage_lib_closure.py" --root "$root" "$@"; then
     echo "::error::${kind}: ELF dependency closure is broken (see ELF_CLOSURE_* above)" >&2
     closure_failures=$((closure_failures + 1))
   fi
@@ -221,7 +227,7 @@ for artifact in "$@"; do
         continue
       fi
       scan_elf_tree "$extract/squashfs-root" "AppImage $(basename "$artifact")"
-      check_closure "$extract/squashfs-root" "AppImage $(basename "$artifact")" ""
+      check_closure "$extract/squashfs-root" "AppImage $(basename "$artifact")"
       ;;
     *.deb)
       command -v dpkg-deb >/dev/null 2>&1 || die "required tool not found: dpkg-deb (install dpkg)"
@@ -232,7 +238,9 @@ for artifact in "$@"; do
         continue
       fi
       scan_elf_tree "$target" "deb $(basename "$artifact")"
-      check_closure "$target" "deb $(basename "$artifact")" "--allow-host-owned-libs"
+      depends="$(deb_depends "$artifact")"
+      [ -n "$depends" ] || die "deb declares no Depends: $(basename "$artifact")"
+      check_closure "$target" "deb $(basename "$artifact")" --allow-host-owned-libs --depends "$depends"
       ;;
   esac
 done

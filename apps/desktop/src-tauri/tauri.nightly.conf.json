@@ -33,7 +33,8 @@
     "linux": {
       "deb": {
         "depends": [
-          "zenity"
+          "zenity",
+          "libudev1"
         ],
         "conflicts": [],
         "replaces": [],
