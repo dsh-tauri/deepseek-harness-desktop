@@ -1,6 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import process from 'node:process'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const spawn = vi.fn((_file: string, _args: readonly string[], _options: SpawnOptions) => ({ pid: 4242, unref: vi.fn() }) as unknown as ChildProcess)
 
@@ -19,6 +19,12 @@ const originalArgv = process.argv
 beforeEach(() => {
   vi.useFakeTimers()
   spawn.mockClear()
+})
+
+afterEach(() => {
+  process.argv = originalArgv
+  delete process.env.DSH_DESKTOP
+  vi.useRealTimers()
 })
 
 describe('restart.start', () => {
@@ -40,14 +46,7 @@ describe('restart.start', () => {
   it('restarts the host itself even when the desktop marker env is present', () => {
     process.env.DSH_DESKTOP = '1'
     process.argv = ['node', asarEntry]
-    try {
-      expect(restart.start().replacementPid).toBe(4242)
-      expect(spawn).toHaveBeenCalledTimes(1)
-    }
-    finally {
-      process.argv = originalArgv
-      delete process.env.DSH_DESKTOP
-      vi.useRealTimers()
-    }
+    expect(restart.start().replacementPid).toBe(4242)
+    expect(spawn).toHaveBeenCalledTimes(1)
   })
 })
