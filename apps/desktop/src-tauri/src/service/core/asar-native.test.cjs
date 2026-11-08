@@ -514,3 +514,76 @@ if (process.env.DSH_ASAR_NATIVE_INTEGRATION === '1') {
     assert.match(output, /DSH_NATIVE_PTY_OK/)
   })
 }
+
+function runnerFixture(t, buildArgv) {
+  const root = fs.mkdtempSync(path.join(scratch, 'runner-'))
+  const archive = path.join(root, 'core')
+  const cache = path.join(root, 'cache')
+  fs.mkdirSync(archive)
+  const entry = path.join(archive, 'worker.js')
+  fs.writeFileSync(entry, '')
+  const selection = process.env.DSH_SUBPROCESS_RUNNER
+  const originalArgv = process.argv
+  const hooks = []
+  process.env.DSH_SUBPROCESS_RUNNER = 'windows'
+  process.argv = buildArgv(entry, archive)
+  t.after(() => {
+    for (const hook of hooks)
+      hook.deregister()
+    process.argv = originalArgv
+    if (selection === undefined)
+      delete process.env.DSH_SUBPROCESS_RUNNER
+    else process.env.DSH_SUBPROCESS_RUNNER = selection
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  return {
+    archive,
+    cache,
+    entry,
+    register(targetCache = cache) {
+      const hook = register(archive, targetCache)
+      hooks.push(hook)
+      return hook
+    },
+  }
+}
+
+test('windows subprocess runner hands its preload to an archived Node target', (t) => {
+  const f = runnerFixture(t, (entry, archive) => [process.execPath, path.join(archive, 'runner.js'), '--', process.execPath, entry])
+  f.register()
+  assert.deepEqual(process.argv, [
+    process.execPath,
+    path.join(f.archive, 'runner.js'),
+    '--',
+    process.execPath,
+    '--require',
+    require.resolve('./asar-native.cjs'),
+    f.entry,
+  ])
+  assert.equal(process.env.DSH_CORE_ARCHIVE, f.archive)
+  assert.equal(process.env.DSH_CORE_NATIVE_CACHE, f.cache)
+})
+
+test('windows subprocess runner leaves a non-Node target argv untouched', (t) => {
+  const f = runnerFixture(t, (entry, archive) => [process.execPath, path.join(archive, 'runner.js'), '--', 'tool.exe', entry])
+  const before = [...process.argv]
+  f.register()
+  assert.deepEqual(process.argv, before)
+})
+
+test('windows subprocess runner inserts its preload once across registrations', (t) => {
+  const f = runnerFixture(t, (entry, archive) => [process.execPath, path.join(archive, 'runner.js'), '--', process.execPath, entry])
+  f.register()
+  const inserted = [...process.argv]
+  assert.equal(inserted.filter(arg => arg === '--require').length, 1)
+  f.register(path.join(path.dirname(f.cache), 'second-cache'))
+  assert.deepEqual(process.argv, inserted)
+})
+
+test('ordinary process without the runner selection keeps its argv', (t) => {
+  const f = runnerFixture(t, (entry, archive) => [process.execPath, path.join(archive, 'runner.js'), '--', process.execPath, entry])
+  delete process.env.DSH_SUBPROCESS_RUNNER
+  const before = [...process.argv]
+  f.register()
+  assert.deepEqual(process.argv, before)
+})

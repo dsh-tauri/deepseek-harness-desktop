@@ -243,10 +243,25 @@ module.exports = function registerNativePackages(archive, cache) {
   }
   if (!process.execArgv.includes(__filename))
     process.execArgv.push('--require', __filename)
+  function handOffWindowsRunner() {
+    if (process.env.DSH_SUBPROCESS_RUNNER !== 'windows')
+      return
+    const delimiter = process.argv.indexOf('--', 1)
+    const program = delimiter < 0 ? undefined : process.argv[delimiter + 1]
+    if (program === undefined || path.resolve(program) !== process.execPath)
+      return
+    const target = process.argv.slice(delimiter + 2)
+    if (target.includes(__filename))
+      return
+    if (!target.some(arg => /\.[cm]?js$/.test(arg) && relative(archive, path.resolve(arg)) !== null))
+      return
+    process.argv.splice(delimiter + 2, 0, '--require', __filename)
+  }
   const previousArchive = process.env.DSH_CORE_ARCHIVE
   const previousCache = process.env.DSH_CORE_NATIVE_CACHE
   process.env.DSH_CORE_ARCHIVE = archive
   process.env.DSH_CORE_NATIVE_CACHE = cache
+  handOffWindowsRunner()
   const registration = {
     deregister() {
       if (!registrations.has(key))

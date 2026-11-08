@@ -39,7 +39,7 @@ fn get(app_handle: &AppHandle) -> Option<PendingInstaller> {
     Some(pending)
 }
 
-pub(super) fn installer_path(app_handle: &AppHandle) -> Option<std::path::PathBuf> {
+pub(crate) fn installer_path(app_handle: &AppHandle) -> Option<std::path::PathBuf> {
     get(app_handle).map(|pending| pending.path.into())
 }
 

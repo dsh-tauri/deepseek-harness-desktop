@@ -120,9 +120,18 @@ pub fn run() -> Result<(), String> {
             tauri::RunEvent::Exit => {
                 // 进行中的插件安装子进程是独立进程组，父进程退出不会连带回收；
                 // 不显式结束就会留下占着档案 / pnpm store 的孤儿，让下一次启动
-                // 永久卡在安装阶段（且日志无任何输出）。必须先于其它收尾动作。
+                // 永久卡在安装阶段（且日志无任何输出）。必须先于读取设置：后者与设置
+                // 写入共用一把锁，保存卡在 I/O 上时会把回收一起拖到用户强杀进程之后。
                 service::plugin::terminate_active_installs_blocking();
+                // Exit 在一个进程生命周期内只发生一次，这条日志是「内核为什么被杀」
+                // 的唯一线索：desktop 的 stderr 在 .desktop 启动下会被丢弃（issue #1466）。
                 let setting = config::get_store_dat_setting(app_handle);
+                log::warn!(
+                    "RUN_EVENT_EXIT: installed={} auto_update={} pending_installer={}",
+                    setting.installed,
+                    setting.auto_update,
+                    service::update::pending_installer_path(app_handle).is_some()
+                );
                 if setting.installed {
                     service::workflow::stop_on_exit(app_handle);
                 }

@@ -5,7 +5,6 @@ use std::{
 };
 use tauri::Manager;
 use tauri::{Emitter, Runtime, Url, webview::DownloadEvent};
-use tauri_plugin_opener::OpenerExt;
 use tauri_runtime_electron::{NewWindowFeatures, NewWindowResponse};
 
 use crate::config;
@@ -17,9 +16,16 @@ pub fn on_new_window(
     _features: NewWindowFeatures,
 ) -> NewWindowResponse {
     if matches!(url.scheme(), "http" | "https") {
-        if let Err(e) = app_handle.opener().open_url(url.to_string(), None::<&str>) {
-            log::warn!("[new-window] open in browser failed {e}");
-        }
+        let client = app_handle
+            .state::<tauri_runtime_electron::ElectronClient>()
+            .inner()
+            .clone();
+        let target = url.to_string();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = tauri_runtime_electron::open_external(&client, &target).await {
+                log::warn!("[new-window] open in browser failed {e}");
+            }
+        });
     } else {
         log::debug!("[new-window] denied {url}");
     }

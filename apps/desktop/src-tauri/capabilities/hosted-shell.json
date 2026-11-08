@@ -29,6 +29,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-set-decorations",
     "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
     "core:window:allow-unminimize",
     "core:window:allow-unmaximize",
     "core:window:allow-start-dragging",
