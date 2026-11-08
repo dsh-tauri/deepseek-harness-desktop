@@ -118,11 +118,19 @@ pub fn run() -> Result<(), String> {
             // 残留并把原生模块 DLL（如 sharp 的 libvips-42.dll）锁在内存，
             // 下次启动重新解压时会失败（Windows os error 32）
             tauri::RunEvent::Exit => {
+                // Exit 在一个进程生命周期内只发生一次，这条日志是「内核为什么被杀」
+                // 的唯一线索：desktop 的 stderr 在 .desktop 启动下会被丢弃（issue #1466）。
+                let setting = config::get_store_dat_setting(app_handle);
+                log::warn!(
+                    "RUN_EVENT_EXIT: installed={} auto_update={} pending_installer={}",
+                    setting.installed,
+                    setting.auto_update,
+                    service::update::pending_installer_path(app_handle).is_some()
+                );
                 // 进行中的插件安装子进程是独立进程组，父进程退出不会连带回收；
                 // 不显式结束就会留下占着档案 / pnpm store 的孤儿，让下一次启动
                 // 永久卡在安装阶段（且日志无任何输出）。必须先于其它收尾动作。
                 service::plugin::terminate_active_installs_blocking();
-                let setting = config::get_store_dat_setting(app_handle);
                 if setting.installed {
                     service::workflow::stop_on_exit(app_handle);
                 }

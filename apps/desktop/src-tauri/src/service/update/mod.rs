@@ -35,6 +35,7 @@ pub use about::{about, DesktopAboutInfo};
 #[allow(unused_imports)]
 pub use install::{check, download, open_installer, DesktopDownloadProgress, DesktopUpdateInfo};
 pub use pending::launch_pending_installer;
+pub(crate) use pending::installer_path as pending_installer_path;
 
 /// 是否为发行版仓库构建（见 [`version`] 的 `DISTRO_MANAGED`），前端据此提示改用包管理器更新。
 pub fn distro_managed() -> bool {
