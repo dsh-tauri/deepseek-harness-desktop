@@ -8,6 +8,8 @@ dist
 .env
 .tmp
 .temp/
+__pycache__/
+*.pyc
 
 .agents/skills/
 .claude/skills/

@@ -147,6 +147,8 @@ jobs:
         shell: bash
         run: |
           python3 -B scripts/test_fix_appimage_host_libs.py
+          python3 -B scripts/test_appimage_lib_closure.py
+          python3 -B scripts/test_linux_host_abi_ceiling.py
           mapfile -d '' appimages < <(find apps/desktop/src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
           [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
           for appimage in "${appimages[@]}"; do
@@ -156,12 +158,11 @@ jobs:
       - name: Normalize release asset names
         run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/release/bundle/appimage apps/desktop/src-tauri/target/release/bundle/deb
 
-      - name: Verify arm64 glibc ABI
-        if: matrix.arch == 'arm64'
+      - name: Verify host ABI and ELF dependency closure
         shell: bash
         run: |
           mapfile -d '' artifacts < <(find apps/desktop/src-tauri/target/release/bundle/appimage apps/desktop/src-tauri/target/release/bundle/deb -type f \( -name '*.AppImage' -o -name '*.deb' \) -print0)
-          [ "${#artifacts[@]}" -gt 0 ] || { echo '::error::no Linux arm64 artifacts were produced'; exit 1; }
+          [ "${#artifacts[@]}" -gt 0 ] || { echo '::error::no Linux artifacts were produced'; exit 1; }
           bash scripts/check-linux-glibc-abi.sh --max 2.35 "${artifacts[@]}"
 
       - name: Upload build outputs

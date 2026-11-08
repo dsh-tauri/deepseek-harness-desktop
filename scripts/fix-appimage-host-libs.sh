@@ -69,12 +69,22 @@ readonly EXCLUDED_CRYPTO=(
   'libgssapi_krb5.so.2*'
   'libkeyutils.so.1*'
 )
+# #1407 残留：libcups.so.2 是镜像内唯一 DT_NEEDED libgssapi_krb5.so.2（gssapi_krb5_2_MIT）
+# 的 ELF，krb5 链交还宿主后它就变成悬空依赖；libprintbackend-cups.so 是 libcups 的唯一消费者。
+# libgcrypt.so.20 无人 NEEDED，且它自己 NEEDED 的 libgpg-error.so.0 从来没被打包进来。
+# 三者都不该留在镜像里：Electron 主程序本身就硬 NEEDED libcups.so.2，宿主必须提供，与 deb 一致。
+readonly EXCLUDED_LINKAGE=(
+  'libcups.so.2*'
+  'libprintbackend-cups.so*'
+  'libgcrypt.so*'
+)
 readonly EXCLUDED_ALL=(
   "${EXCLUDED_LIBS[@]}"
   "${EXCLUDED_GLIB[@]}"
   "${EXCLUDED_MEDIA[@]}"
   "${EXCLUDED_NSS[@]}"
   "${EXCLUDED_CRYPTO[@]}"
+  "${EXCLUDED_LINKAGE[@]}"
 )
 
 # 在镜像中扫描 squashfs 4.0 superblock：magic "hsqs"，版本字段 s_major/s_minor == 4/0，
@@ -279,6 +289,8 @@ if find "$verified" -type f \( -name 'libgstsoup.so' -o -name 'libgstwebrtc.so' 
   echo "fix-appimage-host-libs: verification failed, libsoup-2.4 GStreamer plugins are still bundled (#1165)" >&2
   verdict=1
 fi
+# #1407：krb5 链被剔除后，libcups 这类 NEEDED 它会变成悬空依赖；NEEDED 闭合性的全量检查
+# 由 scripts/appimage_lib_closure.py 在 CI 的 check-linux-glibc-abi.sh 里做，此处只守 libsoup。
 if command -v readelf >/dev/null 2>&1; then
   while IFS= read -r -d '' elf; do
     if readelf -d "$elf" 2>/dev/null | grep -q 'NEEDED.*libsoup-2[.]4'; then
