@@ -1,3 +1,4 @@
+import platform
 import re
 import shutil
 import subprocess
@@ -169,13 +170,98 @@ class ShellContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('unsupported artifact type', result.stderr)
 
-    def test_closure_check_is_wired_for_both_artifact_kinds(self):
-        text = SHELL.read_text(encoding='utf-8')
-        self.assertIn('check_closure "$extract/squashfs-root" "AppImage $(basename "$artifact")" ""', text)
-        self.assertIn('check_closure "$target" "deb $(basename "$artifact")" "--allow-host-owned-libs"', text)
-        self.assertIn('closure_failures', text)
-        self.assertIn('appimage_lib_closure.py', text)
-        self.assertIn('linux_host_abi_ceiling.py', text)
+
+DEB_HOST_LIBS = (
+    'libgtk-3.so.0',
+    'libgdk-3.so.0',
+    'libatk-1.0.so.0',
+    'libcairo.so.2',
+    'libpango-1.0.so.0',
+    'libXrandr.so.2',
+    'libudev.so.1',
+)
+DEB_ARCH = {'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}
+
+
+def deb_missing_tools():
+    return [tool for tool in ('dpkg-deb', 'readelf', 'patchelf', 'bash') if shutil.which(tool) is None]
+
+
+@unittest.skipIf(deb_missing_tools(), f'deb fixture needs {", ".join(deb_missing_tools())}')
+class DebArtifactTest(unittest.TestCase):
+    """用真 .deb 走一遍 check-linux-glibc-abi.sh，验证宿主白名单来自 control 的 Depends。
+
+    夹具里的可执行文件是宿主 /bin/true 的副本，用 patchelf 追加 DT_NEEDED：这样 readelf
+    能看到真实的 GLIBC 版本需求，被测 ELF 和线上产物走同一条解析路径。
+    """
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.work = Path(self.directory.name)
+        self.source = Path('/bin/true')
+
+    def build_deb(self, needed, depends, name='deepseek-harness-desktop.deb'):
+        tree = self.work / f'tree-{name}'
+        binary = tree / 'usr/bin/deepseek-harness-desktop'
+        binary.parent.mkdir(parents=True)
+        shutil.copy2(self.source, binary)
+        for library in needed:
+            subprocess.run(['patchelf', '--add-needed', library, str(binary)], check=True)
+        control = tree / 'DEBIAN'
+        control.mkdir()
+        fields = [
+            'Package: dsh-tauri-fixture',
+            'Version: 0.0.0',
+            f'Architecture: {DEB_ARCH[platform.machine()]}',
+            'Maintainer: fixture <fixture@example.invalid>',
+        ]
+        if depends is not None:
+            fields.append(f'Depends: {depends}')
+        fields.append('Description: closure fixture')
+        (control / 'control').write_text('\n'.join(fields) + '\n', encoding='utf-8')
+        artifact = self.work / name
+        subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(tree), str(artifact)],
+                       check=True, capture_output=True, text=True)
+        return artifact
+
+    def check(self, artifact):
+        return subprocess.run(['bash', str(SHELL), '--max', '9.99', str(artifact)],
+                              capture_output=True, text=True)
+
+    def test_gtk_stack_declared_by_depends_passes(self):
+        depends = 'zenity, libudev1, libappindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0'
+        artifact = self.build_deb(DEB_HOST_LIBS, depends)
+        result = self.check(artifact)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('NEEDED closure intact', result.stdout)
+        self.assertIn('deb host allowlist declared by Depends:', result.stdout)
+        self.assertIn('libgtk-3-0', result.stdout)
+        self.assertIn('libudev1', result.stdout)
+
+    def test_gtk_stack_without_depends_fails(self):
+        artifact = self.build_deb(DEB_HOST_LIBS, 'zenity, libappindicator3-1, libwebkit2gtk-4.1-0')
+        result = self.check(artifact)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('::error::ELF_CLOSURE_UNRESOLVED_NEEDED', result.stderr)
+        for library in DEB_HOST_LIBS:
+            with self.subTest(library=library):
+                self.assertIn(library, result.stderr)
+        self.assertIn('ELF dependency closure is broken', result.stderr)
+
+    def test_gcrypt_still_fails_with_gtk_depends(self):
+        depends = 'zenity, libudev1, libgtk-3-0'
+        artifact = self.build_deb(('libgcrypt.so.20', 'libXrandr.so.2'), depends)
+        result = self.check(artifact)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('libgcrypt.so.20', result.stderr)
+        self.assertNotIn('libXrandr.so.2, which is neither', result.stderr)
+
+    def test_deb_without_depends_is_refused(self):
+        artifact = self.build_deb(('libc.so.6',), None)
+        result = self.check(artifact)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('deb declares no Depends', result.stderr)
 
 
 if __name__ == '__main__':

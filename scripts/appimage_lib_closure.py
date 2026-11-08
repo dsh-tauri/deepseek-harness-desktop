@@ -6,6 +6,10 @@
 cannot open shared object file：#1407 的 libcups.so.2 挂在 libgssapi_krb5.so.2 上、
 而后者已被 #1412 交还宿主，正是这种悬空依赖。同一个道理也适用于版本符号：镜像内
 libnssutil3 只提供到 NSSUTIL_3.94 时，任何要求 NSSUTIL_3.108 的 ELF 都解析失败。
+
+deb 与 AppImage 的区别在于谁来保证宿主装了什么。AppImage 是自包含的，HOST_LIBS 就是
+它替宿主写下的全部契约；deb 由 dpkg 按 control 里的 Depends 装依赖，Depends 才是契约，
+所以 deb 路径把 Depends 声明的包展开成白名单（DEB_PACKAGE_LIBS），而不是放宽 HOST_LIBS。
 """
 
 import fnmatch
@@ -74,6 +78,31 @@ HOST_LIBS = (
     'libkeyutils.so.1',
     'libcups.so.2',
 )
+
+# deb 的宿主白名单只能来自它自己声明的 Depends：装了这些包，这些 soname 才一定在。
+# 按包名分组而不是摊平，Depends 里少一个包，对应的 soname 立刻回到「既没打包也没人保证」。
+# 值是声明该包后由 dpkg 保证在盘上的 soname（含该包自己的 Depends 传递来的）：
+# libgtk-3-0 直接依赖 libatk1.0-0 / libatk-bridge2.0-0 / libcairo2 / libpango-1.0-0 /
+# libgdk-pixbuf-2.0-0 / libxcomposite1 / libxdamage1 / libxext6 / libxfixes3 / libxrandr2。
+# 不写 libgtk-3-0 传递但镜像不打包的 libcups2 / libgcrypt20：那两家宿主不保证也不该被拖进来。
+DEB_PACKAGE_LIBS = {
+    'libgtk-3-0': (
+        'libgtk-3.so.0',
+        'libgdk-3.so.0',
+        'libgdk_pixbuf-2.0.so.0',
+        'libatk-1.0.so.0',
+        'libatk-bridge-2.0.so.0',
+        'libatspi.so.0',
+        'libcairo.so.2',
+        'libpango-1.0.so.0',
+        'libXcomposite.so.1',
+        'libXdamage.so.1',
+        'libXext.so.6',
+        'libXfixes.so.3',
+        'libXrandr.so.2',
+    ),
+    'libudev1': ('libudev.so.1',),
+}
 
 # 镜像内绝不打包的宿主接口库（AppImage 专用）。这些库在宿主侧属于同一条加载链，
 # 镜像内的旧副本会让宿主的 NSS softoken / libcurl / git 绑定到缺失的版本符号上。
@@ -203,6 +232,21 @@ def parse_elf(path):
     return ElfInfo(soname, needed, tuple(requires), tuple(provides))
 
 
+def parse_depends(text):
+    packages = []
+    for clause in text.replace('\n', ' ').split(','):
+        if '|' in clause:
+            continue
+        name = clause.strip().split('(')[0].split(':')[0].strip()
+        if name:
+            packages.append(name)
+    return tuple(packages)
+
+
+def deb_host_libs(depends, packages=DEB_PACKAGE_LIBS):
+    return tuple(pattern for name in parse_depends(depends) for pattern in packages.get(name, ()))
+
+
 def _matches(name, patterns):
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
@@ -314,18 +358,29 @@ def check_tree(root, host_libs=HOST_LIBS, host_owned=HOST_OWNED, allow_host_owne
     return problems, Stats(len(entries), needed_total, host_total, version_total)
 
 
+USAGE = ('usage: appimage_lib_closure.py --root <tree> [--root <tree>] '
+         '[--allow-host-owned-libs] [--depends <control-Depends>]')
+
+
 def main(argv):
     roots = []
     allow_host_owned = False
+    depends = None
     index = 0
     while index < len(argv):
         argument = argv[index]
         if argument == '--root':
             index += 1
             if index >= len(argv):
-                print('usage: appimage_lib_closure.py --root <tree> [--root <tree>] [--allow-host-owned-libs]', file=sys.stderr)
+                print(USAGE, file=sys.stderr)
                 return 2
             roots.append(argv[index])
+        elif argument == '--depends':
+            index += 1
+            if index >= len(argv):
+                print(USAGE, file=sys.stderr)
+                return 2
+            depends = argv[index]
         elif argument == '--allow-host-owned-libs':
             allow_host_owned = True
         else:
@@ -333,13 +388,18 @@ def main(argv):
             return 2
         index += 1
     if not roots:
-        print('usage: appimage_lib_closure.py --root <tree> [--root <tree>] [--allow-host-owned-libs]', file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
+
+    host_libs = HOST_LIBS if depends is None else HOST_LIBS + deb_host_libs(depends)
+    if depends is not None:
+        declared = [name for name in parse_depends(depends) if name in DEB_PACKAGE_LIBS]
+        print(f'appimage-lib-closure: deb host allowlist declared by Depends: {" ".join(declared) or "none"}')
 
     failed = 0
     for root in roots:
         try:
-            problems, stats = check_tree(root, allow_host_owned=allow_host_owned)
+            problems, stats = check_tree(root, host_libs=host_libs, allow_host_owned=allow_host_owned)
         except ValueError as error:
             print(f'::error::ELF_CLOSURE_FAILED: {error}', file=sys.stderr)
             failed += 1
