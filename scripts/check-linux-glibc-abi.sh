@@ -102,6 +102,7 @@ is_elf() {
 violations=0
 extract_failures=0
 closure_failures=0
+unreadable_elf=0
 elf_count=0
 versioned_count=0
 host_symbol_count=0
@@ -134,6 +135,7 @@ check_elf() {
   report="$(mktemp -p "$work")"
   if ! read_version_report "$file" "$report"; then
     rm -f "$report"
+    unreadable_elf=$((unreadable_elf + 1))
     return 0
   fi
   record_symbols_from "$report" "$label"
@@ -245,8 +247,8 @@ if ! python3 -B "$script_dir/linux_host_abi_ceiling.py" < "$host_symbols"; then
   violations=$((violations + 1))
 fi
 
-if [ "$violations" -gt 0 ] || [ "$extract_failures" -gt 0 ] || [ "$closure_failures" -gt 0 ]; then
-  echo "::error::host ABI check failed: ${violations} violating ELF file(s), ${closure_failures} tree(s) with broken NEEDED closure, ${extract_failures} artifact extraction failure(s), GLIBC limit ${max}" >&2
+if [ "$violations" -gt 0 ] || [ "$extract_failures" -gt 0 ] || [ "$closure_failures" -gt 0 ] || [ "$unreadable_elf" -gt 0 ]; then
+  echo "::error::host ABI check failed: ${violations} violating ELF file(s), ${closure_failures} tree(s) with broken NEEDED closure, ${extract_failures} artifact extraction failure(s), ${unreadable_elf} ELF file(s) without readable version information, GLIBC limit ${max}" >&2
   exit 1
 fi
 
