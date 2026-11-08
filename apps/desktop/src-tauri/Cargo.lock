@@ -1277,6 +1277,7 @@ name = "electron-rs"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "log",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -5382,6 +5383,7 @@ dependencies = [
  "gtk",
  "http",
  "json-patch 4.2.0",
+ "log",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
