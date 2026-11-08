@@ -315,6 +315,10 @@ fn wait_harness(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "supervision needs the exit sink, log target, readiness sender, guards, and four injected steps"
+)]
 fn supervise_harness(
     mut on_exit: impl FnMut(u32, Option<i64>, Option<&Path>),
     log_path: &PathBuf,
@@ -507,13 +511,11 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
             .then(|| config::get_dsh_pkg_tag(&app_handle))
             .flatten();
         let baseline = config::manifest::minimum_dsh_version(&app_handle);
-        if let Err(error) = crate::service::core::ensure_app_core_supported(
+        crate::service::core::ensure_app_core_supported(
             &core_dir,
             tag.as_deref(),
             baseline.as_deref(),
-        ) {
-            return Err(error);
-        }
+        )?;
     }
     mark_phase("resolve", &mut phase_started);
 
@@ -841,27 +843,27 @@ pub(super) async fn launch_prepared(
     // 前置应用自身的 shim 目录，使市场（dsh-market）及其子进程通过名字解析的
     // `pnpm`/`dsh` 都命中桌面端 shim，从而受桌面端 pnpm 选版策略管辖
     // （轻量缓解，issue #69 系列）。
-    if let Some(node_dir) = node_abs.parent() {
-        if let Some(existing_path) = std::env::var_os("PATH") {
-            let git_dirs = win_inspector::git_bash_bin_dirs();
-            // 只打印注入的前缀目录，完整 PATH 太长会刷屏
-            for dir in &git_dirs {
-                log::debug!("harness service PATH prepend: {}", dir.to_string_lossy());
-            }
-            let mut paths = vec![bin_dir.clone()];
-            paths.push(node_dir.to_path_buf());
-            if let Some(git_dir) = git_dir {
-                log::debug!(
-                    "harness service Git PATH prepend: {}",
-                    git_dir.to_string_lossy()
-                );
-                paths.push(git_dir);
-            }
-            paths.extend(git_dirs);
-            paths.extend(std::env::split_paths(&existing_path));
-            if let Ok(new_path) = std::env::join_paths(paths) {
-                envs.insert("PATH".to_string(), new_path.to_string_lossy().into_owned());
-            }
+    if let Some(node_dir) = node_abs.parent()
+        && let Some(existing_path) = std::env::var_os("PATH")
+    {
+        let git_dirs = win_inspector::git_bash_bin_dirs();
+        // 只打印注入的前缀目录，完整 PATH 太长会刷屏
+        for dir in &git_dirs {
+            log::debug!("harness service PATH prepend: {}", dir.to_string_lossy());
+        }
+        let mut paths = vec![bin_dir.clone()];
+        paths.push(node_dir.to_path_buf());
+        if let Some(git_dir) = git_dir {
+            log::debug!(
+                "harness service Git PATH prepend: {}",
+                git_dir.to_string_lossy()
+            );
+            paths.push(git_dir);
+        }
+        paths.extend(git_dirs);
+        paths.extend(std::env::split_paths(&existing_path));
+        if let Ok(new_path) = std::env::join_paths(paths) {
+            envs.insert("PATH".to_string(), new_path.to_string_lossy().into_owned());
         }
     }
 
@@ -958,17 +960,16 @@ pub(super) async fn launch_prepared(
     // 完全无视）。既然这次要显式下发用户设置，就把继承来的堆 flag 从子进程环境里
     // 摘掉——只删堆相关项，`--require` 等其余选项原样保留；否则「已设置 16384」
     // 仍可能是一句谎话。
-    if super::heap::heap_option_arg(heap_mb).is_some() {
-        if let Ok(node_options) = std::env::var("NODE_OPTIONS") {
-            if super::heap::node_options_has_heap_flags(&node_options) {
-                let stripped = super::heap::node_options_without_heap_flags(&node_options);
-                log::info!(
-                    "Dropped inherited heap flags from NODE_OPTIONS for the Harness process (kept={:?})",
-                    stripped
-                );
-                envs.insert("NODE_OPTIONS".to_string(), stripped.unwrap_or_default());
-            }
-        }
+    if super::heap::heap_option_arg(heap_mb).is_some()
+        && let Ok(node_options) = std::env::var("NODE_OPTIONS")
+        && super::heap::node_options_has_heap_flags(&node_options)
+    {
+        let stripped = super::heap::node_options_without_heap_flags(&node_options);
+        log::info!(
+            "Dropped inherited heap flags from NODE_OPTIONS for the Harness process (kept={:?})",
+            stripped
+        );
+        envs.insert("NODE_OPTIONS".to_string(), stripped.unwrap_or_default());
     }
     // 提示里说的上限必须与进程真正拿到的上限一致，否则用户会看到「已设置 8192
     // 还提示 8192」这种自相矛盾的诊断（详见 heap.rs 的优先级说明）。

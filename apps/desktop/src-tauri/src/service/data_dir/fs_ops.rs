@@ -110,7 +110,7 @@ impl<'a> CopyProgress<'a> {
     fn record_file(&self, bytes: u64) {
         let files = self.files.fetch_add(1, Ordering::Relaxed) + 1;
         let total = self.bytes.fetch_add(bytes, Ordering::Relaxed) + bytes;
-        if files % PROGRESS_EVERY_FILES == 0 {
+        if files.is_multiple_of(PROGRESS_EVERY_FILES) {
             (self.on_tick)(files, total);
         }
     }

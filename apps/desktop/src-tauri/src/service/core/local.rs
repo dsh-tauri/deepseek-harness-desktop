@@ -255,10 +255,10 @@ fn prefix_candidates(bin: &Path) -> Vec<PathBuf> {
     let mut prefixes = vec![bin_dir.to_path_buf()];
     let dir_name = bin_dir.file_name().and_then(|n| n.to_str());
     // 仅当 bin 目录名为 `bin` 时才把父目录作为前缀候选，避免无关目录被误判
-    if dir_name == Some("bin") {
-        if let Some(parent) = bin_dir.parent() {
-            prefixes.push(parent.to_path_buf());
-        }
+    if dir_name == Some("bin")
+        && let Some(parent) = bin_dir.parent()
+    {
+        prefixes.push(parent.to_path_buf());
     }
     // fnm/pnpm 全局布局：shim 位于 `<prefix>/node_modules/.bin`，包目录位于
     // `<prefix>/node_modules/@deepseek-ai/dsh`，故前缀候选取 `.bin` 的祖父目录
@@ -269,10 +269,9 @@ fn prefix_candidates(bin: &Path) -> Vec<PathBuf> {
             .and_then(|n| n.file_name())
             .and_then(|n| n.to_str())
             == Some("node_modules")
+        && let Some(prefix) = bin_dir.parent().and_then(Path::parent)
     {
-        if let Some(prefix) = bin_dir.parent().and_then(Path::parent) {
-            prefixes.push(prefix.to_path_buf());
-        }
+        prefixes.push(prefix.to_path_buf());
     }
     prefixes
 }

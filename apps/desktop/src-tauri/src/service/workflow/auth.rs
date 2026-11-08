@@ -47,12 +47,15 @@ pub(crate) async fn authenticated_host(
     let instance = super::instances::instance();
     let launch = launch_url(port)?;
     let mut cached = instance.authenticated_host.lock().await;
-    if let Some((generation, host)) = cached.as_ref() {
-        if generation == &launch {
-            return Ok(host.clone());
-        }
+    if let Some((generation, host)) = cached.as_ref()
+        && generation == &launch
+    {
+        return Ok(host.clone());
     }
-    let client = app.state::<tauri_runtime_electron::ElectronClient>().inner().clone();
+    let client = app
+        .state::<tauri_runtime_electron::ElectronClient>()
+        .inner()
+        .clone();
     let host = tauri_runtime_electron::authenticate_web_host(&client, &launch)
         .await
         .map_err(|error| format!("HARNESS_AUTH_FAILED: {error}"))?;

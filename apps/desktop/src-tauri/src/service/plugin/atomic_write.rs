@@ -338,6 +338,16 @@ mod tests {
     use super::*;
     const ORIGINAL: &str = "- id: plugin\n";
 
+    #[cfg(windows)]
+    fn clear_readonly(path: &Path) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, SetFileAttributesW};
+
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let applied = unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_NORMAL) };
+        assert_ne!(applied, 0, "restoring the file attributes failed");
+    }
+
     #[test]
     fn replaces_complete_utf8_content_without_leaking_temp_files() {
         let temp = tempfile::tempdir().unwrap();
@@ -365,9 +375,7 @@ mod tests {
             io::ErrorKind::PermissionDenied
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), ORIGINAL);
-        let mut permissions = path.metadata().unwrap().permissions();
-        permissions.set_readonly(false);
-        std::fs::set_permissions(&path, permissions).unwrap();
+        clear_readonly(&path);
         let lock = File::options()
             .read(true)
             .share_mode(1 | 2)

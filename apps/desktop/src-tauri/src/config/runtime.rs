@@ -153,16 +153,12 @@ fn probe_node_version(node: &Path) -> Option<(String, Option<PathBuf>)> {
             "-p",
             "JSON.stringify([process.versions.node,process.execPath])",
         ],
-    ) {
-        if output.status.success() {
-            if let Ok((version, actual)) =
-                serde_json::from_slice::<(String, PathBuf)>(&output.stdout)
-            {
-                if semver::Version::parse(&version).is_ok() && actual.is_absolute() {
-                    return Some((version, Some(actual)));
-                }
-            }
-        }
+    ) && output.status.success()
+        && let Ok((version, actual)) = serde_json::from_slice::<(String, PathBuf)>(&output.stdout)
+        && semver::Version::parse(&version).is_ok()
+        && actual.is_absolute()
+    {
+        return Some((version, Some(actual)));
     }
     let output = node_version_output(node, &["--version"])?;
     if !output.status.success() {
@@ -195,10 +191,10 @@ fn cached_node_version(
         drop(guard);
         return probe().map(|(version, _)| version);
     };
-    if let Some((cached_key, version)) = guard.as_ref() {
-        if cached_key == &key {
-            return Some(version.clone());
-        }
+    if let Some((cached_key, version)) = guard.as_ref()
+        && cached_key == &key
+    {
+        return Some(version.clone());
     }
     let (version, actual) = probe()?;
     // 静态转发器可不改自身文件就切换 Node，只有实际执行文件一致才可复用版本。
@@ -454,10 +450,10 @@ pub(crate) fn dsh_data_path_from_env() -> PathBuf {
     let dir_name = if cfg!(debug_assertions) {
         DSH_HOME_DEV_DIR_NAME
     } else {
-        if let Some(home) = std::env::var_os("DSH_HOME") {
-            if !home.is_empty() {
-                return PathBuf::from(home);
-            }
+        if let Some(home) = std::env::var_os("DSH_HOME")
+            && !home.is_empty()
+        {
+            return PathBuf::from(home);
         }
         DSH_HOME_DIR_NAME
     };

@@ -65,10 +65,10 @@ pub(crate) fn declared_packages_at(profile: &Path) -> Option<HashSet<String>> {
     let manifest = serde_json::from_str::<ProfilePackageJson>(&content).ok()?;
 
     let mut set: HashSet<String> = manifest.dependencies.into_keys().collect();
-    if let Some(dsh) = manifest.dsh {
-        if let Some(profile) = dsh.profile {
-            set.extend(profile.bundles);
-        }
+    if let Some(dsh) = manifest.dsh
+        && let Some(profile) = dsh.profile
+    {
+        set.extend(profile.bundles);
     }
     Some(set)
 }
@@ -261,10 +261,10 @@ mod tests {
         let parsed: ProfilePackageJson = serde_json::from_str(&content).unwrap();
 
         let mut set: HashSet<String> = parsed.dependencies.into_keys().collect();
-        if let Some(dsh) = parsed.dsh {
-            if let Some(profile) = dsh.profile {
-                set.extend(profile.bundles);
-            }
+        if let Some(dsh) = parsed.dsh
+            && let Some(profile) = dsh.profile
+        {
+            set.extend(profile.bundles);
         }
 
         assert!(set.contains("dshmarket"));

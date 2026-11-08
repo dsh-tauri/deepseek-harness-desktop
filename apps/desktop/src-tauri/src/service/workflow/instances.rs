@@ -14,10 +14,13 @@ struct Registry {
     instances: HashMap<String, Arc<Instance>>,
 }
 
+pub(super) type LaunchUrl = Arc<Mutex<Option<(u16, String)>>>;
+
 pub(super) struct Instance {
     pub process: Mutex<Option<super::process::OwnedProcess>>,
-    pub launch_url: Mutex<Arc<Mutex<Option<(u16, String)>>>>,
-    pub authenticated_host: tokio::sync::Mutex<Option<(String, tauri_runtime_electron::AuthenticatedWebHost)>>,
+    pub launch_url: Mutex<LaunchUrl>,
+    pub authenticated_host:
+        tokio::sync::Mutex<Option<(String, tauri_runtime_electron::AuthenticatedWebHost)>>,
     pub launching: Arc<std::sync::atomic::AtomicBool>,
     pub status: Mutex<Status>,
     pub port: Mutex<Option<u16>>,

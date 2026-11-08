@@ -35,12 +35,12 @@ fn confirm_harness_stopped(
     let recorded: Vec<_> = recorded.into_iter().collect();
     reject_unreadable_markers(recorded.clone())?;
     for marker in recorded {
-        if let data_dir::HarnessMarker::Pid(pid) = marker {
-            if data_dir::process_alive(pid) {
-                return Err(format!(
-                    "DATA_DIR_HARNESS_RUNNING: {pid} 仍在使用数据目录，请先退出那个实例再重试"
-                ));
-            }
+        if let data_dir::HarnessMarker::Pid(pid) = marker
+            && data_dir::process_alive(pid)
+        {
+            return Err(format!(
+                "DATA_DIR_HARNESS_RUNNING: {pid} 仍在使用数据目录，请先退出那个实例再重试"
+            ));
         }
     }
     Ok(())

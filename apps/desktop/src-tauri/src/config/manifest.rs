@@ -404,10 +404,10 @@ pub fn resolve_location_from(base: &Path, resource_root: Option<&Path>, raw: &st
     if let Some(rest) = strip_prefix_ci(&normalized, "$resources") {
         return join_token(resource_root.unwrap_or(base), rest);
     }
-    if let Some(rest) = normalized.strip_prefix("resources/") {
-        if let Some(root) = resource_root {
-            return join_token(root, rest);
-        }
+    if let Some(rest) = normalized.strip_prefix("resources/")
+        && let Some(root) = resource_root
+    {
+        return join_token(root, rest);
     }
     base.join(value)
 }

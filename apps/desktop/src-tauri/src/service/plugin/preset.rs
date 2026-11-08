@@ -296,10 +296,10 @@ fn find_bundled_in_root(root: &std::path::Path, id: &str) -> Option<PathBuf> {
 /// 兜底逻辑。
 pub(crate) fn bundled_plugin_dir(app_handle: &AppHandle, id: &str) -> Option<PathBuf> {
     let resources = app_handle.path().resource_dir().ok();
-    if let Some(stable_root) = appimage_bundled_root(app_handle) {
-        if let Some(dir) = stable_bundled_dir(resources.as_deref(), &stable_root, id) {
-            return Some(dir);
-        }
+    if let Some(stable_root) = appimage_bundled_root(app_handle)
+        && let Some(dir) = stable_bundled_dir(resources.as_deref(), &stable_root, id)
+    {
+        return Some(dir);
     }
     bundled_plugin_dir_from(resources.as_deref(), id)
 }

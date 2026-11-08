@@ -63,10 +63,10 @@ impl<'a, R: Runtime> ProgressTracker<'a, R> {
             .unwrap_or_else(|e| e.into_inner());
 
         // 节流处理：如果距离上次发送不足 50ms，则跳过
-        if let Some(last_time) = *last_emit {
-            if now.duration_since(last_time) < Duration::from_millis(50) {
-                return;
-            }
+        if let Some(last_time) = *last_emit
+            && now.duration_since(last_time) < Duration::from_millis(50)
+        {
+            return;
         }
 
         *last_emit = Some(now);

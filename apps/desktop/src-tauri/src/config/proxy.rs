@@ -163,7 +163,7 @@ pub(crate) fn prepare_inherited_proxy() {
 fn child_no_proxy() -> String {
     let inherited = ["NO_PROXY", "no_proxy"]
         .iter()
-        .filter_map(|key| std::env::var_os(key))
+        .filter_map(std::env::var_os)
         .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(",");

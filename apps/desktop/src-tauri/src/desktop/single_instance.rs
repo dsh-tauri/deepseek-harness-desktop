@@ -136,7 +136,7 @@ struct NativeWindow {
     hwnd: HWND,
     class: Vec<u16>,
     module: HINSTANCE,
-    inbox: Option<Box<Arc<Mutex<Inbox>>>>,
+    inbox: Option<*mut Arc<Mutex<Inbox>>>,
 }
 
 impl NativeWindow {
@@ -162,8 +162,8 @@ impl NativeWindow {
         if unsafe { RegisterClassW(&definition) } == 0 {
             return Err(win_error("REGISTER_CLASS"));
         }
-        let data = Box::new(Arc::clone(inbox));
-        let userdata = (&*data as *const Arc<Mutex<Inbox>>).cast();
+        let data = Box::into_raw(Box::new(Arc::clone(inbox)));
+        let userdata = data.cast();
         let mut window = Self {
             hwnd: null_mut(),
             class,
@@ -199,9 +199,9 @@ impl Drop for NativeWindow {
             if !self.hwnd.is_null() && DestroyWindow(self.hwnd) == 0 {
                 log::error!("{}", win_error("DESTROY_WINDOW"));
                 // 销毁失败时窗口仍可能回调，不能提前释放它的 userdata。
-                if let Some(data) = self.inbox.take() {
-                    let _ = Box::into_raw(data);
-                }
+                self.inbox = None;
+            } else if let Some(data) = self.inbox.take() {
+                drop(Box::from_raw(data));
             }
             if UnregisterClassW(self.class.as_ptr(), self.module) == 0 {
                 log::error!("{}", win_error("UNREGISTER_CLASS"));
@@ -252,11 +252,11 @@ unsafe extern "system" fn window_proc(
                     state.pending.push(request);
                     state.app.clone()
                 };
-                if let Some(app) = app {
-                    if let Err(error) = dispatch(inbox, &app) {
-                        log::error!("{error}");
-                        return 0;
-                    }
+                if let Some(app) = app
+                    && let Err(error) = dispatch(inbox, &app)
+                {
+                    log::error!("{error}");
+                    return 0;
                 }
                 1
             }

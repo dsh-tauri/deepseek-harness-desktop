@@ -466,10 +466,10 @@ fn assign_and_resume(
     let mut operation = None;
     if unsafe { AssignProcessToJobObject(job.handle.as_raw_handle(), process) } == 0 {
         operation = Some("AssignProcessToJobObject");
-    } else if let Some(nested_job) = nested_job {
-        if unsafe { AssignProcessToJobObject(nested_job.handle.as_raw_handle(), process) } == 0 {
-            operation = Some("AssignProcessToJobObject nested");
-        }
+    } else if let Some(nested_job) = nested_job
+        && unsafe { AssignProcessToJobObject(nested_job.handle.as_raw_handle(), process) } == 0
+    {
+        operation = Some("AssignProcessToJobObject nested");
     }
     let operation = match operation {
         Some(operation) => operation,
@@ -842,10 +842,10 @@ mod tests {
         let parent = unsafe { OwnedHandle::from_raw_handle(handle) };
         let deadline = Instant::now() + Duration::from_secs(10);
         let (node_pid, descendant_pid, port): (u32, u32, u16) = loop {
-            if let Ok(text) = std::fs::read_to_string(root.path().join("ready.json")) {
-                if let Ok(ready) = serde_json::from_str(&text) {
-                    break ready;
-                }
+            if let Ok(text) = std::fs::read_to_string(root.path().join("ready.json"))
+                && let Ok(ready) = serde_json::from_str(&text)
+            {
+                break ready;
             }
             assert_eq!(
                 unsafe { WaitForSingleObject(parent.as_raw_handle(), 0) },
@@ -1166,10 +1166,10 @@ mod tests {
         });
         let deadline = Instant::now() + Duration::from_secs(5);
         let pid = loop {
-            if let Ok(text) = std::fs::read_to_string(&ready) {
-                if let Ok(pid) = text.parse::<u32>() {
-                    break pid;
-                }
+            if let Ok(text) = std::fs::read_to_string(&ready)
+                && let Ok(pid) = text.parse::<u32>()
+            {
+                break pid;
             }
             assert!(
                 Instant::now() < deadline,

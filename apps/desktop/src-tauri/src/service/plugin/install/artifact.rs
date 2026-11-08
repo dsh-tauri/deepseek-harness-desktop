@@ -150,12 +150,11 @@ fn declared_main_entry(pkg_dir: &Path) -> Option<PathBuf> {
             .and_then(|main| join_contained(pkg_dir, main))
     };
     let plugin_manifest_text = std::fs::read_to_string(pkg_dir.join("dsh.plugin.json")).ok();
-    if let Some(text) = plugin_manifest_text {
-        if let Ok(value) = serde_json::from_str::<JsonValue>(&text) {
-            if let Some(entry) = from_main_field(&value) {
-                return Some(entry);
-            }
-        }
+    if let Some(text) = plugin_manifest_text
+        && let Ok(value) = serde_json::from_str::<JsonValue>(&text)
+        && let Some(entry) = from_main_field(&value)
+    {
+        return Some(entry);
     }
     let pkg_text = std::fs::read_to_string(pkg_dir.join("package.json")).ok()?;
     let value = serde_json::from_str::<JsonValue>(&pkg_text).ok()?;

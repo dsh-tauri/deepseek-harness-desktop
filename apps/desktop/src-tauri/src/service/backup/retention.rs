@@ -54,18 +54,17 @@ pub fn prune_backups_in_dir(
             .map_err(|e| format!("BACKUP_PRUNE_SERIALIZE: {e}"))?,
     )
     .map_err(|e| format!("BACKUP_PRUNE_WRITE: {e}"))?;
-    fs::rename(&tmp, manifest_path)
-        .map_err(|e| format!("BACKUP_PRUNE_RENAME: {e}"))?;
+    fs::rename(&tmp, manifest_path).map_err(|e| format!("BACKUP_PRUNE_RENAME: {e}"))?;
 
     for entry in &to_remove {
         let Some(file) = current_archive_path(&canonical_dir, entry) else {
             log::warn!("BACKUP_PRUNE_PATH_INVALID: {}", entry["path"]);
             continue;
         };
-        if let Err(e) = fs::remove_file(&file) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!("[backup] 删除旧备份失败: {e} ({})", file.display());
-            }
+        if let Err(e) = fs::remove_file(&file)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("[backup] 删除旧备份失败: {e} ({})", file.display());
         }
     }
     Ok(())

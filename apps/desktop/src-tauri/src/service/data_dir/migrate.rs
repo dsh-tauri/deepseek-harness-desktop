@@ -383,12 +383,11 @@ fn resolved_path(path: &Path) -> Result<PathBuf, String> {
             Err(error) => {
                 if error.kind() == std::io::ErrorKind::NotFound
                     && matches!(fs::symlink_metadata(existing), Err(ref metadata_error) if metadata_error.kind() == std::io::ErrorKind::NotFound)
+                    && let (Some(name), Some(parent)) = (existing.file_name(), existing.parent())
                 {
-                    if let (Some(name), Some(parent)) = (existing.file_name(), existing.parent()) {
-                        missing.push(name);
-                        existing = parent;
-                        continue;
-                    }
+                    missing.push(name);
+                    existing = parent;
+                    continue;
                 }
                 return Err(format!(
                     "DATA_DIR_PATH_RESOLVE: {}: {error}",

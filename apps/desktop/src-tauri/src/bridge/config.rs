@@ -76,10 +76,10 @@ pub async fn update_app_config(
         .as_deref()
         .map(config::proxy::normalize_proxy_url)
         .transpose()?;
-    if let Some(port) = port {
-        if port == 0 {
-            return Err("port must be a positive number".to_string());
-        }
+    if let Some(port) = port
+        && port == 0
+    {
+        return Err("port must be a positive number".to_string());
     }
     // 命令行集成：先执行文件系统/PATH 操作，成功后再持久化开关，
     // 失败时配置保持不变，避免"开关已开但 shim 未生成"的不一致状态。

@@ -418,11 +418,9 @@ async fn commit_staged_install(staging: &Path, dest: &Path, backup: &Path) -> Re
             dest.display()
         ));
     }
-    if had_previous {
-        if let Err(e) = remove_path_if_exists(backup).await {
-            // 新版本已经切换成功，备份清理失败不应把成功安装误报为失败。
-            log::warn!("Failed to remove previous installation backup: {e}");
-        }
+    if had_previous && let Err(e) = remove_path_if_exists(backup).await {
+        // 新版本已经切换成功，备份清理失败不应把成功安装误报为失败。
+        log::warn!("Failed to remove previous installation backup: {e}");
     }
     Ok(())
 }

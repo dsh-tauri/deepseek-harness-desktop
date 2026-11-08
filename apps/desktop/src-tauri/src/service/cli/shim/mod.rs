@@ -91,10 +91,10 @@ pub fn portable_path_cmd(path: &Path) -> String {
     // 令牌之外的路径（如 `D:\软件\nodejs`）用 8.3 短名换回 ASCII；卷上关掉
     // 短名或路径不存在时拿回的仍是长名，此处按 is_ascii 拒绝。
     #[cfg(windows)]
-    if let Some(short) = crate::utils::short_path(path) {
-        if short.to_string_lossy().is_ascii() {
-            return escape_path_cmd(&short);
-        }
+    if let Some(short) = crate::utils::short_path(path)
+        && short.to_string_lossy().is_ascii()
+    {
+        return escape_path_cmd(&short);
     }
     escape_path_cmd(path)
 }

@@ -884,10 +884,10 @@ pub fn build_main_window(
     apply_windows_window_icon(&webview_window);
     apply_window_background(app, &webview_window);
     let zoom_factor = crate::config::get_store_dat_setting(app).zoom_factor;
-    if zoom_factor != crate::config::default_zoom_factor() {
-        if let Err(error) = crate::desktop::zoom::apply_native_zoom(&webview_window, zoom_factor) {
-            log::warn!("[zoom] startup zoom was not applied: {error}");
-        }
+    if zoom_factor != crate::config::default_zoom_factor()
+        && let Err(error) = crate::desktop::zoom::apply_native_zoom(&webview_window, zoom_factor)
+    {
+        log::warn!("[zoom] startup zoom was not applied: {error}");
     }
 
     if let Err(error) = webview_window.restore_state(WINDOW_STATE_FLAGS) {
@@ -966,10 +966,10 @@ pub fn build_shell_window(
     apply_window_background(app, &window);
 
     let zoom_factor = crate::config::get_store_dat_setting(app).zoom_factor;
-    if zoom_factor != crate::config::default_zoom_factor() {
-        if let Err(error) = crate::desktop::zoom::apply_native_zoom(&window, zoom_factor) {
-            log::warn!("[zoom] extra window zoom was not applied: {error}");
-        }
+    if zoom_factor != crate::config::default_zoom_factor()
+        && let Err(error) = crate::desktop::zoom::apply_native_zoom(&window, zoom_factor)
+    {
+        log::warn!("[zoom] extra window zoom was not applied: {error}");
     }
     let _ = window.set_focus();
 
@@ -1492,12 +1492,10 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                     .windows()
                     .into_values()
                     .find(|window| window.is_focused().unwrap_or(false))
-                {
-                    if let Err(error) =
+                    && let Err(error) =
                         app.emit_to(window.label(), "macos-menu-action", event.id().as_ref())
-                    {
-                        log::warn!("[menu] failed to emit View action: {error}");
-                    }
+                {
+                    log::warn!("[menu] failed to emit View action: {error}");
                 }
             }
             "desktop-documentation" | "desktop-feedback" | "desktop-harness-feedback" => {
@@ -1596,14 +1594,13 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                     tauri::async_runtime::spawn(async move {
                         if let Ok(_transition) =
                             crate::service::workflow::acquire_core_transition().await
+                            && !crate::service::workflow::instances::is_attached(&profile)
                         {
-                            if !crate::service::workflow::instances::is_attached(&profile) {
-                                let _ = crate::service::workflow::instances::scope(
-                                    profile,
-                                    crate::service::workflow::stop(app),
-                                )
-                                .await;
-                            }
+                            let _ = crate::service::workflow::instances::scope(
+                                profile,
+                                crate::service::workflow::stop(app),
+                            )
+                            .await;
                         }
                     });
                 }

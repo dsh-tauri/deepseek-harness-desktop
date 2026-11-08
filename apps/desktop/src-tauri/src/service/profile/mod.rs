@@ -613,10 +613,10 @@ fn copy_dir_tree(src: &Path, dst: &Path) -> Result<(), String> {
         .try_for_each(|entry| -> Result<(), String> {
             let name = entry.file_name();
             // 仅跳过运行时产物（不随克隆迁移）
-            if let Some(s) = name.to_str() {
-                if crate::config::HARNESS_PID_MARKER_NAMES.contains(&s) || s == ".backups" {
-                    return Ok(());
-                }
+            if let Some(s) = name.to_str()
+                && (crate::config::HARNESS_PID_MARKER_NAMES.contains(&s) || s == ".backups")
+            {
+                return Ok(());
             }
             let src_path = entry.path();
             let dst_path = dst.join(&name);

@@ -42,16 +42,16 @@ pub fn get_dsh_theme(app_handle: &AppHandle) -> DshTheme {
 /// 随后改名为 `settings.yaml.imported`。档案层是唯一的活配置；后两者只是旧核心与
 /// 「导入完、档案里还没写过主题」的兜底。
 fn read_dsh_theme(home: &Path, profile_dir: &Path) -> DshTheme {
-    if let Ok(content) = fs::read_to_string(profile_dir.join("cordis.patch.yml")) {
-        if let Some(theme) = parse_profile_theme(&content) {
-            return theme;
-        }
+    if let Ok(content) = fs::read_to_string(profile_dir.join("cordis.patch.yml"))
+        && let Some(theme) = parse_profile_theme(&content)
+    {
+        return theme;
     }
     for name in [LEGACY_SETTINGS_FILE, IMPORTED_SETTINGS_FILE] {
-        if let Ok(content) = fs::read_to_string(home.join(name)) {
-            if let Some(theme) = parse_theme_preference(&content) {
-                return theme;
-            }
+        if let Ok(content) = fs::read_to_string(home.join(name))
+            && let Some(theme) = parse_theme_preference(&content)
+        {
+            return theme;
         }
     }
     log::debug!("no dsh theme preference found; following the system appearance");
@@ -122,10 +122,11 @@ fn parse_theme_preference(content: &str) -> Option<DshTheme> {
         if !line.starts_with(' ') && !line.starts_with('\t') {
             return None;
         }
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            if let Some(value) = trimmed.strip_prefix("preference:") {
-                return parse_theme_name(value.trim());
-            }
+        if !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && let Some(value) = trimmed.strip_prefix("preference:")
+        {
+            return parse_theme_name(value.trim());
         }
     }
     None
