@@ -892,7 +892,7 @@ pub(super) fn terminate_windows_process(
     handle: windows_sys::Win32::Foundation::HANDLE,
     kill_tree: impl FnOnce(u32),
 ) -> Result<(), String> {
-    use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
     match unsafe { WaitForSingleObject(handle, 0) } {
         WAIT_OBJECT_0 => return Ok(()),
@@ -911,7 +911,12 @@ pub(super) fn terminate_windows_process(
     log::warn!("Harness process {pid} survived taskkill; terminating the retained handle");
     let termination_error =
         (unsafe { TerminateProcess(handle, 1) } == 0).then(std::io::Error::last_os_error);
-    if unsafe { WaitForSingleObject(handle, 5000) } != WAIT_OBJECT_0 {
+    let terminating = termination_error.as_ref().is_some_and(|error| error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32));
+    if terminating {
+        log::warn!("Harness process {pid} is already terminating; waiting for it to exit");
+    }
+    let wait_ms = if terminating { 15000 } else { 5000 };
+    if unsafe { WaitForSingleObject(handle, wait_ms) } != WAIT_OBJECT_0 {
         if let Some(error) = termination_error {
             return Err(format!(
                 "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {error}"
@@ -2600,6 +2605,38 @@ setTimeout(() => process.exit(0), 60000);
             .unwrap_err()
             .starts_with("HARNESS_CLEANUP_FAILED:")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminating_process_is_not_reported_as_a_cleanup_failure() {
+        use std::io::Write;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+
+        let mut child = Command::new("node.exe")
+            .args([
+                "-e",
+                "require('fs').readSync(0,Buffer.alloc(1),0,1,null);setTimeout(()=>process.exit(0),9000)",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x08000000)
+            .spawn()
+            .unwrap();
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, child.id()) };
+        assert!(!handle.is_null());
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        let result = terminate_windows_process(child.id(), handle.as_raw_handle(), |_| {
+            child.stdin.take().unwrap().write_all(b"x").unwrap();
+        });
+        let stopped = child.try_wait().unwrap().is_some();
+        let exit = child.wait().unwrap();
+        result.expect("a process already terminating must be awaited, not reported as a cleanup failure");
+        assert!(stopped, "cleanup must confirm exit before returning");
+        assert!(exit.success());
     }
 
     #[cfg(windows)]
