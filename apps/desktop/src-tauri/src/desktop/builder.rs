@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(any(windows, target_os = "macos"))]
 use std::sync::OnceLock;
 use tauri::{Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, ipc::Invoke};
+use tauri_plugin_window_state::WindowExt;
 use tauri_runtime_electron::ElectronRuntime;
 
 #[cfg(windows)]
@@ -42,6 +43,15 @@ const TRAFFIC_LIGHT_INSET_X: f64 = 18.0;
 const TRAFFIC_LIGHT_VISUAL_OFFSET: f64 = 2.0;
 
 pub const MAIN_WINDOW_LABEL: &str = "main";
+
+/// 由插件持久化的窗口状态位：只留尺寸、位置与最大化。
+///
+/// 可见性与装饰由本项目自己的壳层控制（自绘窗框、Windows 上先隐藏建窗再 show），交给插件
+/// 恢复会在启动时把窗口抢先显示出来并改写装饰样式，因此刻意不纳入。
+pub const WINDOW_STATE_FLAGS: tauri_plugin_window_state::StateFlags =
+    tauri_plugin_window_state::StateFlags::SIZE
+        .union(tauri_plugin_window_state::StateFlags::POSITION)
+        .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
 
 static EXTRA_WINDOW_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -832,7 +842,7 @@ pub fn build_main_window(
 ) -> tauri::Result<crate::WebviewWindow<ElectronRuntime>> {
     let app_handle = app.clone();
 
-    let _geometry_restore = crate::config::GeometryRestoreGuard::begin();
+    let _geometry_restore = tauri_plugin_window_state::GeometryRestoreGuard::begin();
 
     let _host_paths =
         tauri_runtime_electron::WebviewSetup::new(MAIN_WINDOW_LABEL)
@@ -880,7 +890,9 @@ pub fn build_main_window(
         }
     }
 
-    crate::config::restore_main_window(app, &webview_window);
+    if let Err(error) = webview_window.restore_state(WINDOW_STATE_FLAGS) {
+        log::warn!("[window-state] geometry restore failed: {error}");
+    }
     #[cfg(windows)]
     webview_window.show()?;
 
@@ -1596,20 +1608,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                     });
                 }
             }
-            tauri::WindowEvent::ScaleFactorChanged { .. } => {}
-            // 只用事件自带的坐标/尺寸：在 Electron 运行时里，任何
-            // outer_position()/inner_size() 都是一次同步 IPC 往返，而拖动时每秒有
-            // 数百个 move —— 逐事件再问一次会把主线程和 RPC 队列一起拖住
-            // （主窗口拖动卡顿即源于此）。
-            tauri::WindowEvent::Moved(position) => {
-                if window.label() == MAIN_WINDOW_LABEL {
-                    crate::config::record_moved(*position);
-                }
-            }
-            tauri::WindowEvent::Resized(size) => {
-                if window.label() == MAIN_WINDOW_LABEL {
-                    crate::config::record_resized(window, *size);
-                }
+            tauri::WindowEvent::Resized(_) => {
                 #[cfg(target_os = "macos")]
                 {
                     sync_macos_fullscreen_menu(window);
@@ -1629,6 +1628,18 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
     }));
 
     let builder = builder
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(WINDOW_STATE_FLAGS)
+                .with_filter(|label| label == MAIN_WINDOW_LABEL)
+                .skip_initial_state(MAIN_WINDOW_LABEL)
+                .with_legacy_store(
+                    crate::config::store_dat_file_name(),
+                    crate::config::STORE_WINDOW_STATE_KEY,
+                    MAIN_WINDOW_LABEL,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())

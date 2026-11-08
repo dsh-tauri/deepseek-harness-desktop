@@ -6,7 +6,7 @@ export type GetApiTauriModelEndpointModelsQueryProfilePath = undefined | string
 export type GetApiTauriModelEndpointModelsQueryBaseURL = undefined | string
 export type GetApiTauriModelEndpointModelsQueryApiKey = undefined | string
 export type GetApiTauriModelEndpointModelsQueryHeaders = undefined | string
-export interface GetApiTauriModelPresetsResponse { ok?: undefined | false | true, source?: undefined | string, fetchedAt?: undefined | string, stale?: undefined | false | true, count?: undefined | number, presets?: undefined | Record<string, unknown>, error?: undefined | string }
+export interface GetApiTauriModelPresetsResponse { ok?: undefined | false | true, source?: undefined | 'pi-ai' | 'litellm' | 'merged', fetchedAt?: undefined | string, stale?: undefined | false | true, count?: undefined | number, presets?: undefined | Record<string, { provider?: undefined | string, id?: undefined | string, api?: undefined | string, input?: undefined | string[], reasoning?: undefined | false | true, reasoningEfforts?: undefined | false | Record<string, null | string>, contextWindow?: undefined | number, maxTokens?: undefined | number }>, error?: undefined | string }
 export type GetApiTauriModelPresetsQueryForce = undefined | string
 
 export interface PostApiTauriModelConfigOpenQuery {

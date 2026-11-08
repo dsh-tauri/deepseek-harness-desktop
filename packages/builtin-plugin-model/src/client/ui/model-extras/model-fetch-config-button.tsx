@@ -25,7 +25,7 @@ export function ModelFetchConfigButton({
   disabled,
   onApply,
 }: ModelFetchConfigButtonProps): ReactElement | null {
-  const { busy, failure, run } = useModelConfigFetch({ t, models, probe, operations, onApply })
+  const { busy, failure, notice, run } = useModelConfigFetch({ t, models, probe, operations, onApply })
   const row = models.find(model => model.id === modelId)
   if (row !== undefined && hasModelConfig(row))
     return null
@@ -42,6 +42,7 @@ export function ModelFetchConfigButton({
         {busy ? t('fetchingConfig') : t('fetchModelConfig')}
       </Action>
       {failure === undefined ? null : <Text tone="error" className="flex-[1_1_100%] min-w-0 [overflow-wrap:anywhere]" role="alert">{failure}</Text>}
+      {notice === undefined ? null : <Text tone="success" className="flex-[1_1_100%] min-w-0 [overflow-wrap:anywhere]">{notice}</Text>}
     </div>
   )
 }

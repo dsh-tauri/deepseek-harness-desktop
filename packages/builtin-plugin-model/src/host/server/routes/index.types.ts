@@ -1,4 +1,4 @@
-import type { ModelCapabilityPreset } from '../../../shared/model-presets'
+import type { PresetSource, PresetTable } from '../../../shared/model-presets'
 
 export interface EndpointModelCard {
   id: string
@@ -35,10 +35,10 @@ export interface GetPresetsQuery {
 
 export interface PresetsResponse {
   ok?: boolean
-  source?: string
+  source?: PresetSource
   fetchedAt?: string
   stale?: boolean
   count?: number
-  presets?: Record<string, ModelCapabilityPreset>
+  presets?: PresetTable
   error?: string
 }
