@@ -272,14 +272,20 @@ def check_tree(root, host_libs=HOST_LIBS, host_owned=HOST_OWNED, allow_host_owne
                 continue
             if target is None:
                 continue
-            try:
-                info = parse_elf(target)
-            except (OSError, ValueError, struct.error) as error:
-                problems.append(f'ELF_CLOSURE_UNREADABLE: {rel}: {error}')
-                continue
+            real = os.path.normcase(os.path.abspath(str(target)))
+            if real in parsed:
+                info = parsed[real]
+            else:
+                try:
+                    info = parse_elf(target)
+                except (OSError, ValueError, struct.error) as error:
+                    problems.append(f'ELF_CLOSURE_UNREADABLE: {rel}: {error}')
+                    info = None
+                if info is not None:
+                    entries.append((rel, info))
+                parsed[real] = info
             if info is None:
                 continue
-            entries.append((rel, info))
             for alias in {info.soname, name}:
                 if alias:
                     providers.setdefault(alias, []).append(info)

@@ -29,6 +29,7 @@ VERDEF_ENTRY = 28
 
 def make_symlink(link, target):
     """建真实符号链接；Windows 非管理员且未开开发者模式时无法创建，跳过该用例。"""
+    link.parent.mkdir(parents=True, exist_ok=True)
     try:
         link.symlink_to(target)
     except OSError as error:
