@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
     unminimize: vi.fn().mockResolvedValue(undefined),
     show: vi.fn().mockResolvedValue(undefined),
     setFocus: vi.fn().mockResolvedValue(undefined),
+    setAlwaysOnTop: vi.fn().mockResolvedValue(undefined),
     onFocusChanged: vi.fn().mockResolvedValue(vi.fn()),
     onResized: vi.fn().mockResolvedValue(vi.fn()),
   },
@@ -252,6 +253,17 @@ it('activates a minimized window before delivering a native notification click',
   expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
     ['dsh://notification-clicked', { tag: 'session-tag', sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081' }],
   ])
+})
+
+it('re-raises a window whose first focus was refused by the foreground lock', async () => {
+  mocks.window.isFocused.mockResolvedValueOnce(false)
+  render(<Shell />)
+  await act(async () => {
+    await mocks.clicked!({ data: { tag: 'session-tag', sessionId: 'session-1', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(mocks.window.setAlwaysOnTop.mock.calls).toEqual([[true], [false]])
+  expect(mocks.window.setFocus).toHaveBeenCalledTimes(2)
 })
 
 it('ignores native notification clicks and actions owned by another live window', async () => {

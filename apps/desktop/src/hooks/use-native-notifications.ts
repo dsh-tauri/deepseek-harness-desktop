@@ -142,6 +142,16 @@ export function useNativeNotifications(source: string) {
         await appWindow.unminimize()
       await appWindow.show()
       await appWindow.setFocus()
+      if (!await appWindow.isFocused()) {
+        await appWindow.setAlwaysOnTop(true)
+        try {
+          await appWindow.show()
+          await appWindow.setFocus()
+        }
+        finally {
+          await appWindow.setAlwaysOnTop(false)
+        }
+      }
     }
     catch (error) {
       console.error('[notification] focus window failed:', error)
