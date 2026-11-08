@@ -91,8 +91,20 @@ jobs:
         shell: bash
         run: |
           runtime="apps/desktop/src-tauri/target/${{ matrix.target }}/release/runtime/win32-arm64"
-          if [ ! -f "$runtime/electron.exe" ]; then
-            echo "::error::$runtime/electron.exe is missing; the arm64 installer would carry no usable runtime"
+          marker="$runtime/electron-rs.json"
+          if [ ! -f "$marker" ]; then
+            echo "::error::$marker is missing; the arm64 installer would carry no usable runtime"
+            exit 1
+          fi
+          binary="$(node -e 'const fs = require("node:fs"); const marker = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(marker.binary ?? ""))' "$marker")"
+          case "$binary" in
+            ''|/*|*:*|..|../*|*/..)
+              echo "::error::$marker does not name a safe relative runtime binary: $binary"
+              exit 1
+              ;;
+          esac
+          if [ ! -f "$runtime/$binary" ]; then
+            echo "::error::$runtime/$binary is missing; the arm64 installer would carry no usable runtime"
             exit 1
           fi
           shopt -s nullglob
