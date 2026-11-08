@@ -504,13 +504,15 @@ fn package_json_description(raw: &str) -> Option<String> {
 
 /// 删除旧版随包资源目录 `resources/preset-plugins` 与 `resources/internal-plugins`，
 /// 避免升级安装保留不再使用/已迁至 `resources/node_modules/<name>` 的内置插件副本；
-/// 同时清掉数据目录下非当前版本的稳定副本根（见 [`appimage_bundled_root`]）。
+/// 同时清掉数据目录下非当前版本、且已超过保留期的稳定副本根（见
+/// [`appimage_bundled_root`] 与 [`stale_stable_bundled_roots`]）。
 /// 仅处理随包资源根与数据目录，绝不删除源码 checkout；逐个尝试所有布局后再汇总
 /// 错误，避免一个被占用的旧目录阻碍其余目录清理。
 pub(crate) fn remove_legacy_bundled_plugins(app_handle: &AppHandle) -> Result<(), String> {
     let mut candidates = stale_stable_bundled_roots(
         &config::get_base_dir(app_handle).join(BUNDLED_PLUGINS_DIR),
         env!("CARGO_PKG_VERSION"),
+        STABLE_ROOT_GRACE,
     );
     if let Ok(root) = app_handle.path().resource_dir() {
         candidates.extend([
@@ -527,13 +529,23 @@ pub(crate) fn remove_legacy_bundled_plugins(app_handle: &AppHandle) -> Result<()
     remove_legacy_candidates(candidates, |path| std::fs::remove_dir_all(path))
 }
 
+/// 刚被写过的稳定副本目录保留期。跨版本清理要求目录「确定过期」：用户升级后
+/// 旧版本进程可能仍在运行，它的 `link:` 目标就在自己版本的副本里，删掉会当场失效。
+const STABLE_ROOT_GRACE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
 /// 稳定副本根下不属于当前版本的目录（升级残留与中断的 `.tmp-<pid>` 半成品）。
 ///
-/// 版本目录只由当前版本使用，旧版本目录里的插件副本永远不会再被 `link:` 指向。
-fn stale_stable_bundled_roots(plugins_root: &Path, current_version: &str) -> Vec<PathBuf> {
+/// 只有超过 `grace` 未被动过的目录才算残骸：另一个版本的进程可能正在写自己的副本。
+/// 修改时间读不到时按「仍在使用」处理，宁可少删。
+fn stale_stable_bundled_roots(
+    plugins_root: &Path,
+    current_version: &str,
+    grace: std::time::Duration,
+) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(plugins_root) else {
         return Vec::new();
     };
+    let now = std::time::SystemTime::now();
     entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -542,7 +554,17 @@ fn stale_stable_bundled_roots(plugins_root: &Path, current_version: &str) -> Vec
             path.file_name()
                 .is_none_or(|name| name.to_string_lossy() != current_version)
         })
+        .filter(|path| !touched_recently(path, now, grace))
         .collect()
+}
+
+fn touched_recently(path: &Path, now: std::time::SystemTime, grace: std::time::Duration) -> bool {
+    let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
+        return true;
+    };
+    now.duration_since(modified)
+        .ok()
+        .is_none_or(|age| age < grace)
 }
 
 /// 对候选旧目录执行最佳努力清理；删除动作参数化是为了验证单项失败后仍继续处理。
@@ -1366,16 +1388,42 @@ mod tests {
         }
         std::fs::write(plugins_root.join("notes.txt"), "keep").expect("write stray file");
 
-        let mut stale: Vec<String> = stale_stable_bundled_roots(&plugins_root, "0.31.0")
-            .iter()
-            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
+        let mut stale: Vec<String> =
+            stale_stable_bundled_roots(&plugins_root, "0.31.0", std::time::Duration::ZERO)
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
         stale.sort();
         assert_eq!(
             stale,
             vec!["0.30.0".to_string(), "0.31.0.tmp-42".to_string()]
         );
-        assert!(stale_stable_bundled_roots(&temp.path().join("absent"), "0.31.0").is_empty());
+        assert!(
+            stale_stable_bundled_roots(
+                &temp.path().join("absent"),
+                "0.31.0",
+                std::time::Duration::ZERO
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn stale_stable_bundled_roots_keep_copies_touched_within_the_grace_period() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins_root = temp.path().join(BUNDLED_PLUGINS_DIR);
+        for name in ["0.30.0", "0.30.0.tmp-42"] {
+            std::fs::create_dir_all(plugins_root.join(name)).expect("create version dir");
+        }
+
+        assert!(
+            stale_stable_bundled_roots(
+                &plugins_root,
+                "0.31.0",
+                std::time::Duration::from_secs(24 * 60 * 60)
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1385,7 +1433,8 @@ mod tests {
         for name in ["0.29.0", "0.30.0", "0.31.0"] {
             std::fs::create_dir_all(plugins_root.join(name)).expect("create version dir");
         }
-        let candidates = stale_stable_bundled_roots(&plugins_root, "0.31.0");
+        let candidates =
+            stale_stable_bundled_roots(&plugins_root, "0.31.0", std::time::Duration::ZERO);
         let locked = plugins_root.join("0.29.0");
         let mut attempted = Vec::new();
 
