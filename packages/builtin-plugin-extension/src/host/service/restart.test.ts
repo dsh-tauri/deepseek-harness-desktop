@@ -6,7 +6,7 @@ const spawn = vi.fn((_file: string, _args: readonly string[], _options: SpawnOpt
 
 vi.mock('node:child_process', () => ({ spawn: (file: string, args: readonly string[], options: SpawnOptions) => spawn(file, args, options) }))
 vi.mock('node:fs', () => ({ openSync: () => 7 }))
-vi.mock('node:os', () => ({ tmpdir: () => '/tmp' }))
+vi.mock('node:os', async importOriginal => ({ ...(await importOriginal<typeof import('node:os')>()), tmpdir: () => '/tmp' }))
 
 const { restart } = await import('./restart')
 
