@@ -1114,7 +1114,7 @@ fn application_capabilities_separate_shell_and_harness_commands() {
     };
     let guest = Origin::Remote { url };
     let wrong_origin = Origin::Remote { url: Url::parse("http://127.0.0.1:3081/").unwrap() };
-    for command in ["host_harness_document", "begin_harness_restart", "get_harness_restart", "prepare_harness_restart", "resume_harness_restart", "finish_harness_restart", "get_dsh_theme", "get_runtime_info", "read_service_logs", "quit_app", "update_app_config", "prepare_harness_webview", "update_harness_webview", "release_harness_webview"] {
+    for command in ["host_harness_document", "begin_harness_restart", "get_harness_restart", "prepare_harness_restart", "resume_harness_restart", "finish_harness_restart", "get_dsh_theme", "get_runtime_info", "read_service_logs", "quit_app", "update_app_config", "prepare_harness_webview", "update_harness_webview", "set_harness_zoom", "release_harness_webview"] {
         assert!(allowed(command, "main", &Origin::Local), "{command}");
         assert!(!allowed(command, "harness-1", &guest), "{command}");
     }
@@ -1292,4 +1292,35 @@ pub fn toggle_devtools(window: Webview<tauri_runtime_electron::ElectronRuntime>)
     } else {
         window.open_devtools();
     }
+}
+
+#[tauri::command]
+pub async fn set_harness_zoom(
+    app: AppHandle,
+    webview: Webview,
+    zoom_factor: f64,
+) -> Result<(), String> {
+    require_shell(&webview)?;
+    if !zoom_factor.is_finite() || zoom_factor <= 0. {
+        return Err("HARNESS_WEBVIEW_INVALID_ZOOM".into());
+    }
+    let window_label = webview.window().label().to_string();
+    let guest_label = {
+        let documents = app
+            .try_state::<HarnessDocuments>()
+            .ok_or("HARNESS_WEBVIEW_NOT_FOUND")?;
+        let documents = documents.0.lock().unwrap();
+        documents
+            .iter()
+            .find(|(_, doc)| doc.lock().unwrap().owner == window_label)
+            .map(|(label, _)| label.clone())
+            .ok_or("HARNESS_WEBVIEW_NOT_FOUND")?
+    };
+    let guest = app
+        .get_webview(&guest_label)
+        .ok_or("HARNESS_WEBVIEW_NOT_FOUND")?;
+    guest
+        .set_zoom(config::normalize_zoom_factor(zoom_factor))
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }

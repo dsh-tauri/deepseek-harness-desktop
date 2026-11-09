@@ -15,6 +15,7 @@ import { useListen } from '@/hooks/use-listen'
 import { useNativeNotifications } from '@/hooks/use-native-notifications'
 import { useNotificationAction } from '@/hooks/use-notification-action'
 import { useNotificationClicked } from '@/hooks/use-notification-clicked'
+import { useZoom } from '@/hooks/use-zoom'
 import { store } from '@/store'
 import { ConfigDialog } from '@/ui/dialog/config'
 import { Recovery } from '@/ui/plugin/recovery'
@@ -40,6 +41,7 @@ export function Shell() {
   const [dshStyle, setDshStyle] = useDshStyle()
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
   const appearanceCss = useAppearance()
+  useZoom()
   const openConfigDialog = useOverlay(ConfigDialog)
 
   // 2. 本地用户选择状态

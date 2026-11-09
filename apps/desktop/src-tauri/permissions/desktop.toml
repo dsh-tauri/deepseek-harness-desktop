@@ -13,6 +13,7 @@ commands.allow = [
   "prepare_harness_webview",
   "release_harness_webview",
   "update_harness_webview",
+  "set_harness_zoom",
   "install_dependencies",
   "check_dsh_update",
   "launch_harness",
