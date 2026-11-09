@@ -210,7 +210,7 @@ pub(super) fn on_owned_process_exit<R: tauri::Runtime>(
 /// Unix 信号终止编码成负退出码（issue #1490），与 split_exit_code 成对；
 /// 信号号永不为负，因此可安全与普通退出码区分。
 #[cfg_attr(windows, allow(dead_code))] // 仅 Unix 启动监视使用
-fn signal_exit_code(signal: i32) -> i64 {
+pub(super) fn signal_exit_code(signal: i32) -> i64 {
     -i64::from(signal)
 }
 
