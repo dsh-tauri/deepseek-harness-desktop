@@ -846,7 +846,9 @@ pub fn build_main_window(
 
     let _host_paths =
         tauri_runtime_electron::WebviewSetup::new(MAIN_WINDOW_LABEL)
-            .authenticated_web_host_session()
+            .authenticated_web_host_session_key(
+                crate::desktop::session_key::window_authenticated_session_key(app, MAIN_WINDOW_LABEL),
+            )
             .browser_host()
             .preload_script(include_str!("preload.js.inc"));
 
@@ -883,11 +885,8 @@ pub fn build_main_window(
     #[cfg(windows)]
     apply_windows_window_icon(&webview_window);
     apply_window_background(app, &webview_window);
-    let zoom_factor = crate::config::get_store_dat_setting(app).zoom_factor;
-    if zoom_factor != crate::config::default_zoom_factor()
-        && let Err(error) = crate::desktop::zoom::apply_native_zoom(&webview_window, zoom_factor)
-    {
-        log::warn!("[zoom] startup zoom was not applied: {error}");
+    if let Err(error) = crate::desktop::zoom::apply_zoom_on_load(app, &webview_window) {
+        log::warn!("[zoom] document zoom hook was not registered: {error}");
     }
 
     if let Err(error) = webview_window.restore_state(WINDOW_STATE_FLAGS) {
@@ -927,7 +926,9 @@ pub fn build_shell_window(
     let app_handle = app.clone();
 
     let _setup = tauri_runtime_electron::WebviewSetup::new(&label)
-        .authenticated_web_host_session()
+        .authenticated_web_host_session_key(
+            crate::desktop::session_key::window_authenticated_session_key(app, &label),
+        )
         .browser_host()
         .preload_script(include_str!("preload.js.inc"));
     let mut webview_builder = with_shell_chrome(
@@ -965,11 +966,8 @@ pub fn build_shell_window(
     apply_windows_window_icon(&window);
     apply_window_background(app, &window);
 
-    let zoom_factor = crate::config::get_store_dat_setting(app).zoom_factor;
-    if zoom_factor != crate::config::default_zoom_factor()
-        && let Err(error) = crate::desktop::zoom::apply_native_zoom(&window, zoom_factor)
-    {
-        log::warn!("[zoom] extra window zoom was not applied: {error}");
+    if let Err(error) = crate::desktop::zoom::apply_zoom_on_load(app, &window) {
+        log::warn!("[zoom] document zoom hook was not registered: {error}");
     }
     let _ = window.set_focus();
 

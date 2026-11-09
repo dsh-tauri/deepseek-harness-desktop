@@ -207,6 +207,41 @@ pub(super) fn on_owned_process_exit<R: tauri::Runtime>(
     })
 }
 
+/// Unix 信号终止编码成负退出码（issue #1490），与 split_exit_code 成对；
+/// 信号号永不为负，因此可安全与普通退出码区分。
+#[cfg_attr(windows, allow(dead_code))] // 仅 Unix 启动监视使用
+pub(super) fn signal_exit_code(signal: i32) -> i64 {
+    -i64::from(signal)
+}
+
+/// 还原 signal_exit_code 的编码：退出码仍按原有约定为空，信号只用于日志诊断。
+fn split_exit_code(code: Option<i64>) -> (Option<i64>, Option<i32>) {
+    match code {
+        Some(code) if code < 0 => (None, i32::try_from(-code).ok()),
+        code => (code, None),
+    }
+}
+
+/// 信号号 → 可检索的日志描述（如 SIGSEGV (signal 11)），未知信号只报编号。
+fn signal_description(signal: i32) -> String {
+    let name = match signal {
+        2 => "SIGINT",
+        3 => "SIGQUIT",
+        4 => "SIGILL",
+        5 => "SIGTRAP",
+        6 => "SIGABRT",
+        7 => "SIGBUS",
+        8 => "SIGFPE",
+        9 => "SIGKILL",
+        11 => "SIGSEGV",
+        13 => "SIGPIPE",
+        14 => "SIGALRM",
+        15 => "SIGTERM",
+        _ => return format!("signal {signal}"),
+    };
+    format!("{name} (signal {signal})")
+}
+
 pub(super) fn on_owned_process_exit_at(
     pid: u32,
     exit_code: impl FnOnce(&OwnedProcess) -> Option<i64>,
@@ -229,6 +264,7 @@ pub(super) fn on_owned_process_exit_at(
         (owned, exit_code)
     };
 
+    let (exit_code, signal) = split_exit_code(exit_code);
     if let Some(code) = exit_code {
         log::warn!(
             "Owned Harness process {} exited with code {code}; resetting status to Stopped",
@@ -242,6 +278,12 @@ pub(super) fn on_owned_process_exit_at(
                  limit is the common cause — raise the service memory limit in Settings"
             );
         }
+    } else if let Some(signal) = signal {
+        log::warn!(
+            "Owned Harness process {} terminated by {}; resetting status to Stopped",
+            owned.pid,
+            signal_description(signal)
+        );
     } else {
         log::warn!(
             "Owned Harness process {} exited (exit code unavailable); resetting status to Stopped",
@@ -2076,6 +2118,49 @@ mod tests {
             without_code,
             serde_json::json!({ "pid": 43, "exitCode": null })
         );
+    }
+
+    /// 信号终止由启动监视记为负退出码，on_owned_process_exit_at 只还原信号、清空退出码（issue #1490）。
+    #[test]
+    fn signal_terminated_exit_clears_the_reported_exit_code() {
+        assert_eq!(split_exit_code(Some(signal_exit_code(11))), (None, Some(11)));
+        assert_eq!(split_exit_code(Some(signal_exit_code(6))), (None, Some(6)));
+        assert_eq!(signal_exit_code(11), -11);
+        assert_eq!(split_exit_code(Some(0)), (Some(0), None));
+        assert_eq!(split_exit_code(Some(1)), (Some(1), None));
+        assert_eq!(split_exit_code(None), (None, None));
+    }
+
+    /// 崩溃日志要把信号号写成可检索的 SIGSEGV/SIGABRT 名字，未知信号保留编号。
+    #[test]
+    fn signal_number_maps_to_readable_name() {
+        assert_eq!(signal_description(11), "SIGSEGV (signal 11)");
+        assert_eq!(signal_description(6), "SIGABRT (signal 6)");
+        assert_eq!(signal_description(34), "signal 34");
+    }
+
+    /// 被信号杀死的 Harness 退出仍上报空退出码并复位状态，宿主进程不受影响（issue #1490）。
+    #[test]
+    fn signal_terminated_harness_exit_notifies_without_exit_code() {
+        let profile = "signal-terminated-exit-test";
+        let instance = super::super::instances::instance_of(profile);
+        instance.launching.store(true, Ordering::SeqCst);
+        *instance.process.lock().unwrap() = Some(test_owned(52));
+        super::super::instances::scope_sync(profile.into(), || {
+            let mut notified = None;
+            let exited =
+                on_owned_process_exit_at(52, |_| Some(-11), |payload| notified = Some(payload));
+            assert_eq!(exited.map(|owned| owned.pid), Some(52));
+            assert_eq!(
+                notified,
+                Some(HarnessProcessExitedPayload {
+                    pid: 52,
+                    exit_code: None
+                })
+            );
+            assert_eq!(status::get_status(), status::Status::Stopped);
+            assert_eq!(owned_process_pid(), None);
+        });
     }
 
     /// 核心转换锁可被多个异步操作按顺序获取，避免两个切换重叠。

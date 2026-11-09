@@ -6,6 +6,11 @@ export const DEFAULT_MACHINE_TRANSPORT = 'ssh'
 
 export const REMOTE_ROOT = '.dsh-desktop'
 
+/** 远端实例的 pidfile：按档案与端口区分，同一台主机上的多个档案互不覆盖。 */
+export function remotePidfile(profileName: string, port: number): string {
+  return `.dsh/.dsh-remote-${profileName}-${port}.pid`
+}
+
 /** 内部来源标识的两枚头名（S2 §9）；网关注入侧与插件判定侧必须逐字一致。 */
 export const GATEWAY_SOURCE_HEADER = 'x-dsh-remote-source'
 

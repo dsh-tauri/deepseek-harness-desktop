@@ -4,7 +4,7 @@ import type { BootstrapHooks, BootstrapLogLine, EnvCredentials, RemoteInstallPla
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
 import { messageOf } from '../../shared/error'
-import { DEFAULT_REMOTE_PROFILE, REMOTE_ROOT } from '../config/constants'
+import { DEFAULT_REMOTE_PROFILE, REMOTE_ROOT, remotePidfile } from '../config/constants'
 import { assetMatrixFor, dshNpmTarballUrls, dshZipDownloadUrls, NODE_SHASUMS256_SHA256, NODE_VERSION, nodeDownloadUrls, nodeShasumUrls, parsePlatform, PNPM_SHA256, PNPM_VERSION, pnpmDownloadUrls } from '../utils/assets'
 import { clientUrlsFromBootHtml, looksLikePluginBundle, releaseVersionFromBootHtml } from '../utils/boot-html'
 import { shQuote } from '../utils/shell'
@@ -451,7 +451,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
     `export PATH="$ROOT/runtime/bin:$PATH"`,
     `export DSH_TELEMETRY_DISABLED=1 NO_COLOR=1 DSH_WEB_PORT=${profile.remotePort}`,
     `export DSH_REMOTE_SESSION_ORIGIN=${shQuote(profile.name)}`,
-    `( sh -c 'echo $$ > "$1/.dsh-remote.pid"; exec "$2" "$3" --profile "$5" --host 127.0.0.1 --port "$4" --no-open' dsh-remote "$LOG_DIR" "$NODE" "$DSH_BIN" ${profile.remotePort} ${profileName} </dev/null >>"$LOG" 2>&1 & )`,
+    `( sh -c 'echo $$ > "$1"; exec "$2" "$3" --profile "$5" --host 127.0.0.1 --port "$4" --no-open' dsh-remote "$HOME/${remotePidfile(profileName, profile.remotePort)}" "$NODE" "$DSH_BIN" ${profile.remotePort} ${profileName} </dev/null >>"$LOG" 2>&1 & )`,
     `echo "远端实例已拉起（档案: ${profileName}, 日志: $LOG）"`,
   ].join('\n')
 }

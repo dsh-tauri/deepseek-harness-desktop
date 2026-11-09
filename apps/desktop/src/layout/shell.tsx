@@ -66,6 +66,14 @@ export function Shell() {
   useListen('dsh://desktop-settings:open', () => {
     void openConfigDialog()
   })
+  useListen<{ action?: unknown }>('dsh://zoom-shortcut', ({ payload }) => {
+    switch (payload.action) {
+      case 'increase':
+      case 'decrease':
+      case 'reset':
+        void store.setting.zoom(payload.action).catch(error => console.error('[Shell] zoom shortcut failed:', error))
+    }
+  })
 
   // keep:effect 主窗口文档即 DSH：本机服务就绪后把当前 webview 导航到 DSH 页面。
   // `serviceHealthy` 在启动收尾阶段会反复翻转，重复导航会互相打断（ERR_ABORTED），

@@ -7,6 +7,7 @@ use crate::config;
 use crate::service::cli;
 use crate::service::update;
 use crate::AppHandle;
+use tauri::Manager;
 
 /// 当前桌面端配置
 #[tauri::command]
@@ -128,6 +129,13 @@ pub async fn update_app_config(
             setting.backup_include_credentials = include;
         }
     });
+    if zoom_factor.is_some() {
+        for (label, window) in app_handle.webview_windows() {
+            if let Err(error) = crate::desktop::zoom::apply_native_zoom(&window, setting.zoom_factor) {
+                log::warn!("[zoom] window zoom was not applied ({label}): {error}");
+            }
+        }
+    }
     // 关闭自动更新时立刻丢弃已下载的待安装包：否则用户退出前又打开开关，旧的
     // 安装包会在退出时被直接拉起安装（见 service::update::clear_pending_installer）。
     if auto_update == Some(false) {

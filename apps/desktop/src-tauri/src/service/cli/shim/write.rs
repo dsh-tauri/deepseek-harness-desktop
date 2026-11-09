@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::Runtime;
 
-#[cfg(all(windows, not(debug_assertions)))]
+#[cfg(windows)]
 use super::SHIM_PS1_NAME;
 #[cfg(not(windows))]
 #[allow(unused_imports)] // debug 构建 dsh shim 不写入；测试仍引用
@@ -236,7 +236,8 @@ pub fn write_shims_at(bin_dir: &Path, paths: &ShimPaths, dsh_home: &Path) -> Res
     // 解析这些命令依赖它，写它不污染任何共享数据。
     //
     // `node` 是关键一项：没有独立 Node 运行时后，包脚本与第三方代码仍会按名字
-    // spawn `node`，必须能解析到这个转发到 Electron 的启动器。
+    // spawn `node`。应用自己的子进程带 DSH_NODE，落到随包 Electron；用户终端里
+    // 没有 DSH_NODE，启动器转发系统 node，不再被 Electron 顶替（issue #1486）。
     #[cfg(windows)]
     {
         write_if_ours!(NODE_SHIM_CMD_NAME, build_node_cmd_shim(paths));
@@ -267,6 +268,47 @@ pub fn write_shims_at(bin_dir: &Path, paths: &ShimPaths, dsh_home: &Path) -> Res
         }
     }
     Ok(())
+}
+
+/// [`write_shims_at`] 的逆操作：删除本应用写入 bin 目录的全部 shim。
+///
+/// 关闭命令行集成后必须连 `node` 启动器一起删（issue #1486）：残留的 `node.cmd`
+/// 仍会让用户终端与其它应用解析到随包 Electron。文件清单两边共用同一组常量，
+/// 写入/删除始终成对。
+///
+/// 只删除本应用生成的文件：`~/.local/bin/node` 也可能是用户自装的运行时，
+/// 写入侧既然会保留它们，删除侧就必须同样跳过。
+pub fn remove_shims(bin_dir: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    let names: &[&str] = &[
+        SHIM_CMD_NAME,
+        SHIM_PS1_NAME,
+        NODE_SHIM_CMD_NAME,
+        PNPM_SHIM_CMD_NAME,
+        PNPM_SHIM_PS1_NAME,
+        NPX_SHIM_CMD_NAME,
+        NPX_SHIM_PS1_NAME,
+        NPM_SHIM_CMD_NAME,
+        NPM_SHIM_PS1_NAME,
+    ];
+    #[cfg(not(windows))]
+    let names: &[&str] = &[SHIM_SH_NAME, NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME];
+    let mut failure = None;
+    for name in names {
+        let path = bin_dir.join(name);
+        if !is_generated_shim(&path) {
+            continue;
+        }
+        if let Err(error) = fs::remove_file(&path)
+            && failure.is_none()
+        {
+            failure = Some(format!("SHIM_REMOVE_FAILED: remove {} failed: {error}", path.display()));
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -616,6 +658,76 @@ mod tests {
             "npx.cmd lost its generated marker: {npx}"
         );
         assert!(!bin_dir.join("dsh.cmd").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// issue #1486：关闭命令行集成必须连 `node` 启动器一起删除。
+    ///
+    /// 残留的 `node.cmd` / `node` 会让用户终端与其它应用继续解析到随包
+    /// Electron（macOS 上还会多出 Dock 的 exec 图标），因此删除清单必须与
+    /// [`write_shims_at`] 的写入清单一一对应。
+    #[test]
+    fn remove_shims_deletes_the_node_launcher_alongside_every_other_shim() {
+        let dir = temp_dir("remove-shims");
+        let bin_dir = dir.join("bin");
+        write_shims_at(
+            &bin_dir,
+            &shim_paths_for(&dir.join("app")),
+            &dir.join("home"),
+        )
+        .unwrap();
+
+        #[cfg(windows)]
+        let names = [
+            NODE_SHIM_CMD_NAME,
+            PNPM_SHIM_CMD_NAME,
+            PNPM_SHIM_PS1_NAME,
+            NPX_SHIM_CMD_NAME,
+            NPX_SHIM_PS1_NAME,
+            NPM_SHIM_CMD_NAME,
+            NPM_SHIM_PS1_NAME,
+        ];
+        #[cfg(not(windows))]
+        let names = [NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME];
+        for name in names {
+            assert!(
+                bin_dir.join(name).is_file(),
+                "{name} must exist before the removal runs"
+            );
+        }
+
+        remove_shims(&bin_dir).unwrap();
+
+        for name in names {
+            assert!(
+                !bin_dir.join(name).exists(),
+                "{name} survived disabling the CLI integration"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// issue #1486：删除只看生成标记，用户自己放在 bin 目录下的同名文件必须保留。
+    ///
+    /// `~/.local/bin/node` 是用户自装运行时的常见位置；写入侧遇到非本应用文件会跳过，
+    /// 删除侧若无条件删除就会把它删掉。
+    #[test]
+    fn remove_shims_preserves_user_files_that_were_never_generated() {
+        let dir = temp_dir("remove-shims-foreign");
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        #[cfg(windows)]
+        let user_node = bin_dir.join(NODE_SHIM_CMD_NAME);
+        #[cfg(not(windows))]
+        let user_node = bin_dir.join(NODE_SHIM_SH_NAME);
+        std::fs::write(&user_node, "#!/bin/sh\nexec /opt/node/bin/node \"$@\"\n").unwrap();
+
+        remove_shims(&bin_dir).unwrap();
+
+        assert!(
+            user_node.is_file(),
+            "a user-installed node launcher must survive disabling the CLI integration"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

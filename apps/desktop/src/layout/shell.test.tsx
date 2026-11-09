@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   setShortcuts: vi.fn(),
   dshStyle: { frame: { background: 'rgb(10, 20, 30)' }, sidebar: { background: 'rgb(40, 50, 60)' } },
   setDshStyle: vi.fn(),
+  setting: { zoom: vi.fn().mockResolvedValue(undefined) },
   harness: { markHostedReady: vi.fn(), status: 'ready', serviceHealthy: true, serviceRunning: true, webviewKey: 0, webviewLoaded: false, webviewAlive: false, webviewError: false, webviewSrc: 'http://127.0.0.1:3081', startupPhase: 'process-boot', busyAction: null },
   recovery: { recovery: { required: false } },
   emit: vi.fn().mockResolvedValue(undefined),
@@ -51,7 +52,7 @@ vi.mock('@/hooks/use-notification-clicked', () => ({ useNotificationClicked: (ha
 } }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'windows' }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value, defineStore: (value: unknown) => value }))
-vi.mock('@/store', () => ({ store: { harness: mocks.harness, recovery: mocks.recovery } }))
+vi.mock('@/store', () => ({ store: { harness: mocks.harness, recovery: mocks.recovery, setting: mocks.setting } }))
 vi.mock('@/hooks/use-appearance', () => ({ useAppearance: () => '' }))
 vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [mocks.dshStyle, mocks.setDshStyle] }))
 vi.mock('@overlastic/react', () => ({ useOverlay: () => vi.fn() }))
@@ -169,6 +170,22 @@ it('sends sidebar and settings actions through the registered Tauri event contra
   expect(mocks.emit).toHaveBeenCalledWith('dsh://sidebar:toggle', undefined)
   expect(mocks.emit).toHaveBeenCalledWith('dsh://settings:open', { section: 'dsh-tauri-remote', tab: 'machines' })
   expect(mocks.emit).toHaveBeenCalledWith('dsh://settings:open', { section: 'dsh-tauri-remote', tab: 'access' })
+})
+
+it.each(['increase', 'decrease', 'reset'] as const)('applies the %s zoom action once when the document forwards a shortcut', (action) => {
+  render(<Shell />)
+  act(() => mocks.listeners.get('dsh://zoom-shortcut')!({ payload: { action } }))
+  expect(mocks.setting.zoom).toHaveBeenCalledExactlyOnceWith(action)
+})
+
+it.each([
+  ['an unknown action', { action: 'maximize' }],
+  ['a missing action', {}],
+  ['a non-string action', { action: 1 }],
+])('ignores a forwarded zoom shortcut carrying %s', (_case, payload) => {
+  render(<Shell />)
+  act(() => mocks.listeners.get('dsh://zoom-shortcut')!({ payload }))
+  expect(mocks.setting.zoom).not.toHaveBeenCalled()
 })
 
 it('returns to local content before opening remote settings after plugin readiness', () => {

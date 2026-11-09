@@ -74,6 +74,24 @@ module.exports = function registerNativePackages(archive, cache) {
     return native
   }
 
+  const refused = new Set()
+  function refuseElectronLinuxSharp(root) {
+    const name = `@img/${path.basename(root)}`
+    if (process.platform !== 'linux'
+      || process.versions.electron === undefined
+      || path.basename(path.dirname(root)) !== '@img'
+      || !/^sharp-(?:libvips-)?linux/.test(path.basename(root)))
+      return
+    if (!refused.has(name)) {
+      refused.add(name)
+      console.error(`[asar-native] refusing ${name}: Electron's bundled glibc conflicts with sharp's prebuilt Linux binaries and terminates the Harness process, so image decoders stay unavailable (issue #1490)`)
+    }
+    throw Object.assign(
+      new Error(`${name} is disabled under Electron on Linux: its prebuilt binaries conflict with Electron's bundled glibc and terminate the Harness process (issue #1490)`),
+      { code: 'ERR_DSH_SHARP_ELECTRON_LINUX' },
+    )
+  }
+
   function copy(source, destination) {
     const stat = fs.lstatSync(source)
     if (stat.isSymbolicLink()) {
@@ -173,6 +191,7 @@ module.exports = function registerNativePackages(archive, cache) {
       const root = packageRoot(filename)
       if (!root || !isNative(root))
         return result
+      refuseElectronLinuxSharp(root)
       return { ...result, url: pathToFileURL(path.join(materialize(root), path.relative(root, filename))).href }
     },
   })
