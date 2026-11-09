@@ -41,8 +41,9 @@ export const languageDetector: LanguageDetectorModule = {
     if (!selectedLanguage)
       selectedLanguage = store.setting.language ?? ''
 
+    // 后端只存短码（zh / ko / ru / en），需补全为已打包的资源 id
     if (selectedLanguage)
-      return selectedLanguage
+      return browserLocale(selectedLanguage)
 
     // If no saved language, use device locale or fallback
     const deviceLocale = browserLocale(navigator.language)

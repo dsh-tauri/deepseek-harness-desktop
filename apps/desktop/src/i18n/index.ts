@@ -8,6 +8,10 @@ export const i18n = i18next
   .use(initReactI18next)
   .init({
     fallbackLng: {
+      'en': ['en-US'],
+      'zh': ['zh-CN'],
+      'ko': ['ko-KR'],
+      'ru': ['ru-RU'],
       'en-*': ['en-US'],
       'zh-*': ['zh-CN'],
       'ko-*': ['ko-KR'],
