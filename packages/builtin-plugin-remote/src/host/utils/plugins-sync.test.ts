@@ -257,6 +257,14 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     expect(new RegExp(pattern).test(argv.replaceAll(`--port ${REMOTE_PORT}`, `--port ${REMOTE_PORT + 1}`)), '不得误杀别的端口上的实例').toBe(false)
   })
 
+  it('停实例的匹配串在运行期拼装，脚本不会命中自己', () => {
+    // 匹配串若在生成期展开，脚本自身的命令行就包含它，`pkill -f` 会在 Linux 上
+    // 把正在执行同步的 shell 一起杀掉（同步失败且退出码为空）。
+    const script = pluginSyncApplyCommand(TREE, HASH, PROFILE, REMOTE_PORT)
+
+    expect(script).not.toContain(`bin.js --profile ${PROFILE} --host 127.0.0.1 --port ${REMOTE_PORT}`)
+  })
+
   describe.skipIf(!PS_ARGS_AVAILABLE)('pidfile 过期时按命令行确认身份', () => {
     it('pidfile 记录的 PID 已被无关进程复用时不得停掉它', () => {
       const sandbox = createSandbox()

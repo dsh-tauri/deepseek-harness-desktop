@@ -119,10 +119,9 @@ export function pluginSyncMarkerCommand(): string {
  * Unix，`ps -o args=` 不可用时（例如 MSYS）退化为直接 kill，此时行为与修复前一致。
  */
 function stopInstanceCommand(profileName: string, remotePort: number): string[] {
-  const argv = `bin.js --profile ${profileName} --host 127.0.0.1 --port ${remotePort}`
   const pidfile = `$HOME/${remotePidfile(profileName, remotePort)}`
   return [
-    `ARGV="${argv}"`,
+    `ARGV="bin.js --profile $PROFILE --host 127.0.0.1 --port $PORT"`,
     `if [ -f "${pidfile}" ]; then`,
     `  OLD_PID="$(cat "${pidfile}" 2>/dev/null || true)"`,
     `  case "$OLD_PID" in`,
@@ -145,6 +144,7 @@ export function pluginSyncApplyCommand(tree: BundledPluginsTree, hash: string, p
   return [
     'set -e',
     `BASE="$HOME/${REMOTE_PLUGINS_DIR}"`,
+    `PROFILE="${profileName}"`,
     `PORT="${remotePort}"`,
     `TAG="$$-$(date +%s)"`,
     `NEW="$BASE.new.$TAG"`,
