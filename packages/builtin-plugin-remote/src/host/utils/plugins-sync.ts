@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { REMOTE_PIDFILE, REMOTE_ROOT } from '../config/constants'
+import { REMOTE_ROOT, remotePidfile } from '../config/constants'
 
 const REMOTE_PLUGINS_DIR = `${REMOTE_ROOT}/plugins`
 const SYNC_MARKER = `${REMOTE_PLUGINS_DIR}/.sync-sha256`
@@ -111,13 +111,40 @@ export function pluginSyncMarkerCommand(): string {
   return `cat "$HOME/${SYNC_MARKER}" 2>/dev/null || true`
 }
 
+/**
+ * 停掉本档案本端口的远端实例。
+ *
+ * pidfile 已按档案与端口分开，同一台主机上的多个档案互不覆盖；剩下的风险是
+ * pidfile 过期后 PID 被无关进程复用，因此先按命令行确认身份再 kill。远端都是
+ * Unix，`ps -o args=` 不可用时（例如 MSYS）退化为直接 kill，此时行为与修复前一致。
+ */
+function stopInstanceCommand(profileName: string, remotePort: number): string[] {
+  const argv = `bin.js --profile ${profileName} --host 127.0.0.1 --port ${remotePort}`
+  const pidfile = `$HOME/${remotePidfile(profileName, remotePort)}`
+  return [
+    `ARGV="${argv}"`,
+    `if [ -f "${pidfile}" ]; then`,
+    `  OLD_PID="$(cat "${pidfile}" 2>/dev/null || true)"`,
+    `  case "$OLD_PID" in`,
+    `    "" | *[!0-9]*) ;;`,
+    `    *)`,
+    `      OLD_ARGS="$(ps -p "$OLD_PID" -o args= 2>/dev/null || true)"`,
+    `      if [ -z "$OLD_ARGS" ] || printf '%s' "$OLD_ARGS" | grep -Fq "$ARGV"; then`,
+    `        kill "$OLD_PID" 2>/dev/null || true`,
+    `      fi`,
+    `      ;;`,
+    `  esac`,
+    `fi`,
+    `pkill -f "$ARGV" 2>/dev/null || true`,
+  ]
+}
+
 export function pluginSyncApplyCommand(tree: BundledPluginsTree, hash: string, profileName: string, remotePort: number): string {
   const names = tree.pluginNames.join(' ')
   const profile = `.dsh/profiles/${profileName}`
   return [
     'set -e',
     `BASE="$HOME/${REMOTE_PLUGINS_DIR}"`,
-    `PROFILE="${profileName}"`,
     `PORT="${remotePort}"`,
     `TAG="$$-$(date +%s)"`,
     `NEW="$BASE.new.$TAG"`,
@@ -125,8 +152,7 @@ export function pluginSyncApplyCommand(tree: BundledPluginsTree, hash: string, p
     `rm -rf "$HOME/${REMOTE_PLUGINS_DIR}".new.* "$HOME/${REMOTE_PLUGINS_DIR}".old.* 2>/dev/null || true`,
     `mkdir -p "$NEW/node_modules"`,
     `tar -xzf - -C "$NEW/node_modules"`,
-    `[ -f "$HOME/${REMOTE_PIDFILE}" ] && kill "$(cat "$HOME/${REMOTE_PIDFILE}")" 2>/dev/null || true`,
-    `pkill -f "bin.js --profile $PROFILE --host 127.0.0.1 --port $PORT" 2>/dev/null || true`,
+    ...stopInstanceCommand(profileName, remotePort),
     `i=0; while [ $i -lt 50 ] && (exec 3<>/dev/tcp/127.0.0.1/$PORT) 2>/dev/null; do i=$((i+1)); sleep 0.2; done`,
     `if [ -d "$BASE" ]; then mv "$BASE" "$OLD"; fi`,
     `mv "$NEW" "$BASE"`,

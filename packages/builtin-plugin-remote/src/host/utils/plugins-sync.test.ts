@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { remotePidfile } from '../config/constants'
 import { startCommandFor } from '../service/bootstrap.utils'
 import { MachineId } from '../types/index'
 import { pluginSyncApplyCommand, pluginSyncMarkerCommand } from './plugins-sync'
@@ -18,6 +19,7 @@ const TREE: BundledPluginsTree = { root: '/unused', pluginNames: ['plugin-alpha'
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v tar >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 const PKILL_AVAILABLE = spawnSync('pkill', ['-f', 'dsh-plugins-sync-probe-absent']).status === 1
+const PS_ARGS_AVAILABLE = spawnSync('sh', ['-c', 'ps -p $$ -o args= >/dev/null 2>&1']).status === 0
 
 const NODE_STUB = `#!/bin/sh
 if [ -n "$STUB_ARGV_LOG" ]; then printf '%s\\n' "$0 $*" >> "$STUB_ARGV_LOG"; fi
@@ -253,6 +255,23 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const pattern = invocation.replace(/^-f\s+/u, '')
     expect(new RegExp(pattern).test(argv), `${pattern} 必须命中 ${argv}`).toBe(true)
     expect(new RegExp(pattern).test(argv.replaceAll(`--port ${REMOTE_PORT}`, `--port ${REMOTE_PORT + 1}`)), '不得误杀别的端口上的实例').toBe(false)
+  })
+
+  describe.skipIf(!PS_ARGS_AVAILABLE)('pidfile 过期时按命令行确认身份', () => {
+    it('pidfile 记录的 PID 已被无关进程复用时不得停掉它', () => {
+      const sandbox = createSandbox()
+      const unrelated = spawnSync('sh', ['-c', 'sleep 30 >/dev/null 2>&1 & echo $!'], { encoding: 'utf8' })
+      const pid = Number(unrelated.stdout.trim())
+      expect(Number.isInteger(pid) && pid > 0, `需要先拿到一个无关进程: ${unrelated.stderr}`).toBe(true)
+      startedPids.push(pid)
+      writeFileSync(join(sandbox.home, remotePidfile(PROFILE, REMOTE_PORT)), `${pid}\n`)
+
+      const result = runSyncScript(sandbox)
+
+      expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
+      expect(processAlive(pid), '命令行不匹配的进程必须保留').toBe(true)
+      expect(markerOf(sandbox)).toBe(HASH)
+    })
   })
 
   describe.skipIf(!PKILL_AVAILABLE)('真实 pkill 兜底', () => {
