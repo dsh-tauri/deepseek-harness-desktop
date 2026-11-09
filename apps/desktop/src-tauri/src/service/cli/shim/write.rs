@@ -278,7 +278,7 @@ pub fn write_shims_at(bin_dir: &Path, paths: &ShimPaths, dsh_home: &Path) -> Res
 ///
 /// 只删除本应用生成的文件：`~/.local/bin/node` 也可能是用户自装的运行时，
 /// 写入侧既然会保留它们，删除侧就必须同样跳过。
-pub fn remove_shims(bin_dir: &Path) {
+pub fn remove_shims(bin_dir: &Path) -> Result<(), String> {
     #[cfg(windows)]
     let names: &[&str] = &[
         SHIM_CMD_NAME,
@@ -293,11 +293,21 @@ pub fn remove_shims(bin_dir: &Path) {
     ];
     #[cfg(not(windows))]
     let names: &[&str] = &[SHIM_SH_NAME, NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME];
+    let mut failure = None;
     for name in names {
         let path = bin_dir.join(name);
-        if is_generated_shim(&path) {
-            let _ = fs::remove_file(path);
+        if !is_generated_shim(&path) {
+            continue;
         }
+        if let Err(error) = fs::remove_file(&path)
+            && failure.is_none()
+        {
+            failure = Some(format!("SHIM_REMOVE_FAILED: remove {} failed: {error}", path.display()));
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -686,7 +696,7 @@ mod tests {
             );
         }
 
-        remove_shims(&bin_dir);
+        remove_shims(&bin_dir).unwrap();
 
         for name in names {
             assert!(
@@ -712,7 +722,7 @@ mod tests {
         let user_node = bin_dir.join(NODE_SHIM_SH_NAME);
         std::fs::write(&user_node, "#!/bin/sh\nexec /opt/node/bin/node \"$@\"\n").unwrap();
 
-        remove_shims(&bin_dir);
+        remove_shims(&bin_dir).unwrap();
 
         assert!(
             user_node.is_file(),

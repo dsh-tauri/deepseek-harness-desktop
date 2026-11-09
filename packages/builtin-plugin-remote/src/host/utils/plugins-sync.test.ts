@@ -255,6 +255,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const pattern = invocation.replace(/^-f\s+/u, '')
     expect(new RegExp(pattern).test(argv), `${pattern} 必须命中 ${argv}`).toBe(true)
     expect(new RegExp(pattern).test(argv.replaceAll(`--port ${REMOTE_PORT}`, `--port ${REMOTE_PORT + 1}`)), '不得误杀别的端口上的实例').toBe(false)
+    expect(new RegExp(pattern).test(argv.replaceAll(`--port ${REMOTE_PORT}`, `--port ${REMOTE_PORT}1`)), '端口必须按完整数字匹配').toBe(false)
   })
 
   it('停实例的匹配串在运行期拼装，脚本不会命中自己', () => {

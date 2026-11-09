@@ -90,7 +90,7 @@ pub fn remove(app_handle: &AppHandle) -> Result<CliLinkStatus, String> {
     let bin_dir = get_bin_dir(app_handle);
     // 删除清单一律由 shim 写入侧维护：关闭集成后连 `node` 启动器也要删掉，
     // 否则终端与其它应用解析到的 `node` 仍是随包 Electron（issue #1486）。
-    remove_shims(&bin_dir);
+    remove_shims(&bin_dir)?;
 
     unregister_path(app_handle)?;
 
