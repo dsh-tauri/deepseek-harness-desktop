@@ -275,6 +275,9 @@ pub fn write_shims_at(bin_dir: &Path, paths: &ShimPaths, dsh_home: &Path) -> Res
 /// 关闭命令行集成后必须连 `node` 启动器一起删（issue #1486）：残留的 `node.cmd`
 /// 仍会让用户终端与其它应用解析到随包 Electron。文件清单两边共用同一组常量，
 /// 写入/删除始终成对。
+///
+/// 只删除本应用生成的文件：`~/.local/bin/node` 也可能是用户自装的运行时，
+/// 写入侧既然会保留它们，删除侧就必须同样跳过。
 pub fn remove_shims(bin_dir: &Path) {
     #[cfg(windows)]
     let names: &[&str] = &[
@@ -291,7 +294,10 @@ pub fn remove_shims(bin_dir: &Path) {
     #[cfg(not(windows))]
     let names: &[&str] = &[SHIM_SH_NAME, NODE_SHIM_SH_NAME, PNPM_SHIM_SH_NAME];
     for name in names {
-        let _ = fs::remove_file(bin_dir.join(name));
+        let path = bin_dir.join(name);
+        if is_generated_shim(&path) {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
@@ -688,6 +694,30 @@ mod tests {
                 "{name} survived disabling the CLI integration"
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// issue #1486：删除只看生成标记，用户自己放在 bin 目录下的同名文件必须保留。
+    ///
+    /// `~/.local/bin/node` 是用户自装运行时的常见位置；写入侧遇到非本应用文件会跳过，
+    /// 删除侧若无条件删除就会把它删掉。
+    #[test]
+    fn remove_shims_preserves_user_files_that_were_never_generated() {
+        let dir = temp_dir("remove-shims-foreign");
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        #[cfg(windows)]
+        let user_node = bin_dir.join(NODE_SHIM_CMD_NAME);
+        #[cfg(not(windows))]
+        let user_node = bin_dir.join(NODE_SHIM_SH_NAME);
+        std::fs::write(&user_node, "#!/bin/sh\nexec /opt/node/bin/node \"$@\"\n").unwrap();
+
+        remove_shims(&bin_dir);
+
+        assert!(
+            user_node.is_file(),
+            "a user-installed node launcher must survive disabling the CLI integration"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
