@@ -6,6 +6,8 @@ export const DEFAULT_MACHINE_TRANSPORT = 'ssh'
 
 export const REMOTE_ROOT = '.dsh-desktop'
 
+export const REMOTE_PIDFILE = '.dsh/.dsh-remote.pid'
+
 /** 内部来源标识的两枚头名（S2 §9）；网关注入侧与插件判定侧必须逐字一致。 */
 export const GATEWAY_SOURCE_HEADER = 'x-dsh-remote-source'
 

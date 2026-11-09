@@ -8,11 +8,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { REMOTE_ROOT } from '../config/constants'
+import { REMOTE_PIDFILE, REMOTE_ROOT } from '../config/constants'
 
 const REMOTE_PLUGINS_DIR = `${REMOTE_ROOT}/plugins`
 const SYNC_MARKER = `${REMOTE_PLUGINS_DIR}/.sync-sha256`
-const REMOTE_PIDFILE = '.dsh/dsh-remote.pid'
 
 export const WIRE_SCRIPT = `const fs = require('fs')
 const path = require('path')
@@ -118,18 +117,23 @@ export function pluginSyncApplyCommand(tree: BundledPluginsTree, hash: string, p
   return [
     'set -e',
     `BASE="$HOME/${REMOTE_PLUGINS_DIR}"`,
-    `rm -rf "$BASE.new" && mkdir -p "$BASE.new/node_modules"`,
-    `tar -xzf - -C "$BASE.new/node_modules"`,
-    `rm -rf "$BASE.old"`,
-    `[ -d "$BASE" ] && mv "$BASE" "$BASE.old" || true`,
-    `mv "$BASE.new" "$BASE"`,
-    `rm -rf "$BASE.old"`,
-    `echo "${hash}" > "$HOME/${SYNC_MARKER}"`,
+    `PROFILE="${profileName}"`,
+    `PORT="${remotePort}"`,
+    `TAG="$$-$(date +%s)"`,
+    `NEW="$BASE.new.$TAG"`,
+    `OLD="$BASE.old.$TAG"`,
+    `rm -rf "$HOME/${REMOTE_PLUGINS_DIR}".new.* "$HOME/${REMOTE_PLUGINS_DIR}".old.* 2>/dev/null || true`,
+    `mkdir -p "$NEW/node_modules"`,
+    `tar -xzf - -C "$NEW/node_modules"`,
+    `[ -f "$HOME/${REMOTE_PIDFILE}" ] && kill "$(cat "$HOME/${REMOTE_PIDFILE}")" 2>/dev/null || true`,
+    `pkill -f "bin.js --profile $PROFILE --host 127.0.0.1 --port $PORT" 2>/dev/null || true`,
+    `i=0; while [ $i -lt 50 ] && (exec 3<>/dev/tcp/127.0.0.1/$PORT) 2>/dev/null; do i=$((i+1)); sleep 0.2; done`,
+    `if [ -d "$BASE" ]; then mv "$BASE" "$OLD"; fi`,
+    `mv "$NEW" "$BASE"`,
+    `rm -rf "$OLD" "$HOME/${REMOTE_PLUGINS_DIR}".old.* 2>/dev/null || true`,
     `[ -f "$HOME/${profile}/package.json" ] || "$HOME/${REMOTE_ROOT}/runtime/bin/node" "$HOME/${REMOTE_ROOT}/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile ${profileName} --from-default-profile web --help >/dev/null 2>&1`,
     `"$HOME/${REMOTE_ROOT}/runtime/bin/node" "$BASE/node_modules/_wire.js" "$HOME/${profile}/package.json" "$BASE/node_modules" ${names}`,
-    `[ -f "$HOME/${REMOTE_PIDFILE}" ] && kill "$(cat "$HOME/${REMOTE_PIDFILE}")" 2>/dev/null || true`,
-    `pkill -f "$HOME/${REMOTE_ROOT}/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web" 2>/dev/null || true`,
-    `i=0; while [ $i -lt 50 ] && (exec 3<>/dev/tcp/127.0.0.1/${remotePort}) 2>/dev/null; do i=$((i+1)); sleep 0.2; done`,
+    `echo "${hash}" > "$HOME/${SYNC_MARKER}"`,
     'echo PLUGINS_SYNCED',
   ].join('\n')
 }

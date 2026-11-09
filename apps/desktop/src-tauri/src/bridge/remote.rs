@@ -37,10 +37,12 @@ fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
 }
 
 fn machine_tunnel_url(machines: &Value, machine_id: &str) -> Result<tauri::Url, String> {
-    let machine = machines
-        .get("items")
-        .and_then(Value::as_array)
-        .and_then(|items| items.iter().find(|item| item.get("id").and_then(Value::as_str) == Some(machine_id)))
+    // 与机器列表同口径：ssh config 里发现的机器（discovered）同样可连接。issue #1488
+    let machine = ["items", "discovered"]
+        .into_iter()
+        .filter_map(|list| machines.get(list).and_then(Value::as_array))
+        .flatten()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(machine_id))
         .ok_or_else(|| "REMOTE_MACHINE_NOT_FOUND".to_string())?;
     if machine.get("state").and_then(Value::as_str) != Some("connected") {
         return Err("REMOTE_MACHINE_NOT_CONNECTED".into());
@@ -304,6 +306,36 @@ mod tests {
         assert_eq!(machine_tunnel_url(&machines, "m2").unwrap_err(), "REMOTE_MACHINE_NOT_CONNECTED");
         assert_eq!(machine_tunnel_url(&machines, "m4").unwrap_err(), "REMOTE_MACHINE_NOT_FOUND");
         assert!(machine_tunnel_url(&machines, "m3").unwrap_err().starts_with("REMOTE_URL_INVALID:"));
+    }
+
+    #[test]
+    fn remote_navigation_resolves_discovered_machines_like_the_machine_list() {
+        let machines = json!({
+            "items": [
+                {"id": "manual", "state": "connected", "tunnelBaseUrl": "http://127.0.0.1:43123"}
+            ],
+            "discovered": [
+                {"id": "ssh-host", "state": "connected", "tunnelBaseUrl": "http://127.0.0.1:43124"},
+                {"id": "ssh-offline", "state": "disconnected"},
+                {"id": "ssh-tunnel-missing", "state": "connected"}
+            ]
+        });
+        assert_eq!(
+            machine_tunnel_url(&machines, "ssh-host").unwrap().as_str(),
+            "http://127.0.0.1:43124/"
+        );
+        assert_eq!(
+            machine_tunnel_url(&machines, "ssh-offline").unwrap_err(),
+            "REMOTE_MACHINE_NOT_CONNECTED"
+        );
+        assert_eq!(
+            machine_tunnel_url(&machines, "ssh-tunnel-missing").unwrap_err(),
+            "REMOTE_MACHINE_NOT_CONNECTED"
+        );
+        assert_eq!(
+            machine_tunnel_url(&machines, "manual").unwrap().as_str(),
+            "http://127.0.0.1:43123/"
+        );
     }
 
     #[test]
