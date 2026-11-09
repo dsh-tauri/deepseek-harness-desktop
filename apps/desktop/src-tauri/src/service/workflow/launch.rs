@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 
 #[cfg(unix)]
-use super::process::warn_if_inotify_watch_limit_low;
+use super::process::{signal_exit_code, warn_if_inotify_watch_limit_low};
 use super::process::{
     HARNESS_PROCESS_EXITED_EVENT, LaunchGuard, OwnedProcess, has_owned_process, launch_guard,
     on_owned_process_exit_at, register_owned_process, stop, take_startup_sweep,
@@ -297,16 +297,26 @@ fn wait_harness(
     }
     #[cfg(unix)]
     {
+        use std::os::unix::process::ExitStatusExt;
+
+        // issue #1490：Unix 被信号终止时 ExitStatus::code() 为空，改用负信号号上报，
+        // 让退出日志写出 "terminated by SIGSEGV"；退出载荷仍是空退出码。
+        fn exit_code(exit: std::process::ExitStatus) -> Option<i64> {
+            exit.code()
+                .map(i64::from)
+                .or_else(|| exit.signal().map(signal_exit_code))
+        }
+
         let Some(timeout) = timeout else {
             return child
                 .wait()
-                .map(|exit| Some(exit.code().map(i64::from)))
+                .map(|exit| Some(exit_code(exit)))
                 .map_err(|error| format!("PROCESS_WAIT_FAILED: {error}"));
         };
         let deadline = std::time::Instant::now() + timeout;
         loop {
             match child.try_wait() {
-                Ok(Some(exit)) => return Ok(Some(exit.code().map(i64::from))),
+                Ok(Some(exit)) => return Ok(Some(exit_code(exit))),
                 Ok(None) if std::time::Instant::now() >= deadline => return Ok(None),
                 Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
                 Err(error) => return Err(format!("PROCESS_WAIT_FAILED: {error}")),
