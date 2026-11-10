@@ -1,8 +1,10 @@
 import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
+import { useStore } from 'valtio-define'
 import { Panel } from '@/components/panel'
 import { button } from '@/components/primitives'
+import { store } from '@/store'
 
 export type IconComponent = ComponentType<SVGProps<SVGSVGElement>>
 
@@ -39,9 +41,13 @@ export function Loadable({
   children,
 }: LoadableProps) {
   const { t } = useTranslation()
+  const { startupPhase, startupReason } = useStore(store.harness)
   const error = errorMsg != null
   const wordmark = title ?? t('app.wordmark')
-  const hint = error ? errorMsg : subtitle ?? t('status.loading_plugins')
+  // 启动页副标题跟随内置插件阶段的实时原因（「Checking N… · Working on <条目>」），
+  // 卡住时用户能直接看到卡在哪个插件（issue #1503）；其余阶段与空原因沿用固定文案。
+  const liveReason = startupPhase === 'plugin-install' ? startupReason : ''
+  const hint = error ? errorMsg : subtitle ?? (liveReason || t('status.loading_plugins'))
   const hasLogs = logs != null
   const showPanel = hasLogs || percentage != null
 

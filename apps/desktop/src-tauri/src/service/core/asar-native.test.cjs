@@ -183,6 +183,46 @@ for (const [runtime, platform, electron] of [
   })
 }
 
+test('Electron on Linux refuses the sharp entry point when the archive has no WebAssembly fallback', (t) => {
+  const f = fixture(t)
+  const entry = f.write('node_modules/sharp/index.js', 'require("node:fs").writeFileSync(require("node:path").join(__dirname, "executed.txt"), "1")')
+  runtimeVariant(t, 'linux', '44.7.0')
+  let error
+  try {
+    f.load('sharp')
+  }
+  catch (thrown) {
+    error = thrown
+  }
+  assert.ok(error, 'sharp entry must be refused')
+  assert.equal(error.code, 'ERR_DSH_SHARP_ELECTRON_LINUX')
+  assert.match(error.message, /issue #1504/)
+  assert.doesNotMatch(error.message, /Possible solutions|npm install/)
+  assert.equal(fs.existsSync(path.join(path.dirname(entry), 'executed.txt')), false)
+  assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/sharp')), false)
+})
+
+test('Electron on Linux keeps the sharp entry point when the archive contains the WebAssembly fallback', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/sharp/index.js', 'module.exports = "sharp entry"')
+  f.write('node_modules/@img/sharp-wasm32/sharp.node', 'wasm binary')
+  runtimeVariant(t, 'linux', '44.7.0')
+  assert.equal(f.load('sharp'), 'sharp entry')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/sharp/index.js'), 'utf8'), 'module.exports = "sharp entry"')
+})
+
+for (const [runtime, platform, electron] of [
+  ['plain Node on Linux', 'linux', undefined],
+  ['Electron on Windows', 'win32', '44.7.0'],
+]) {
+  test(runtime + ' keeps the sharp entry point loadable without a WebAssembly fallback', (t) => {
+    const f = fixture(t)
+    f.write('node_modules/sharp/index.js', 'module.exports = "sharp entry"')
+    runtimeVariant(t, platform, electron)
+    assert.equal(f.load('sharp'), 'sharp entry')
+  })
+}
+
 test('pure JavaScript parent remains archived when only a nested dependency is native', (t) => {
   const f = fixture(t)
   f.write('node_modules/outer/index.js', 'module.exports = __dirname')
@@ -472,7 +512,7 @@ if (process.env.DSH_ASAR_NATIVE_INTEGRATION === '1') {
             return
           }
           if (process.platform === 'linux' && process.versions.electron !== undefined) {
-            assert.throws(() => load('sharp'), /ERR_DSH_SHARP_ELECTRON_LINUX/)
+            assert.throws(() => load('sharp'), { code: 'ERR_DSH_SHARP_ELECTRON_LINUX', message: /issue #1504/ })
             return
           }
           const sharp = load('sharp')

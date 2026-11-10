@@ -37,6 +37,8 @@ export interface InternalPluginsPhasePayload {
   detail: InternalPluginPhaseDetail
   completed: number
   total: number
+  /** 当前正在核对/安装的条目名（仅 checking / installing 时携带） */
+  entry?: string
 }
 
 /** 安装器展示状态 */

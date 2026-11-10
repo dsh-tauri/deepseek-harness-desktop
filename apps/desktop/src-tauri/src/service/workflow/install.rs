@@ -154,7 +154,9 @@ pub async fn install(
                 .as_ref()
                 .map(|info| info.asset_url.clone())
                 .filter(|url| !url.is_empty())
-                .unwrap_or(config::get_dsh_download_url()?);
+                .unwrap_or(config::get_dsh_download_url(
+                    config::get_store_dat_setting(app_handle).core_asar,
+                )?);
             let name = primary.rsplit('/').next().unwrap_or("").to_string();
             let mut urls = vec![primary.clone()];
             urls.extend(config::mirror_download_urls(&primary));

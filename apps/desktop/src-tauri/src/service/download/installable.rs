@@ -30,7 +30,14 @@ pub trait Installable: Send + Sync {
     fn kind(&self) -> InstallKind;
     fn title(&self) -> &str;
     fn check_installed(&self, app: &AppHandle) -> bool;
-    fn get_download_url(&self) -> Result<String, String>;
+    /// 固定下载地址。Harness 核心不实现：它的资产名随核心格式变化，
+    /// 由安装流程按当前设置解析（见 `config::get_dsh_download_url`）。
+    fn get_download_url(&self) -> Result<String, String> {
+        Err(format!(
+            "INSTALL_TASK_INVALID: {} has no fixed download URL",
+            self.title()
+        ))
+    }
     fn get_install_path(&self, app: &AppHandle) -> PathBuf;
     /// 把该依赖当前解析出的安装根写回映射表（系统环境满足 → `null`）。
     ///
@@ -58,6 +65,16 @@ pub fn record_mappings(app: &AppHandle) {
 // --- DeepSeek Harness 实现 ---
 pub struct Dsh;
 
+impl Dsh {
+    /// 托管核心的磁盘形态是否已与 `core_asar` 设置不符：切换核心格式后必须重新下载。
+    /// 随包内核随安装包分发、无法重下，不参与判定。
+    pub fn format_mismatch(&self, app: &AppHandle) -> bool {
+        config::dependencies::bundled_core_dir(app).is_none()
+            && config::core_archive_in(&config::get_dsh_install_path(app)).is_some()
+                != config::get_store_dat_setting(app).core_asar
+    }
+}
+
 #[async_trait]
 impl Installable for Dsh {
     fn kind(&self) -> InstallKind {
@@ -65,9 +82,6 @@ impl Installable for Dsh {
     }
     fn title(&self) -> &str {
         "Harness 核心"
-    }
-    fn get_download_url(&self) -> Result<String, String> {
-        config::get_dsh_download_url()
     }
     fn get_install_path(&self, app: &AppHandle) -> PathBuf {
         let root = config::get_dsh_install_path(app);
@@ -85,6 +99,7 @@ impl Installable for Dsh {
         // 核心入口可能在 asar 归档内部（std::fs 看不到），必须走归档感知的判定。
         config::core_entry_exists(&crate::service::core::active_dsh_binary(app))
             && crate::service::core::app_core_meets_baseline(app)
+            && !self.format_mismatch(app)
     }
     fn record_mapping(&self, app: &AppHandle) {
         // 记录**当前生效的根**而不是清单托管根：随包资源构建（离线包）里用户可以把内核

@@ -75,20 +75,34 @@ module.exports = function registerNativePackages(archive, cache) {
   }
 
   const refused = new Set()
-  function refuseElectronLinuxSharp(root) {
-    const name = `@img/${path.basename(root)}`
-    if (process.platform !== 'linux'
-      || process.versions.electron === undefined
-      || path.basename(path.dirname(root)) !== '@img'
-      || !/^sharp-(?:libvips-)?linux/.test(path.basename(root)))
-      return
+  function refuse(name, message, log) {
     if (!refused.has(name)) {
       refused.add(name)
-      console.error(`[asar-native] refusing ${name}: Electron's bundled glibc conflicts with sharp's prebuilt Linux binaries and terminates the Harness process, so image decoders stay unavailable (issue #1490)`)
+      console.error(log)
     }
-    throw Object.assign(
-      new Error(`${name} is disabled under Electron on Linux: its prebuilt binaries conflict with Electron's bundled glibc and terminate the Harness process (issue #1490)`),
-      { code: 'ERR_DSH_SHARP_ELECTRON_LINUX' },
+    throw Object.assign(new Error(message), { code: 'ERR_DSH_SHARP_ELECTRON_LINUX' })
+  }
+
+  function refuseElectronLinuxSharp(root) {
+    if (process.platform !== 'linux' || process.versions.electron === undefined)
+      return
+    const base = path.basename(root)
+    if (base === 'sharp') {
+      if (!fs.existsSync(path.join(archive, 'node_modules', '@img', 'sharp-wasm32')))
+        refuse(
+          'sharp',
+          `sharp is disabled under Electron on Linux: its prebuilt native decoders conflict with Electron's bundled glibc and terminate the Harness process (issue #1504). Reinstalling or rebuilding sharp cannot fix this: image features are unavailable, and every other feature keeps working.`,
+          `[asar-native] refusing sharp: the archive carries no @img/sharp-wasm32 fallback, so image decoding stays unavailable under Electron on Linux and reinstalling sharp cannot help (issue #1504)`,
+        )
+      return
+    }
+    if (path.basename(path.dirname(root)) !== '@img' || !/^sharp-(?:libvips-)?linux/.test(base))
+      return
+    const name = `@img/${base}`
+    refuse(
+      name,
+      `${name} is disabled under Electron on Linux: its prebuilt binaries conflict with Electron's bundled glibc and terminate the Harness process (issue #1490)`,
+      `[asar-native] refusing ${name}: Electron's bundled glibc conflicts with sharp's prebuilt Linux binaries and terminates the Harness process, so image decoders stay unavailable (issue #1490)`,
     )
   }
 

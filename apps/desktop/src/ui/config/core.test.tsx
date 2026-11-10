@@ -53,6 +53,8 @@ let cores: HarnessCore[]
 let translations = createInstance()
 let updateVersion: string
 let updateError: string | Error | null
+let coreAsar: boolean
+let coreAsarError: string | Error | null
 
 function renderCore() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -89,6 +91,8 @@ beforeEach(async () => {
   cores = [{ ...localFixture }, { ...managedFixture }]
   updateVersion = '0.2.3-rc.1'
   updateError = null
+  coreAsar = true
+  coreAsarError = null
   translations = createInstance()
   await translations.init({
     lng: 'en-US',
@@ -97,9 +101,17 @@ beforeEach(async () => {
     interpolation: { escapeValue: false },
   })
   mocks.restart.mockResolvedValue(undefined)
-  mocks.invoke.mockImplementation(async (command: string) => {
+  mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'get_cores')
       return cores.map(core => ({ ...core }))
+    if (command === 'get_core_asar')
+      return coreAsar
+    if (command === 'set_core_asar') {
+      if (coreAsarError)
+        throw coreAsarError
+      coreAsar = args?.enabled === true
+      return undefined
+    }
     if (command === 'set_active_core')
       return { ...managedFixture, active: true }
     if (command === 'update_local_core') {
@@ -285,5 +297,84 @@ describe('本地核心更新档案安全', () => {
 
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expectNoCoreOrProfileSwitch()
+  })
+})
+
+describe('核心格式（ASAR）开关', () => {
+  async function openAdvanced() {
+    renderCore()
+    fireEvent.click(await screen.findByRole('switch', { name: 'Advanced options' }))
+    const toggle = await screen.findByRole('switch', { name: 'ASAR' })
+    await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false))
+    return toggle
+  }
+
+  it('高级选项默认收起，展开后显示默认开启的 ASAR 开关', async () => {
+    renderCore()
+    expect(screen.queryByRole('switch', { name: 'ASAR' })).toBeNull()
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Advanced options' }))
+
+    const toggle = await screen.findByRole('switch', { name: 'ASAR' })
+    await waitFor(() => expect((toggle as HTMLInputElement).checked).toBe(true))
+    const hint = enUS['core.asar_hint']
+    expect(screen.getByText(hint).textContent).toBe(hint)
+  })
+
+  it('关闭 ASAR 先确认，确认后切换格式并重启服务', async () => {
+    const toggle = await openAdvanced()
+    fireEvent.click(toggle)
+
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByRole('heading').textContent).toBe(enUS['core.asar_confirm_title'])
+    const description = enUS['core.asar_confirm_desc']
+    expect(within(dialog).getByText(description).textContent).toBe(description)
+    expect(mocks.invoke).not.toHaveBeenCalledWith('set_core_asar', expect.anything())
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('set_core_asar', { enabled: false }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switched to the directory core', {
+      variant: 'accent',
+      description: 'Core switched — restarting the service…',
+      timeout: 10_000,
+    }))
+    await waitFor(() => expect(mocks.restart).toHaveBeenCalledTimes(1))
+    expect((toggle as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('取消确认框不切换格式、不重启', async () => {
+    const toggle = await openAdvanced()
+    fireEvent.click(toggle)
+
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(mocks.invoke).not.toHaveBeenCalledWith('set_core_asar', expect.anything())
+    expect(mocks.restart).not.toHaveBeenCalled()
+    expect((toggle as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('随包内核构建禁用 ASAR 开关', async () => {
+    cores = [{ ...managedFixture, id: 'app-bundled', bundled: true }]
+    renderCore()
+    fireEvent.click(await screen.findByRole('switch', { name: 'Advanced options' }))
+
+    const toggle = await screen.findByRole('switch', { name: 'ASAR' })
+    expect((toggle as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('切换失败时提示失败并保留原格式', async () => {
+    coreAsarError = 'CORE_ASAR_SWITCH_FAILED: download unavailable'
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const toggle = await openAdvanced()
+    fireEvent.click(toggle)
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to switch the core format', {}))
+    expect(errorLog).toHaveBeenCalledWith('[ConfigCore] switch core format failed:', coreAsarError)
+    expect(mocks.restart).not.toHaveBeenCalled()
+    expect((toggle as HTMLInputElement).checked).toBe(true)
   })
 })

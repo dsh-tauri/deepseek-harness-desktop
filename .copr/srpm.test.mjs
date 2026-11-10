@@ -27,10 +27,10 @@ function run(command, args, options = {}) {
 const realGit = run('bash', ['-c', 'command -v git']).trim()
 cpSync(join(root, '.copr'), join(repo, '.copr'), { recursive: true })
 put(join(repo, 'package.json'), '{\n  "version": "0.3.0-pre.alpha.2",\n  "packageManager": "pnpm@11.7.0"\n}\n')
-for (const file of ['Cargo.toml', 'tauri.conf.json', 'src/config/constants.rs']) {
-  const dest = join(repo, 'apps/desktop/src-tauri', file)
+for (const file of ['apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/tauri.conf.json', 'packages/builtin-plugin-remote/src/host/utils/assets.ts']) {
+  const dest = join(repo, file)
   mkdirSync(dirname(dest), { recursive: true })
-  cpSync(join(root, 'apps/desktop/src-tauri', file), dest)
+  cpSync(join(root, file), dest)
 }
 run('git', ['init', '-q', repo])
 run('git', ['-C', repo, 'add', '.'])
@@ -96,4 +96,21 @@ check('SRPM fills Next metadata, picks highest release and includes required sub
   assert.equal(readFileSync(join(buildroot, 'usr/lib/DeepSeek Harness/runtime/linux-x64/runtime/main.cjs'), 'utf8'), 'target/electron/linux-x64/runtime/main.cjs')
   assert.equal(readFileSync(join(buildroot, 'usr/lib/DeepSeek Harness/resources/manifest.jsonc'), 'utf8'), 'resources/manifest.jsonc')
   assert.match(readFileSync(join(buildroot, 'usr/share/applications/DeepSeek Harness.desktop'), 'utf8'), /Exec=deepseek-harness-desktop[\s\S]*MimeType=x-scheme-handler\/dsh/)
+})
+check('SRPM keeps cross-arch Tailwind bindings out of automatic requires', () => {
+  const result = build('dsh-tauri-beta', 'v0.3.0-pre.alpha.2')
+  assert.ifError(result.error)
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+  const lines = readFileSync(join(work, 'output/result.spec'), 'utf8').split('\n')
+  function macro(name) {
+    const line = lines.find(text => text.startsWith(`%global ${name} `))
+    assert.ok(line, `SRPM_MACRO_MISSING: ${name}`)
+    return line.slice(`%global ${name} `.length)
+  }
+  const appdir = macro('appdir').replaceAll('%{_prefix}', '/usr').replaceAll('%{appname}', macro('appname'))
+  const pattern = new RegExp(macro('__requires_exclude_from').replaceAll('%{appdir}', appdir))
+  for (const arch of ['x64', 'arm64']) {
+    assert.match(`${appdir}/resources/node_modules/@tailwindcss/oxide-linux-${arch}-gnu/tailwindcss-oxide.linux-${arch}-gnu.node`, pattern)
+  }
+  assert.doesNotMatch(`${appdir}/runtime/linux-x64/electron`, pattern)
 })

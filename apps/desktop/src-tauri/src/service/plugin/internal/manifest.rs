@@ -7,15 +7,55 @@ use std::os::windows::fs::FileTypeExt;
 use std::path::Path;
 
 pub(crate) fn internal_plugin_entry_is_ready(entry: &Path) -> bool {
-    let Ok(raw) = std::fs::read(entry.join("package.json")) else {
-        return false;
+    internal_plugin_entry_problem(entry).is_none()
+}
+
+/// 内置插件入口不就绪的具体原因（就绪时为 None）。
+///
+/// 判定语义与 internal_plugin_entry_is_ready 完全一致，只是把「哪一步不成立」拆开：
+/// 清单读不出来（io 错误原样带出）、JSON 解析失败、顶层不是对象、声明的 main 不是
+/// 字符串或其产物不在位。启动自愈每轮据此决定是否重装，日志必须能自证是「路径漂移」
+/// 还是「入口不在位」，否则只剩三个布尔值无法定位（issue #1503）。
+pub(super) fn internal_plugin_entry_problem(entry: &Path) -> Option<String> {
+    let manifest_path = entry.join("package.json");
+    let raw = match std::fs::read(&manifest_path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            return Some(format!(
+                "INTERNAL_PLUGIN_ENTRY_MANIFEST_UNREADABLE: {}: {error}",
+                manifest_path.display()
+            ));
+        }
     };
-    serde_json::from_slice::<serde_json::Value>(&raw).is_ok_and(|manifest| {
-        manifest.is_object()
-            && manifest
-                .get("main")
-                .is_none_or(|main| main.as_str().is_some_and(|main| entry.join(main).is_file()))
-    })
+    let manifest = match serde_json::from_slice::<serde_json::Value>(&raw) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            return Some(format!(
+                "INTERNAL_PLUGIN_ENTRY_MANIFEST_INVALID: {}: {error}",
+                manifest_path.display()
+            ));
+        }
+    };
+    if !manifest.is_object() {
+        return Some(format!(
+            "INTERNAL_PLUGIN_ENTRY_MANIFEST_NOT_OBJECT: {}",
+            manifest_path.display()
+        ));
+    }
+    match manifest.get("main") {
+        None => None,
+        Some(main) => match main.as_str() {
+            None => Some(format!(
+                "INTERNAL_PLUGIN_ENTRY_MAIN_NOT_STRING: {}",
+                manifest_path.display()
+            )),
+            Some(main) if entry.join(main).is_file() => None,
+            Some(main) => Some(format!(
+                "INTERNAL_PLUGIN_ENTRY_MAIN_MISSING: {}",
+                entry.join(main).display()
+            )),
+        },
+    }
 }
 
 /// 清理 profile bundle 列表中的重复引用，保留首次出现的顺序。
@@ -345,6 +385,68 @@ mod tests {
         assert!(!internal_plugin_entry_is_ready(&root));
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn entry_problem_identifies_which_step_of_the_readiness_check_failed() {
+        let root = tempfile::tempdir().unwrap();
+        let entry = root.path().join("node_modules/dsh-tauri");
+        let manifest = entry.join("package.json");
+
+        let unreadable = internal_plugin_entry_problem(&entry).unwrap();
+        assert!(
+            unreadable.starts_with("INTERNAL_PLUGIN_ENTRY_MANIFEST_UNREADABLE: "),
+            "{unreadable}"
+        );
+        assert!(
+            unreadable.contains(&manifest.display().to_string()),
+            "{unreadable}"
+        );
+
+        std::fs::create_dir_all(&entry).unwrap();
+        std::fs::write(&manifest, br#"{"name":"dsh-tauri""#).unwrap();
+        let invalid = internal_plugin_entry_problem(&entry).unwrap();
+        assert!(
+            invalid.starts_with("INTERNAL_PLUGIN_ENTRY_MANIFEST_INVALID: "),
+            "{invalid}"
+        );
+        assert!(invalid.contains(&manifest.display().to_string()), "{invalid}");
+
+        std::fs::write(&manifest, b"[]").unwrap();
+        assert_eq!(
+            internal_plugin_entry_problem(&entry),
+            Some(format!(
+                "INTERNAL_PLUGIN_ENTRY_MANIFEST_NOT_OBJECT: {}",
+                manifest.display()
+            ))
+        );
+
+        std::fs::write(&manifest, br#"{"main":5}"#).unwrap();
+        assert_eq!(
+            internal_plugin_entry_problem(&entry),
+            Some(format!(
+                "INTERNAL_PLUGIN_ENTRY_MAIN_NOT_STRING: {}",
+                manifest.display()
+            ))
+        );
+
+        std::fs::write(&manifest, br#"{"main":"./dist/index.js"}"#).unwrap();
+        let declared = entry.join("./dist/index.js");
+        assert_eq!(
+            internal_plugin_entry_problem(&entry),
+            Some(format!(
+                "INTERNAL_PLUGIN_ENTRY_MAIN_MISSING: {}",
+                declared.display()
+            ))
+        );
+
+        std::fs::create_dir_all(entry.join("dist")).unwrap();
+        std::fs::write(entry.join("dist/index.js"), b"export function apply() {}").unwrap();
+        assert_eq!(internal_plugin_entry_problem(&entry), None);
+        assert!(internal_plugin_entry_is_ready(&entry));
+
+        std::fs::write(&manifest, br#"{"name":"dsh-tauri"}"#).unwrap();
+        assert_eq!(internal_plugin_entry_problem(&entry), None);
     }
 
     #[test]

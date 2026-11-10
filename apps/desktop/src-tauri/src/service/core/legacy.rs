@@ -53,19 +53,30 @@ pub(super) fn preserve_directory_core(root: &Path, deps: &Path, tag: &str) -> Re
     Ok(())
 }
 
+/// 需要退役的目录核心：目录核心正是当前要求的格式（`core_asar` 关闭）且入口可用时一律
+/// 保留——否则用户刚下载的目录核心会在下次启动时被改名搬走。asar 模式下仍按历史行为
+/// 清理，入口已损坏的目录残留也照常退役。
+fn needs_retirement<R: tauri::Runtime>(app: &AppHandle<R>, root: &Path, core_asar: bool) -> bool {
+    if !is_directory_core(root) {
+        return false;
+    }
+    core_asar || !config::core_entry_exists(&config::dsh_binary_at(root, app))
+}
+
 pub fn retire_directory_core<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let deps = config::get_base_dir(app).join("dependencies");
     let default = deps.join("dsh");
     let active = config::dependencies::active_root(app, config::dependencies::DEP_DSH);
-    let active_legacy = is_directory_core(&active);
-    if !active_legacy && !is_directory_core(&default) {
+    let core_asar = config::get_store_dat_setting(app).core_asar;
+    let active_legacy = needs_retirement(app, &active, core_asar);
+    if !active_legacy && !needs_retirement(app, &default, core_asar) {
         return Ok(());
     }
     let resources = config::manifest::resource_root(app);
     let local = super::local::local_core(app).map(|core| core.package_dir);
     let recorded_tag = config::get_store_dat_setting(app).dsh_pkg_tag;
     for root in [&active, &default] {
-        if !is_directory_core(root) {
+        if !needs_retirement(app, root, core_asar) {
             continue;
         }
         let real = dunce::canonicalize(root)

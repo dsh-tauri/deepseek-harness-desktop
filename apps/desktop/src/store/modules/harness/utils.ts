@@ -259,7 +259,7 @@ export function notifyPatchEntryStrip(report: PatchEntryStripReport): void {
 
 export type InternalPluginPhaseTranslate = (
   key: string,
-  options?: Record<string, number>,
+  options?: Record<string, number | string>,
 ) => string
 
 export function internalPluginReason(
@@ -267,13 +267,16 @@ export function internalPluginReason(
   previousReason: string,
   translate: InternalPluginPhaseTranslate,
 ): string {
+  const withEntry = (text: string) => payload.entry
+    ? `${text} · ${translate('status.internal_current', { entry: payload.entry })}`
+    : text
   switch (payload.detail) {
     case 'waiting':
       return translate('status.internal_waiting')
     case 'checking':
-      return translate('status.internal_checking', { total: payload.total })
+      return withEntry(translate('status.internal_checking', { total: payload.total }))
     case 'installing':
-      return translate('status.internal_installing', { total: payload.total })
+      return withEntry(translate('status.internal_installing', { total: payload.total }))
     case 'heartbeat':
       return previousReason
     case 'done':
