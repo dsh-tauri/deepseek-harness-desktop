@@ -1,6 +1,6 @@
 import type { HarnessCore } from '@/types'
 import { ArrowRotateRight, ChevronRight, CircleArrowDown as DownloadIcon, FolderOpen } from '@gravity-ui/icons'
-import { Button, Checkbox, Chip, Description, Label, Spinner } from '@heroui/react'
+import { Button, Checkbox, Chip, Description, Label, Spinner, Switch } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
 import { useToggle } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -34,7 +34,12 @@ export function ConfigCore() {
     queryKey: queryKeys.cores,
     queryFn: () => invoke<HarnessCore[]>('get_cores'),
   })
+  const { data: coreAsar, isPending: asarLoading } = useQuery({
+    queryKey: queryKeys.coreAsar,
+    queryFn: () => invoke<boolean>('get_core_asar'),
+  })
   useInvalidateOnSettingUpdated(queryKeys.cores)
+  useInvalidateOnSettingUpdated(queryKeys.coreAsar)
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.cores })
@@ -56,18 +61,30 @@ export function ConfigCore() {
     mutationFn: () => invoke<string>('update_local_core'),
     onSuccess: invalidate,
   })
+  const setCoreAsar = useMutation({
+    mutationFn: (enabled: boolean) => invoke<void>('set_core_asar', { enabled }),
+    onSuccess: (_data, enabled) => {
+      queryClient.setQueryData(queryKeys.coreAsar, enabled)
+      invalidate()
+    },
+    onError: () => {
+      // 失败时后端会回滚设置：重拉一次让开关回到真实值
+      void queryClient.invalidateQueries({ queryKey: queryKeys.coreAsar })
+    },
+  })
 
   const cores = coreList ?? []
   const loading = isLoading
   const error = coreError ? String(coreError) : ''
   /** 操作进行中标记（任一写操作 pending） */
-  const busy = activate.isPending || download.isPending || uninstall.isPending || updateLocal.isPending
+  const busy = activate.isPending || download.isPending || uninstall.isPending || updateLocal.isPending || setCoreAsar.isPending
 
   /** 行内操作进行中的核心 id（该行的下载/卸载按钮显示 Spinner 并禁用重复点击） */
   const [busyId, setBusyId] = useState<string | null>(null)
   /** 「不兼容版本」分组是否展开：默认折叠，旧版本不参与首选 */
   const [showIncompatible, setShowIncompatible] = useState(false)
   const [refreshing, toggleRefreshing] = useToggle()
+  const [advanced, toggleAdvanced] = useToggle()
 
   // 本地核心未检测到时不渲染 local 行（保留 local_missing_hint 提示）
   // 后端列表在部分缓存/旧版本返回路径中可能仍保持远程顺序，前端统一按版本从高到低排序。
@@ -86,6 +103,8 @@ export function ConfigCore() {
       return -compareVersions(a.version || a.tag, b.version || b.tag)
     })
   const localCore = cores.find(c => c.source === 'local')
+  /** 随包内核随安装包分发、无法重下：这类构建不允许切换核心格式 */
+  const bundledBuild = cores.some(core => core.bundled)
   const currentRows = rows.filter(core => !core.orphaned)
   const orphanRows = rows.filter(core => core.orphaned)
   const orderedRows = [...currentRows, ...orphanRows]
@@ -252,6 +271,44 @@ export function ConfigCore() {
     }
   }
 
+  /** 切换核心格式：关闭 asar 会重下目录核心，先确认；成功后重启服务。 */
+  async function onCoreAsarChange(enabled: boolean) {
+    if (busy)
+      return
+    if (!enabled) {
+      try {
+        await openDialog({
+          status: 'warning',
+          title: t('core.asar_confirm_title'),
+          description: <p>{t('core.asar_confirm_desc')}</p>,
+        })
+      }
+      catch (e) {
+        silence(e, 'core asar: dialog cancelled')
+        return
+      }
+    }
+    try {
+      await setCoreAsar.mutateAsync(enabled)
+      const key = toast(t(enabled ? 'core.asar_enabled_toast' : 'core.asar_disabled_toast'), {
+        variant: 'accent',
+        description: t('core.switch_restart_hint'),
+        timeout: 10_000,
+      })
+      try {
+        await store.harness.restart()
+        toast.close(key)
+      }
+      catch (e) {
+        silence(e, 'core asar: restart failure already shown by app error state')
+      }
+    }
+    catch (err) {
+      console.error('[ConfigCore] switch core format failed:', err)
+      toast(t('core.asar_switch_failed'), {})
+    }
+  }
+
   function showLocalUpdateWarning() {
     toast(t('core.update_local_requires_app'), {
       variant: 'warning',
@@ -302,22 +359,59 @@ export function ConfigCore() {
         description={t('core.tooltip')}
         testId="dsh-config-panel-title"
         action={(
-          <Button
-            size="sm"
-            variant="tertiary"
-            isDisabled={busy || refreshing}
-            aria-label={t('core.refresh')}
-            onPress={onRefresh}
-          >
-            <If cond={refreshing} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
-            {t('core.refresh')}
-          </Button>
+          <div className="flex shrink-0 items-center gap-3">
+            <Switch
+              size="sm"
+              isSelected={advanced}
+              onChange={() => toggleAdvanced()}
+              aria-label={t('core.advanced_options')}
+            >
+              <Switch.Content className="gap-2">
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+                <span className="text-xs font-medium text-muted">{t('core.advanced_options')}</span>
+              </Switch.Content>
+            </Switch>
+            <Button
+              size="sm"
+              variant="tertiary"
+              isDisabled={busy || refreshing}
+              aria-label={t('core.refresh')}
+              onPress={onRefresh}
+            >
+              <If cond={refreshing} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
+              {t('core.refresh')}
+            </Button>
+          </div>
         )}
       />
 
       {/* 加载 / 失败 / 列表 */}
       <Panel.Loadable loading={loading} error={error}>
         <div className="flex flex-col gap-4">
+          {/* 高级选项：核心引擎的发行格式。关闭 asar 会重下目录版核心并重启 */}
+          <If cond={advanced}>
+            <div className="flex flex-col gap-1 px-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-ink">{t('core.asar')}</span>
+                <Switch
+                  size="sm"
+                  isSelected={coreAsar ?? true}
+                  isDisabled={asarLoading || busy || bundledBuild}
+                  onChange={enabled => void onCoreAsarChange(enabled)}
+                  aria-label={t('core.asar')}
+                >
+                  <Switch.Content>
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                  </Switch.Content>
+                </Switch>
+              </div>
+              <Description className="text-[10px] text-muted/70">{t('core.asar_hint')}</Description>
+            </div>
+          </If>
           {/* 本地核心提示：未检测到时说明如何安装。放在列表首位，先解释「为什么没有本地行」 */}
           <If cond={!localCore?.present}>
             <Empty>{t('core.local_missing_hint')}</Empty>

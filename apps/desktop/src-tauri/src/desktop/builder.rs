@@ -1332,6 +1332,8 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::delete_backup,
         crate::bridge::get_cores,
         crate::bridge::set_active_core,
+        crate::bridge::get_core_asar,
+        crate::bridge::set_core_asar,
         crate::bridge::download_core,
         crate::bridge::remove_core,
         crate::bridge::update_local_core,

@@ -101,14 +101,13 @@ pub(crate) fn app_core_version(core_dir: &std::path::Path, tag: Option<&str>) ->
         .or_else(|| tag.and_then(parse_version_from_tag))
 }
 
+/// 托管核心是否可启动：只按盘上那份文件的清单判版本，归档与目录两种形态一视同仁
+/// （入口存在性由启动链路的 core_entry_exists 兜底，两处判定不重复）。
 pub(crate) fn ensure_app_core_supported(
     core_dir: &std::path::Path,
     tag: Option<&str>,
     baseline: Option<&str>,
 ) -> Result<(), String> {
-    if super::legacy::is_directory_core(core_dir) {
-        return Err("CORE_VERSION_LEGACY_DIRECTORY: managed directory cores are retired; download an asar core".to_string());
-    }
     let version = app_core_version(core_dir, tag);
     if !core_supports_bundled_plugins(version.as_deref().unwrap_or_default(), baseline) {
         return Err(format!(
@@ -288,17 +287,28 @@ mod tests {
     }
 
     #[test]
-    fn managed_directory_is_rejected_even_with_a_supported_version() {
+    fn directory_core_with_a_supported_version_is_accepted() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(
             root.path().join(config::DSH_MANIFEST_RELATIVE),
             r#"{"name":"@deepseek-ai/dsh","version":"0.2.2-rc.1"}"#,
         )
         .unwrap();
+        let package = root.path().join("node_modules/@deepseek-ai/dsh");
+        std::fs::create_dir_all(package.join("lib")).unwrap();
+        std::fs::write(package.join("lib/bin.js"), "directory core").unwrap();
+
+        assert!(ensure_app_core_supported(root.path(), None, None).is_ok());
+
+        std::fs::write(
+            root.path().join(config::DSH_MANIFEST_RELATIVE),
+            r#"{"name":"@deepseek-ai/dsh","version":"0.1.6"}"#,
+        )
+        .unwrap();
         assert!(
             ensure_app_core_supported(root.path(), None, None)
                 .unwrap_err()
-                .starts_with("CORE_VERSION_LEGACY_DIRECTORY:")
+                .starts_with("CORE_APP_UNSUPPORTED:")
         );
     }
 

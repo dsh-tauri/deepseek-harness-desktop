@@ -77,6 +77,10 @@ pub struct Setting {
     /// 源码改动即时生效（无需重启服务）。没有本地插件时不产生任何补丁层。
     #[serde(default = "default_local_plugin_hmr")]
     pub local_plugin_hmr: bool,
+    /// 核心引擎的发行格式：开启时下载并以 asar 归档运行，关闭时改用解压后的目录核心。
+    /// 只决定下载哪种资产；磁盘上实际是哪一种以文件为准（见 config::dependencies::binary_path_at）。
+    #[serde(default = "default_core_asar")]
+    pub core_asar: bool,
 }
 
 pub const ZOOM_FACTOR_MIN: f64 = 0.5;
@@ -124,6 +128,11 @@ pub fn default_backup_retention_count() -> u32 {
 /// 本地插件热重载默认开启：只有确实装了本地路径插件时才会产生监听目录，
 /// 未使用该能力的用户完全不受影响。
 pub fn default_local_plugin_hmr() -> bool {
+    true
+}
+
+/// 核心引擎默认以 asar 归档分发：归档体积更小、解压更快，也是既有的安装形态。
+pub fn default_core_asar() -> bool {
     true
 }
 
@@ -200,6 +209,7 @@ impl Default for Setting {
             backup_include_credentials: false,
             force_xwayland: false,
             local_plugin_hmr: default_local_plugin_hmr(),
+            core_asar: default_core_asar(),
         }
     }
 }
@@ -328,6 +338,7 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.auto_update = current.auto_update;
     replacement.force_xwayland = current.force_xwayland;
     replacement.local_plugin_hmr = current.local_plugin_hmr;
+    replacement.core_asar = current.core_asar;
     replacement
 }
 
@@ -675,6 +686,31 @@ mod tests {
         assert!(
             !merged.auto_update,
             "整对象写入不得把用户显式关闭的自动更新翻回开启"
+        );
+    }
+
+    #[test]
+    fn core_asar_defaults_on_and_survives_stale_full_writes() {
+        let legacy: Setting = serde_json::from_value(serde_json::json!({
+            "installed": true,
+            "port": 3080,
+            "auto_start": true,
+            "language": "zh-CN"
+        }))
+        .expect("legacy setting should deserialize");
+        assert!(
+            legacy.core_asar,
+            "旧配置缺失 core_asar 时应回落默认的 asar 核心，不能把老用户静默切到目录核心"
+        );
+
+        let current = Setting {
+            core_asar: false,
+            ..Default::default()
+        };
+        let merged = preserve_persisted_fields(Setting::default(), &current);
+        assert!(
+            !merged.core_asar,
+            "整对象写入不得把用户显式关闭的 ASAR 开关翻回开启"
         );
     }
 

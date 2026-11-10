@@ -22,17 +22,9 @@ fn prepare_active_runtime_at(paths: &RuntimePreparationPaths<'_>) -> Result<(), 
     if paths.source != CoreSource::App {
         return Ok(());
     }
-    let archive = crate::config::core_archive_in(paths.core_root).ok_or_else(|| {
-        format!(
-            "CORE_RUNTIME_NOT_FOUND: bundled core asar is missing: {}",
-            paths.core_root.display()
-        )
-    })?;
-    if crate::config::asar_ancestor(paths.core_binary) != Some(archive.as_path())
-        || !crate::config::core_entry_exists(paths.core_binary)
-    {
+    if !crate::config::core_entry_exists(paths.core_binary) {
         return Err(format!(
-            "CORE_RUNTIME_ENTRY_NOT_FOUND: bundled core asar entry is unavailable: {}",
+            "CORE_RUNTIME_ENTRY_NOT_FOUND: core entry is unavailable: {}",
             paths.core_binary.display()
         ));
     }
@@ -436,12 +428,12 @@ mod tests {
     }
 
     #[test]
-    fn app_preparation_requires_a_real_asar_entry() {
+    fn app_preparation_accepts_directory_and_archive_entries() {
         let root = tempfile::tempdir().unwrap();
         let core = root.path().join("core");
         std::fs::create_dir_all(&core).unwrap();
         let binary = core.join("node_modules/@deepseek-ai/dsh/lib/bin.js");
-        let mut paths = RuntimePreparationPaths {
+        let paths = RuntimePreparationPaths {
             source: CoreSource::App,
             core_root: &core,
             core_binary: &binary,
@@ -449,34 +441,31 @@ mod tests {
         };
         std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
         std::fs::write(&binary, "directory core").unwrap();
+        prepare_active_runtime_at(&paths).unwrap();
+
+        std::fs::remove_file(&binary).unwrap();
         assert!(
             prepare_active_runtime_at(&paths)
                 .unwrap_err()
-                .starts_with("CORE_RUNTIME_NOT_FOUND:")
+                .starts_with("CORE_RUNTIME_ENTRY_NOT_FOUND:")
         );
+
         let archive = core.join(crate::config::dsh_core_asar_filename().unwrap());
         let archived_binary = archive.join("node_modules/@deepseek-ai/dsh/lib/bin.js");
-        paths.core_binary = &archived_binary;
         std::fs::write(&archive, "not an archive").unwrap();
+        let archived_paths = RuntimePreparationPaths {
+            source: CoreSource::App,
+            core_root: &core,
+            core_binary: &archived_binary,
+            profile: root.path(),
+        };
         assert!(
-            prepare_active_runtime_at(&paths)
+            prepare_active_runtime_at(&archived_paths)
                 .unwrap_err()
                 .starts_with("CORE_RUNTIME_ENTRY_NOT_FOUND:")
         );
         write_core_archive(&core);
-        let missing = archive.join("node_modules/missing.js");
-        paths.core_binary = &missing;
-        assert!(
-            prepare_active_runtime_at(&paths)
-                .unwrap_err()
-                .starts_with("CORE_RUNTIME_ENTRY_NOT_FOUND:")
-        );
-        paths.core_binary = &binary;
-        assert!(
-            prepare_active_runtime_at(&paths)
-                .unwrap_err()
-                .starts_with("CORE_RUNTIME_ENTRY_NOT_FOUND:")
-        );
+        prepare_active_runtime_at(&archived_paths).unwrap();
         assert!(!core.join("node_modules/dsh-tauri").exists());
     }
 

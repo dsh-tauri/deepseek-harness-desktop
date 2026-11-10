@@ -261,12 +261,18 @@ pub fn binary_path<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
     binary_path_at(app, &active_root(app, key), key)
 }
 
+/// 指定依赖根下的入口：dsh 的入口形状由**磁盘**决定——托管根里有核心归档就进归档，
+/// 否则按普通目录核心解析。设置（core_asar）只决定下载哪种资产，切换中途或设置与磁盘
+/// 不一致时仍应启动得了盘上那份。
 pub fn binary_path_at<R: Runtime>(app: &AppHandle<R>, root: &Path, key: &str) -> PathBuf {
-    let entry = entry_relative(app, key);
+    binary_path_in(root, &entry_relative(app, key), key)
+}
+
+fn binary_path_in(root: &Path, entry: &Path, key: &str) -> PathBuf {
     if key == DEP_DSH
-        && let Ok(name) = super::runtime::dsh_core_asar_filename()
+        && let Some(archive) = super::runtime::core_archive_in(root)
     {
-        return root.join(name).join(entry);
+        return archive.join(entry);
     }
     root.join(entry)
 }
@@ -399,6 +405,20 @@ mod tests {
             entry_relative_from(None, DEP_PNPM),
             PathBuf::from("bin").join("pnpm.cjs")
         );
+    }
+
+    #[test]
+    fn dsh_entry_follows_the_artifact_on_disk() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("dsh");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = Path::new("node_modules/@deepseek-ai/dsh/lib/bin.js");
+        assert_eq!(binary_path_in(&dir, entry, DEP_DSH), dir.join(entry));
+
+        let archive = dir.join(super::super::runtime::dsh_core_asar_filename().unwrap());
+        std::fs::write(&archive, b"asar").unwrap();
+        assert_eq!(binary_path_in(&dir, entry, DEP_DSH), archive.join(entry));
+        assert_eq!(binary_path_in(&dir, entry, DEP_PNPM), dir.join(entry));
     }
 
     #[test]

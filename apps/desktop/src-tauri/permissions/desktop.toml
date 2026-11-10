@@ -71,6 +71,8 @@ commands.allow = [
   "download_core",
   "remove_core",
   "update_local_core",
+  "get_core_asar",
+  "set_core_asar",
   "proxy_health_check",
   "harness_ownership",
   "get_runtime_info",

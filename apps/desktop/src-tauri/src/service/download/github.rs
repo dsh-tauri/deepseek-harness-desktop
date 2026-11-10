@@ -252,11 +252,8 @@ pub async fn fetch_latest_dsh_pkg_info(
     app_handle: &crate::AppHandle,
 ) -> Result<LatestDshPkg, String> {
     let client = github_client(app_handle)?;
-    let expected_name = config::get_dsh_download_url()?
-        .rsplit('/')
-        .next()
-        .ok_or_else(|| "Missing DSH asset filename".to_string())?
-        .to_string();
+    let core_asar = config::get_store_dat_setting(app_handle).core_asar;
+    let expected_name = config::dsh_pkg_asset_name(core_asar)?;
 
     // 1. 首选 GitHub API 拉最新 release（含 tag + 资产 + 可信摘要）
     let api_release = match fetch_releases_latest(&client).await {
@@ -328,7 +325,7 @@ pub async fn fetch_latest_dsh_pkg_info(
     // API 不可用时 tag 来自 Atom，因此下载地址也必须按该 tag 确定性构造，
     // 不能继续使用 latest 地址，否则会把别的 release 内容拿来匹配当前摘要。
     let (asset_url, mut digest) =
-        release_asset_metadata(api_release.as_ref(), &tag_name, &expected_name)?;
+        release_asset_metadata(api_release.as_ref(), &tag_name, &expected_name, core_asar)?;
 
     // 4b. API 限流/不可用导致取不到可信摘要时，改从 expanded_assets HTML
     // （github.com，非 api.github.com，不受 403 限流）解析作者填写的 sha256，
@@ -391,9 +388,10 @@ fn release_asset_metadata(
     release: Option<&serde_json::Value>,
     tag: &str,
     expected_name: &str,
+    core_asar: bool,
 ) -> Result<(String, Option<String>), String> {
     let Some(release) = release else {
-        return Ok((config::get_dsh_download_url_for_tag(tag)?, None));
+        return Ok((config::get_dsh_download_url_for_tag(tag, core_asar)?, None));
     };
     let asset = release
         .get("assets")
@@ -434,11 +432,8 @@ pub async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
         ));
     }
     let client = github_client(app_handle)?;
-    let expected_name = config::get_dsh_download_url()?
-        .rsplit('/')
-        .next()
-        .ok_or_else(|| "Missing DSH asset filename".to_string())?
-        .to_string();
+    let core_asar = config::get_store_dat_setting(app_handle).core_asar;
+    let expected_name = config::dsh_pkg_asset_name(core_asar)?;
 
     // 1. 优先 API 拉该 tag 的 release（含资产 + 可信摘要）；API 失败/限流或响应
     //    不可解析时不整体失败：资产 URL 回退到平台确定性推导（latest 地址的
@@ -463,7 +458,8 @@ pub async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
         }
     };
 
-    let (asset_url, mut digest) = release_asset_metadata(json.as_ref(), tag, &expected_name)?;
+    let (asset_url, mut digest) =
+        release_asset_metadata(json.as_ref(), tag, &expected_name, core_asar)?;
 
     // 2. 摘要兜底：expanded_assets HTML（github.com，非 api.github.com）
     if digest.is_none() {
@@ -872,6 +868,7 @@ mod tests {
                 Some(&release),
                 "dsh-0.2.2-rc.1-123",
                 "deepseek-harness-pkg-windows.asar.zip",
+                true,
             )
             .unwrap_err();
             assert!(error.starts_with("DSH_RELEASE_ASSET_MISSING:"), "{error}");
@@ -929,9 +926,8 @@ mod tests {
     #[test]
     fn atom_fallback_download_url_is_pinned_to_resolved_tag() {
         let tag = "dsh-0.2.2-rc.1-41838008646";
-        let expected_name = config::get_dsh_download_url().unwrap();
-        let expected_name = expected_name.rsplit('/').next().unwrap();
-        let (url, digest) = release_asset_metadata(None, tag, expected_name).unwrap();
+        let expected_name = config::dsh_pkg_asset_name(true).unwrap();
+        let (url, digest) = release_asset_metadata(None, tag, &expected_name, true).unwrap();
         assert_eq!(digest, None);
         assert!(url.contains(&format!("/releases/download/{tag}/")));
         assert!(!url.contains("/releases/latest/download/"));
@@ -1014,10 +1010,35 @@ mod tests {
             {"name": "deepseek-harness-pkg-windows.asar.zip", "browser_download_url": "https://example.invalid/x64", "digest": "sha256:wrong-platform"},
             {"name": "deepseek-harness-pkg-windows-arm64.asar.zip", "browser_download_url": "https://github.com/dsh-tauri/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-41838008646/deepseek-harness-pkg-windows-arm64.asar.zip", "digest": "sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da"}
         ]});
-        assert_eq!(release_asset_metadata(Some(&release), "dsh-0.2.2-rc.1-41838008646", "deepseek-harness-pkg-windows-arm64.asar.zip").unwrap(), (
+        assert_eq!(release_asset_metadata(Some(&release), "dsh-0.2.2-rc.1-41838008646", "deepseek-harness-pkg-windows-arm64.asar.zip", true).unwrap(), (
             "https://github.com/dsh-tauri/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-41838008646/deepseek-harness-pkg-windows-arm64.asar.zip".to_string(),
             Some("sha256:25cc1ab0a88818f30034e9d806d95bd743445eb9ce0e8ac62806ab6b51e6c9da".to_string())
         ));
+    }
+
+    #[test]
+    fn release_metadata_follows_the_configured_core_format() {
+        let release = serde_json::json!({"assets": [
+            {"name": "deepseek-harness-pkg-windows.asar.zip", "browser_download_url": "https://example.invalid/asar", "digest": "sha256:asar"},
+            {"name": "deepseek-harness-pkg-windows.zip", "browser_download_url": "https://example.invalid/directory", "digest": "sha256:directory"}
+        ]});
+        let tag = "dsh-0.2.2-rc.1-41838008646";
+        assert_eq!(
+            release_asset_metadata(Some(&release), tag, "deepseek-harness-pkg-windows.asar.zip", true).unwrap(),
+            ("https://example.invalid/asar".to_string(), Some("sha256:asar".to_string()))
+        );
+        assert_eq!(
+            release_asset_metadata(Some(&release), tag, "deepseek-harness-pkg-windows.zip", false).unwrap(),
+            (
+                "https://example.invalid/directory".to_string(),
+                Some("sha256:directory".to_string())
+            )
+        );
+        assert!(
+            release_asset_metadata(Some(&release), tag, "deepseek-harness-pkg-windows-arm64.zip", false)
+                .unwrap_err()
+                .starts_with("DSH_RELEASE_ASSET_MISSING:")
+        );
     }
 
     #[test]

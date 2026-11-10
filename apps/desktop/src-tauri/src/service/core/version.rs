@@ -14,7 +14,8 @@ use crate::service::{download, fs_guard, workflow};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::legacy::{is_directory_core, preserve_directory_core};
+use super::is_directory_core;
+use super::legacy::preserve_directory_core;
 use super::local::{find_user_dsh_bin, local_core};
 use super::source::{
     CoreSource, HarnessCore, active_is_bundled, active_source, core_supports_bundled_plugins,
@@ -33,8 +34,10 @@ fn dependencies_dir<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     config::get_base_dir(app_handle).join("dependencies")
 }
 
+/// 槽位是否可用：盘上的形态必须与 `core_asar` 要求的一致（asar 模式下是归档、目录模式下
+/// 是目录树），且入口存在。切换核心格式后旧槽位因此判为「未下载」，让安装流程重下。
 fn installed_slot<R: tauri::Runtime>(dir: &Path, app: &AppHandle<R>) -> bool {
-    config::core_archive_in(dir).is_some()
+    config::core_archive_in(dir).is_some() == config::get_store_dat_setting(app).core_asar
         && config::core_entry_exists(&config::dsh_binary_at(dir, app))
 }
 
@@ -145,6 +148,10 @@ fn rows_with_release_catalog<R: tauri::Runtime>(
         error: None,
     }];
 
+    // 当前要求的核心形态：asar 归档与展开后的目录树是并列的两条正路，只有与设置不符的
+    // 目录核心才按历史遗留处理（退役槽位与 asar 模式下残留的目录核心）。
+    let core_asar = config::get_store_dat_setting(app_handle).core_asar;
+
     // 随包资源构建（离线包）：随包内核独立成一行并置顶（`app-bundled`），用户仍可下载
     // 其它版本（槽位在 AppData）并切换，也可以切回它。
     let bundled_dir = config::dependencies::bundled_core_dir(app_handle);
@@ -162,10 +169,10 @@ fn rows_with_release_catalog<R: tauri::Runtime>(
                 path: dir_str.clone(),
                 dir: dir_str,
                 present: config::core_entry_exists(&config::dsh_binary_at(dir, app_handle)),
-                active: bundled_active && !is_directory_core(dir),
+                active: bundled_active && !(core_asar && is_directory_core(dir)),
                 removable: false,
                 preview: false,
-                orphaned: is_directory_core(dir),
+                orphaned: core_asar && is_directory_core(dir),
                 bundled: true,
                 error: None,
             },
@@ -192,7 +199,7 @@ fn rows_with_release_catalog<R: tauri::Runtime>(
     // tag 的已装行——切换找不到槽位（CORE_VERSION_NOT_DOWNLOADED）、卸载找不到目录
     // （CORE_VERSION_NOT_FOUND），并吞掉核心更新提示（issue #790）。
     // 随包内核激活时（`app-bundled` 行已经代表它）不再让版本行认领同一份目录。
-    let active_legacy = is_directory_core(&active_dir);
+    let active_legacy = core_asar && is_directory_core(&active_dir);
     let installed_release = (!bundled_active && !active_legacy && active_present)
         .then(|| trusted_release_version(active_tag.as_deref(), manifest_version.as_deref()))
         .flatten();
@@ -335,7 +342,7 @@ fn rows_with_release_catalog<R: tauri::Runtime>(
             if safe_slot_path(&dependencies_dir(app_handle), &tag).is_err() {
                 continue;
             }
-            let legacy = is_directory_core(&dir);
+            let legacy = is_directory_core(&dir) && (core_asar || name.starts_with(".retired-"));
             if !legacy && (version.is_empty() || !seen_tags.insert(tag.clone())) {
                 continue;
             }
@@ -575,11 +582,6 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
         existing_slot_dir(app_handle, tag)
             .ok_or_else(|| format!("CORE_VERSION_NOT_DOWNLOADED: {tag}"))?
     };
-    if crate::service::core::is_directory_core(&target_dir) {
-        return Err(format!(
-            "CORE_VERSION_LEGACY_DIRECTORY: {tag} is a legacy directory core and is no longer supported; download a supported version from Settings > Core"
-        ));
-    }
     if !installed_slot(&target_dir, app_handle) {
         return Err(format!("CORE_VERSION_NOT_DOWNLOADED: {tag}"));
     }
@@ -1127,6 +1129,21 @@ mod tests {
         );
         assert!(any_release_installed(&rows, "0.2.2-rc.1"));
         assert!(ensure_app_core_supported(&deps.join(tag), Some(tag), Some("0.2.2-rc.1")).is_ok());
+
+        // 目录版核心是当前要求的格式：关闭 asar 后刚下载的目录核心必须原地保留，
+        // 只有 asar 模式下才把它当历史残留退役。
+        config::update_store_dat_setting(app, |setting| setting.core_asar = false);
+        write_directory_core(&default);
+        config::dependencies::record(app, config::dependencies::DEP_DSH, Some(default.clone()));
+        super::super::legacy::retire_directory_core(app).unwrap();
+        assert!(is_directory_core(&default));
+        assert!(config::core_entry_exists(&config::dsh_binary_at(&default, app)));
+        let directory_rows = rows_with_release_catalog(app, Vec::new(), false);
+        let active_row = directory_rows
+            .iter()
+            .find(|row| row.active)
+            .expect("directory core must stay active");
+        assert!(!active_row.orphaned && active_row.present);
     }
 
     #[test]

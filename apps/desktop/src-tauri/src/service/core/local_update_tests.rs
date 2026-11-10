@@ -207,9 +207,7 @@ fn local_update_isolation_child() {
     )
     .unwrap();
     let managed = config::get_dsh_install_path(app.handle());
-    let entry = config::get_dsh_binary_path(app.handle());
     assert!(managed.starts_with(&scratch));
-    assert!(entry.starts_with(&managed));
     let managed_manifest = if case == "unsupported-app" {
         br#"{"dependencies":{"@deepseek-ai/dsh":"0.1.6"}}"#.as_slice()
     } else if case == "unreadable-app" {
@@ -255,6 +253,9 @@ fn local_update_isolation_child() {
     let archive = managed.join(config::dsh_core_asar_filename().unwrap());
     std::fs::create_dir_all(&managed).unwrap();
     std::fs::write(&archive, &archive_bytes).unwrap();
+    // 入口形状按磁盘事实解析：归档落盘后才能拿到归档内的入口路径。
+    let entry = config::get_dsh_binary_path(app.handle());
+    assert!(entry.starts_with(&managed));
     assert_eq!(config::core_entry_exists(&entry), case != "missing-app");
     assert_eq!(
         config::get_dsh_version(app.handle()).as_deref(),

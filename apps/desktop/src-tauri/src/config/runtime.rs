@@ -58,9 +58,20 @@ fn dsh_pkg_asset_stem(os: &str, arch: &str) -> Result<String, String> {
     }
 }
 
-/// Harness 发行版下载资产文件名（`.asar.zip`：归档外层再套一层 zip，回传体积约 140 MiB）。
-fn dsh_pkg_asset_filename(os: &str, arch: &str) -> Result<String, String> {
-    Ok(format!("{}.asar.zip", dsh_pkg_asset_stem(os, arch)?))
+/// Harness 发行版下载资产文件名：asar 核心是 `<平台>.asar.zip`（归档外层再套一层 zip），
+/// 目录核心是 `<平台>.zip`（解压后直接就是核心目录树）。
+fn dsh_pkg_asset_filename(os: &str, arch: &str, core_asar: bool) -> Result<String, String> {
+    let stem = dsh_pkg_asset_stem(os, arch)?;
+    Ok(if core_asar {
+        format!("{stem}.asar.zip")
+    } else {
+        format!("{stem}.zip")
+    })
+}
+
+/// 当前平台的核心发行版资产名：下载地址与 release 资产匹配共用这一处命名。
+pub fn dsh_pkg_asset_name(core_asar: bool) -> Result<String, String> {
+    dsh_pkg_asset_filename(env::consts::OS, env::consts::ARCH, core_asar)
 }
 
 /// 解压后落在托管根里的核心归档文件名（`deepseek-harness-pkg-<平台>.asar`）。
@@ -97,12 +108,8 @@ pub fn core_entry_exists(path: &Path) -> bool {
 }
 
 /// 打包的 DeepSeek Harness 发行版下载地址（GitHub 官方直连，首选源）
-pub fn get_dsh_download_url() -> Result<String, String> {
-    Ok(format!(
-        "{}{}",
-        DSH_CORE_URL,
-        dsh_pkg_asset_filename(env::consts::OS, env::consts::ARCH)?
-    ))
+pub fn get_dsh_download_url(core_asar: bool) -> Result<String, String> {
+    Ok(format!("{DSH_CORE_URL}{}", dsh_pkg_asset_name(core_asar)?))
 }
 
 /// 为任意 GitHub Release 资产 URL 生成全部镜像兜底地址
@@ -119,16 +126,12 @@ pub fn mirror_download_urls(asset_url: &str) -> Vec<String> {
 /// 把 latest 下载地址中的 `releases/latest/download/` 替换为
 /// `releases/download/<tag>/`，镜像/直连与平台文件名逻辑与最新版完全一致
 /// （GitHub 的 tag 下载路径是固定的 release 资产地址，可被确定性推导）。
-pub fn get_dsh_download_url_for_tag(tag: &str) -> Result<String, String> {
+pub fn get_dsh_download_url_for_tag(tag: &str, core_asar: bool) -> Result<String, String> {
     let base = DSH_CORE_URL.replace(
         "releases/latest/download/",
         &format!("releases/download/{tag}/"),
     );
-    Ok(format!(
-        "{}{}",
-        base,
-        dsh_pkg_asset_filename(env::consts::OS, env::consts::ARCH)?
-    ))
+    Ok(format!("{base}{}", dsh_pkg_asset_name(core_asar)?))
 }
 
 fn node_version_output(node: &Path, args: &[&str]) -> Option<std::process::Output> {
@@ -944,9 +947,11 @@ mod tests {
     #[test]
     fn download_urls_keep_platform_filename_shape() {
         // 无论哪个地域，URL 都以 https 开头并保留平台文件名（镜像只是换前缀）
-        let dsh = get_dsh_download_url().expect("dsh url");
-        assert!(dsh.starts_with("https://"));
-        assert!(dsh.ends_with(".zip"));
+        for core_asar in [true, false] {
+            let dsh = get_dsh_download_url(core_asar).expect("dsh url");
+            assert!(dsh.starts_with("https://"));
+            assert!(dsh.ends_with(if core_asar { ".asar.zip" } else { ".zip" }));
+        }
     }
 
     #[test]
@@ -978,19 +983,28 @@ mod tests {
 
     #[test]
     fn dsh_pkg_asset_filename_matches_linux_architecture() {
-        // 分发的资产是 asar 归档（外层再套一层 zip），解压得到同名 .asar。
+        // 同一 tag 同时发布两种形态：asar 归档（外层再套一层 zip）与解压后即目录树的 zip。
         assert_eq!(
-            dsh_pkg_asset_filename("linux", "x86_64").unwrap(),
+            dsh_pkg_asset_filename("linux", "x86_64", true).unwrap(),
             "deepseek-harness-pkg-linux.asar.zip"
         );
         assert_eq!(
-            dsh_pkg_asset_filename("linux", "aarch64").unwrap(),
+            dsh_pkg_asset_filename("linux", "aarch64", true).unwrap(),
             "deepseek-harness-pkg-linux-arm64.asar.zip"
+        );
+        assert_eq!(
+            dsh_pkg_asset_filename("linux", "x86_64", false).unwrap(),
+            "deepseek-harness-pkg-linux.zip"
+        );
+        assert_eq!(
+            dsh_pkg_asset_filename("linux", "aarch64", false).unwrap(),
+            "deepseek-harness-pkg-linux-arm64.zip"
         );
         assert_eq!(
             dsh_pkg_asset_stem("linux", "aarch64").unwrap(),
             "deepseek-harness-pkg-linux-arm64"
         );
-        assert!(dsh_pkg_asset_filename("linux", "riscv64").is_err());
+        assert!(dsh_pkg_asset_filename("linux", "riscv64", true).is_err());
+        assert!(dsh_pkg_asset_filename("linux", "riscv64", false).is_err());
     }
 }

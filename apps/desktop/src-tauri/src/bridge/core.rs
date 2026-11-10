@@ -44,6 +44,52 @@ pub async fn remove_core(app_handle: AppHandle, id: String) -> Result<(), String
     core::remove_version(&app_handle, &id).await
 }
 
+/// 核心引擎当前是否以 asar 归档分发（设置 → 核心 → 高级选项）
+#[tauri::command]
+pub async fn get_core_asar(app_handle: AppHandle) -> bool {
+    crate::config::get_store_dat_setting(&app_handle).core_asar
+}
+
+/// 切换核心的分发格式：写入设置后复用安装流程重新下载对应格式的核心
+/// （停服 → 校验 → 下载解压 → 写映射 → 记录 tag），失败回滚设置。
+#[tauri::command]
+pub async fn set_core_asar(
+    window: crate::Window,
+    app_handle: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    crate::service::workflow::instances::scope(profile, async move {
+        if crate::config::get_store_dat_setting(&app_handle).core_asar == enabled {
+            return Ok(());
+        }
+        if crate::config::dependencies::bundled_core_dir(&app_handle).is_some() {
+            return Err(
+                "CORE_ASAR_SWITCH_UNSUPPORTED: the bundled core ships with the app and cannot change format"
+                    .to_string(),
+            );
+        }
+        crate::config::update_store_dat_setting(&app_handle, |setting| setting.core_asar = enabled);
+        let rollback = || {
+            crate::config::update_store_dat_setting(&app_handle, |setting| {
+                setting.core_asar = !enabled;
+            });
+        };
+        if let Err(error) = crate::service::workflow::install(&app_handle, None).await {
+            rollback();
+            return Err(format!("CORE_ASAR_SWITCH_FAILED: {error}"));
+        }
+        if crate::service::download::Dsh.format_mismatch(&app_handle) {
+            rollback();
+            return Err(
+                "CORE_ASAR_SWITCH_FAILED: the built core still uses the previous format".to_string(),
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn update_local_core(
     window: crate::Window,
