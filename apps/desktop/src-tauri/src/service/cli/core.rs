@@ -6,7 +6,7 @@ use std::fs;
 use crate::AppHandle;
 
 use super::path::{get_bin_dir, get_shim_path, path_registered, register_path, unregister_path};
-use super::shim::{user_dsh_preserved, write_shims};
+use super::shim::{remove_shims, user_dsh_preserved, write_shims};
 
 /// 命令行集成状态（设置页展示）
 #[derive(Debug, Clone, Serialize)]
@@ -88,28 +88,9 @@ pub fn remove(app_handle: &AppHandle) -> Result<CliLinkStatus, String> {
         return Ok(get_status(app_handle));
     }
     let bin_dir = get_bin_dir(app_handle);
-
-    #[cfg(windows)]
-    {
-        use super::shim::{
-            NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME, NPX_SHIM_PS1_NAME,
-            PNPM_SHIM_CMD_NAME, PNPM_SHIM_PS1_NAME, SHIM_CMD_NAME, SHIM_PS1_NAME,
-        };
-        let _ = fs::remove_file(bin_dir.join(SHIM_CMD_NAME));
-        let _ = fs::remove_file(bin_dir.join(SHIM_PS1_NAME));
-        let _ = fs::remove_file(bin_dir.join(PNPM_SHIM_CMD_NAME));
-        let _ = fs::remove_file(bin_dir.join(PNPM_SHIM_PS1_NAME));
-        let _ = fs::remove_file(bin_dir.join(NPX_SHIM_CMD_NAME));
-        let _ = fs::remove_file(bin_dir.join(NPX_SHIM_PS1_NAME));
-        let _ = fs::remove_file(bin_dir.join(NPM_SHIM_CMD_NAME));
-        let _ = fs::remove_file(bin_dir.join(NPM_SHIM_PS1_NAME));
-    }
-    #[cfg(not(windows))]
-    {
-        use super::shim::{PNPM_SHIM_SH_NAME, SHIM_SH_NAME};
-        let _ = fs::remove_file(bin_dir.join(SHIM_SH_NAME));
-        let _ = fs::remove_file(bin_dir.join(PNPM_SHIM_SH_NAME));
-    }
+    // 删除清单一律由 shim 写入侧维护：关闭集成后连 `node` 启动器也要删掉，
+    // 否则终端与其它应用解析到的 `node` 仍是随包 Electron（issue #1486）。
+    remove_shims(&bin_dir)?;
 
     unregister_path(app_handle)?;
 

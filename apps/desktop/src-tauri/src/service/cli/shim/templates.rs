@@ -19,6 +19,10 @@
 // 顺序：桌面端注入的 DSH_NODE（与宿主同一二进制）> 已烘焙的 NODE_BIN。
 // 两者都要显式置上 ELECTRON_RUN_AS_NODE，否则 Electron 会当 GUI 启动。
 // DSH_NODE 只在桌面端自身派生的子进程里存在，终端用户环境不受影响。
+//
+// 唯一的例外是 node 启动器（`node` / `node.cmd`）：它在 DSH_NODE 缺失时先转发
+// 用户自己的 node，避免把系统 node 抢成随包 Electron，见本文件的
+// `CMD_USER_NODE_PRECEDENCE` / `SH_USER_NODE_PRECEDENCE`（issue #1486）。
 // ---------------------------------------------------------------------------
 
 pub(super) const CMD_NODE_RESOLVE: &str = r#"
@@ -81,6 +85,81 @@ if [ -z "$NODE" ]; then
   exit 1
 fi
 export ELECTRON_RUN_AS_NODE=1
+"#;
+
+// ---------------------------------------------------------------------------
+// node 启动器专用片段：用户自己的 node 优先（issue #1486）
+//
+// `node` 这个名字在用户 PATH 上一旦落到本应用，其它应用/终端拉起的 node 就被
+// 换成了随包 Electron（macOS 上还会多出 Dock 的 exec 图标）。因此 node 启动器
+// 在 DSH_NODE 不可用时先转发 PATH 上用户自己的 node（跳过本 shim 目录），只有
+// 用户机器确实没有 node 时才回退到烘焙的 Electron——「隔离」即由此实现：应用
+// 自己的子进程永远带 DSH_NODE，行为不变；终端里没有 DSH_NODE，于是仍是系统 node。
+//
+// 转发用户 node 时不追加 `--expose-internals`、也不置 `ELECTRON_RUN_AS_NODE`：
+// 两者都是随包 Electron 的启动参数，不该泄漏给用户自己的运行时。dsh/pnpm/npm/npx
+// shim 不引入这段：它们运行核心与包管理器，必须与随包运行时保持一致。
+// ---------------------------------------------------------------------------
+
+pub(super) const CMD_USER_NODE_PRECEDENCE: &str = r#"
+rem DSH_NODE (injected by the app into its own child processes) wins, so the
+rem launcher and the app keep using the same runtime. Without it, hand the call
+rem to the user-installed node on PATH instead of taking over the `node` command
+rem of a terminal or another app; the baked Electron is the last resort.
+set "NODE="
+if defined DSH_NODE set "NODE=%DSH_NODE%"
+if not defined NODE goto :search_user_node
+rem Windows canonical paths may carry a \\?\ verbatim prefix that cmd.exe
+rem cannot launch directly; strip it before checking/using the path.
+if "%NODE:~0,4%"=="\\?\" set "NODE=%NODE:~4%"
+if not exist "%NODE%" set "NODE="
+if defined NODE goto :launch
+:search_user_node
+set "SELF_PREFIX=%~dp0"
+set "SELF_PREFIX=%SELF_PREFIX:~0,-1%"
+set "USER_NODE="
+for /f "delims=" %%n in ('where node 2^>nul') do (
+  if not defined USER_NODE (
+    if /i not "%%n"=="%SELF_PREFIX%\node.cmd" (
+      if /i not "%%n"=="%SELF_PREFIX%\node.exe" (
+        if /i not "%%n"=="%SELF_PREFIX%\node.bat" (
+          if /i "%%~xn"==".cmd" set "USER_NODE=%%n"
+          if /i "%%~xn"==".exe" set "USER_NODE=%%n"
+          if /i "%%~xn"==".bat" set "USER_NODE=%%n"
+        )
+      )
+    )
+  )
+)
+if not defined USER_NODE goto :after_user_node
+rem Forward as-is: --expose-internals and ELECTRON_RUN_AS_NODE belong to the
+rem bundled Electron, not to the user runtime.
+"%USER_NODE%" %*
+exit /b %ERRORLEVEL%
+:after_user_node
+"#;
+
+#[cfg_attr(windows, allow(dead_code))] // 仅 Unix node 启动器使用
+pub(super) const SH_USER_NODE_PRECEDENCE: &str = r#"
+NODE=""
+if [ -n "$DSH_NODE" ] && [ -x "$DSH_NODE" ]; then
+  NODE="$DSH_NODE"
+fi
+if [ -z "$NODE" ]; then
+  remaining_path=${PATH-}:
+  while [ -n "$remaining_path" ]; do
+    dir=${remaining_path%%:*}
+    remaining_path=${remaining_path#*:}
+    dir=${dir:-.}
+    if [ "$dir/node" -ef "$0" ]; then
+      continue
+    fi
+    if [ -x "$dir/node" ]; then
+      exec "$dir/node" "$@"
+    fi
+  done
+  unset remaining_path
+fi
 "#;
 
 // ---------------------------------------------------------------------------

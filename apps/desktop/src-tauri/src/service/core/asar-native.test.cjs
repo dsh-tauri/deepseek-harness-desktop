@@ -122,6 +122,67 @@ test('node-pty wrapper is materialized before it calculates helper directories',
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/node-pty/helpers/agent.js'), 'utf8'), 'helper')
 })
 
+function runtimeVariant(t, platform, electron) {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  const version = Object.getOwnPropertyDescriptor(process.versions, 'electron')
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  if (electron === undefined)
+    delete process.versions.electron
+  else
+    Object.defineProperty(process.versions, 'electron', { value: electron, configurable: true })
+  t.after(() => {
+    Object.defineProperty(process, 'platform', descriptor)
+    if (version === undefined)
+      delete process.versions.electron
+    else
+      Object.defineProperty(process.versions, 'electron', version)
+  })
+}
+
+test('Electron on Linux refuses sharp prebuilt Linux binaries before they load', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@img/sharp-linux-x64/sharp.node', 'prebuilt binary')
+  f.write('node_modules/@img/sharp-libvips-linux-x64/package.json', JSON.stringify({ name: '@img/sharp-libvips-linux-x64' }))
+  f.write('node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.42', 'prebuilt library')
+  runtimeVariant(t, 'linux', '44.7.0')
+  assert.throws(() => f.load('@img/sharp-linux-x64/sharp.node'), { code: 'ERR_DSH_SHARP_ELECTRON_LINUX', message: /issue #1490/ })
+  assert.throws(() => f.load('@img/sharp-libvips-linux-x64/package.json'), { code: 'ERR_DSH_SHARP_ELECTRON_LINUX' })
+  assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/@img')), false)
+})
+
+test('Electron on Linux keeps sharp WebAssembly fallback resolvable', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@img/sharp-wasm32/sharp.node', 'wasm binary')
+  runtimeVariant(t, 'linux', '44.7.0')
+  assert.throws(() => f.load('@img/sharp-wasm32/sharp.node'), { code: 'ERR_DLOPEN_FAILED' })
+  assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/@img/sharp-wasm32/sharp.node')), true)
+})
+
+test('Electron on Linux keeps other native packages loadable', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/node-pty/index.js', 'module.exports = __dirname')
+  f.write('node_modules/node-pty/build/Release/pty.node', 'terminal binding')
+  f.write('node_modules/koffi/index.js', 'module.exports = __dirname')
+  f.write('node_modules/koffi/build/koffi.node', 'ffi binding')
+  runtimeVariant(t, 'linux', '44.7.0')
+  assert.equal(f.load('node-pty'), path.join(f.cache, 'node_modules/node-pty'))
+  assert.equal(f.load('koffi'), path.join(f.cache, 'node_modules/koffi'))
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/koffi/build/koffi.node'), 'utf8'), 'ffi binding')
+})
+
+for (const [runtime, platform, electron] of [
+  ['plain Node on Linux', 'linux', undefined],
+  ['Electron on Windows', 'win32', '44.7.0'],
+]) {
+  test(runtime + ' still materializes sharp prebuilt binaries from the archive', (t) => {
+    const f = fixture(t)
+    f.write('node_modules/@img/sharp-linux-x64/sharp.node', 'prebuilt binary')
+    runtimeVariant(t, platform, electron)
+    assert.throws(() => f.load('@img/sharp-linux-x64/sharp.node'), { code: 'ERR_DLOPEN_FAILED' })
+    assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/@img/sharp-linux-x64/sharp.node')), true)
+  })
+}
+
 test('pure JavaScript parent remains archived when only a nested dependency is native', (t) => {
   const f = fixture(t)
   f.write('node_modules/outer/index.js', 'module.exports = __dirname')
@@ -408,6 +469,10 @@ if (process.env.DSH_ASAR_NATIVE_INTEGRATION === '1') {
             const koffi = sessionLoad('koffi')
             const library = koffi.load(process.platform === 'win32' ? 'kernel32.dll' : process.platform === 'darwin' ? 'libSystem.B.dylib' : 'libc.so.6')
             assert.equal(library.func(process.platform === 'win32' ? 'uint32_t __stdcall GetCurrentProcessId()' : 'int getpid()')(), process.pid)
+            return
+          }
+          if (process.platform === 'linux' && process.versions.electron !== undefined) {
+            assert.throws(() => load('sharp'), /ERR_DSH_SHARP_ELECTRON_LINUX/)
             return
           }
           const sharp = load('sharp')

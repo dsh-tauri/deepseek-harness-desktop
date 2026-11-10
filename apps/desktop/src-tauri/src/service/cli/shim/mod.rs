@@ -13,7 +13,7 @@ mod build;
 mod templates;
 mod write;
 
-pub use write::{is_generated_shim, user_dsh_preserved, write_shims};
+pub use write::{is_generated_shim, remove_shims, user_dsh_preserved, write_shims};
 
 /// Windows 下 shim 文件名（cmd 为主入口，ps1 供 PowerShell 原生体验）
 #[cfg(windows)]

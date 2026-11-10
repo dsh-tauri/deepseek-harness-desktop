@@ -10,9 +10,10 @@
 //!   `~/.zshrc` / `~/.bashrc` 幂等更新 PATH 导出块（只动自身标记块、保留
 //!   用户其余配置；写入前备份临时文件 + rename，失败自动回滚）。
 //!
-//! shim 运行时优先使用本地版本兼容的 node（校验规则与
-//! [`crate::config::is_supported_node_version`] 一致），否则回退到捆绑运行时；
-//! `pnpm` shim 还额外优先转发用户自己安装的 pnpm（PATH 中排除本 shim 目录）。
+//! shim 的运行时固定为随包 Electron（Node 模式）：桌面端自己的子进程通过 `DSH_NODE`
+//! 注入同一个二进制。只有 `node` 启动器在没有 `DSH_NODE` 时转发 PATH 上用户自己的
+//! node（排除本 shim 目录），避免把用户终端与其它应用的 `node` 抢成随包 Electron
+//! （issue #1486）；`pnpm` shim 还额外优先转发用户自己安装的 pnpm。
 //! shim 不重定向 stdin/stdout、不修改工作目录，保证交互式命令可用，
 //! 并透传全部参数与退出码。
 //!
