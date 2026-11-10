@@ -17,7 +17,7 @@ vi.mock('@/store/modules/plugins', () => import('@/store/modules/plugins/utils')
 vi.mock('@/store/modules/preinstall', () => ({ preinstall: {} }))
 vi.mock('@/store/modules/recovery', async () => {
   const { defineStore } = await import('valtio-define')
-  return { recovery: defineStore({ state: () => ({ recovery: { required: false } }), actions: { clear: vi.fn(), reset: vi.fn() } }) }
+  return { recovery: defineStore({ state: () => ({ recovery: { required: false } }), actions: { clear: vi.fn(), reset: vi.fn(), reviewStartupRecovery: vi.fn() } }) }
 })
 vi.mock('@/store/modules/setting', () => ({ setting: { $state: { installed: true }, refresh: vi.fn() } }))
 vi.mock('@/store', async () => {
@@ -201,4 +201,30 @@ it('keeps service metadata covered until a visible populated DSH frame mounts', 
     harness.restartPending = false
   })
   expect(view.queryByText('status.loading_plugins')).toBeNull()
+})
+it('falls to the plugin error page when the hosted document shows the boot failure card', async () => {
+  vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+  vi.stubGlobal('location', new URL('http://127.0.0.1:3081/'))
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === 'read_service_logs')
+      return ''
+    return undefined
+  })
+  const view = render(<Shell />)
+  await act(async () => {})
+  const boot = document.createElement('div')
+  boot.setAttribute('data-dsh-boot', '')
+  const card = document.createElement('div')
+  for (const line of ['HARNESS', 'Failed to load plugins', 'dsh-office-kit', 'web boot: 1 entry did not activate', 'dsh-office-kit: failed']) {
+    const leaf = document.createElement('div')
+    leaf.textContent = line
+    card.append(leaf)
+  }
+  boot.append(card)
+  await act(async () => {
+    document.body.append(boot)
+  })
+  await act(async () => {})
+  expect(harness.status).toBe('error')
+  expect(view.getByTestId('dsh-setup-error').textContent).toContain('dsh-office-kit')
 })

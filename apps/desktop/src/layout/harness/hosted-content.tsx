@@ -7,7 +7,9 @@ import { Loadable } from '../startup/loadable'
 
 export function HostedContent() {
   const harness = useStore(store.harness)
-  const documentReady = useHostedDocumentReady()
+  const documentReady = useHostedDocumentReady((detail) => {
+    void store.harness.handleWebviewBootFailure(detail)
+  })
   const ready = documentReady && harness.serviceHealthy && !harness.restartPending
 
   useWatch([ready, harness.webviewKey], () => {

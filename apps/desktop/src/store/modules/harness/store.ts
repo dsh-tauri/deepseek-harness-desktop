@@ -15,6 +15,7 @@ import type { PatchEntryStripReport, PatchQuarantineReport } from '@/types/plugi
 import type { Profile } from '@/types/profile'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import i18next from 'i18next'
 import semver from 'semver'
 import { defineStore } from 'valtio-define'
@@ -248,6 +249,7 @@ export const harness = defineStore({
         recovery.listen(),
         this.listenInternalPhase(),
         this.listenProcessExit(),
+        this.listenPluginBootFailure(),
       ])
       if (isHostedServiceDocument())
         return
@@ -279,6 +281,24 @@ export const harness = defineStore({
       }
       catch (err) {
         console.error('[Harness] failed to listen harness-process-exited:', err)
+      }
+    },
+
+    /**
+     * 订阅内嵌 guest 上报的启动失败卡片：`plugin_boot.js.inc` 把上游失败页逐项发出，
+     * 壳层据此走与「文档即 DSH」相同的恢复流程。`dsh://` 事件按窗口投递，必须显式
+     * 声明目标窗口，否则收不到。
+     */
+    async listenPluginBootFailure() {
+      try {
+        await listen<{ label?: string, detail?: string }>('dsh://plugin-boot:failed', ({ payload }) => {
+          if (payload?.detail === undefined || payload.detail === '')
+            return
+          void this.handleWebviewBootFailure(payload.detail)
+        }, { target: { kind: 'Window', label: getCurrentWindow().label } })
+      }
+      catch (err) {
+        console.error('[Harness] failed to listen dsh://plugin-boot:failed:', err)
       }
     },
 

@@ -5,6 +5,7 @@ import { recovery } from '../recovery'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ label: 'main' }) }))
 vi.mock('@/config/client', () => ({ queryClient: { invalidateQueries: vi.fn() } }))
 vi.mock('@/config/hooks', () => ({ hooks: { 'config.dialog.hidden': { trigger: vi.fn() } } }))
 vi.mock('@/utils/toast', () => ({ toast: Object.assign(vi.fn(), { close: vi.fn() }) }))
@@ -70,7 +71,7 @@ it('subscribes hosted startup once without launching the already hosted service'
   harness.startup()
   await vi.advanceTimersByTimeAsync(0)
   expect(recovery.listen).toHaveBeenCalledTimes(1)
-  expect(vi.mocked(listen).mock.calls.map(([event]) => event)).toEqual(['internal-plugins-phase', 'harness-process-exited'])
+  expect(vi.mocked(listen).mock.calls.map(([event]) => event)).toEqual(['internal-plugins-phase', 'harness-process-exited', 'dsh://plugin-boot:failed'])
   expect(invoke).not.toHaveBeenCalled()
   expect(harness.status).toBe('ready')
   expect(harness.serviceHealthy).toBe(true)
@@ -87,6 +88,35 @@ it('fails the hosted local document when its owned process exits', async () => {
   expect(harness.serviceHealthy).toBe(false)
   expect(harness.serviceRunning).toBe(false)
   expect(recovery.reviewStartupRecovery).toHaveBeenCalledWith([], expect.any(Function))
+})
+
+it('routes a guest boot failure card into the plugin recovery flow', async () => {
+  harness.markHostedReady()
+  harness.startup()
+  await vi.advanceTimersByTimeAsync(0)
+  const registered = vi.mocked(listen).mock.calls.find(([event]) => event === 'dsh://plugin-boot:failed')!
+  expect(registered[2]).toEqual({ target: { kind: 'Window', label: 'main' } })
+  registered[1]({ payload: { label: 'harness-1', detail: 'Failed to load plugins\ndsh-office-kit\ndsh-office-kit: failed' } } as Parameters<typeof registered[1]>[0])
+  await vi.advanceTimersByTimeAsync(0)
+  expect(recovery.reviewStartupRecovery).toHaveBeenCalledWith(
+    ['Failed to load plugins', 'dsh-office-kit', 'dsh-office-kit: failed'],
+    expect.any(Function),
+  )
+  expect(harness.status).toBe('error')
+  expect(harness.errorMsg).toBe('Failed to load plugins\ndsh-office-kit\ndsh-office-kit: failed')
+  expect(harness.errorLogs).toEqual(['Failed to load plugins', 'dsh-office-kit', 'dsh-office-kit: failed'])
+  expect(harness.serviceRunning).toBe(true)
+})
+
+it('ignores a guest boot notification without a failure card body', async () => {
+  harness.markHostedReady()
+  harness.startup()
+  await vi.advanceTimersByTimeAsync(0)
+  const listener = vi.mocked(listen).mock.calls.find(([event]) => event === 'dsh://plugin-boot:failed')![1]
+  listener({ payload: { label: 'harness-1' } } as Parameters<typeof listener>[0])
+  await vi.advanceTimersByTimeAsync(0)
+  expect(recovery.reviewStartupRecovery).not.toHaveBeenCalled()
+  expect(harness.status).toBe('ready')
 })
 
 it('ignores a local process exit while native state identifies a remote hosted document', async () => {
