@@ -20,6 +20,7 @@
   "status.internal_waiting": "내부 플러그인 확인을 기다리고 있습니다.",
   "status.internal_checking": "내부 플러그인 {{total}}개를 확인하고 있습니다.",
   "status.internal_installing": "내부 플러그인 {{total}}개 설치 중…",
+  "status.internal_current": "{{entry}} 처리 중",
   "status.internal_done": "내부 플러그인 {{total}}개를 확인했습니다.",
   "status.internal_timeout": "내부 플러그인 설치 시간이 초과되었습니다.",
   "status.internal_cancelled": "내부 플러그인 설치가 취소되었습니다.",

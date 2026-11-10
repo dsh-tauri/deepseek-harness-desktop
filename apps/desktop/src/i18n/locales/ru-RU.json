@@ -20,6 +20,7 @@
   "status.internal_waiting": "Ожидание проверки внутренних плагинов.",
   "status.internal_checking": "Проверка {{total}} внутренних плагинов.",
   "status.internal_installing": "Установка {{total}} внутренних плагинов.",
+  "status.internal_current": "Обработка {{entry}}",
   "status.internal_done": "Проверено {{total}} внутренних плагинов.",
   "status.internal_timeout": "Превышено время установки внутренних плагинов.",
   "status.internal_cancelled": "Установка внутренних плагинов отменена.",

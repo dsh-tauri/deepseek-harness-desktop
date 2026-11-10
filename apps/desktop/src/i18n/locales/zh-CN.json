@@ -20,6 +20,7 @@
   "status.internal_waiting": "Waiting for internal plugins…",
   "status.internal_checking": "Checking {{total}} internal plugins…",
   "status.internal_installing": "Installing {{total}} internal plugins…",
+  "status.internal_current": "正在处理 {{entry}}",
   "status.internal_done": "Checked {{total}} internal plugins.",
   "status.internal_timeout": "Internal plugin installation timeout.",
   "status.internal_cancelled": "Internal plugin installation cancelled.",

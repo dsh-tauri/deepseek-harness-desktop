@@ -10,6 +10,12 @@ const DSH_MIRROR_URL_PREFIXES = [
 
 /** 日志中认定为「错误行」的标记（大小写不敏感） */
 const ERROR_LINE_MARKERS = /error|duplicate|fatal|panic|throw|✖|exception|failed/i
+/**
+ * 启动卡点行的标记：插件停在 `pending (waiting for service: …)`，或 MCP 客户端在连接/握手
+ * 阶段停滞时报出的 `mcp-client(<server>)` 行。这些行没有任何 error/failed 字样，却往往是
+ * 唯一能指名「卡在哪个条目」的证据，因此必须与错误行一起保留（issue #1503）。
+ */
+const STARTUP_STALL_MARKERS = /pending \(waiting for services?:|mcp-client\(/
 
 /**
  * 精简下载日志行：把 GitHub Release 下载 URL 缩短为「版本 tag / 文件名」，
@@ -23,13 +29,22 @@ export function formatLogLine(line: string): string {
 }
 
 /**
- * 从日志行中挑出真正的错误行（命中错误标记，最多 8 行）；没有命中则退回最后 8 行。
+ * 从日志行中挑出能定位失败的证据行（最多 8 行）：致命报告 → 启动卡点行 → 错误行；
+ * 全都命不中才退回最后 8 行。卡点行必须完整保留，否则错误页只剩「启动失败」，
+ * 用户和日志里都看不出卡在哪个插件上（issue #1503）。
  * 纯函数：仅依赖字符串输入，便于单元测试。
  */
 export function pickErrorLines(lines: readonly string[]): string[] {
-  const reports = lines.filter(line => line.startsWith('ERROR HARNESS_FATAL_REPORT: ')).slice(-8)
-  const errored = [...lines.filter(line => ERROR_LINE_MARKERS.test(line) && !line.startsWith('ERROR HARNESS_FATAL_REPORT: ')).slice(0, 8 - reports.length), ...reports]
-  return errored.length > 0 ? errored : lines.slice(-8)
+  const isReport = (line: string) => line.startsWith('ERROR HARNESS_FATAL_REPORT: ')
+  const isStall = (line: string) => !isReport(line) && STARTUP_STALL_MARKERS.test(line)
+  const reports = lines.filter(isReport).slice(-8)
+  const room = Math.max(0, 8 - reports.length)
+  const stalls = room === 0 ? [] : lines.filter(isStall).slice(-Math.min(4, room))
+  const errored = lines
+    .filter(line => !isReport(line) && !isStall(line) && ERROR_LINE_MARKERS.test(line))
+    .slice(0, Math.max(0, room - stalls.length))
+  const picked = [...errored, ...stalls, ...reports]
+  return picked.length > 0 ? picked : lines.slice(-8)
 }
 
 /**

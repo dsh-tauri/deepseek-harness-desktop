@@ -29,8 +29,8 @@ use crate::config;
 use manifest::internal_plugin_entry_is_ready;
 use manifest::{
     collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec,
-    remove_duplicate_bundle_entries_from_patch, remove_internal_plugins_from_manifest,
-    remove_stale_plugin_entry, write_profile_manifest,
+    internal_plugin_entry_problem, remove_duplicate_bundle_entries_from_patch,
+    remove_internal_plugins_from_manifest, remove_stale_plugin_entry, write_profile_manifest,
 };
 use materialize::{OfflineLink, materialize_links};
 
@@ -49,6 +49,10 @@ struct InternalPluginsPhase {
     detail: InternalPluginPhaseDetail,
     completed: usize,
     total: usize,
+    /// 当前正在核对/安装的条目（安装名）。启动卡死时前端据此指名卡在哪个插件，
+    /// 因此只在 checking / installing 且确有当前条目时携带（issue #1503）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entry: Option<String>,
 }
 
 #[derive(serde::Serialize, Clone, Copy)]
@@ -369,6 +373,16 @@ async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
             &config::get_dsh_data_path(app_handle),
             &refs,
             false,
+            |entry: &str| {
+                emit_phase(
+                    app_handle,
+                    "progress",
+                    InternalPluginPhaseDetail::Checking,
+                    0,
+                    refs.len(),
+                    Some(entry),
+                );
+            },
             |id| bundled_plugin_dir(app_handle, id),
         )?;
         return require_running_plugins_ready(&profile, &check);
@@ -553,13 +567,7 @@ async fn run_ensure_operation(
         InternalPluginPhaseDetail::Waiting,
         0,
         total,
-    );
-    emit_phase(
-        app_handle,
-        "progress",
-        InternalPluginPhaseDetail::Checking,
-        0,
-        total,
+        None,
     );
     let refs: Vec<_> = internal.iter().collect();
     let operation = ensure_inner(app_handle, &refs, cancel.clone(), owner);
@@ -569,7 +577,7 @@ async fn run_ensure_operation(
         owner,
         cancel_tx,
         cancel,
-        |phase, detail, completed| emit_phase(app_handle, phase, detail, completed, total),
+        |phase, detail, completed| emit_phase(app_handle, phase, detail, completed, total, None),
     )
     .await
 }
@@ -634,6 +642,7 @@ fn emit_phase(
     detail: InternalPluginPhaseDetail,
     completed: usize,
     total: usize,
+    entry: Option<&str>,
 ) {
     crate::service::workflow::instances::emit(
         app_handle,
@@ -643,6 +652,7 @@ fn emit_phase(
             detail,
             completed,
             total,
+            entry: entry.map(str::to_string),
         },
     );
 }
@@ -655,11 +665,14 @@ struct InternalPluginCheck {
     migration_pending: bool,
 }
 
+/// on_entry 在每个条目真正开始核对前被调用（启动页据此指名当前条目，见 issue #1503）；
+/// 只报名字，不参与任何判定。
 fn prepare_internal_plugins(
     profile: &Path,
     dsh_home: &Path,
     internal: &[&PreinstallPluginInfo],
     prepare: bool,
+    on_entry: impl Fn(&str),
     resolve_bundle: impl Fn(&str) -> Option<PathBuf>,
 ) -> Result<InternalPluginCheck, String> {
     let manifest_path = profile.join("package.json");
@@ -705,11 +718,18 @@ fn prepare_internal_plugins(
             continue;
         }
         let entry = profile.join("node_modules").join(name);
-        let link_ok = internal_plugin_entry_is_ready(&entry);
+        on_entry(name);
+        let entry_problem = internal_plugin_entry_problem(&entry);
+        let link_ok = entry_problem.is_none();
         let bundled = resolve_bundle(&preset.id);
-        let Some(bundled) = bundled.filter(|source| internal_plugin_entry_is_ready(source)) else {
+        let source_ready = bundled
+            .as_deref()
+            .map(internal_plugin_entry_problem)
+            .unwrap_or_else(|| Some("INTERNAL_PLUGIN_SOURCE_ABSENT: no bundled directory".into()));
+        let Some(bundled) = bundled.filter(|_| source_ready.is_none()) else {
             log::warn!(
-                "INTERNAL_PLUGIN_SOURCE_MISSING: {name}: bundled manifest or host entry unavailable, skipping repair (installed_ready={link_ok})"
+                "INTERNAL_PLUGIN_SOURCE_MISSING: {name}: bundled manifest or host entry unavailable, skipping repair (installed_ready={link_ok}, installed_entry={}, installed_problem={entry_problem:?}, bundled_problem={source_ready:?})",
+                entry.display()
             );
             sources_ready = false;
             if !link_ok {
@@ -722,9 +742,8 @@ fn prepare_internal_plugins(
         // ① 依赖声明：未声明，或声明的值不再指向当前捆绑目录（路径变更/被改
         // 写）→ 重装；② 依赖真实性：node_modules 链接/拷贝须真实存在（用户
         // 手动清过 node_modules 时声明可能残留但产物已不在）→ 重装。
-        let dep_ok = dependencies
-            .get(&name)
-            .is_some_and(|actual| dep_matches_spec(actual, &expected));
+        let declared = dependencies.get(&name);
+        let dep_ok = declared.is_some_and(|actual| dep_matches_spec(actual, &expected));
 
         let bundle_ok = manifest
             .as_ref()
@@ -737,7 +756,8 @@ fn prepare_internal_plugins(
             });
         if !dep_ok || !link_ok || !bundle_ok {
             log::info!(
-                "INTERNAL_PLUGIN_NEEDS_REINSTALL: {name}（dep_ok={dep_ok}, link_ok={link_ok}, bundle_ok={bundle_ok}, expected={expected}）"
+                "INTERNAL_PLUGIN_NEEDS_REINSTALL: {name}（dep_ok={dep_ok}, actual={declared:?}, expected={expected}, link_ok={link_ok}, entry={}, problem={entry_problem:?}, bundle_ok={bundle_ok}）",
+                entry.display()
             );
             // 应用升级会移动 `.app` 内的捆绑目录，旧 profile 可能留下指向上个
             // 版本资源的悬空链接。pnpm 在处理这些入口时会在真正改写依赖前以
@@ -800,6 +820,7 @@ async fn prepare_internal_plugins_for_install(
     resolve_paths: impl FnOnce() -> (PathBuf, PathBuf),
     internal: &[&PreinstallPluginInfo],
     cancel: &tokio::sync::watch::Receiver<bool>,
+    on_entry: &(dyn Fn(&str) + Sync),
     resolve_bundle: impl Fn(&str) -> Option<PathBuf>,
 ) -> Result<
     (
@@ -820,7 +841,14 @@ async fn prepare_internal_plugins_for_install(
         return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
     }
     let (profile, dsh_home) = resolve_paths();
-    let check = prepare_internal_plugins(&profile, &dsh_home, internal, true, resolve_bundle)?;
+    let check = prepare_internal_plugins(
+        &profile,
+        &dsh_home,
+        internal,
+        true,
+        on_entry,
+        resolve_bundle,
+    )?;
     Ok((operation, profile, check))
 }
 
@@ -842,6 +870,16 @@ async fn ensure_inner(
         },
         internal,
         &cancel,
+        &|entry: &str| {
+            emit_phase(
+                app_handle,
+                "progress",
+                InternalPluginPhaseDetail::Checking,
+                0,
+                internal.len(),
+                Some(entry),
+            );
+        },
         |id| bundled_plugin_dir(app_handle, id),
     )
     .await?;
@@ -887,13 +925,6 @@ async fn ensure_inner(
 
     let ids: Vec<String> = need.iter().map(|(id, _, _)| id.clone()).collect();
     log::info!("Reinstalling internal preset plugins: {ids:?}");
-    emit_phase(
-        app_handle,
-        "progress",
-        InternalPluginPhaseDetail::Installing,
-        0,
-        ids.len(),
-    );
 
     // pnpm add 会先解析清单里的所有既有依赖。0.9.0 将随包目录从
     // `preset-plugins` 迁至 `internal-plugins` 后，旧 file:/link: 路径已不存在，pnpm
@@ -916,10 +947,20 @@ async fn ensure_inner(
     // dep_ok=false 再装，形成不可恢复的启动死循环。保留健康链接，交给本轮 `dsh plugin
     // add` 重写依赖声明即可（pnpm 处理 link: 依赖时会自行覆盖旧入口）。
     let mut entries = HashSet::new();
-    for (_, _, entry) in &need {
+    for (_, name, entry) in &need {
         if !entries.insert(entry.clone()) {
             continue;
         }
+        // pnpm 把整批 id 一次性交给子进程，逐条上报是为了让启动页在整个安装
+        // 期间都有条目可指名；heartbeat 会沿用最后一条原因（issue #1503）。
+        emit_phase(
+            app_handle,
+            "progress",
+            InternalPluginPhaseDetail::Installing,
+            0,
+            ids.len(),
+            Some(name),
+        );
         if internal_plugin_entry_is_ready(entry) {
             log::info!(
                 "INTERNAL_PLUGIN_ENTRY_HEALTHY: keeping intact link {} (no delete + recreate)",
@@ -1337,6 +1378,7 @@ mod tests {
                 || (profile, preparation_root),
                 &[&preset],
                 &cancel,
+                &|_: &str| {},
                 |_| {
                     entered_tx.send(()).unwrap();
                     wait.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -1409,6 +1451,7 @@ mod tests {
             || (profile.clone(), scratch.path().to_path_buf()),
             &presets,
             &cancel,
+            &|_: &str| {},
             |_| None,
         ));
         assert!(
@@ -1435,6 +1478,7 @@ mod tests {
                             detail,
                             completed,
                             total: presets.len(),
+                            entry: None,
                         })
                         .unwrap(),
                     );
@@ -1501,6 +1545,7 @@ mod tests {
                                 detail,
                                 completed,
                                 total: 1,
+                                entry: None,
                             })
                             .unwrap(),
                         );
@@ -1600,6 +1645,7 @@ mod tests {
                 root.path(),
                 &[&presets[0], &presets[1]],
                 true,
+                &|_: &str| {},
                 |id| {
                     Some(if id == "builtin" {
                         source.clone()
@@ -1637,6 +1683,44 @@ mod tests {
     }
 
     #[test]
+    fn entry_reports_every_checked_internal_plugin_in_order() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profiles/test");
+        std::fs::create_dir_all(&profile).unwrap();
+        for id in ["dsh-tauri", "dsh-tauri-ui"] {
+            let source = root.path().join(id);
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::write(source.join("package.json"), br#"{"name":"x"}"#).unwrap();
+        }
+        let ready = profile.join("node_modules/dsh-tauri");
+        std::fs::create_dir_all(&ready).unwrap();
+        std::fs::write(ready.join("package.json"), br#"{"name":"dsh-tauri"}"#).unwrap();
+        std::fs::write(
+            profile.join("package.json"),
+            serde_json::json!({
+                "dependencies": { "dsh-tauri": bundled_dep_spec(&root.path().join("dsh-tauri")) },
+                "dsh": { "profile": { "bundles": ["dsh-tauri"] } }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let presets = [builtin("dsh-tauri"), builtin("dsh-tauri-ui")];
+        let seen = std::cell::RefCell::new(Vec::new());
+
+        prepare_internal_plugins(
+            &profile,
+            root.path(),
+            &[&presets[0], &presets[1]],
+            false,
+            &|name: &str| seen.borrow_mut().push(name.to_string()),
+            |id| Some(root.path().join(id)),
+        )
+        .unwrap();
+
+        assert_eq!(*seen.borrow(), vec!["dsh-tauri", "dsh-tauri-ui"]);
+    }
+
+    #[test]
     fn dev_plugin_sources_missing_preserves_healthy_installed_copy() {
         let root = tempfile::tempdir().unwrap();
         let profile = root.path().join("profiles/test");
@@ -1656,6 +1740,7 @@ mod tests {
             root.path(),
             &[&presets[0], &presets[1]],
             false,
+            &|_: &str| {},
             |_| None,
         )
         .unwrap();
@@ -1670,6 +1755,7 @@ mod tests {
             root.path(),
             &[&presets[0], &presets[1]],
             true,
+            &|_: &str| {},
             |_| None,
         )
         .unwrap();
