@@ -854,15 +854,13 @@ pub fn build_main_window(
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
             .title(crate::desktop::product_name(app))
             .initialization_script(include_str!("browser.js.inc"));
-    if let Some(injection) = (!cfg!(debug_assertions)
-        || cfg!(feature = "dsh-shell-dev")
-        || app.config().build.dev_url.is_none())
-        .then(|| crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None)))
-        .flatten()
+    // Electron 运行时主窗口是 browser host：`will-attach-webview` 只放行浏览器租约，
+    // 独立壳层页的 `<webview>` 永远挂不上，因此开发与生产统一走注入 + 宿主文档。
+    if let Some(injection) =
+        crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None))
     {
         webview_builder = webview_builder.initialization_script(injection.source().to_owned());
     }
-
 
     #[cfg(windows)]
     let webview_builder = webview_builder.visible(false);
@@ -936,11 +934,8 @@ pub fn build_shell_window(
             .title(title)
             .initialization_script(include_str!("browser.js.inc")),
     )?;
-    if let Some(injection) = (!cfg!(debug_assertions)
-        || cfg!(feature = "dsh-shell-dev")
-        || app.config().build.dev_url.is_none())
-        .then(|| crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None)))
-        .flatten()
+    if let Some(injection) =
+        crate::desktop::shell::ShellInjection::new(main_shell_theme(app, None))
     {
         webview_builder = webview_builder.initialization_script(injection.source().to_owned());
     }

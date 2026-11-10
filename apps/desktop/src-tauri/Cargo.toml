@@ -5,9 +5,6 @@ description = "Desktop application for DeepSeek Harness (dsh)"
 authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2024"
 
-[features]
-dsh-shell-dev = []
-
 [lib]
 name = "main"
 crate-type = [
