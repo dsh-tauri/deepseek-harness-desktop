@@ -3,6 +3,8 @@
 %global appdir %{_prefix}/lib/%{appname}
 %global debug_package %{nil}
 %global __requires_exclude ^/usr/bin/node$
+# 部署树为远端同步同时带 x86_64 与 aarch64 的 Tailwind 绑定（issue #1389），异架构 .node 的 GLIBC_2.17 符号版本会被 ELF 扫描写成 Requires（issue #1499）。
+%global __requires_exclude_from ^%{appdir}/resources/node_modules/@tailwindcss/oxide-[^/]+/
 
 Name:           @NAME@
 Version:        @VERSION@

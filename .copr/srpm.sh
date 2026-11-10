@@ -53,7 +53,7 @@ binname=$(field apps/desktop/src-tauri/Cargo.toml '2s/^name = "\([^"]*\)"$/\1/p'
 summary=$(field apps/desktop/src-tauri/Cargo.toml 's/^description = "\([^"]*\)"$/\1/p' description)
 description=$summary
 scheme=$(field apps/desktop/src-tauri/tauri.conf.json '/"schemes": \[/,/\]/{s/^[[:space:]]*"\([a-z][a-z0-9+.-]*\)"[,]\{0,1\}$/\1/p;}' 'deep-link scheme')
-node_version=$(field apps/desktop/src-tauri/src/config/constants.rs 's/^pub const NODE_VERSION: &str = "\(v[0-9.]*\)";$/\1/p' NODE_VERSION)
+node_version=$(field packages/builtin-plugin-remote/src/host/utils/assets.ts "s/^export const NODE_VERSION = '\(v[0-9.]*\)'$/\1/p" NODE_VERSION)
 packager=$(repo log -1 --format='%an <%ae>')
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/dsh-copr.XXXXXX")
