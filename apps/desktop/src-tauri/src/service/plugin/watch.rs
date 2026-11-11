@@ -488,6 +488,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// 验证解析插件清单时能正确标记内置预设插件。
     #[test]
     fn parse_plugins_marks_internal_presets() {
         let dir = build_profile(
@@ -506,7 +507,7 @@ mod tests {
             spec: "dsh-tauri@0.2.0".into(),
             name: "DSH Tauri".into(),
             description: "Message bridge".into(),
-            repo_url: "https://github.com/dsh-tauri-desk/dsh-tauri".into(),
+            repo_url: "https://github.com/dsh-tauri/dsh-tauri".into(),
             recommended: true,
             fix: false,
             default_checked: false,

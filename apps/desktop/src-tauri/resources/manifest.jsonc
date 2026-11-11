@@ -82,49 +82,49 @@
         "id": "dsh-tauri",
         "spec": "dsh-tauri",
         "name": "DSH Tauri",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri"
+        "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri"
       },
       {
         "id": "dsh-tauri-ui",
         "spec": "dsh-tauri-ui",
         "name": "DSH Tauri UI",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-ui"
+        "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri-ui"
       },
       {
         "id": "dsh-tauri-extension",
         "spec": "dsh-tauri-extension",
         "name": "DSH Tauri Extension",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-extension"
+        "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri-extension"
       },
       {
         "id": "dsh-tauri-archive",
         "spec": "dsh-tauri-archive",
         "name": "DSH Tauri Archive",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-archive"
+        "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri-archive"
       },
       {
         "id": "dsh-tauri-rightclick",
         "spec": "dsh-tauri-rightclick",
         "name": "DSH Tauri Rightclick Menu",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-rightclick"
+        "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri-rightclick"
       },
       {
         "id": "dsh-tauri-model",
         "spec": "dsh-tauri-model",
         "name": "DSH Tauri Model",
-        "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-model"
+        "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri-model"
       },
       {
         "id": "dsh-tauri-remote",
         "spec": "dsh-tauri-remote",
         "name": "DSH Tauri Remote",
-        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-remote"
+        "repo": "https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-remote"
       },
       {
         "id": "dsh-tauri-notification",
         "spec": "dsh-tauri-notification",
         "name": "DSH Tauri Notification",
-        "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notification"
+        "repo": "https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notification"
       }
     ],
     "preset": [

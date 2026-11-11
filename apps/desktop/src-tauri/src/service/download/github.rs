@@ -13,9 +13,9 @@
 use crate::config;
 
 /// GitHub API 地址（未认证限流 60 次/小时/IP，仅供每次启动检查一次）
-const DSH_PKG_GITHUB_API: &str = "https://api.github.com/repos/dsh-tauri-desk/deepseek-harness-pkg";
+const DSH_PKG_GITHUB_API: &str = "https://api.github.com/repos/dsh-tauri/deepseek-harness-pkg";
 /// pkg 仓库 HTML 来源；`releases.atom` 走 github.com 而非 api.github.com，不受未认证限流约束。
-const DSH_PKG_REPO: &str = "https://github.com/dsh-tauri-desk/deepseek-harness-pkg";
+const DSH_PKG_REPO: &str = "https://github.com/dsh-tauri/deepseek-harness-pkg";
 const GITHUB_RELEASES_PAGE_SIZE: usize = 100;
 
 /// 最新 Harness 发行版信息（版本 tag + 对应 commit hash）
@@ -36,7 +36,7 @@ fn github_client<R: tauri::Runtime>(
 ) -> Result<reqwest::Client, String> {
     config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }

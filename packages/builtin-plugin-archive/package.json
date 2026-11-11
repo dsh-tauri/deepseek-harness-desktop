@@ -5,12 +5,12 @@
   "description": "桌面端会话归档插件：把工作区浏览器的「删除工作区」改写为「归档工作区」，并新增带搜索、排序、分组、项目筛选与取消归档的「已归档会话」设置页。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
-  "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",
+  "homepage": "https://github.com/dsh-tauri/dsh-tauri-plugins#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dsh-tauri-desk/dsh-tauri-plugins.git"
+    "url": "git+https://github.com/dsh-tauri/dsh-tauri-plugins.git"
   },
-  "bugs": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/issues",
+  "bugs": "https://github.com/dsh-tauri/dsh-tauri-plugins/issues",
   "keywords": [
     "dsh",
     "plugin",

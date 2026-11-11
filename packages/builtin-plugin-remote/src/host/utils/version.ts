@@ -27,8 +27,11 @@ export function assertSupportedDshVersion(version: string): void {
 
 export const OFFICIAL_INSTALL_REPO = 'https://github.com/deepseek-ai/deepseek-harness.git'
 
-export const OFFICIAL_PKG_REPO = 'dsh-tauri-desk/deepseek-harness-pkg'
+export const OFFICIAL_PKG_REPO = 'dsh-tauri/deepseek-harness-pkg'
 
+/**
+ * 解析或回退 Harness 核心包的 GitHub 仓库全名。
+ */
 export function pkgRepoOf(installRepo?: string): string {
   const configured = installRepo === undefined || installRepo.trim() === '' ? undefined : installRepo.trim()
   if (configured === undefined)
