@@ -12,7 +12,7 @@ directory (the Tauri app-data dir for identifier `dsh-tauri`, e.g.
 `%APPDATA%/dsh-tauri/` on Windows):
 
 - `dependencies/dsh/` — the packaged DeepSeek Harness distribution (downloaded from the
-  `dsh-tauri-desk/deepseek-harness-pkg` release feed)
+  `dsh-tauri/deepseek-harness-pkg` release feed)
 - `data/dsh/` — **legacy** `$DSH_HOME` location (pre-migration builds only; see below)
 - `logs/` — application and `dsh` service logs
 - `.store.dat` — desktop settings (port, auto-start, language, etc.)

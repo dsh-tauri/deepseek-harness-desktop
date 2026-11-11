@@ -5,12 +5,12 @@
   "description": "DSH Tauri 技能与 MCP 设置页。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
-  "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",
+  "homepage": "https://github.com/dsh-tauri/dsh-tauri-plugins#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dsh-tauri-desk/dsh-tauri-plugins.git"
+    "url": "git+https://github.com/dsh-tauri/dsh-tauri-plugins.git"
   },
-  "bugs": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/issues",
+  "bugs": "https://github.com/dsh-tauri/dsh-tauri-plugins/issues",
   "keywords": [
     "dsh",
     "plugin",

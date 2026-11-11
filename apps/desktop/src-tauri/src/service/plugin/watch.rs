@@ -506,7 +506,7 @@ mod tests {
             spec: "dsh-tauri@0.2.0".into(),
             name: "DSH Tauri".into(),
             description: "Message bridge".into(),
-            repo_url: "https://github.com/dsh-tauri-desk/dsh-tauri".into(),
+            repo_url: "https://github.com/dsh-tauri/dsh-tauri".into(),
             recommended: true,
             fix: false,
             default_checked: false,

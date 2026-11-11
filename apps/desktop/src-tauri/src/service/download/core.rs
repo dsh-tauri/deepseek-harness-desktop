@@ -579,7 +579,7 @@ mod tests {
         for prefix in crate::config::DSH_MIRROR_PREFIXES {
             assert!(
                 validate_download_url(&format!(
-                    "{prefix}https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/deepseek-harness-pkg-windows.zip"
+                    "{prefix}https://github.com/dsh-tauri/deepseek-harness-pkg/releases/latest/download/deepseek-harness-pkg-windows.zip"
                 ))
                 .is_ok(),
                 "镜像前缀应被放行: {prefix}"

@@ -930,7 +930,7 @@ mod tests {
     /// 当前 DSH 明确支持 22.19+ 与 24+，不支持 22.18 及整个 Node 23 系列。
     #[test]
     fn mirror_urls_expand_every_prefix() {
-        let asset = "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/v1.0.0/deepseek-harness-pkg-windows.zip";
+        let asset = "https://github.com/dsh-tauri/deepseek-harness-pkg/releases/download/v1.0.0/deepseek-harness-pkg-windows.zip";
         let urls = mirror_download_urls(asset);
         assert_eq!(urls.len(), DSH_MIRROR_PREFIXES.len());
         for (url, prefix) in urls.iter().zip(DSH_MIRROR_PREFIXES) {

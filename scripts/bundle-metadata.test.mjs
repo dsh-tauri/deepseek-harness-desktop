@@ -97,7 +97,7 @@ it.each([
 it('generates offline assets from current Electron build constants without standalone Node', () => {
   const assets = bundleAssets({ platform: 'windows', arch: 'arm64', constants: readBuildConstants(repoRoot), dshTag: 'dsh-0.2.2-rc.1-100', withGit: true })
   expect(Object.keys(assets)).toEqual(['pnpm', 'dsh', 'git'])
-  expect(assets.dsh.url).toBe('https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-100/deepseek-harness-pkg-windows-arm64.asar.zip')
+  expect(assets.dsh.url).toBe('https://github.com/dsh-tauri/deepseek-harness-pkg/releases/download/dsh-0.2.2-rc.1-100/deepseek-harness-pkg-windows-arm64.asar.zip')
   expect(assets.git.name).toBe('MinGit-2.53.0.2-arm64.zip')
 })
 

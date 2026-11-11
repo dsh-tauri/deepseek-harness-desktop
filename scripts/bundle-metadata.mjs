@@ -3,7 +3,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
-const DSH_PKG_REPO = 'dsh-tauri-desk/deepseek-harness-pkg'
+const DSH_PKG_REPO = 'dsh-tauri/deepseek-harness-pkg'
 const DSH_LATEST_DOWNLOAD_SEGMENT = 'releases/latest/download/'
 const RESOURCES_TOKEN = '$Resources'
 

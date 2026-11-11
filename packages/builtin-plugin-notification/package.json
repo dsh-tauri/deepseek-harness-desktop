@@ -5,12 +5,12 @@
   "description": "DeepSeek Harness 桌面壳的原生通知：轮次完成、权限审批与提问提醒，带「批准」操作，点击可聚焦到发起会话，并提供通知设置页。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
-  "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",
+  "homepage": "https://github.com/dsh-tauri/dsh-tauri-plugins#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dsh-tauri-desk/dsh-tauri-plugins.git"
+    "url": "git+https://github.com/dsh-tauri/dsh-tauri-plugins.git"
   },
-  "bugs": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/issues",
+  "bugs": "https://github.com/dsh-tauri/dsh-tauri-plugins/issues",
   "keywords": [
     "dsh",
     "plugin",

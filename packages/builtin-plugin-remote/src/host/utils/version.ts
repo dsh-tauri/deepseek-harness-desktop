@@ -27,7 +27,7 @@ export function assertSupportedDshVersion(version: string): void {
 
 export const OFFICIAL_INSTALL_REPO = 'https://github.com/deepseek-ai/deepseek-harness.git'
 
-export const OFFICIAL_PKG_REPO = 'dsh-tauri-desk/deepseek-harness-pkg'
+export const OFFICIAL_PKG_REPO = 'dsh-tauri/deepseek-harness-pkg'
 
 export function pkgRepoOf(installRepo?: string): string {
   const configured = installRepo === undefined || installRepo.trim() === '' ? undefined : installRepo.trim()

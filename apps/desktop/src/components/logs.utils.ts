@@ -1,5 +1,5 @@
 /** DSH 发行版 GitHub Release 下载 URL 前缀：日志展示时剥离，避免整段长 URL 占满一行 */
-const DSH_RELEASE_URL_PREFIX = 'https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/'
+const DSH_RELEASE_URL_PREFIX = 'https://github.com/dsh-tauri/deepseek-harness-pkg/releases/download/'
 /** GitHub 代理镜像的透传包装前缀（与官方 URL 拼接），同样剥离 */
 const DSH_MIRROR_URL_PREFIXES = [
   'https://gh-proxy.com/',

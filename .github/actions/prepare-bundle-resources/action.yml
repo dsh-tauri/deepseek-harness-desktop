@@ -127,7 +127,7 @@ runs:
           esac
         done <<< "$assets"
         fetch "$dsh_url" "${workdir}/${dsh_name}"
-        dsh_digest="$(gh api "repos/dsh-tauri-desk/deepseek-harness-pkg/releases/tags/${DSH_TAG}" \
+        dsh_digest="$(gh api "repos/dsh-tauri/deepseek-harness-pkg/releases/tags/${DSH_TAG}" \
           --jq ".assets[] | select(.name == \"${dsh_name}\") | .digest" 2>/dev/null \
           | sed 's/^sha256://' | head -n 1)"
         verify "${workdir}/${dsh_name}" "$dsh_digest" "dsh core ${dsh_name}"
