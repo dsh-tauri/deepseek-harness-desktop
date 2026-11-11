@@ -488,6 +488,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// 验证解析插件清单时能正确标记内置预设插件。
     #[test]
     fn parse_plugins_marks_internal_presets() {
         let dir = build_profile(

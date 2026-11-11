@@ -561,6 +561,7 @@ mod tests {
         assert!(verify_sha256(b"abc", "not-a-digest").is_err());
     }
 
+    /// 校验下载源仅放行 HTTPS 协议与白名单域名（含官方源、镜像代理与 Node/pnpm 镜像源）。
     #[test]
     fn download_sources_are_https_and_allowlisted() {
         assert!(validate_download_url("https://nodejs.org/dist/v22/file.zip").is_err());
