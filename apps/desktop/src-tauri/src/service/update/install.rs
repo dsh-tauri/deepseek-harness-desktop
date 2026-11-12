@@ -323,7 +323,8 @@ fn read_installer_digest(path: &Path) -> Result<String, String> {
     if !std::fs::symlink_metadata(&digest).is_ok_and(|meta| meta.is_file() && meta.len() == 64) {
         return Err("UPDATE_CACHE_UNVERIFIED: installer has no recorded SHA-256".to_string());
     }
-    let digest = std::fs::read_to_string(digest).map_err(|e| format!("UPDATE_FILE: {e}"))?;
+    let digest = std::fs::read_to_string(digest)
+        .map_err(|e| format!("UPDATE_CACHE_UNVERIFIED: cannot read recorded SHA-256: {e}"))?;
     if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(
             "UPDATE_CACHE_UNVERIFIED: installer has an invalid recorded SHA-256".to_string(),
@@ -940,6 +941,29 @@ fn open_with_system_handler(file: &std::path::Path) -> Result<(), String> {
     spawn_waited_handler(&command).map(|_| ())
 }
 
+fn stage_verified_installer(path: &Path, digest: &str) -> Result<tempfile::TempPath, String> {
+    let parent = path
+        .parent()
+        .ok_or("UPDATE_FILE: installer has no parent directory")?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or("UPDATE_FILE: installer has no file extension")?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".installer-handoff-")
+        .suffix(&format!(".{extension}"))
+        .tempfile_in(parent)
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
+    let mut source = std::fs::File::open(path)
+        .map_err(|e| format!("UPDATE_CACHE_UNVERIFIED: cannot open installer: {e}"))?;
+    std::io::copy(&mut source, staged.as_file_mut()).map_err(|e| format!("UPDATE_FILE: {e}"))?;
+    verify_installer_sha256(staged.path(), digest)
+        .map_err(|e| format!("UPDATE_CACHE_UNVERIFIED: {e}"))?;
+    #[cfg(unix)]
+    ensure_installer_executable(staged.path())?;
+    Ok(staged.into_temp_path())
+}
+
 /// 校验安装包并交给系统默认处理器打开（不停服务、不动「待安装」标记）。
 ///
 /// **调用方必须先停 Harness**（见 [`stop_for_installer`](crate::service::workflow::stop_for_installer)）：
@@ -951,14 +975,9 @@ fn open_with_system_handler(file: &std::path::Path) -> Result<(), String> {
 pub(super) fn open_installer_now(
     app_handle: &AppHandle,
     resolved: &Path,
-    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] digest: &str,
+    digest: &str,
 ) -> Result<(), String> {
     log::info!("Opening desktop installer: {}", resolved.display());
-    // 兜底补充可执行权限：兼容老版本下载的 AppImage（0644）被打包用户留存，
-    // 直接打开仍会失败；此处幂等修复后再交给系统处理器。
-    #[cfg(unix)]
-    ensure_installer_executable(resolved)?;
-
     // Linux：AppImage 自带运行时，直接执行；xdg-open 依赖桌面注册的 MIME
     // 处理器，COSMIC 等未注册的环境会静默失败（open::that_detached 只检查
     // 进程是否 spawn 成功，看不到 xdg-open 的退出码）。
@@ -987,16 +1006,23 @@ pub(super) fn open_installer_now(
     // .deb/.rpm 仍交给系统默认处理器（软件中心 / 包管理器），但由本进程启动，
     // 让处理器有活着的父进程，否则其提权按钮会被 pkexec 的孤儿检查拒绝
     // （issue #865）。处理器解析失败时退回 opener 的分离式交接：至少能打开。
+    let handoff = stage_verified_installer(resolved, digest)?
+        .keep()
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
     #[cfg(target_os = "linux")]
-    match open_with_system_handler(resolved) {
+    match open_with_system_handler(&handoff) {
         Ok(()) => return Ok(()),
         Err(error) => log::warn!("UPDATE_OPEN: system handler launch failed: {error}"),
     }
 
-    app_handle
+    let result = app_handle
         .opener()
-        .open_path(resolved.to_string_lossy(), None::<&str>)
-        .map_err(|e| format!("UPDATE_OPEN: {e}"))
+        .open_path(handoff.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("UPDATE_OPEN: {e}"));
+    if result.is_err() {
+        let _ = std::fs::remove_file(handoff);
+    }
+    result
 }
 
 /// 打开安装包：交给系统默认处理器（Windows 会触发 UAC 执行安装器）。
@@ -1082,6 +1108,31 @@ mod tests {
             .collect();
         files.sort();
         files
+    }
+
+    #[test]
+    fn unreadable_digest_uses_the_cache_retry_error() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("installer.dmg");
+        std::fs::write(digest_path(&path), [0xff; 64]).unwrap();
+        let error = read_installer_digest(&path).unwrap_err();
+        assert!(error.starts_with("UPDATE_CACHE_UNVERIFIED:"), "{error}");
+    }
+
+    #[test]
+    fn system_handoff_keeps_verified_bytes_when_cache_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("installer.dmg");
+        std::fs::write(&path, b"abc").unwrap();
+        let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let staged = stage_verified_installer(&path, digest).unwrap();
+        std::fs::write(&path, b"changed").unwrap();
+
+        assert_eq!(staged.extension().unwrap(), "dmg");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"abc");
+        let error = stage_verified_installer(&path, digest).unwrap_err();
+        assert!(error.starts_with("UPDATE_CACHE_UNVERIFIED:"), "{error}");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
     }
 
     #[tokio::test]
