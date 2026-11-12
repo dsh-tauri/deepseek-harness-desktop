@@ -98,6 +98,13 @@ describe('pickErrorLines', () => {
     expect(pickErrorLines([terminal, stall, ...cleanup])).toEqual([terminal, ...cleanup.slice(-6), stall])
   })
 
+  it('八条致命报告占满预算时不插入普通错误或卡点', () => {
+    const reports = Array.from({ length: 9 }, (_, index) => `ERROR HARNESS_FATAL_REPORT: report ${index}`)
+    const terminal = 'ERROR cannot bind the main HTTP server: permission denied'
+    const stall = 'mcp-client(local): connection stalled'
+    expect(pickErrorLines([...reports, terminal, stall])).toEqual(reports.slice(-8))
+  })
+
   it('没有可定位证据时退回最后 8 行', () => {
     const lines = Array.from({ length: 10 }, (_, index) => `INFO line ${index}`)
 
