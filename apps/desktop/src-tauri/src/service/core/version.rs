@@ -788,6 +788,10 @@ pub(crate) async fn switch_format(app_handle: &AppHandle, asar: bool) -> Result<
         return Err("CORE_ASAR_SWITCH_UNSUPPORTED: the active core is outside the managed installation directory".into());
     }
     fs_guard::ensure_within(&active, &deps)?;
+    let active_entry = config::dsh_binary_at(&active, app_handle);
+    if !config::core_entry_exists(&active_entry) {
+        return Err("CORE_ASAR_SWITCH_UNSUPPORTED: the active core entry is missing".into());
+    }
     let tag = format_switch_tag(&active, setting.dsh_pkg_tag.as_deref())?;
     let staging = tempfile::Builder::new()
         .prefix(".core-format-")
@@ -811,6 +815,7 @@ pub(crate) async fn switch_format(app_handle: &AppHandle, asar: bool) -> Result<
         drop(transition);
         if was_running
             && !workflow::has_owned_process()
+            && config::core_entry_exists(&active_entry)
             && let Err(restart) = workflow::start(app_handle.clone()).await
         {
             return Err(format!(

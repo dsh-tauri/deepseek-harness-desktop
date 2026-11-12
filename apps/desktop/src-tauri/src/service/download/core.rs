@@ -365,6 +365,7 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
     for attempt in 1..=MAX_ATTEMPTS {
         match fs::rename(from, to) {
             Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(e),
             Err(e) if attempt < MAX_ATTEMPTS => {
                 log::warn!(
                     "Rename {:?} -> {:?} failed (attempt {attempt}/{MAX_ATTEMPTS}), file may be locked: {e}",
