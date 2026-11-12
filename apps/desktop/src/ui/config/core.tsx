@@ -105,6 +105,7 @@ export function ConfigCore() {
   const localCore = cores.find(c => c.source === 'local')
   /** 随包内核随安装包分发、无法重下：这类构建不允许切换核心格式 */
   const bundledBuild = cores.some(core => core.bundled)
+  const localCoreActive = cores.some(core => core.active && core.source === 'local')
   const currentRows = rows.filter(core => !core.orphaned)
   const orphanRows = rows.filter(core => core.orphaned)
   const orderedRows = [...currentRows, ...orphanRows]
@@ -271,7 +272,7 @@ export function ConfigCore() {
     }
   }
 
-  /** 切换核心格式：关闭 asar 会重下目录核心，先确认；成功后重启服务。 */
+  /** 切换核心格式：成功下载并切换后重启服务。 */
   async function onCoreAsarChange(enabled: boolean) {
     if (busy)
       return
@@ -305,7 +306,7 @@ export function ConfigCore() {
     }
     catch (err) {
       console.error('[ConfigCore] switch core format failed:', err)
-      toast(t('core.asar_switch_failed'), {})
+      toast(t('core.asar_switch_failed'), { variant: 'danger', description: String(err) })
     }
   }
 
@@ -398,7 +399,7 @@ export function ConfigCore() {
                 <Switch
                   size="sm"
                   isSelected={coreAsar ?? true}
-                  isDisabled={asarLoading || busy || bundledBuild}
+                  isDisabled={asarLoading || busy || bundledBuild || localCoreActive}
                   onChange={enabled => void onCoreAsarChange(enabled)}
                   aria-label={t('core.asar')}
                 >

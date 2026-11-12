@@ -426,13 +426,25 @@ pub async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
     app_handle: &crate::AppHandle<R>,
     tag: &str,
 ) -> Result<LatestDshPkg, String> {
+    fetch_dsh_pkg_asset_for_format(
+        app_handle,
+        tag,
+        config::get_store_dat_setting(app_handle).core_asar,
+    )
+    .await
+}
+
+pub(crate) async fn fetch_dsh_pkg_asset_for_format<R: tauri::Runtime>(
+    app_handle: &crate::AppHandle<R>,
+    tag: &str,
+    core_asar: bool,
+) -> Result<LatestDshPkg, String> {
     if !supported_release_tag(tag) {
         return Err(format!(
             "CORE_APP_UNSUPPORTED: release {tag} is outside the supported 0.2.2 core series (minimum 0.2.2-rc.1)"
         ));
     }
     let client = github_client(app_handle)?;
-    let core_asar = config::get_store_dat_setting(app_handle).core_asar;
     let expected_name = config::dsh_pkg_asset_name(core_asar)?;
 
     // 1. 优先 API 拉该 tag 的 release（含资产 + 可信摘要）；API 失败/限流或响应
