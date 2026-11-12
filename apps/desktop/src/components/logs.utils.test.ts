@@ -85,6 +85,19 @@ describe('pickErrorLines', () => {
     ]))
   })
 
+  it('保留被早期可恢复警告淹没的启动错误', () => {
+    const warnings = Array.from({ length: 8 }, (_, index) => `WARN failed to refresh optional entry ${index}`)
+    const terminal = 'ERROR cannot bind the main HTTP server: permission denied'
+    expect(pickErrorLines([...warnings, terminal])).toEqual([...warnings.slice(1), terminal])
+  })
+
+  it('后续清理警告不会挤掉启动错误或服务卡点', () => {
+    const terminal = 'ERROR cannot bind the main HTTP server: permission denied'
+    const stall = 'mcp-client(local): connection stalled'
+    const cleanup = Array.from({ length: 8 }, (_, index) => `WARN failed to clean up entry ${index}`)
+    expect(pickErrorLines([terminal, stall, ...cleanup])).toEqual([terminal, ...cleanup.slice(-6), stall])
+  })
+
   it('没有可定位证据时退回最后 8 行', () => {
     const lines = Array.from({ length: 10 }, (_, index) => `INFO line ${index}`)
 

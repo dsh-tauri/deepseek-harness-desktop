@@ -40,9 +40,12 @@ export function pickErrorLines(lines: readonly string[]): string[] {
   const reports = lines.filter(isReport).slice(-8)
   const room = Math.max(0, 8 - reports.length)
   const stalls = room === 0 ? [] : lines.filter(isStall).slice(-Math.min(4, room))
-  const errored = lines
-    .filter(line => !isReport(line) && !isStall(line) && ERROR_LINE_MARKERS.test(line))
-    .slice(0, Math.max(0, room - stalls.length))
+  const errors = lines.filter(line => !isReport(line) && !isStall(line) && ERROR_LINE_MARKERS.test(line))
+  const errorBudget = room - stalls.length
+  const errored = errorBudget > 0 ? errors.slice(-errorBudget) : []
+  const terminal = errors.findLast(line => /^(?:error|fatal|panic)\b/i.test(line))
+  if (errored.length > 0 && terminal !== undefined && !errored.includes(terminal))
+    errored[0] = terminal
   const picked = [...errored, ...stalls, ...reports]
   return picked.length > 0 ? picked : lines.slice(-8)
 }
