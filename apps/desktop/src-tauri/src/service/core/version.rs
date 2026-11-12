@@ -870,7 +870,7 @@ async fn download_core_into(
     asar: bool,
     dest: &Path,
 ) -> Result<(), String> {
-    let info = download::fetch_dsh_pkg_asset_for_format(app_handle, tag, asar)
+    let info = download::fetch_dsh_pkg_asset(app_handle, tag, Some(asar))
         .await
         .map_err(|error| format!("CORE_METADATA_FAILED: {error}"))?;
     let digest = info.digest.ok_or_else(|| {

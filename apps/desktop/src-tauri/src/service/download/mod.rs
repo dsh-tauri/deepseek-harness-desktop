@@ -16,7 +16,7 @@ pub use github::{
 };
 // 供核心面板切换版本时使用（跨模块内部接口，不进公共 API）
 pub(crate) use core::{commit_staged_install, remove_dir_with_retry, rename_with_retry};
-pub(crate) use github::fetch_dsh_pkg_asset_for_format;
+pub(crate) use github::fetch_dsh_pkg_asset;
 // 依赖任务清单与映射回写：安装流程与启动检测共用同一组任务定义。
 pub use installable::{Dsh, InstallKind, Installable, Pnpm, record_mappings, tasks};
 pub use progress::ProgressTracker;
