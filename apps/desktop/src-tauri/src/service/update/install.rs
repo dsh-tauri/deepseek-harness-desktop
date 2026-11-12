@@ -7,7 +7,7 @@
 
 use crate::AppHandle;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use futures_util::StreamExt;
 use tauri::{Emitter, Manager};
@@ -21,6 +21,11 @@ use super::version::current_version;
 #[cfg(target_os = "linux")]
 use super::version::{running_appimage, self_updatable};
 use super::{DOWNLOAD_TIMEOUT_SECS, UPDATES_DIR};
+
+const HANDOFF_DIR: &str = "handoff";
+const HANDOFF_PREFIX: &str = ".installer-handoff-";
+// 系统处理器可能异步读取安装包，且没有统一的完成回调。保留一周，供用户完成安装。
+const HANDOFF_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// 就地替换不了的媒介不发起更新：系统包安装（非 deb/rpm 宿主，或当前二进制不归该
 /// 家族的包管理）下载的任何格式都只会「另跑一份」，桌面条目仍指向旧版本，用户点完
@@ -104,6 +109,37 @@ fn prune_installers_in_dir(dir: &std::path::Path, protected: &[PathBuf]) -> std:
     Ok(())
 }
 
+fn prune_expired_handoffs(dir: &Path, now: SystemTime) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_name().to_string_lossy().starts_with(HANDOFF_PREFIX) {
+            continue;
+        }
+        let path = entry.path();
+        let meta = match entry.metadata() {
+            Ok(meta) if meta.is_file() => meta,
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if now
+            .duration_since(meta.modified()?)
+            .is_ok_and(|age| age >= HANDOFF_RETENTION)
+            && let Err(error) = std::fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("UPDATE_PRUNE: failed to remove {}: {error}", path.display());
+        }
+    }
+    Ok(())
+}
+
 fn prune_old_installers(app_handle: &AppHandle) {
     let mut protected: Vec<_> = super::pending::installer_path(app_handle)
         .into_iter()
@@ -116,6 +152,9 @@ fn prune_old_installers(app_handle: &AppHandle) {
         protected.push(PathBuf::from(appimage));
     }
     let result = updates_dir(app_handle).and_then(|dir| {
+        if let Err(error) = prune_expired_handoffs(&dir.join(HANDOFF_DIR), SystemTime::now()) {
+            log::warn!("UPDATE_PRUNE: failed to clean installer handoffs: {error}");
+        }
         prune_installers_in_dir(&dir, &protected).map_err(|error| error.to_string())
     });
     if let Err(error) = result {
@@ -612,16 +651,26 @@ pub(super) fn prepare_installer(
     } else {
         None
     };
-    let staging_dir = updates_real.as_path();
     #[cfg(target_os = "linux")]
-    let staging_dir = match running_appimage.as_deref() {
+    let running_path = running_appimage.as_deref();
+    #[cfg(not(target_os = "linux"))]
+    let running_path: Option<&Path> = None;
+    let staging_dir = match running_path {
         Some(path) => path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new(".")),
-        None => staging_dir,
+            .unwrap_or(Path::new("."))
+            .to_path_buf(),
+        None => {
+            let dir = updates_real.join(HANDOFF_DIR);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("UPDATE_FILE: {e}"))?;
+            if !std::fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir()) {
+                return Err("UPDATE_FILE: invalid installer handoff directory".into());
+            }
+            dir
+        }
     };
-    let staged = stage_verified_installer(&canonical, &digest, staging_dir)?;
+    let staged = stage_verified_installer(&canonical, &digest, &staging_dir)?;
     Ok(PreparedInstaller {
         staged,
         #[cfg(target_os = "linux")]
@@ -946,7 +995,7 @@ fn stage_verified_installer(
         .and_then(|value| value.to_str())
         .ok_or("UPDATE_FILE: installer has no file extension")?;
     let mut staged = tempfile::Builder::new()
-        .prefix(".installer-handoff-")
+        .prefix(HANDOFF_PREFIX)
         .suffix(&format!(".{extension}"))
         .tempfile_in(staging_dir)
         .map_err(|e| format!("UPDATE_FILE: {e}"))?;
@@ -991,6 +1040,7 @@ pub(super) fn open_installer_now(
     // .deb/.rpm 仍交给系统默认处理器（软件中心 / 包管理器），但由本进程启动，
     // 让处理器有活着的父进程，否则其提权按钮会被 pkexec 的孤儿检查拒绝
     // （issue #865）。处理器解析失败时退回 opener 的分离式交接：至少能打开。
+    // 处理器可能在本进程退出后读取文件；更新检查会按保留期清理成功交付的副本。
     let handoff = installer
         .staged
         .keep()
@@ -1716,6 +1766,38 @@ mod tests {
             prune_installers_in_dir(dir.path(), &[]).unwrap();
             assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), i + 1);
         }
+    }
+
+    #[test]
+    fn handoffs_are_pruned_by_age_separately_from_the_installer_cache() {
+        let updates = tempfile::tempdir().unwrap();
+        let handoffs = updates.path().join(HANDOFF_DIR);
+        std::fs::create_dir(&handoffs).unwrap();
+        let now = SystemTime::now();
+        let old = handoffs.join(format!("{HANDOFF_PREFIX}old.exe"));
+        let recent = handoffs.join(format!("{HANDOFF_PREFIX}recent.exe"));
+        let other = handoffs.join("other.exe");
+        for (path, age) in [
+            (&old, HANDOFF_RETENTION + Duration::from_secs(60)),
+            (&recent, Duration::from_secs(60)),
+            (&other, HANDOFF_RETENTION + Duration::from_secs(60)),
+        ] {
+            std::fs::File::create(path)
+                .unwrap()
+                .set_modified(now - age)
+                .unwrap();
+        }
+        for index in 0..6 {
+            std::fs::write(updates.path().join(format!("cache-{index}.exe")), b"cache").unwrap();
+        }
+
+        prune_installers_in_dir(updates.path(), &[]).unwrap();
+        assert_eq!(std::fs::read_dir(updates.path()).unwrap().count(), 6);
+        assert!(old.exists() && recent.exists() && other.exists());
+
+        prune_expired_handoffs(&handoffs, now).unwrap();
+        assert!(!old.exists());
+        assert!(recent.exists() && other.exists());
     }
 
     #[test]
