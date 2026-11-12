@@ -101,7 +101,7 @@ pub fn launch_pending_installer(app_handle: &AppHandle) {
         return;
     }
 
-    let (path, digest) = match super::install::prepare_installer(app_handle, &pending.path) {
+    let installer = match super::install::prepare_installer(app_handle, &pending.path) {
         Ok(installer) => installer,
         Err(error) => {
             log::warn!("UPDATE_OPEN: rejecting pending installer: {error}");
@@ -123,7 +123,7 @@ pub fn launch_pending_installer(app_handle: &AppHandle) {
         log::error!("UPDATE_STOP_FAILED: refusing installer handoff: {error}");
         return;
     }
-    if let Err(error) = super::install::open_installer_now(app_handle, &path, &digest) {
+    if let Err(error) = super::install::open_installer_now(app_handle, installer) {
         log::warn!("UPDATE_OPEN: failed to launch pending installer on exit: {error}");
     }
 }
