@@ -225,6 +225,24 @@ describe('desktop updater operation coordination', () => {
     expect(mocks.invoke).toHaveBeenCalledTimes(2)
   })
 
+  it('downloads a replacement after a cached installer fails integrity validation', async () => {
+    desktopUpdater.updateInfo = { ...UPDATE }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.invoke
+      .mockRejectedValueOnce('UPDATE_CACHE_UNVERIFIED: SHA-256 mismatch')
+      .mockResolvedValueOnce(UPDATE)
+      .mockResolvedValueOnce(undefined)
+
+    await expect(desktopUpdater.downloadAndOpen()).resolves.toBe(false)
+    expect(desktopUpdater.updateInfo?.downloaded).toBe(false)
+    await expect(desktopUpdater.downloadAndOpen()).resolves.toBe(true)
+    expect(mocks.invoke.mock.calls).toEqual([
+      ['open_desktop_installer', { path: UPDATE.path }],
+      ['download_desktop_update'],
+      ['open_desktop_installer', { path: UPDATE.path }],
+    ])
+  })
+
   it('does not invoke native update actions when no update is available', async () => {
     desktopUpdater.updateInfo = null
 

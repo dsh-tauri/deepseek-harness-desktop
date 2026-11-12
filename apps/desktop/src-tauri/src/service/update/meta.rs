@@ -17,8 +17,8 @@
 
 use std::time::Duration;
 
-use super::version::{current_version, is_newer, is_stable, parse_version, pick_asset};
 use super::REPO_URL;
+use super::version::{current_version, is_newer, is_stable, parse_version, pick_asset};
 
 /// 最新可用发布信息（仅在有更新且匹配到当前平台安装包时才有意义）
 #[derive(Debug, Clone)]
@@ -76,9 +76,12 @@ fn parse_atom_entries(body: &str) -> Vec<(String, String)> {
 }
 
 /// 拉取 releases.atom 并解析全部 release（不走 api.github.com，不受未认证限流约束）。
-pub(super) async fn fetch_releases_meta(app_handle: &crate::AppHandle) -> Result<Vec<(String, String)>, String> {
-    let body = http_client(app_handle)?
-        .get(format!("{REPO_URL}/releases.atom"))
+async fn fetch_releases_meta(
+    client: &reqwest::Client,
+    repo: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let body = client
+        .get(format!("{repo}/releases.atom"))
         .send()
         .await
         .map_err(|e| format!("UPDATE_ATOM: {e}"))?
@@ -88,7 +91,7 @@ pub(super) async fn fetch_releases_meta(app_handle: &crate::AppHandle) -> Result
         .await
         .map_err(|e| format!("UPDATE_ATOM: {e}"))?;
     let releases = parse_atom_entries(&body);
-    if releases.is_empty() {
+    if !body.trim_end().ends_with("</feed>") || releases.is_empty() {
         return Err("UPDATE_PARSE: no releases found in atom feed".to_string());
     }
     Ok(releases)
@@ -111,28 +114,14 @@ fn extract_asset_names(html: &str, tag: &str) -> Vec<String> {
     names
 }
 
-/// 从 expanded_assets HTML 片段中解析指定资产文件名后的 `sha256:<64hex>` 摘要。
-///
-/// 与 `download::core` 中 dsh 包的解析算法保持一致（非签名，仅页面元数据兜底，
-/// 不能替代独立信任根）；解析失败/缺失返回 `None`。
-fn parse_digest_from_expanded_assets(body: &str, expected_name: &str) -> Option<String> {
-    let pos = body.find(expected_name)?;
-    // 4096 字节窗口的终点回退到 UTF-8 字符边界，避免切片落在多字节字符中间 panic
-    let mut end = (pos + 4096).min(body.len());
-    while end > pos && !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    let window = &body[pos..end];
-    const START: &str = "sha256:";
-    let hash_start = window.find(START)?;
-    let hash = &window[hash_start + START.len()..];
-    let hex_end = hash
-        .find(|c: char| !c.is_ascii_hexdigit())
-        .unwrap_or(hash.len());
-    if hex_end != 64 {
-        return None;
-    }
-    Some(format!("sha256:{}", &hash[..64]))
+fn parse_digest_from_expanded_assets(body: &str, tag: &str, expected_name: &str) -> Option<String> {
+    let link = format!("releases/download/{tag}/{expected_name}\"");
+    let (_, tail) = body.split_once(&link)?;
+    let (row, _) = tail.split_once("</li>")?;
+    let row = row.split("<li").next()?;
+    let (_, hash) = row.split_once("sha256:")?;
+    let hex = hash.split(|c: char| !c.is_ascii_hexdigit()).next()?;
+    (hex.len() == 64).then(|| format!("sha256:{hex}"))
 }
 
 /// 一次性拉取 expanded_assets 页面，同时提取资产名列表与该页面的原始 HTML。
@@ -141,9 +130,13 @@ fn parse_digest_from_expanded_assets(body: &str, expected_name: &str) -> Option<
 /// expanded_assets 会列出所有平台的安装包，各带一个 `sha256:`，不能取「页面里
 /// 第一个能解析出摘要的资产」，否则会把别的资产的摘要套到当前平台安装包上，
 /// 导致完整性校验必然失败（见 `fetch_latest_release`）。
-async fn fetch_expanded_assets(app_handle: &crate::AppHandle, tag: &str) -> Result<(Vec<String>, String), String> {
-    let body = http_client(app_handle)?
-        .get(format!("{REPO_URL}/releases/expanded_assets/{tag}"))
+async fn fetch_expanded_assets(
+    client: &reqwest::Client,
+    repo: &str,
+    tag: &str,
+) -> Result<(Vec<String>, String), String> {
+    let body = client
+        .get(format!("{repo}/releases/expanded_assets/{tag}"))
         .send()
         .await
         .map_err(|e| format!("UPDATE_ASSETS: {e}"))?
@@ -275,9 +268,12 @@ fn parse_published_at(html: &str) -> Option<String> {
 ///
 /// 仓库一个正式版都没有时该端点直接 404：这是「无更新」而不是检查失败，必须返回
 /// `Ok(None)`，否则界面会把「已是最新」显示成检查出错。
-async fn fetch_latest_stable_tag(app_handle: &crate::AppHandle) -> Result<Option<String>, String> {
-    let response = http_client(app_handle)?
-        .get(format!("{REPO_URL}/releases/latest"))
+async fn fetch_latest_stable_tag(
+    client: &reqwest::Client,
+    repo: &str,
+) -> Result<Option<String>, String> {
+    let response = client
+        .get(format!("{repo}/releases/latest"))
         .send()
         .await
         .map_err(|e| format!("UPDATE_LATEST: {e}"))?;
@@ -296,16 +292,16 @@ async fn fetch_latest_stable_tag(app_handle: &crate::AppHandle) -> Result<Option
 /// 页）——第一页就可能拿到多个更旧的正式版，多了没有意义。返回空表示确实没有更旧的
 /// 正式版（此时「没有可用更新」是正确结论，不是检查失败）。
 async fn fetch_listed_stable_candidates(
-    app_handle: &crate::AppHandle,
+    client: &reqwest::Client,
+    repo: &str,
     current: &str,
     skip: &[String],
 ) -> Result<Vec<(String, String)>, String> {
     const LISTING_PAGES: u32 = 3;
-    let client = http_client(app_handle)?;
     let mut found: Vec<(String, String)> = Vec::new();
     for page in 1..=LISTING_PAGES {
         let body = client
-            .get(format!("{REPO_URL}/releases?page={page}"))
+            .get(format!("{repo}/releases?page={page}"))
             .send()
             .await
             .map_err(|e| format!("UPDATE_LISTING: {e}"))?
@@ -349,12 +345,15 @@ pub(super) async fn fetch_tag_published_at(
 ///
 /// 没有匹配安装包时继续看下一个候选（见 [`fetch_latest_release`] 的语义说明）。
 async fn first_matching_release(
-    app_handle: &crate::AppHandle,
+    client: &reqwest::Client,
+    repo: &str,
     candidates: Vec<(String, String)>,
 ) -> Result<Option<LatestRelease>, String> {
     for (tag, published_at) in candidates {
         let version = tag.trim_start_matches('v');
-        if let Some(release) = fetch_release_assets(app_handle, &tag, version, &published_at).await? {
+        if let Some(release) =
+            fetch_release_assets(client, repo, &tag, version, &published_at).await?
+        {
             return Ok(Some(release));
         }
     }
@@ -368,7 +367,7 @@ async fn first_matching_release(
 /// 测试 release 的 `test-*` tag）、pre-release（rc/beta/夜间版）与不高于当前版本的 tag，
 /// 首个命中的正式版即返回；当前平台无匹配安装包时继续看更旧的正式版。
 ///
-/// feed 里一条正式版都看不见时（窗口被夜间版占满）改问 `/releases/latest`：GitHub 保证
+/// feed 不可用或没有正式版时改问 `/releases/latest`：GitHub 保证
 /// 它指向最新正式版。只要窗口里看得见任一正式版，最新正式版必然也在窗口内，因此不必兜底
 /// ——这条捷径也保证正式版没被挤出时，更新检查行为与旧实现完全一致。
 ///
@@ -382,18 +381,28 @@ pub(super) async fn fetch_latest_release(app_handle: &crate::AppHandle) -> Resul
     if !super::version::supports_stable_updates(&app_handle.config().identifier) {
         return Ok(None);
     }
-    let current = current_version();
-    let (candidates, saw_stable) = stable_candidates(&fetch_releases_meta(app_handle).await?, &current);
+    fetch_latest_release_from(&http_client(app_handle)?, REPO_URL, &current_version()).await
+}
 
-    // 窗口里看得见正式版：与旧实现完全一致，只按 feed 顺序找（最新正式版必在窗口内）
-    if saw_stable {
-        return first_matching_release(app_handle, candidates).await;
+async fn fetch_latest_release_from(
+    client: &reqwest::Client,
+    repo: &str,
+    current: &str,
+) -> Result<Option<LatestRelease>, String> {
+    match fetch_releases_meta(client, repo).await {
+        Ok(releases) => {
+            let (candidates, saw_stable) = stable_candidates(&releases, current);
+            if saw_stable {
+                return first_matching_release(client, repo, candidates).await;
+            }
+        }
+        Err(error) => {
+            log::warn!("Desktop update feed unavailable, trying latest stable release: {error}")
+        }
     }
-
-    // 窗口被夜间版占满：先问 `/releases/latest`
     let mut fallback: Vec<(String, String)> = Vec::new();
-    if let Some(tag) = fetch_latest_stable_tag(app_handle).await? {
-        if is_stable_tag(&tag) && is_newer(tag.trim_start_matches('v'), &current) {
+    if let Some(tag) = fetch_latest_stable_tag(client, repo).await? {
+        if is_stable_tag(&tag) && is_newer(tag.trim_start_matches('v'), current) {
             // 发布时间只有 feed 正文才有：兜底路径不为它再多请求一次页面。该字段仅随
             // 更新信息透传给前端、界面不展示（关于对话框的发布日期走 `about.rs`）。
             fallback.push((tag, String::new()));
@@ -406,13 +415,13 @@ pub(super) async fn fetch_latest_release(app_handle: &crate::AppHandle) -> Resul
         return Ok(None);
     }
     let skip: Vec<String> = fallback.iter().map(|(tag, _)| tag.clone()).collect();
-    if let Some(release) = first_matching_release(app_handle, fallback).await? {
+    if let Some(release) = first_matching_release(client, repo, fallback).await? {
         return Ok(Some(release));
     }
 
     // 兜底候选缺当前平台安装包：翻列表页继续找更旧的正式版
-    let older = fetch_listed_stable_candidates(app_handle, &current, &skip).await?;
-    first_matching_release(app_handle, older).await
+    let older = fetch_listed_stable_candidates(client, repo, current, &skip).await?;
+    first_matching_release(client, repo, older).await
 }
 
 /// 为选定的正式版 tag 挑选当前平台安装包并解析摘要。
@@ -424,19 +433,20 @@ pub(super) async fn fetch_latest_release(app_handle: &crate::AppHandle) -> Resul
 ///
 /// 返回 `None` 表示该 release 无匹配当前平台的安装包（调用方继续看更旧的正式版）。
 async fn fetch_release_assets(
-    app_handle: &crate::AppHandle,
+    client: &reqwest::Client,
+    repo: &str,
     tag: &str,
     version: &str,
     published_at: &str,
 ) -> Result<Option<LatestRelease>, String> {
     // 一次拉取 expanded_assets 页面，得到资产名列表与原始 HTML（避免两次请求）
-    let (names, body) = fetch_expanded_assets(app_handle, tag).await?;
+    let (names, body) = fetch_expanded_assets(client, repo, tag).await?;
     let Some(asset_name) = pick_asset(&names) else {
         log::debug!("UPDATE_SKIP: {tag} 无当前平台安装包，继续看更旧的正式版");
         return Ok(None);
     };
 
-    let digest = parse_digest_from_expanded_assets(&body, &asset_name);
+    let digest = parse_digest_from_expanded_assets(&body, tag, &asset_name);
     log::debug!(
         "Release {tag} digest for picked asset {}: {}",
         asset_name,
@@ -444,7 +454,7 @@ async fn fetch_release_assets(
     );
 
     // 下载地址由 tag + 资产名直接构造，无需 API
-    let url = format!("{REPO_URL}/releases/download/{tag}/{asset_name}");
+    let url = format!("{repo}/releases/download/{tag}/{asset_name}");
     Ok(Some(LatestRelease {
         version: version.to_string(),
         tag: tag.to_string(),
@@ -509,25 +519,107 @@ mod tests {
         assert!(extract_asset_names("", tag).is_empty());
     }
 
+    #[tokio::test]
+    async fn atom_failure_uses_latest_stable_release_and_matches_platform_asset() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let repo = format!("http://{}", listener.local_addr().unwrap());
+        let asset = pick_asset(
+            &["app.AppImage", "app.deb", "app.rpm", "app.dmg", "app.exe"].map(str::to_string),
+        )
+        .unwrap();
+        let expected = format!("sha256:{}", "a".repeat(64));
+        let body = format!(
+            r#"<li><a href="/releases/download/v99.0.0/{asset}">{asset}</a><span>{expected}</span></li>"#
+        );
+        let server = tokio::spawn(async move {
+            for (path, status, headers, body) in [
+                ("/releases.atom", "503 Service Unavailable", "", ""),
+                (
+                    "/releases/latest",
+                    "302 Found",
+                    "Location: /releases/tag/v99.0.0\r\n",
+                    "",
+                ),
+                ("/releases/tag/v99.0.0", "200 OK", "", ""),
+                (
+                    "/releases/expanded_assets/v99.0.0",
+                    "200 OK",
+                    "",
+                    body.as_str(),
+                ),
+            ] {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut socket = BufReader::new(socket);
+                let mut line = String::new();
+                socket.read_line(&mut line).await.unwrap();
+                assert!(line.starts_with(&format!("GET {path} ")), "{line}");
+                loop {
+                    line.clear();
+                    assert_ne!(socket.read_line(&mut line).await.unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                socket.get_mut().write_all(format!(
+                    "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                ).as_bytes()).await.unwrap();
+            }
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let release = fetch_latest_release_from(&client, &repo, "98.0.0")
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(release.tag, "v99.0.0");
+        assert_eq!(release.asset_name, asset);
+        assert_eq!(release.digest, Some(expected));
+    }
+
+    #[test]
+    fn missing_asset_digest_does_not_borrow_from_another_row() {
+        let other = "b".repeat(64);
+        let html = format!(
+            r#"<li><a href="/x/y/releases/download/v0.7.5/app.deb">app.deb</a></li>
+                <li><a href="/x/y/releases/download/v0.7.5/app.deb.exe">app.deb.exe</a>
+                <span>sha256:{other}</span></li>"#
+        );
+        assert_eq!(
+            parse_digest_from_expanded_assets(&html, "v0.7.5", "app.deb"),
+            None
+        );
+        assert_eq!(
+            parse_digest_from_expanded_assets(&html, "v0.7.5", "app.deb.exe"),
+            Some(format!("sha256:{other}"))
+        );
+    }
+
     /// 摘要解析回归：识别 `sha256:<64hex>`（含中文/多字节前缀），拒绝非法摘要。
     #[test]
     fn parse_digest_from_expanded_assets_extracts_sha256() {
         let hex = format!("sha256:{}", "a".repeat(64));
         let html = format!(
-            r#"<td>设置包</td><td class="d-block">app.dmg</td><td>下载</td><td>{hex}</td>"#
+            r#"<li><a href="/x/y/releases/download/v0.7.5/app.dmg">设置包</a><span>{hex}</span></li>"#
         );
-        let digest = parse_digest_from_expanded_assets(&html, "app.dmg");
+        let digest = parse_digest_from_expanded_assets(&html, "v0.7.5", "app.dmg");
         let expected = format!("sha256:{}", "a".repeat(64));
         assert_eq!(digest.as_deref(), Some(expected.as_str()));
 
         // 无匹配资产 → None
-        assert!(parse_digest_from_expanded_assets(&html, "app-x86_64.dmg").is_none());
+        assert!(parse_digest_from_expanded_assets(&html, "v0.7.5", "app-x86_64.dmg").is_none());
         // 摘要长度/字符不合法 → None
-        let bad = r#"<td>app.dmg sha256:zz"#;
-        assert!(parse_digest_from_expanded_assets(bad, "app.dmg").is_none());
-        // 多字节内容前移后仍能解析（切片边界安全）
-        let unicode = format!("中文说明app.dmg{}更多内容", hex);
-        assert!(parse_digest_from_expanded_assets(&unicode, "app.dmg").is_some());
+        let bad =
+            r#"<li><a href="/x/y/releases/download/v0.7.5/app.dmg">app.dmg</a>sha256:zz</li>"#;
+        assert!(parse_digest_from_expanded_assets(bad, "v0.7.5", "app.dmg").is_none());
     }
 
     /// 回归：多平台 release 页面里每个资产各带一个 `sha256:`，摘要必须按**所选
@@ -540,13 +632,13 @@ mod tests {
         // 模拟真实 expanded_assets：每个资产行 = 下载链接 + 紧跟其后的 sha256，
         // 页面顺序为 rpm（第一个）→ setup.exe（第二个），两者摘要不同。
         let body = format!(
-            r#"<a href="/x/y/releases/download/v0.7.5/app.rpm">app.rpm</a><span>sha256:{a}</span>
-               <a href="/x/y/releases/download/v0.7.5/setup.exe">setup.exe</a><span>sha256:{b}</span>"#
+            r#"<li><a href="/x/y/releases/download/v0.7.5/app.rpm">app.rpm</a><span>sha256:{a}</span></li>
+               <li><a href="/x/y/releases/download/v0.7.5/setup.exe">setup.exe</a><span>sha256:{b}</span></li>"#
         );
         // 旧实现「取页面里第一个能解析的资产」会拿到 rpm 的摘要（a），
         // 而实际选中的是 setup.exe —— 修复后必须返回 setup.exe 自己的摘要（b）。
-        let rpm_digest = parse_digest_from_expanded_assets(&body, "app.rpm");
-        let picked_digest = parse_digest_from_expanded_assets(&body, "setup.exe");
+        let rpm_digest = parse_digest_from_expanded_assets(&body, "v0.7.5", "app.rpm");
+        let picked_digest = parse_digest_from_expanded_assets(&body, "v0.7.5", "setup.exe");
         let expected_rpm = format!("sha256:{a}");
         let expected_picked = format!("sha256:{b}");
         assert_eq!(rpm_digest.as_deref(), Some(expected_rpm.as_str()));
