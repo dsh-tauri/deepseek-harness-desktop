@@ -422,7 +422,7 @@ fn release_asset_metadata(
 ///
 /// API 失败时资产 URL 按 tag 确定性构造，摘要从同一个 tag 的页面读取，避免
 /// latest 地址与固定 tag 的摘要发生错配。
-pub async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
+async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
     app_handle: &crate::AppHandle<R>,
     tag: &str,
 ) -> Result<LatestDshPkg, String> {

@@ -10,7 +10,7 @@ pub use core::{
     download_file, download_file_from_sources, ensure_extract, verify_sha256,
 };
 pub use github::{
-    DshPkgReleaseMeta, LatestDshPkg, UpdateCheck, fetch_dsh_pkg_asset, fetch_dsh_pkg_releases,
+    DshPkgReleaseMeta, LatestDshPkg, UpdateCheck, fetch_dsh_pkg_releases,
     fetch_dsh_pkg_tags, fetch_latest_dsh_pkg_info, is_preview_tag, parse_version_from_tag,
     record_matches_latest_release, resolve_update,
 };
