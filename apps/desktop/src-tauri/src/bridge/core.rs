@@ -3,8 +3,8 @@
 //! 管理本地 CLI 核心与预打包的各个发布版本，支持切换活动核心、下载历史版本
 //! 到槽位、卸载已下载的历史版本，以及通过用户包管理器 CLI 更新本地核心。
 
-use crate::service::core;
 use crate::AppHandle;
+use crate::service::core;
 
 /// 核心列表：本地 CLI 核心 + 预打包各版本（含 active 标记、cli path 与
 /// preview 预览版标记）。版本行数据源为 GitHub releases（含 Pre-release label），
@@ -50,8 +50,6 @@ pub async fn get_core_asar(app_handle: AppHandle) -> bool {
     crate::config::get_store_dat_setting(&app_handle).core_asar
 }
 
-/// 切换核心的分发格式：写入设置后复用安装流程重新下载对应格式的核心
-/// （停服 → 校验 → 下载解压 → 写映射 → 记录 tag），失败回滚设置。
 #[tauri::command]
 pub async fn set_core_asar(
     window: crate::Window,
@@ -59,35 +57,8 @@ pub async fn set_core_asar(
     enabled: bool,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
-    crate::service::workflow::instances::scope(profile, async move {
-        if crate::config::get_store_dat_setting(&app_handle).core_asar == enabled {
-            return Ok(());
-        }
-        if crate::config::dependencies::bundled_core_dir(&app_handle).is_some() {
-            return Err(
-                "CORE_ASAR_SWITCH_UNSUPPORTED: the bundled core ships with the app and cannot change format"
-                    .to_string(),
-            );
-        }
-        crate::config::update_store_dat_setting(&app_handle, |setting| setting.core_asar = enabled);
-        let rollback = || {
-            crate::config::update_store_dat_setting(&app_handle, |setting| {
-                setting.core_asar = !enabled;
-            });
-        };
-        if let Err(error) = crate::service::workflow::install(&app_handle, None).await {
-            rollback();
-            return Err(format!("CORE_ASAR_SWITCH_FAILED: {error}"));
-        }
-        if crate::service::download::Dsh.format_mismatch(&app_handle) {
-            rollback();
-            return Err(
-                "CORE_ASAR_SWITCH_FAILED: the built core still uses the previous format".to_string(),
-            );
-        }
-        Ok(())
-    })
-    .await
+    crate::service::workflow::instances::scope(profile, core::switch_format(&app_handle, enabled))
+        .await
 }
 
 #[tauri::command]

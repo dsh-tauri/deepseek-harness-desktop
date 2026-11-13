@@ -365,6 +365,7 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
     for attempt in 1..=MAX_ATTEMPTS {
         match fs::rename(from, to) {
             Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(e),
             Err(e) if attempt < MAX_ATTEMPTS => {
                 log::warn!(
                     "Rename {:?} -> {:?} failed (attempt {attempt}/{MAX_ATTEMPTS}), file may be locked: {e}",
@@ -376,8 +377,10 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
             Err(e) if e.raw_os_error() == Some(32) => {
                 return Err(std::io::Error::new(
                     e.kind(),
-                    format!("{e}; end node.exe processes still using the core directory in Task Manager or restart Windows, then retry"),
-                ))
+                    format!(
+                        "{e}; end node.exe processes still using the core directory in Task Manager or restart Windows, then retry"
+                    ),
+                ));
             }
             Err(e) => return Err(e),
         }
@@ -386,7 +389,11 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
 }
 
 /// 将已经完整解压并验证结构的临时目录切换为正式目录；切换失败时恢复旧版本。
-async fn commit_staged_install(staging: &Path, dest: &Path, backup: &Path) -> Result<(), String> {
+pub(crate) async fn commit_staged_install(
+    staging: &Path,
+    dest: &Path,
+    backup: &Path,
+) -> Result<(), String> {
     // 上次若恰好在“旧目录改名为备份”后崩溃，先恢复旧版本再进行本次切换。
     if !dest.exists() && backup.exists() {
         rename_with_retry(backup, dest).await.map_err(|e| {
@@ -409,8 +416,10 @@ async fn commit_staged_install(staging: &Path, dest: &Path, backup: &Path) -> Re
         })?;
     }
     if let Err(e) = rename_with_retry(staging, dest).await {
-        if had_previous {
-            let _ = fs::rename(backup, dest);
+        if had_previous && let Err(recovery) = rename_with_retry(backup, dest).await {
+            return Err(format!(
+                "INSTALL_RECOVERY_FAILED: {staging:?} -> {dest:?}: {e}; {backup:?} -> {dest:?}: {recovery}"
+            ));
         }
         return Err(format!(
             "INSTALL_COMMIT_FAILED: {} -> {}: {e}",
@@ -586,6 +595,25 @@ mod tests {
                 "镜像前缀应被放行: {prefix}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn staged_install_restores_active_core_if_publish_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let active = root.path().join("dsh");
+        let backup = root.path().join(".dsh.backup");
+        std::fs::create_dir(&active).unwrap();
+        std::fs::write(active.join("entry"), b"working core").unwrap();
+
+        let error = commit_staged_install(&root.path().join("missing"), &active, &backup)
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("INSTALL_COMMIT_FAILED:"), "{error}");
+        assert_eq!(
+            std::fs::read(active.join("entry")).unwrap(),
+            b"working core"
+        );
+        assert!(!backup.exists());
     }
 
     #[tokio::test]

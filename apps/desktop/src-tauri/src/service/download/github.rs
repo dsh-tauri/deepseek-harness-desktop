@@ -381,7 +381,7 @@ async fn fetch_latest_non_preview(app_handle: &crate::AppHandle) -> Result<Lates
     let tag = latest_supported_non_preview_tag(&releases).ok_or_else(|| {
         "DSH_PREVIEW_RELEASE: no supported non-preview release available, not an update".to_string()
     })?;
-    fetch_dsh_pkg_asset(app_handle, tag).await
+    fetch_dsh_pkg_asset(app_handle, tag, None).await
 }
 
 fn release_asset_metadata(
@@ -422,9 +422,10 @@ fn release_asset_metadata(
 ///
 /// API 失败时资产 URL 按 tag 确定性构造，摘要从同一个 tag 的页面读取，避免
 /// latest 地址与固定 tag 的摘要发生错配。
-pub async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
+pub(crate) async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
     app_handle: &crate::AppHandle<R>,
     tag: &str,
+    core_asar: Option<bool>,
 ) -> Result<LatestDshPkg, String> {
     if !supported_release_tag(tag) {
         return Err(format!(
@@ -432,7 +433,7 @@ pub async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
         ));
     }
     let client = github_client(app_handle)?;
-    let core_asar = config::get_store_dat_setting(app_handle).core_asar;
+    let core_asar = core_asar.unwrap_or_else(|| config::get_store_dat_setting(app_handle).core_asar);
     let expected_name = config::dsh_pkg_asset_name(core_asar)?;
 
     // 1. 优先 API 拉该 tag 的 release（含资产 + 可信摘要）；API 失败/限流或响应
@@ -909,7 +910,7 @@ mod tests {
             "dsh-0.2.3-123",
             "invalid",
         ] {
-            let error = fetch_dsh_pkg_asset(app.handle(), tag).await.unwrap_err();
+            let error = fetch_dsh_pkg_asset(app.handle(), tag, None).await.unwrap_err();
             assert!(error.starts_with("CORE_APP_UNSUPPORTED:"), "{error}");
         }
     }

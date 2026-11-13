@@ -762,17 +762,120 @@ pub async fn download_version(app_handle: &AppHandle, tag: &str) -> Result<Harne
         return Ok(row_for_tag(app_handle, tag, &dest));
     }
 
-    // 1. 拉该 tag 的资产地址 + 可信摘要（digest 缺失时安全中止，沿用
-    //    DSH_INTEGRITY_UNAVAILABLE 设计：不下载无法验证完整性的内容）
-    let info = download::fetch_dsh_pkg_asset(app_handle, tag)
+    let asar = config::get_store_dat_setting(app_handle).core_asar;
+    download_core_into(app_handle, tag, asar, &dest).await?;
+    Ok(row_for_tag(app_handle, tag, &dest))
+}
+
+pub(crate) async fn switch_format(app_handle: &AppHandle, asar: bool) -> Result<(), String> {
+    let transition = workflow::acquire_core_transition().await?;
+    let setting = config::get_store_dat_setting(app_handle);
+    if setting.core_asar == asar {
+        return Ok(());
+    }
+    workflow::instances::require_exclusive_profile()?;
+    if config::dependencies::bundled_core_dir(app_handle).is_some()
+        || active_source(app_handle) != CoreSource::App
+    {
+        return Err("CORE_ASAR_SWITCH_UNSUPPORTED: select an installed managed release to switch its format".into());
+    }
+
+    let deps = dependencies_dir(app_handle);
+    let active = config::get_dsh_install_path(app_handle);
+    if active.parent() != Some(deps.as_path())
+        || !std::fs::symlink_metadata(&active).is_ok_and(|meta| meta.is_dir())
+    {
+        return Err("CORE_ASAR_SWITCH_UNSUPPORTED: the active core is outside the managed installation directory".into());
+    }
+    fs_guard::ensure_within(&active, &deps)?;
+    let active_entry = config::dsh_binary_at(&active, app_handle);
+    if !config::core_entry_exists(&active_entry) {
+        return Err("CORE_ASAR_SWITCH_UNSUPPORTED: the active core entry is missing".into());
+    }
+    let tag = format_switch_tag(&active, setting.dsh_pkg_tag.as_deref())?;
+    let staging = tempfile::Builder::new()
+        .prefix(".core-format-")
+        .tempdir_in(&deps)
+        .map_err(|error| format!("CORE_ASAR_SWITCH_FAILED: {error}"))?;
+    let staged_core = staging.path().join("core");
+    download_core_into(app_handle, tag, asar, &staged_core).await?;
+    validate_format_switch(&staged_core, app_handle, tag, asar)?;
+
+    let backup = active.with_file_name(format!(
+        ".{}.backup",
+        active.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let was_running = workflow::has_owned_process();
+    let result = async {
+        stop_harness_for_core_switch(app_handle).await?;
+        download::commit_staged_install(&staged_core, &active, &backup).await
+    }
+    .await;
+    if let Err(error) = result {
+        drop(transition);
+        if was_running
+            && !workflow::has_owned_process()
+            && config::core_entry_exists(&active_entry)
+            && let Err(restart) = workflow::start(app_handle.clone()).await
+        {
+            return Err(format!(
+                "CORE_ASAR_SWITCH_FAILED: {error}; restarting the previous core failed: {restart}"
+            ));
+        }
+        return Err(format!("CORE_ASAR_SWITCH_FAILED: {error}"));
+    }
+    config::update_store_dat_setting(app_handle, |setting| setting.core_asar = asar);
+    Ok(())
+}
+
+fn format_switch_tag<'a>(active: &Path, tag: Option<&'a str>) -> Result<&'a str, String> {
+    let tag = tag.ok_or(
+        "CORE_ASAR_SWITCH_UNSUPPORTED: select an installed managed release with a known tag",
+    )?;
+    fs_guard::validate_id(tag)?;
+    let version = read_manifest_dsh_version(active);
+    if trusted_release_version(Some(tag), version.as_deref()).is_none() {
+        return Err(
+            "CORE_ASAR_SWITCH_UNSUPPORTED: the recorded release does not match the active core"
+                .into(),
+        );
+    }
+    Ok(tag)
+}
+
+fn validate_format_switch<R: tauri::Runtime>(
+    core: &Path,
+    app_handle: &AppHandle<R>,
+    tag: &str,
+    asar: bool,
+) -> Result<(), String> {
+    if config::core_archive_in(core).is_some() != asar
+        || !config::core_entry_exists(&config::dsh_binary_at(core, app_handle))
+        || format_switch_tag(core, Some(tag)).is_err()
+    {
+        return Err(format!(
+            "CORE_ASAR_SWITCH_FAILED: the downloaded core does not match {tag} and the requested format"
+        ));
+    }
+    ensure_app_core_supported(
+        core,
+        Some(tag),
+        config::manifest::minimum_dsh_version(app_handle).as_deref(),
+    )
+}
+
+async fn download_core_into(
+    app_handle: &AppHandle,
+    tag: &str,
+    asar: bool,
+    dest: &Path,
+) -> Result<(), String> {
+    let info = download::fetch_dsh_pkg_asset(app_handle, tag, Some(asar))
         .await
-        .map_err(|e| format!("CORE_METADATA_FAILED: {e}"))?;
+        .map_err(|error| format!("CORE_METADATA_FAILED: {error}"))?;
     let digest = info.digest.ok_or_else(|| {
         format!("CORE_INTEGRITY_UNAVAILABLE: trusted SHA-256 unavailable for {tag}, cannot download safely")
     })?;
-
-    // 2. 下载 + 校验 + 原子解压到历史槽位（两阶段进度：下载 0-50，解压 50-100）
-    //    下载默认走 GitHub 官方直连，失败自动切换代理镜像兜底。
     let window = crate::utils::operation_window(app_handle)
         .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
     let mut tracker = download::ProgressTracker::new(&window, 2);
@@ -781,8 +884,9 @@ pub async fn download_version(app_handle: &AppHandle, tag: &str) -> Result<Harne
     urls.extend(config::mirror_download_urls(&info.asset_url));
     let buffer = download::download_file_from_sources(&tracker, urls)
         .await
-        .map_err(|e| format!("CORE_DOWNLOAD_FAILED: {e}"))?;
-    download::verify_sha256(&buffer, &digest).map_err(|e| format!("CORE_INTEGRITY_FAILED: {e}"))?;
+        .map_err(|error| format!("CORE_DOWNLOAD_FAILED: {error}"))?;
+    download::verify_sha256(&buffer, &digest)
+        .map_err(|error| format!("CORE_INTEGRITY_FAILED: {error}"))?;
     tracker.end_phase();
     let name = info
         .asset_url
@@ -791,20 +895,19 @@ pub async fn download_version(app_handle: &AppHandle, tag: &str) -> Result<Harne
         .unwrap_or(&info.asset_url)
         .to_string();
     tracker.start_phase("extract", &format!("正在解压核心版本 {tag}"));
-    if is_directory_core(&dest) {
+    if is_directory_core(dest) {
         preserve_directory_core(
-            &dest,
+            dest,
             &dependencies_dir(app_handle),
             &format!(".retired-{tag}"),
         )?;
     }
-    download::ensure_extract(&tracker, name, buffer, dest.clone())
+    download::ensure_extract(&tracker, name, buffer, dest.to_path_buf())
         .await
-        .map_err(|e| format!("CORE_EXTRACT_FAILED: {e}"))?;
+        .map_err(|error| format!("CORE_EXTRACT_FAILED: {error}"))?;
     tracker.end_phase();
     log::info!("Downloaded dsh core {tag} to {}", dest.display());
-
-    Ok(row_for_tag(app_handle, tag, &dest))
+    Ok(())
 }
 
 /// 卸载已下载的历史版本（激活中的版本不可卸载）。
@@ -1144,6 +1247,34 @@ mod tests {
             .find(|row| row.active)
             .expect("directory core must stay active");
         assert!(!active_row.orphaned && active_row.present);
+    }
+
+    #[test]
+    fn format_switch_keeps_the_active_build_tag() {
+        let scratch = tempfile::tempdir().unwrap();
+        let active = scratch.path().join("dsh");
+        write_core_archive(&active);
+        let pinned = "dsh-0.2.2-rc.1-43048423223";
+        assert_eq!(format_switch_tag(&active, Some(pinned)).unwrap(), pinned);
+        assert!(format_switch_tag(&active, None).is_err());
+        assert!(format_switch_tag(&active, Some("dsh-0.2.2-rc.2-43074821738")).is_err());
+    }
+
+    #[test]
+    fn format_switch_rejects_a_staged_payload_of_the_wrong_format() {
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path().join("core");
+        write_directory_core(&dir);
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override = Some(
+            tauri::utils::config::AppDirectoriesOverride::Root(scratch.path().join("app-data")),
+        );
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let pinned = "dsh-0.2.2-rc.1-43048423223";
+        assert!(validate_format_switch(&dir, app.handle(), pinned, false).is_ok());
+        let error = validate_format_switch(&dir, app.handle(), pinned, true).unwrap_err();
+        assert!(error.starts_with("CORE_ASAR_SWITCH_FAILED:"), "{error}");
+        assert!(is_directory_core(&dir));
     }
 
     #[test]

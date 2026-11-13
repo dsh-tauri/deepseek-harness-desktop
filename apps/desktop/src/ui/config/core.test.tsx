@@ -365,6 +365,13 @@ describe('核心格式（ASAR）开关', () => {
     expect((toggle as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('本地核心生效时禁用 ASAR 开关', async () => {
+    cores = [{ ...localFixture, active: true }, { ...managedFixture, active: false }]
+    renderCore()
+    fireEvent.click(await screen.findByRole('switch', { name: 'Advanced options' }))
+    expect((await screen.findByRole('switch', { name: 'ASAR' }) as HTMLInputElement).disabled).toBe(true)
+  })
+
   it('切换失败时提示失败并保留原格式', async () => {
     coreAsarError = 'CORE_ASAR_SWITCH_FAILED: download unavailable'
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -372,7 +379,7 @@ describe('核心格式（ASAR）开关', () => {
     fireEvent.click(toggle)
     fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirm' }))
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to switch the core format', {}))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to switch the core format', { variant: 'danger', description: coreAsarError }))
     expect(errorLog).toHaveBeenCalledWith('[ConfigCore] switch core format failed:', coreAsarError)
     expect(mocks.restart).not.toHaveBeenCalled()
     expect((toggle as HTMLInputElement).checked).toBe(true)
