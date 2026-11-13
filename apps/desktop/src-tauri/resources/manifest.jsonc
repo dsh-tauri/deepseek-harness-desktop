@@ -69,7 +69,8 @@
       "dsh-tauri-mobile-ui",
       "dsh-tauri-scheduler",
       "dsh-tauri-pet",
-      "dsh-tauri-worktree"
+      "dsh-tauri-worktree",
+      "dsh-tauri-rightclick"
     ],
     "built-in": [
       {
@@ -101,12 +102,6 @@
         "spec": "dsh-tauri-archive",
         "name": "DSH Tauri Archive",
         "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri-archive"
-      },
-      {
-        "id": "dsh-tauri-rightclick",
-        "spec": "dsh-tauri-rightclick",
-        "name": "DSH Tauri Rightclick Menu",
-        "repo": "https://github.com/dsh-tauri/dsh-tauri-plugins/tree/main/packages/dsh-tauri-rightclick"
       },
       {
         "id": "dsh-tauri-model",

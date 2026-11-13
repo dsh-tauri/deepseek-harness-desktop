@@ -64,7 +64,6 @@
 - [DSH Tauri Extension](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-extension) — 官方插件管理、插件市场、Skills 与 MCP
 - [DSH Tauri Archive](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-archive) — 聊天归档与恢复
 - [DSH Pet Lite](https://github.com/hairyf/dsh-pet-lite) — 轻量桌宠预设插件，需在插件页自行安装
-- [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-rightclick) — 会话、工作区与正文右键菜单
 - [DSH Tauri Model](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-model) — 模型选择与参数、自动配置模型
 - [DSH Tauri Remote](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-remote) — SSH 远端 Harness 连接与同步，并把本机 Harness 分享到局域网或公网隧道
 - [DSH Tauri Notification](https://dshtauri.mintlify.site/zh-CN/built-in-plugins/dsh-tauri-notification) — 原生级会话通知与交互操作

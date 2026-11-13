@@ -7,7 +7,7 @@ import { ESLint } from 'eslint'
 
 const root = '../../'
 const eslint = new ESLint({ cwd: fileURLToPath(new URL(root, import.meta.url)), fix: true })
-const plugins = ['extension', 'rightclick', 'archive', 'model', 'ui', 'notification', 'remote']
+const plugins = ['extension', 'archive', 'model', 'ui', 'notification', 'remote']
 
 export default defineConfig({
   preset: pipeline((options) => {
@@ -26,7 +26,7 @@ export default defineConfig({
     await ofetch.ts.dest(config)
   }),
   meta: { import: { http: 'dsh-tauri/client' } },
-  transform: { operation: name => name.replace(/ApiTauri(?:Extension|Rightclick|Archive|Model|Ui|Notification|Worktree|Bridge|Remote)/, '') },
+  transform: { operation: name => name.replace(/ApiTauri(?:Extension|Archive|Model|Ui|Notification|Worktree|Bridge|Remote)/, '') },
   patch: { operations: { post: 'postWorktree', delete: 'deleteWorktree' } },
   servers: [...plugins.map(plugin => ({
     input: `${root}packages/builtin-plugin-${plugin}/src/host/server/index.ts`,

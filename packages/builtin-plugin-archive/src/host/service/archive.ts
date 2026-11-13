@@ -2,12 +2,11 @@ import type { SessionHost } from '../types'
 import type { ArchivedListPayload } from './ledger.types'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
+import { PLUGIN_ID } from '../../shared/constants'
 import { archiveHooks } from '../events'
 import { server } from '../server'
 import { ledger } from './ledger'
 import { session } from './session'
-
-const LOG_PREFIX = 'dsh-tauri-archive'
 
 export const archive = defineService({
   async archive(sessionId: string): Promise<ArchivedListPayload> {
@@ -25,7 +24,7 @@ export const archive = defineService({
   },
 
   async unarchive(sessionId: string): Promise<{ ok: true }> {
-    await ledger.remove([sessionId], 'attach')
+    await ledger.remove([sessionId])
     void archiveHooks.callHook('archive:restored', sessionId)
     return { ok: true as const }
   },
@@ -55,8 +54,10 @@ async function permanentlyDelete(rawIds: readonly string[]): Promise<{ ok: true 
     throw new Error(`会话 '${missing[0]}' 不在归档集合中，拒绝删除`)
 
   const stillLive = await session.dispose(ids)
-  for (const sessionId of stillLive)
-    host.logger?.warn?.(`[${LOG_PREFIX}] 会话 '${sessionId}' 仍在运行，无法停止其活动`)
+  if (stillLive.length > 0) {
+    host.logger?.warn?.(`[${PLUGIN_ID}] ${stillLive.length} 个会话未能从宿主内存摘除，已中止本次删除`)
+    throw new Error(`会话 '${stillLive[0]}' 仍在运行或无法从宿主内存摘除，已中止删除`)
+  }
 
   let removed = 0
   for (const sessionId of ids) {
@@ -69,8 +70,18 @@ async function permanentlyDelete(rawIds: readonly string[]): Promise<{ ok: true 
     }
   }
 
-  await ledger.remove(ids)
+  await ledger.forget(ids)
+  notifyRemoved(host, ids)
   void archiveHooks.callHook('archive:deleted', ids)
-  host.logger?.info?.(`[${LOG_PREFIX}] permanently deleted ${ids.length} archived session(s) (data removed: ${removed})`)
+  host.logger?.info?.(`[${PLUGIN_ID}] permanently deleted ${ids.length} archived session(s) (data removed: ${removed})`)
   return { ok: true as const }
+}
+
+function notifyRemoved(host: SessionHost, ids: readonly string[]): void {
+  if (typeof host.emit !== 'function') {
+    host.logger?.warn?.(`[${PLUGIN_ID}] 宿主未暴露事件总线，客户端不会同步移除已删除会话`)
+    return
+  }
+  for (const sessionId of ids)
+    host.emit('api-session/removed', sessionId)
 }

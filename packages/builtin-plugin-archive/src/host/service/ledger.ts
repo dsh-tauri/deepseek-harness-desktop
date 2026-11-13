@@ -1,9 +1,12 @@
 import type { ArchiveRegistrySurface, ArchiveTableSurface, SessionHost, SessionLike } from '../types'
-import type { ArchiveAccounting, ArchivedListPayload } from './ledger.types'
+import type { ArchivedListPayload } from './ledger.types'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
+import { PLUGIN_ID } from '../../shared/constants'
 import { server } from '../server'
 import { session } from './session'
+
+const REGISTRY_INDEX_KEYS = ['headers', 'sessionPaths', 'invalidSessionPaths'] as const
 
 export const ledger = defineService({
   list(): string[] {
@@ -39,14 +42,11 @@ export const ledger = defineService({
     await archiveSession.call(registry, sessionId)
   },
 
-  async remove(sessionIds: readonly string[], accounting: ArchiveAccounting = 'detach'): Promise<void> {
+  async remove(sessionIds: readonly string[]): Promise<void> {
     const registry = requireWritableRegistry(getServerContext<SessionHost>(server).workspaceRegistry)
     const ids = [...new Set(sessionIds)]
     await registry.enqueueOperation(async () => {
-      if (accounting === 'attach')
-        await restoreWorkspaceAccounting(registry, ids)
-      else
-        await detachWorkspaceAccounting(registry, ids)
+      await restoreWorkspaceAccounting(registry, ids)
       const state = registry.requireState()
       const archived = state.archivedSessionIds ?? []
       const next = archived.filter(id => !ids.includes(id))
@@ -54,7 +54,37 @@ export const ledger = defineService({
         await registry.setState({ ...state, archivedSessionIds: next })
     })
   },
+
+  async forget(sessionIds: readonly string[]): Promise<void> {
+    const host = getServerContext<SessionHost>(server)
+    const registry = host.workspaceRegistry
+    const ids = [...new Set(sessionIds)]
+    if (ids.length === 0)
+      return
+    try {
+      await forgetRegistryState(registry, ids, host)
+    }
+    catch (error) {
+      warn(host, `宿主记账清理失败（${describeError(error)}），已删除的会话可能仍占用归档集合`)
+    }
+    purgeRegistryIndex(registry, ids, host)
+  },
 })
+
+async function forgetRegistryState(registry: ArchiveRegistrySurface, ids: readonly string[], host: SessionHost): Promise<void> {
+  const writable = requireWritableRegistry(registry)
+  await writable.enqueueOperation(async () => {
+    await detachWorkspaceAccounting(registry, ids, host)
+    const state = writable.requireState()
+    const archived = state.archivedSessionIds ?? []
+    const pinned = state.pinnedSessionIds ?? []
+    const nextArchived = archived.filter(id => !ids.includes(id))
+    const nextPinned = pinned.filter(id => !ids.includes(id))
+    if (nextArchived.length === archived.length && nextPinned.length === pinned.length)
+      return
+    await writable.setState({ ...state, archivedSessionIds: nextArchived, pinnedSessionIds: nextPinned })
+  })
+}
 
 function cwdOf(session: SessionLike | null): string | undefined {
   const cwd = session?.header?.cwd
@@ -74,8 +104,12 @@ function requireTable(registry: ArchiveRegistrySurface): ArchiveTableSurface {
   return table
 }
 
-async function detachWorkspaceAccounting(registry: ArchiveRegistrySurface, sessionIds: readonly string[]): Promise<void> {
-  const table = requireTable(registry)
+async function detachWorkspaceAccounting(registry: ArchiveRegistrySurface, sessionIds: readonly string[], host: SessionHost): Promise<void> {
+  const table = registry.requireTable?.()
+  if (!table) {
+    warn(host, '宿主 workspaceRegistry 未暴露工作区会话记账接口，跳过工作区记账清理')
+    return
+  }
   for (const [workspaceId, record] of table.entries()) {
     const current = record.sessionIds ?? []
     const next = current.filter(id => !sessionIds.includes(id))
@@ -97,4 +131,32 @@ async function restoreWorkspaceAccounting(registry: ArchiveRegistrySurface, sess
       continue
     await table.update(workspace.id, current => ({ ...current, sessionIds: [...(current.sessionIds ?? []), sessionId] }))
   }
+}
+
+function purgeRegistryIndex(registry: ArchiveRegistrySurface, ids: readonly string[], host: SessionHost): void {
+  let purged = false
+  for (const key of REGISTRY_INDEX_KEYS) {
+    const index = registry[key]
+    if (!(index instanceof Map))
+      continue
+    purged = true
+    for (const id of ids)
+      index.delete(id)
+  }
+  const missing = registry.missingSessionPaths
+  if (missing instanceof Set) {
+    purged = true
+    for (const id of ids)
+      missing.delete(id)
+  }
+  if (!purged)
+    warn(host, '宿主 workspaceRegistry 未暴露内存会话索引，跳过索引清理')
+}
+
+function warn(host: SessionHost, message: string): void {
+  host.logger?.warn?.(`[${PLUGIN_ID}] ${message}`)
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

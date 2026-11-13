@@ -65,7 +65,6 @@
 - [DSH Tauri Extension](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-extension) — 공식 플러그인 관리자, 플러그인 마켓, Skills, MCP
 - [DSH Tauri Archive](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-archive) — 대화 보관과 복원
 - [DSH Pet Lite](https://github.com/hairyf/dsh-pet-lite) — 가벼운 데스크톱 펫 프리셋 플러그인, 플러그인 페이지에서 설치
-- [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-rightclick) — 세션, 작업 공간, 텍스트의 컨텍스트 메뉴
 - [DSH Tauri Model](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-model) — 모델 선택, 매개변수, 자동 구성
 - [DSH Tauri Remote](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-remote) — SSH를 통한 원격 Harness 연결 및 동기화, LAN 또는 공개 터널을 통한 로컬 Harness 공유
 - [DSH Tauri Notification](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-notification) — 대화 알림과 관련 동작

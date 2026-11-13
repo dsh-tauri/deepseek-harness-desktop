@@ -43,6 +43,7 @@
     "taiwind": "src/main.css",
     "client": {
       "inject": [
+        "@deepseek-ai/dsh-client-ui-context-menu",
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-renderer",

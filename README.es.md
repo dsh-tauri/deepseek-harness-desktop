@@ -65,7 +65,6 @@ Plugins propios distribuidos con los recursos del escritorio:
 - [DSH Tauri Extension](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-extension) — Gestor oficial de plugins, mercado de plugins, Skills y MCP
 - [DSH Tauri Archive](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-archive) — Archivo y restauración de chats
 - [DSH Pet Lite](https://github.com/hairyf/dsh-pet-lite) — Plugin de mascota de escritorio ligero; instálalo desde la página de plugins
-- [DSH Tauri Rightclick Menu](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-rightclick) — Menús contextuales de sesiones, workspaces y texto
 - [DSH Tauri Model](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-model) — Selección de modelos, parámetros y configuración automática
 - [DSH Tauri Remote](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-remote) — Conexiones Harness remotas y sincronización por SSH, además de compartir el Harness local por LAN o túnel público
 - [DSH Tauri Notification](https://github.com/dsh-tauri/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notification) — Notificaciones de conversaciones y acciones

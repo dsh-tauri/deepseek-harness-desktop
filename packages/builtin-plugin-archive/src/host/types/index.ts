@@ -10,9 +10,15 @@ export interface SessionLike {
   displayTitle?: string
 }
 
+export interface SessionStoreEntryLike {
+  detach?: () => void
+}
+
 export interface SessionStoreSurface {
   get?: (sessionId: string) => SessionLike | undefined
   list?: () => SessionLike[]
+  flush?: (session: SessionLike) => Promise<boolean>
+  store?: ReadonlyMap<string, SessionStoreEntryLike>
 }
 
 export interface AgentLike {
@@ -35,20 +41,31 @@ export interface WorkspaceEntryLike {
   sessionIds?: readonly string[]
 }
 
+export interface RegistryStateLike {
+  archivedSessionIds?: readonly string[]
+  pinnedSessionIds?: readonly string[]
+}
+
 export interface ArchiveRegistrySurface {
   archivedSessionIds?: readonly string[]
+  pinnedSessionIds?: readonly string[]
   archiveSession?: (sessionId: string) => Promise<void>
   list?: () => WorkspaceEntryLike[]
   enqueueOperation?: (fn: () => Promise<void>) => Promise<void>
-  requireState?: () => { archivedSessionIds?: readonly string[] }
+  requireState?: () => RegistryStateLike
   requireTable?: () => ArchiveTableSurface
   setState?: (state: unknown) => Promise<void>
+  headers?: ReadonlyMap<string, unknown>
+  sessionPaths?: ReadonlyMap<string, unknown>
+  invalidSessionPaths?: ReadonlyMap<string, unknown>
+  missingSessionPaths?: ReadonlySet<string>
 }
 
 export interface SessionHost {
   sessions: SessionStoreSurface
   agents?: AgentRegistrySurface
   workspaceRegistry: ArchiveRegistrySurface
+  emit?: (event: string, ...args: unknown[]) => void
   logger?: {
     info?: (message: string) => void
     warn?: (message: string) => void

@@ -6,10 +6,10 @@
 
 ## 当前状态
 
-- 当前兼容与推荐基线：`dsh-v0.2.2-rc.1`（`66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`）。
+- 当前兼容与推荐基线：`dsh-v0.2.2-rc.2`（`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`）。
 - 最低支持内核：`dsh-v0.2.1-rc.1`（`1600d8a1e140dcde43a1a0941940a0480712c011`）；更早内核不再支持。
-- 已核实的推荐打包产物：`dsh-0.2.2-rc.1-41838008646`，build ID `41838008646`；上游源码 tag 与打包 tag 分开登记，不由版本号推算 build ID。
-- 当前核对范围与验证边界：[0.2.2-rc.1 兼容记录](<./compatibility-0.2.2-rc.1.md>)。开发依赖与配套 peers 以 [workspace 配置](<../../../pnpm-workspace.yaml>)、[lockfile](<../../../pnpm-lock.yaml>) 为准。
+- 打包发行现状：rc.2 尚无正式 asar 打包发行，目前只有源码 prerelease `dsh-src-0.2.2-rc.2-43074821738`；推荐版本解析不到时回退 tag 仍指向最新的 rc.1 正式打包发行 `dsh-0.2.2-rc.1-41838008646`（build ID `41838008646`）。上游源码 tag 与打包 tag 分开登记，不由版本号推算 build ID。
+- 当前核对范围与验证边界：[0.2.2-rc.2 兼容记录](<./compatibility-0.2.2-rc.2.md>)。开发依赖与配套 peers 以 [workspace 配置](<../../../pnpm-workspace.yaml>)、[lockfile](<../../../pnpm-lock.yaml>) 为准。
 - 下列内容及其他旧兼容日志不扩展当前支持范围；历史「逐字节相同」与通过数量只对各自已记录区间成立。
 
 ## 0.2.1-alpha.1 历史记录

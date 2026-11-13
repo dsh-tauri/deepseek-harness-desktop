@@ -65,7 +65,6 @@
 - [DSH Tauri Extension](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-extension) — официальный менеджер плагинов, магазин плагинов, Skills и MCP
 - [DSH Tauri Archive](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-archive) — архивирование и восстановление чата
 - [DSH Pet Lite](https://github.com/hairyf/dsh-pet-lite) — лёгкий пресет-плагин питомца, устанавливается со страницы плагинов
-- [DSH Tauri Rightclick Menu](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-rightclick) — контекстные меню сессии, рабочей области и текста
 - [DSH Tauri Model](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-model) — выбор модели, параметры и автоматическая конфигурация
 - [DSH Tauri Remote](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-remote) — дистанционные подключения к Harness и синхронизация по SSH, а также шаринг локального Harness по LAN или публичному туннелю
 - [DSH Tauri Notification](https://dshtauri.mintlify.site/en/built-in-plugins/dsh-tauri-notification) — уведомления и действия диалога

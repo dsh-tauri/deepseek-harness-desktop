@@ -17,6 +17,62 @@ const { transform } = buildRequire('lightningcss') as {
 
 let html: Promise<string> | undefined
 
+const THEME_DECLARATION_SUFFIX = '_css_default'
+const QUOTE_CHARS = new Set(['"', String.fromCharCode(96)])
+const JAVASCRIPT_ESCAPE_PATTERN = /\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|(\r\n|[\s\S]))/g
+const SIMPLE_ESCAPES: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', 0: '\0' }
+
+function readCSSLiteral(source: string, name: string): string | undefined {
+  const marker = `var ${name}${THEME_DECLARATION_SUFFIX}`
+  let from = 0
+  for (;;) {
+    const declaration = source.indexOf(marker, from)
+    if (declaration === -1)
+      return undefined
+    from = declaration + marker.length
+    let cursor = from
+    while (cursor < source.length && /\s/.test(source[cursor]!))
+      cursor += 1
+    if (source[cursor] !== '=')
+      continue
+    cursor += 1
+    while (cursor < source.length && /\s/.test(source[cursor]!))
+      cursor += 1
+    const quote = source[cursor]
+    if (quote === undefined || !QUOTE_CHARS.has(quote))
+      continue
+    cursor += 1
+    let raw = ''
+    while (cursor < source.length) {
+      const char = source[cursor]!
+      if (char === '\\') {
+        raw += char + (source[cursor + 1] ?? '')
+        cursor += 2
+        continue
+      }
+      if (char === quote)
+        return unescapeJavaScriptLiteral(raw)
+      raw += char
+      cursor += 1
+    }
+    return undefined
+  }
+}
+
+function unescapeJavaScriptLiteral(raw: string): string {
+  return raw.replace(JAVASCRIPT_ESCAPE_PATTERN, (match, codePoint: string | undefined, unit: string | undefined, hex: string | undefined, simple: string | undefined) => {
+    if (codePoint !== undefined)
+      return String.fromCodePoint(Number.parseInt(codePoint, 16))
+    if (unit !== undefined)
+      return String.fromCharCode(Number.parseInt(unit, 16))
+    if (hex !== undefined)
+      return String.fromCharCode(Number.parseInt(hex, 16))
+    if (simple === undefined || simple === '\n')
+      return match
+    return SIMPLE_ESCAPES[simple] ?? simple
+  })
+}
+
 export function gatewayAuthHtml(): Promise<string> {
   return html ??= renderGatewayAuthHtml()
 }
@@ -77,10 +133,10 @@ async function renderGatewayAuthHtml(): Promise<string> {
   const { FishLogo, Input, Button } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`) as Record<'FishLogo' | 'Input' | 'Button', ComponentType<Record<string, unknown>>>
   const themeSource = readFileSync(join(dirname(require.resolve('@deepseek-ai/dsh-client-ui-theme')), 'client.js'), 'utf8')
   const theme = ['base', 'design_platform', 'focus'].map((name) => {
-    const literal = themeSource.match(new RegExp(`var ${name}_css_default = ("(?:[^"\\\\]|\\\\.)*");`))?.[1]
+    const literal = readCSSLiteral(themeSource, name)
     if (literal === undefined)
       throw new Error(`Gateway auth theme is missing ${name} CSS`)
-    return JSON.parse(literal) as string
+    return literal
   }).join('')
   const dark = [...theme.matchAll(/body\[data-ds-dark-theme\]\{[^}]+\}/g)].map(match => match[0].replace('body[data-ds-dark-theme]', 'body')).join('')
   if (dark === '')
