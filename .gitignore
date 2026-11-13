@@ -28,3 +28,5 @@ expo-env.d.ts
 *.aab
 *.jks
 *.keystore
+
+.workbuddy/

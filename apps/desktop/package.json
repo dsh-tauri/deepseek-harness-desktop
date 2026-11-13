@@ -11,8 +11,8 @@
     "icons": "tauri icon public/deepseek-harness-desktop-tauri.svg --output src-tauri/icons && tauri icon public/deepseek-harness-desktop-tauri-nightly.svg --output src-tauri/icons/nightly --ios-color \"#000000\" && tsx scripts/rebuild-macos-icon.ts",
     "build:shell": "vite build --config vite.shell.config.ts",
     "watch:shell": "vite build --watch --config vite.shell.config.ts",
-    "dev:desktop": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "dev:shell:desktop": "tauri dev --config src-tauri/tauri.shell.conf.json --features dsh-shell-dev",
+    "dev:desktop": "tauri dev --config src-tauri/tauri.shell.conf.json",
+    "dev:shell:desktop": "tauri dev --config src-tauri/tauri.shell.conf.json",
     "build:desktop": "tauri build"
   },
   "dependencies": {
