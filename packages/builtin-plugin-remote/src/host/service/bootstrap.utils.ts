@@ -154,7 +154,13 @@ export async function planRemoteInstall(
     // 候选 tag 逐个验证：上游删掉 release 后 git tag 还在，发行包已 404。
     const candidates = resolved.candidates.length > 0 ? resolved.candidates : [resolved.tag]
     const availability = new Map<string, ReleaseAvailability>()
+    // 元数据不可达说明网络整体不通，继续逐个查询只会把失败路径拖长。
+    let metadataUnreachable = false
     for (const candidate of candidates) {
+      if (metadataUnreachable) {
+        availability.set(candidate, 'unknown')
+        continue
+      }
       try {
         const assets = await listAssets(repo, candidate)
         const asset = assets.find(item => item.name === zipName)
@@ -172,13 +178,22 @@ export async function planRemoteInstall(
         const state = isNotFoundError(error) ? 'missing' : 'unknown'
         availability.set(candidate, state)
         notes.push(`release 资产元数据获取失败（${candidate}: ${messageOf(error)}）`)
+        if (state === 'unknown') {
+          metadataUnreachable = true
+          notes.push('release 元数据不可达，剩余候选不再逐个查询')
+        }
       }
     }
     if (urls === undefined) {
       // 元数据不可用时按候选顺序探测，确认可下载才写进脚本。
+      let probeUnreachable = false
       for (const candidate of candidates) {
         if (availability.get(candidate) === 'missing')
           continue
+        if (probeUnreachable) {
+          availability.set(candidate, 'unknown')
+          continue
+        }
         const candidateUrls = dshZipDownloadUrls(repo, candidate, zipName)
         const state = await probe(candidateUrls[0] ?? '')
         availability.set(candidate, state)
@@ -187,6 +202,8 @@ export async function planRemoteInstall(
           urls = candidateUrls
           break
         }
+        if (state === 'unknown')
+          probeUnreachable = true
         notes.push(`候选 release ${candidate} ${state === 'missing' ? '已确认不存在' : '可用性未知（网络不可达）'}`)
       }
       if (urls === undefined) {
@@ -201,13 +218,16 @@ export async function planRemoteInstall(
     if (digest === undefined)
       notes.push(`未取得 ${zipName} 的可信摘要，将跳过 SHA-256 校验；校验不了就不启用镜像`)
     const dshUrls = urls
+    // 版本以实际选中的 tag 为准，避免候选跨版本时上报的版本与安装物不符。
+    const dshVersion = parseVersionFromTag(tag) ?? resolved.version
+    assertSupportedDshVersion(dshVersion)
     return {
       os,
       arch,
       matrix,
       repo,
       dshEntry: DSH_ZIP_ENTRY,
-      dshVersion: resolved.version,
+      dshVersion,
       node,
       // 摘要缺失时脚本会跳过 SHA-256 校验：此时只留官方源，绝不额外放大可写入口。
       dsh: { kind: 'pkg-zip', urls: digest === undefined ? dshUrls.slice(0, 1) : dshUrls, ...digest === undefined ? {} : { digest }, zipName, tag },

@@ -27,6 +27,31 @@ describe('planRemoteInstall 的 release 候选选择', () => {
     expect(plan.dsh.urls).toContain('https://example.invalid/linux.zip')
   })
 
+  it('首个候选 404 时改用第二个候选的资产', async () => {
+    const plan = await planRemoteInstall('Linux x86_64', {}, {
+      listReleases: failing,
+      listAssets: async (_repo, tag) => {
+        if (tag === 'dsh-0.2.2-rc.1-43078653398')
+          throw new GithubHttpError('https://api.github.com/repos/x/y/releases/tags/t', 404)
+        return [{ name: 'deepseek-harness-pkg-linux.zip', url: 'https://example.invalid/linux.zip', digest: 'sha256:aa' }]
+      },
+    })
+    expect(zipPlanOf(plan).tag).toBe('dsh-0.2.2-rc.1-43048423223')
+  })
+
+  it('元数据不可达时不再逐个查询其余候选', async () => {
+    const queried: string[] = []
+    await planRemoteInstall('Linux x86_64', {}, {
+      listReleases: failing,
+      listAssets: async (_repo, tag) => {
+        queried.push(tag)
+        throw new Error('network unreachable')
+      },
+      probe: async () => 'unknown',
+    })
+    expect(queried).toEqual(['dsh-0.2.2-rc.1-43078653398'])
+  })
+
   it('全部候选确认不存在时终止规划并报告版本不可用', async () => {
     await expect(planRemoteInstall('Linux x86_64', {}, {
       listReleases: failing,
