@@ -9,6 +9,7 @@ const { fileURLToPath, pathToFileURL } = require('node:url')
 const { promisify } = require('node:util')
 const workerThreads = require('node:worker_threads')
 
+const CACHE_VERSION = '2'
 const registrations = new Map()
 
 module.exports = function registerNativePackages(archive, cache) {
@@ -88,12 +89,13 @@ module.exports = function registerNativePackages(archive, cache) {
       return
     const base = path.basename(root)
     if (base === 'sharp') {
-      if (!fs.existsSync(path.join(archive, 'node_modules', '@img', 'sharp-wasm32')))
+      if (!fs.existsSync(path.join(archive, 'node_modules', '@img', 'sharp-wasm32'))) {
         refuse(
           'sharp',
           `sharp is disabled under Electron on Linux: its prebuilt native decoders conflict with Electron's bundled glibc and terminate the Harness process (issue #1504). Reinstalling or rebuilding sharp cannot fix this: image features are unavailable, and every other feature keeps working.`,
           `[asar-native] refusing sharp: the archive carries no @img/sharp-wasm32 fallback, so image decoding stays unavailable under Electron on Linux and reinstalling sharp cannot help (issue #1504)`,
         )
+      }
       return
     }
     if (path.basename(path.dirname(root)) !== '@img' || !/^sharp-(?:libvips-)?linux/.test(base))
@@ -106,11 +108,11 @@ module.exports = function registerNativePackages(archive, cache) {
     )
   }
 
-  function copy(source, destination) {
+  function copy(source, destination, excludeNodeModules = true) {
     const stat = fs.lstatSync(source)
     if (stat.isSymbolicLink()) {
       if (archived) {
-        copy(fs.realpathSync(source), destination)
+        copy(fs.realpathSync(source), destination, excludeNodeModules)
         return
       }
       let target = fs.readlinkSync(source)
@@ -123,8 +125,8 @@ module.exports = function registerNativePackages(archive, cache) {
     else if (stat.isDirectory()) {
       fs.mkdirSync(destination, { recursive: true })
       for (const entry of fs.readdirSync(source)) {
-        if (entry !== 'node_modules')
-          copy(path.join(source, entry), path.join(destination, entry))
+        if (entry !== 'node_modules' || !excludeNodeModules)
+          copy(path.join(source, entry), path.join(destination, entry), excludeNodeModules)
       }
       fs.chmodSync(destination, stat.mode)
     }
@@ -134,13 +136,110 @@ module.exports = function registerNativePackages(archive, cache) {
     }
   }
 
+  function declarations(root) {
+    const declared = new Map()
+    const filename = path.join(root, 'package.json')
+    if (fs.existsSync(filename)) {
+      try {
+        const manifest = JSON.parse(fs.readFileSync(filename, 'utf8'))
+        for (const field of [manifest.dependencies, manifest.optionalDependencies]) {
+          if (field && typeof field === 'object') {
+            for (const name of Object.keys(field)) declared.set(name, name.split('/'))
+          }
+        }
+      }
+      catch {}
+    }
+    const nested = path.join(root, 'node_modules')
+    if (fs.existsSync(nested)) {
+      for (const entry of fs.readdirSync(nested)) {
+        if (entry.startsWith('.'))
+          continue
+        if (!entry.startsWith('@')) {
+          if (!declared.has(entry))
+            declared.set(entry, [entry])
+          continue
+        }
+        const scope = path.join(nested, entry)
+        for (const name of fs.readdirSync(scope)) {
+          if (!name.startsWith('.'))
+            declared.set(`${entry}/${name}`, [entry, name])
+        }
+      }
+    }
+    return declared
+  }
+
+  function locate(root, segments) {
+    const inside = path.join(root, 'node_modules', ...segments)
+    if (fs.existsSync(inside))
+      return inside
+    const entry = relative(archive, root)
+    if (entry === null)
+      return null
+    const parts = entry === '' ? [] : entry.split(path.sep)
+    for (let index = parts.length - 1; index >= 0; index--) {
+      const candidate = path.join(archive, ...parts.slice(0, index), 'node_modules', ...segments)
+      if (fs.existsSync(candidate))
+        return candidate
+    }
+    return null
+  }
+
+  function hoist(root, staging) {
+    const pending = [root]
+    const handled = new Set()
+    const placed = [root]
+    while (pending.length > 0) {
+      const owner = pending.shift()
+      for (const [name, segments] of declarations(owner)) {
+        if (handled.has(name))
+          continue
+        const source = locate(owner, segments)
+        if (!source)
+          continue
+        handled.add(name)
+        pending.push(source)
+        if (placed.some(directory => relative(directory, source) !== null))
+          continue
+        placed.push(source)
+        const destination = path.join(staging, 'node_modules', ...segments)
+        fs.mkdirSync(path.dirname(destination), { recursive: true })
+        copy(source, destination, false)
+      }
+    }
+  }
+
+  function complete(destination) {
+    const marker = path.join(destination, '.dsh-native-complete')
+    if (!fs.existsSync(marker))
+      return false
+    try {
+      return fs.readFileSync(marker, 'utf8') === CACHE_VERSION
+    }
+    catch {
+      return false
+    }
+  }
+
+  function publish(staging, destination) {
+    if (fs.existsSync(destination) && !complete(destination))
+      fs.rmSync(destination, { recursive: true, force: true })
+    try {
+      fs.renameSync(staging, destination)
+    }
+    catch (error) {
+      if (!complete(destination))
+        throw error
+    }
+  }
+
   function materialize(root) {
     const entry = path.relative(archive, root)
     const destination = path.join(cache, entry)
     if (completed.has(root))
       return destination
-    const marker = path.join(destination, '.dsh-native-complete')
-    if (!fs.existsSync(marker)) {
+    if (!complete(destination)) {
       const parts = entry.split(path.sep)
       for (let index = 0; index < parts.length; index++) {
         if (parts[index] !== 'node_modules')
@@ -152,15 +251,10 @@ module.exports = function registerNativePackages(archive, cache) {
       fs.mkdirSync(path.dirname(destination), { recursive: true })
       const staging = fs.mkdtempSync(`${destination}.stage-`)
       try {
-        copy(root, staging)
-        fs.writeFileSync(path.join(staging, '.dsh-native-complete'), '1')
-        try {
-          fs.renameSync(staging, destination)
-        }
-        catch (error) {
-          if (!fs.existsSync(marker))
-            throw error
-        }
+        copy(root, staging, false)
+        hoist(root, staging)
+        fs.writeFileSync(path.join(staging, '.dsh-native-complete'), CACHE_VERSION)
+        publish(staging, destination)
       }
       finally {
         fs.rmSync(staging, { recursive: true, force: true })
@@ -175,9 +269,8 @@ module.exports = function registerNativePackages(archive, cache) {
   function resolveFromArchive(request, parent, ...options) {
     if (parent?.filename) {
       const filename = original(parent.filename)
-      if (filename !== parent.filename) {
+      if (filename !== parent.filename)
         parent = Object.assign(Object.create(parent), { filename, paths: parent.paths?.map(original) })
-      }
     }
     return resolveFilename.call(this, request, parent, ...options)
   }
@@ -190,9 +283,8 @@ module.exports = function registerNativePackages(archive, cache) {
         const parent = fileURLToPath(parentURL)
         const sourceParent = original(parent)
         parentURL = pathToFileURL(sourceParent).href
-        if (parent !== sourceParent && context.conditions.includes('require')) {
+        if (parent !== sourceParent && context.conditions.includes('require'))
           specifier = createRequire(parentURL).resolve(specifier)
-        }
       }
       if (specifier.startsWith('file:'))
         specifier = pathToFileURL(original(fileURLToPath(specifier))).href
@@ -209,6 +301,23 @@ module.exports = function registerNativePackages(archive, cache) {
       return { ...result, url: pathToFileURL(path.join(materialize(root), path.relative(root, filename))).href }
     },
   })
+
+  function inside(filename) {
+    const resolved = path.resolve(filename)
+    return relative(archive, resolved) !== null || relative(cache, resolved) !== null
+  }
+
+  function entrypoint(filename, candidates) {
+    const source = filename instanceof URL ? (filename.protocol === 'file:' ? fileURLToPath(filename) : null) : filename
+    if (typeof source === 'string' && inside(source))
+      return true
+    return candidates.some(arg => typeof arg === 'string' && /\.[cm]?js$/.test(arg) && inside(arg))
+  }
+
+  function environment(options) {
+    return { ...options, env: { ...(options.env || process.env), DSH_CORE_ARCHIVE: archive, DSH_CORE_NATIVE_CACHE: cache } }
+  }
+
   function wrapChildProcess(name, method) {
     return function nativeChildProcess(filename, args, ...rest) {
       if (name === 'fork' && !Array.isArray(args)) {
@@ -216,22 +325,20 @@ module.exports = function registerNativePackages(archive, cache) {
         args = []
       }
       if (name === 'fork') {
-        const source = original(filename instanceof URL ? fileURLToPath(filename) : filename)
-        if (relative(archive, source) !== null && (!rest[0]?.execPath || path.resolve(rest[0].execPath) === process.execPath)) {
+        if (entrypoint(filename, []) && (!rest[0]?.execPath || path.resolve(rest[0].execPath) === process.execPath)) {
           const options = rest[0] || {}
-          rest[0] = { ...options, execArgv: [...(options.execArgv || process.execArgv)], env: { ...(options.env || process.env), DSH_CORE_ARCHIVE: archive, DSH_CORE_NATIVE_CACHE: cache } }
+          rest[0] = environment({ ...options, execArgv: [...(options.execArgv || process.execArgv)] })
           if (!rest[0].execArgv.includes(__filename))
             rest[0].execArgv.push('--require', __filename)
         }
       }
-      else if (path.resolve(filename) === process.execPath && Array.isArray(args) && args.some(arg => typeof arg === 'string' && /\.[cm]?js$/.test(arg) && relative(archive, path.resolve(arg)) !== null)) {
+      else if (path.resolve(filename) === process.execPath && Array.isArray(args) && entrypoint(null, args)) {
         args = [...args]
         if (!args.includes(__filename))
           args.unshift('--require', __filename)
         if (typeof rest[0] === 'function')
           rest.unshift({})
-        const options = rest[0] || {}
-        rest[0] = { ...options, env: { ...(options.env || process.env), DSH_CORE_ARCHIVE: archive, DSH_CORE_NATIVE_CACHE: cache } }
+        rest[0] = environment(rest[0] || {})
       }
       else {
         const root = packageRoot(filename)
@@ -255,8 +362,7 @@ module.exports = function registerNativePackages(archive, cache) {
   const Worker = workerThreads.Worker
   workerThreads.Worker = class extends Worker {
     constructor(filename, options = {}) {
-      const source = filename instanceof URL ? (filename.protocol === 'file:' ? fileURLToPath(filename) : null) : filename
-      if (!options.eval && typeof source === 'string' && relative(archive, original(path.resolve(source))) !== null) {
+      if (!options.eval && entrypoint(filename, [])) {
         const execArgv = [...(options.execArgv || [])]
         if (!execArgv.includes(__filename))
           execArgv.push('--require', __filename)
@@ -286,7 +392,7 @@ module.exports = function registerNativePackages(archive, cache) {
     const target = process.argv.slice(delimiter + 2)
     if (target.includes(__filename))
       return
-    if (!target.some(arg => /\.[cm]?js$/.test(arg) && relative(archive, path.resolve(arg)) !== null))
+    if (!entrypoint(null, target))
       return
     process.argv.splice(delimiter + 2, 0, '--require', __filename)
   }
