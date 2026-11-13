@@ -123,6 +123,10 @@ pub async fn test(proxy_url: &str, target: &str, timeout: Duration) -> ProxyTest
 /// 两侧信任不一致：走 TLS 中间人的企业代理时核心报 UNABLE_TO_VERIFY_LEAF_SIGNATURE，
 /// 桌面端却正常（issue #1530）。用 Node 自带的开关对齐，语义由 Node 维护，跨平台
 /// 不必自行解析 CA 文件。
+///
+/// 平台差异由 Node 自己吸收（Linux 走 OpenSSL 默认路径、Windows 走 schannel、
+/// macOS 走 Security 框架）；本仓库的实测环境是 Linux，Windows/macOS 未实测。
+/// 关注点是用户自己装的 CA（企业根证书、代理签发 CA）：它们进系统信任库即可。
 pub const NODE_SYSTEM_CA_FLAG: &str = "--use-system-ca";
 
 /// 该 Node 版本是否认识 [`NODE_SYSTEM_CA_FLAG`]。
