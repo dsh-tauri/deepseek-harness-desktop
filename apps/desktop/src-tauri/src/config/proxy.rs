@@ -415,6 +415,62 @@ mod tests {
             .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n"));
     }
 
+    /// 真实跑一次 node，确认开关拼写被运行时接受且真的生效：拼错会让 node 直接以
+    /// "bad option" 退出，而生效时默认信任库会并入系统 CA 列表（默认信任库由 Node
+    /// 内建 CA 列表与系统信任库合并而成）。
+    #[test]
+    fn the_system_ca_switch_is_accepted_and_widens_the_trust_store() {
+        fn node_on_path() -> Option<std::path::PathBuf> {
+            let name = if cfg!(windows) { "node.exe" } else { "node" };
+            std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|dir| dir.join(name))
+                    .find(|candidate| candidate.is_file())
+            })
+        }
+        fn count(node: &std::path::Path, expression: &str, node_options: Option<&str>) -> usize {
+            let mut command = std::process::Command::new(node);
+            command.arg("-p").arg(expression);
+            match node_options {
+                Some(value) => {
+                    command.env("NODE_OPTIONS", value);
+                }
+                None => {
+                    command.env_remove("NODE_OPTIONS");
+                }
+            }
+            let output = command.output().expect("run node");
+            assert!(
+                output.status.success(),
+                "node failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse()
+                .expect("node printed a count")
+        }
+        let Some(node) = node_on_path() else {
+            return;
+        };
+        // 运行时太旧不认这个开关时跳过：那种环境本来就用自带 CA 列表。
+        let Ok(options) = node_system_ca_options(&node, None) else {
+            return;
+        };
+        let default = "require('tls').getCACertificates('default').length";
+        let system = "require('tls').getCACertificates('system').length";
+        let without = count(&node, default, None);
+        let with = count(&node, default, Some(&options));
+        assert!(with >= without);
+        let system_count = count(&node, system, None);
+        if system_count > 0 {
+            assert!(
+                with > without,
+                "the system CA store must be merged: with={with} without={without} system={system_count}"
+            );
+        }
+    }
+
     #[test]
     fn node_system_ca_flag_is_only_offered_to_runtimes_that_know_it() {
         for (version, supported) in [
