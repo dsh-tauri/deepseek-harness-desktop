@@ -537,7 +537,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
     // 远端若经 TLS 中间人的代理出网（代理地址取远端自己的环境），证书校验会失败
     // （UNABLE_TO_VERIFY_LEAF_SIGNATURE）。先用远端自己的 node 试一次开关：不认就
     // 跳过，不能让一个不认的 flag 把远端核心带崩。
-    `if "$NODE" --use-system-ca -e '' 2>/dev/null; then export NODE_OPTIONS="\${NODE_OPTIONS:-} --use-system-ca"; fi`,
+    `if "$NODE" --use-system-ca -e 0 2>/dev/null; then export NODE_OPTIONS="\${NODE_OPTIONS:-} --use-system-ca"; fi`,
     `export DSH_TELEMETRY_DISABLED=1 NO_COLOR=1 DSH_WEB_PORT=${profile.remotePort}`,
     `export DSH_REMOTE_SESSION_ORIGIN=${shQuote(profile.name)}`,
     `( sh -c 'echo $$ > "$1"; exec "$2" "$3" --profile "$5" --host 127.0.0.1 --port "$4" --no-open' dsh-remote "$HOME/${remotePidfile(profileName, profile.remotePort)}" "$NODE" "$DSH_BIN" ${profile.remotePort} ${profileName} </dev/null >>"$LOG" 2>&1 & )`,

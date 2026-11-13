@@ -22,6 +22,12 @@ const PKILL_AVAILABLE = spawnSync('pkill', ['-f', 'dsh-plugins-sync-probe-absent
 const PS_ARGS_AVAILABLE = spawnSync('sh', ['-c', 'ps -p $$ -o args= >/dev/null 2>&1']).status === 0
 
 const NODE_STUB = `#!/bin/sh
+# An inline script (-e) runs and exits right away, like the real runtime does.
+# It is not the instance, so it does not belong in the argv log the pkill
+# fallback matches against.
+for _arg in "$@"; do
+  if [ "$_arg" = "-e" ]; then exit 0; fi
+done
 if [ -n "$STUB_ARGV_LOG" ]; then printf '%s\\n' "$0 $*" >> "$STUB_ARGV_LOG"; fi
 case "$*" in
   *_wire.js*) printf 'wired %s\\n' "$*"; exit "\${STUB_WIRE_STATUS:-0}" ;;
