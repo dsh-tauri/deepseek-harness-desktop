@@ -95,15 +95,18 @@ impl ProcessJob {
 /// 以隐藏控制台方式启动 `program`，返回其 stdout / stderr 管道读取端。
 ///
 /// `envs` 中的键值会覆盖当前进程环境变量后传给子进程。
+/// `remove_env` 列出的环境变量从继承来的环境块里剔除（大小写不敏感），
+/// 覆盖式 `envs` 表达不了「移除」。
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn spawn_with_hidden_console(
     program: &Path,
     args: &[OsString],
     current_dir: Option<&Path>,
     envs: &HashMap<String, String>,
+    remove_env: &[&str],
 ) -> io::Result<(File, File)> {
     let (stdout, stderr, handle) =
-        spawn_with_hidden_console_tracked(program, args, current_dir, envs)?;
+        spawn_with_hidden_console_tracked(program, args, current_dir, envs, remove_env)?;
     unsafe {
         CloseHandle(handle);
     }
@@ -119,13 +122,22 @@ pub fn spawn_with_hidden_console_owned(
     args: &[OsString],
     current_dir: Option<&Path>,
     envs: &HashMap<String, String>,
+    remove_env: &[&str],
 ) -> io::Result<(File, File, u32, HANDLE)> {
     static LIFETIME_JOB: OnceLock<io::Result<ProcessJob>> = OnceLock::new();
     let job = LIFETIME_JOB
         .get_or_init(ProcessJob::new)
         .as_ref()
         .map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
-    spawn_with_hidden_console_inner(program, args, current_dir, envs, Some(job), None, &[])
+    spawn_with_hidden_console_inner(
+        program,
+        args,
+        current_dir,
+        envs,
+        Some(job),
+        None,
+        remove_env,
+    )
 }
 
 pub(crate) fn spawn_with_hidden_console_in_job(
@@ -134,8 +146,17 @@ pub(crate) fn spawn_with_hidden_console_in_job(
     current_dir: Option<&Path>,
     envs: &HashMap<String, String>,
     job: &ProcessJob,
+    remove_env: &[&str],
 ) -> io::Result<(File, File, u32, HANDLE)> {
-    spawn_with_hidden_console_inner(program, args, current_dir, envs, Some(job), None, &[])
+    spawn_with_hidden_console_inner(
+        program,
+        args,
+        current_dir,
+        envs,
+        Some(job),
+        None,
+        remove_env,
+    )
 }
 
 #[cfg_attr(not(test), allow(dead_code))] // 探针仅在 early 启动路径与测试中使用
@@ -301,9 +322,10 @@ pub fn spawn_with_hidden_console_tracked(
     args: &[OsString],
     current_dir: Option<&Path>,
     envs: &HashMap<String, String>,
+    remove_env: &[&str],
 ) -> io::Result<(File, File, HANDLE)> {
     let (stdout, stderr, _, handle) =
-        spawn_with_hidden_console_owned(program, args, current_dir, envs)?;
+        spawn_with_hidden_console_owned(program, args, current_dir, envs, remove_env)?;
     Ok((stdout, stderr, handle))
 }
 
@@ -617,6 +639,39 @@ mod tests {
         assert_eq!(path_entries[0], "NEW");
     }
 
+    /// issue #1531：`remove_env` 命中的变量必须从环境块里整条消失，匹配大小写不敏感。
+    #[test]
+    fn remove_env_drops_inherited_entries_case_insensitively() {
+        fn entries(block: &[u16]) -> Vec<String> {
+            String::from_utf16_lossy(block)
+                .split('\0')
+                .map(|entry| entry.to_ascii_lowercase())
+                .collect()
+        }
+
+        let vars = HashMap::from([
+            ("PYTHONHOME".to_string(), "/tmp/.mount_DSH/usr".to_string()),
+            (
+                "pythonpath".to_string(),
+                "/tmp/.mount_DSH/usr/lib".to_string(),
+            ),
+            ("DSH_KEEP".to_string(), "1".to_string()),
+        ]);
+        let kept = entries(&build_env_block(&vars, &[]));
+        assert!(
+            kept.iter()
+                .any(|entry| entry == "pythonhome=/tmp/.mount_dsh/usr")
+        );
+
+        let removed = entries(&build_env_block(&vars, &["PYTHONHOME", "PYTHONPATH"]));
+        assert!(
+            !removed.iter().any(|entry| entry.starts_with("pythonhome=")),
+            "inherited PYTHONHOME must disappear from the environment block"
+        );
+        assert!(!removed.iter().any(|entry| entry.starts_with("pythonpath=")));
+        assert!(removed.iter().any(|entry| entry == "dsh_keep=1"));
+    }
+
     #[test]
     fn spawn_captures_stdout_with_env_and_workdir() {
         let mut envs = HashMap::new();
@@ -636,6 +691,7 @@ mod tests {
             &args,
             Some(&workdir),
             &envs,
+            &[],
         )
         .unwrap();
 
@@ -669,6 +725,7 @@ mod tests {
             &args,
             None,
             &HashMap::new(),
+            &[],
         )
         .unwrap();
 
@@ -703,7 +760,7 @@ mod tests {
 
         let args = vec![OsString::from("-e"), OsString::from(node_js)];
         let (stdout, stderr) =
-            spawn_with_hidden_console(&node, &args, None, &HashMap::new()).unwrap();
+            spawn_with_hidden_console(&node, &args, None, &HashMap::new(), &[]).unwrap();
 
         let mut output = String::new();
         let mut error = String::new();
@@ -738,6 +795,7 @@ mod tests {
             Some(root.path()),
             &isolated_node_env(root.path()),
             &job,
+            &[],
         )
         .unwrap();
         let process = unsafe { OwnedHandle::from_raw_handle(handle) };
@@ -780,7 +838,7 @@ mod tests {
             OsString::from(spec),
         ];
         let (stdout, _stderr) =
-            spawn_with_hidden_console(&node, &args, None, &HashMap::new()).unwrap();
+            spawn_with_hidden_console(&node, &args, None, &HashMap::new(), &[]).unwrap();
 
         let mut output = String::new();
         use std::io::Read;
@@ -812,6 +870,7 @@ mod tests {
                 ],
                 Some(&root),
                 &isolated_node_env(&root),
+                &[],
             )
             .unwrap();
             let process = unsafe { OwnedHandle::from_raw_handle(handle) };
@@ -837,6 +896,7 @@ mod tests {
             Some(root.path()),
             &envs,
             &cleanup,
+            &[],
         )
         .unwrap();
         let parent = unsafe { OwnedHandle::from_raw_handle(handle) };
@@ -920,7 +980,8 @@ mod tests {
             ready.clone().into_os_string(),
         ];
         let (_stdout, _stderr, _, handle) =
-            spawn_with_hidden_console_in_job(&node, &args, Some(root.path()), &envs, &job).unwrap();
+            spawn_with_hidden_console_in_job(&node, &args, Some(root.path()), &envs, &job, &[])
+                .unwrap();
         let process = unsafe { OwnedHandle::from_raw_handle(handle) };
         let mut descendant = None;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1113,6 +1174,7 @@ mod tests {
             Some(root.path()),
             &envs,
             &job,
+            &[],
         )
         .expect("backend spawn must reuse the job after completed probes");
         let process = unsafe { OwnedHandle::from_raw_handle(handle) };

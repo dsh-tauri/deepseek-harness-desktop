@@ -1,5 +1,4 @@
 use crate::{AppHandle, Window};
-#[cfg(any(windows, target_os = "linux"))]
 use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
@@ -250,13 +249,155 @@ pub(crate) fn child_library_path(
     )
 }
 
+/// issue #1531：AppImage 运行时把 `PYTHONHOME` / `PYTHONPATH` 指向挂载点，让镜像自带
+/// 的 Python 生效。核心进程继承后再拉起外部应用（Kitty），对方的 Python 在
+/// `Failed to import encodings` 上直接失败。这里只剔除指向 `$APPDIR` 内部或空值的
+/// 条目：用户自配的 venv 与桌面端注入的条目原样保留，`$APPDIR` 缺省或为空（非
+/// AppImage 运行）时整体不介入。
+///
+/// 返回 `None` 表示不改动该变量；`Some(None)` 表示从子进程环境里移除它。
+pub(crate) fn appimage_python_env(
+    appdir: Option<&std::ffi::OsStr>,
+    name: &str,
+    value: Option<&std::ffi::OsStr>,
+) -> Option<Option<std::ffi::OsString>> {
+    let appdir = appdir.filter(|path| !path.is_empty())?;
+    let value = value?;
+    if value.is_empty() {
+        log::info!("{name} is empty, dropped for child processes");
+        return Some(None);
+    }
+    let kept = std::env::join_paths(
+        std::env::split_paths(value).filter(|path| !path.starts_with(Path::new(appdir))),
+    )
+    .expect("split path lists contain no path separator");
+    if kept.is_empty() {
+        log::info!("{name} resolved only inside $APPDIR, dropped for child processes");
+        return Some(None);
+    }
+    if kept != value {
+        log::info!(
+            "{name} keeps only the entries outside $APPDIR: {}",
+            kept.to_string_lossy()
+        );
+    }
+    Some(Some(kept))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::appimage_python_env;
     #[cfg(target_os = "linux")]
     use super::child_library_path;
     use super::decode_process_line;
     #[cfg(windows)]
     use super::{decode_multibyte, encode_multibyte, short_path};
+
+    mod appimage_python {
+        use super::appimage_python_env;
+        use std::ffi::{OsStr, OsString};
+
+        #[test]
+        fn drops_home_pointing_into_the_mount() {
+            assert_eq!(
+                appimage_python_env(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    "PYTHONHOME",
+                    Some(OsStr::new("/tmp/.mount_DSH/usr")),
+                ),
+                Some(None),
+            );
+        }
+
+        #[test]
+        fn drops_an_empty_value() {
+            for value in ["", "/tmp/.mount_DSH/usr:/tmp/.mount_DSH/usr/lib"] {
+                assert_eq!(
+                    appimage_python_env(
+                        Some(OsStr::new("/tmp/.mount_DSH")),
+                        "PYTHONPATH",
+                        Some(OsStr::new(value)),
+                    ),
+                    Some(None),
+                    "{value}",
+                );
+            }
+        }
+
+        /// 多条目列表按平台分隔符拆分，只有 Linux 的 `:` 语义能表达 AppImage 现场。
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn keeps_user_paths_while_dropping_mount_entries() {
+            assert_eq!(
+                appimage_python_env(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    "PYTHONPATH",
+                    Some(OsStr::new(
+                        "/home/u/venv/lib:/tmp/.mount_DSH/usr/lib/python:relative/site",
+                    )),
+                ),
+                Some(Some(OsString::from("/home/u/venv/lib:relative/site"))),
+            );
+            assert_eq!(
+                appimage_python_env(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    "PYTHONPATH",
+                    Some(OsStr::new("/tmp/.mount_DSH-other/lib")),
+                ),
+                Some(Some(OsString::from("/tmp/.mount_DSH-other/lib"))),
+            );
+        }
+
+        #[test]
+        fn keeps_sibling_directories_sharing_the_mount_prefix() {
+            assert_eq!(
+                appimage_python_env(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    "PYTHONHOME",
+                    Some(OsStr::new("/tmp/.mount_DSH-other/lib")),
+                ),
+                Some(Some(OsString::from("/tmp/.mount_DSH-other/lib"))),
+            );
+        }
+
+        /// 路径必须原样往返，非 UTF-8 字节不能被解码改写（Linux 上才可能出现）。
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn keeps_non_utf8_user_entries() {
+            use std::os::unix::ffi::OsStringExt;
+            assert_eq!(
+                appimage_python_env(
+                    Some(OsStr::new("/tmp/.mount_DSH")),
+                    "PYTHONPATH",
+                    Some(std::ffi::OsStr::from_bytes(
+                        b"/opt/\xff/lib:/tmp/.mount_DSH/usr/lib",
+                    )),
+                ),
+                Some(Some(OsString::from_vec(b"/opt/\xff/lib".to_vec()))),
+            );
+        }
+
+        #[test]
+        fn ignores_runs_outside_an_appimage() {
+            for appdir in [None, Some(OsStr::new(""))] {
+                for value in [None, Some(OsStr::new("/tmp/.mount_DSH/usr"))] {
+                    assert_eq!(
+                        appimage_python_env(appdir, "PYTHONHOME", value),
+                        None,
+                        "{appdir:?} {value:?}",
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn ignores_an_unset_value() {
+            assert_eq!(
+                appimage_python_env(Some(OsStr::new("/tmp/.mount_DSH")), "PYTHONHOME", None),
+                None,
+            );
+        }
+    }
 
     #[cfg(target_os = "linux")]
     mod appimage_library_path {
