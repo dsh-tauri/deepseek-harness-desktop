@@ -1,3 +1,4 @@
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { InstallProgress } from '../harness'
 import type { CoreDownloadTask } from './types'
 import type { HarnessCore } from '@/types'
@@ -33,25 +34,26 @@ export const coreDownload = defineStore({
       await this.run()
     },
 
-    /** 先挂监听再 invoke，避免漏掉首批进度事件 */
+    /** 先挂监听再 invoke，避免漏掉首批进度事件；监听注册本身也放进 try，注册失败要落到 failed 而不是卡在 running */
     async run() {
       const pending = this.task
       if (!pending)
         return
-      const unlisten = await listen<InstallProgress>('install-progress', (event) => {
-        const current = this.task
-        if (!current)
-          return
-        const { percentage, log } = event.payload
-        if (percentage < current.percentage)
-          return
-        this.task = {
-          ...current,
-          percentage,
-          logs: log ? [...current.logs, log].slice(-LOG_LIMIT) : current.logs,
-        }
-      })
+      let unlisten: UnlistenFn | null = null
       try {
+        unlisten = await listen<InstallProgress>('install-progress', (event) => {
+          const current = this.task
+          if (!current)
+            return
+          const { percentage, log } = event.payload
+          if (percentage < current.percentage)
+            return
+          this.task = {
+            ...current,
+            percentage,
+            logs: log ? [...current.logs, log].slice(-LOG_LIMIT) : current.logs,
+          }
+        })
         const core = await invoke<HarnessCore>('download_core', { tag: pending.tag })
         const current = this.task
         if (current?.tag === pending.tag)
@@ -64,7 +66,7 @@ export const coreDownload = defineStore({
           this.task = { ...current, status: 'failed', error: String(error) }
       }
       finally {
-        unlisten()
+        unlisten?.()
         await queryClient.invalidateQueries({ queryKey: queryKeys.cores })
       }
     },
@@ -84,7 +86,9 @@ export const coreDownload = defineStore({
         return
       }
       this.task = null
-      await queryClient.invalidateQueries({ queryKey: queryKeys.cores })
+      // 不等待列表重拉：那个查询会走 GitHub，失败还要回退 git tags，让重启排在它后面
+      // 等于把「已经切好了的核心」晾在旧服务上（与 config/core.tsx 的约定一致）。
+      void queryClient.invalidateQueries({ queryKey: queryKeys.cores })
       await harness.restart()
     },
 

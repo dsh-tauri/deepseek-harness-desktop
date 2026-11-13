@@ -217,7 +217,7 @@ async function activate(): Promise<void> {
   try {
     const binary = await tunnelRuntimeDeps().resolveBinary(setProgress)
     bound = await listenGateway()
-    launch(tunnelConfig(), binary)
+    launch(tunnelConfig(), binary, ++activation)
   }
   catch (error) {
     await fail(messageOf(error))
@@ -245,28 +245,20 @@ async function listenGateway(): Promise<number> {
   return entry.port
 }
 
-function launch(config: RemoteTunnelConfig, executable: string): void {
+/// 代次由调用方持有并递增：spawn 抛错时不能把代次一起推进，否则重试会拿着失效代次被丢弃。
+function launch(config: RemoteTunnelConfig, executable: string, generation: number): void {
   setProgress({ stage: 'spawn' })
   const args = tunnelArgs(config.mode === 'token' ? undefined : `http://${ENTRY_HOST}:${bound}`)
   const env = config.mode === 'token' ? tokenTunnelEnv(config.token ?? '') : undefined
-  const generation = ++activation
   child = tunnelRuntimeDeps().spawn(executable, args, {
     onLine: line => onLine(config.mode, line, generation),
     onExit: (code, signal) => onExit(code, signal, generation),
   }, env)
-  if (generation !== activation) {
-    // 本次激活已被并发 stop 取代：立刻回收刚起的进程，避免留下孤儿 cloudflared
-    child.kill('SIGTERM')
-    child = undefined
-    return
-  }
   note('state', `隧道入口已监听 ${ENTRY_HOST}:${bound}`)
-  if (config.mode === 'token') {
-    void ready(`https://${config.hostname ?? ''}`)
-    return
-  }
   setProgress({ stage: 'domain' })
-  note('process', 'cloudflared 已启动，等待分配 trycloudflare 域名')
+  note('process', config.mode === 'token'
+    ? 'cloudflared 已启动，等待连接 Cloudflare 边缘'
+    : 'cloudflared 已启动，等待分配 trycloudflare 域名')
 }
 
 async function deactivate(reason: string | undefined): Promise<void> {
@@ -382,7 +374,7 @@ async function retry(generation: number): Promise<void> {
   try {
     const binary = await tunnelRuntimeDeps().resolveBinary()
     bound = await listenGateway()
-    launch(tunnelConfig(), binary)
+    launch(tunnelConfig(), binary, ++activation)
   }
   catch (error) {
     scheduleRestart(generation, `隧道重建失败：${messageOf(error)}`)

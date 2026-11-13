@@ -192,6 +192,32 @@ describe('cloudflared 异常退出后的自愈', () => {
     expect(host.spawn).toHaveBeenCalledTimes(3)
   })
 
+  it('具名隧道在连接建立前不算就绪，退避计数不会因进程重启而被清零', async () => {
+    host.document = {
+      ...host.document,
+      tunnel: { enabled: true, mode: 'token', token: 'secret-token', hostname: 'dsh.example.com' },
+    }
+    const { tunnel } = await import('./tunnel')
+    await tunnel.start('token', 'secret-token', 'dsh.example.com')
+    await flush()
+
+    expect(host.spawn).toHaveBeenCalledTimes(1)
+    const status = await tunnel.status()
+    expect(status.state).toBe('starting')
+    expect(status.url).toBeUndefined()
+
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000]) {
+      crash()
+      await vi.advanceTimersByTimeAsync(delay)
+      await flush()
+    }
+    expect(host.spawn).toHaveBeenCalledTimes(6)
+
+    crash()
+    await flush()
+    expect((await tunnel.status()).state).toBe('error')
+  })
+
   it('用户显式 stop 打断等待中的重试', async () => {
     const { tunnel } = await import('./tunnel')
     await startRunning(tunnel)

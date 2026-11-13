@@ -29,7 +29,19 @@ module.exports = function registerNativePackages(archive, cache) {
     return null
   }
 
+  // 提升依赖复制进物化目录后，路径不再与归档一一对应（cache/<pkg>/node_modules/a 来自
+  // 归档根 node_modules/a）。这里记录副本 → 真实来源，才能让 resolve hook 还原到存在的文件。
+  const sources = new Map()
+
   function original(filename) {
+    let best
+    for (const [copy, source] of sources) {
+      const entry = relative(copy, filename)
+      if (entry !== null && (best === undefined || copy.length > best.copy.length))
+        best = { copy, source, entry }
+    }
+    if (best)
+      return path.join(best.source, best.entry)
     const entry = relative(cache, filename)
     return entry === null ? filename : path.join(archive, entry)
   }
@@ -186,28 +198,30 @@ module.exports = function registerNativePackages(archive, cache) {
     return null
   }
 
+  /// 依赖按「解析到它的那个包」的私有目录落地：owner 的目录相对归档的路径 P 对应
+  /// staging/P，于是依赖落 staging/P/node_modules/<name>，与 node 在归档里的查找顺序
+  /// 完全一致。按来源目录而不是包名去重，两个版本因此各留一份，不会互相顶掉。
+  ///
+  /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
   function hoist(root, staging) {
-    const pending = [root]
     const handled = new Set()
-    const placed = [root]
+    const copies = []
+    const pending = [{ directory: root, target: staging }]
     while (pending.length > 0) {
-      const owner = pending.shift()
-      for (const [name, segments] of declarations(owner)) {
-        if (handled.has(name))
+      const { directory, target } = pending.shift()
+      for (const [, segments] of declarations(directory)) {
+        const source = locate(directory, segments)
+        if (!source || handled.has(source))
           continue
-        const source = locate(owner, segments)
-        if (!source)
-          continue
-        handled.add(name)
-        pending.push(source)
-        if (placed.some(directory => relative(directory, source) !== null))
-          continue
-        placed.push(source)
-        const destination = path.join(staging, 'node_modules', ...segments)
+        handled.add(source)
+        const destination = path.join(target, 'node_modules', ...segments)
         fs.mkdirSync(path.dirname(destination), { recursive: true })
         copy(source, destination, false)
+        copies.push({ relative: path.relative(staging, destination), source })
+        pending.push({ directory: source, target: destination })
       }
     }
+    return copies
   }
 
   function complete(destination) {
@@ -252,9 +266,11 @@ module.exports = function registerNativePackages(archive, cache) {
       const staging = fs.mkdtempSync(`${destination}.stage-`)
       try {
         copy(root, staging, false)
-        hoist(root, staging)
+        const copies = hoist(root, staging)
         fs.writeFileSync(path.join(staging, '.dsh-native-complete'), CACHE_VERSION)
         publish(staging, destination)
+        for (const copy of copies)
+          sources.set(path.join(destination, copy.relative), copy.source)
       }
       finally {
         fs.rmSync(staging, { recursive: true, force: true })

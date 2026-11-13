@@ -262,7 +262,7 @@ test('materialized package carries its hoisted dependency beside the entry so a 
   assert.equal(f.load('@scope/pkg'), 'fflate')
   assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/@scope/pkg/lib/pkg.node')), true)
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/lib/index.cjs'), 'utf8'), 'module.exports = "fflate"')
-  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/saxes/lib/saxes.js'), 'utf8'), 'module.exports = "saxes"')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/node_modules/saxes/lib/saxes.js'), 'utf8'), 'module.exports = "saxes"')
   const entry = path.join(f.cache, 'node_modules/@scope/pkg/lib/index.js')
   const script = 'process.stdout.write(require.resolve("fflate", { paths: [require("node:path").dirname(process.env.DSH_PROBE_ENTRY)] }))'
   const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_ENTRY: entry } })
@@ -291,6 +291,39 @@ test('hoisted dependency keeps the private node_modules tree it needs at runtime
   f.write('node_modules/fflate/node_modules/vendor-only/index.js', 'module.exports = "vendor only"')
   assert.equal(f.load('pkg'), 'vendor only')
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/pkg/node_modules/fflate/node_modules/vendor-only/index.js'), 'utf8'), 'module.exports = "vendor only"')
+})
+
+test('two different versions of the same dependency keep their own copies instead of merging by name', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = [require("a"), require("x")]')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  f.write('node_modules/@scope/pkg/node_modules/x/package.json', JSON.stringify({ main: 'index.js', version: '1.0.0' }))
+  f.write('node_modules/@scope/pkg/node_modules/x/index.js', 'module.exports = "x@1"')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^2.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("x")')
+  f.write('node_modules/x/package.json', JSON.stringify({ main: 'index.js', version: '2.0.0' }))
+  f.write('node_modules/x/index.js', 'module.exports = "x@2"')
+  assert.deepEqual(f.load('@scope/pkg'), ['x@2', 'x@1'])
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/a/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@2"')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@1"')
+})
+
+test('a hoisted copy outside the archive resolves its own dependencies through the real archive source', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = require("fflate")')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  f.write('node_modules/fflate/package.json', JSON.stringify({ main: 'lib/index.cjs', dependencies: { saxes: '^6.0.0' } }))
+  f.write('node_modules/fflate/lib/index.cjs', 'module.exports = require("saxes")')
+  f.write('node_modules/saxes/package.json', JSON.stringify({ main: 'lib/saxes.js' }))
+  f.write('node_modules/saxes/lib/saxes.js', 'module.exports = "saxes"')
+  assert.equal(f.load('@scope/pkg'), 'saxes')
+  const entry = path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/lib/index.cjs')
+  const script = 'process.stdout.write(require(process.env.DSH_PROBE_ENTRY))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_ENTRY: entry } })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.equal(bare.stdout, 'saxes')
 })
 
 test('cache marker without the current version rebuilds the materialized package', (t) => {
