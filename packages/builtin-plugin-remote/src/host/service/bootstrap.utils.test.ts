@@ -93,7 +93,7 @@ describe('远端实例的启动命令', () => {
     const command = startCommandFor({ id: 'm1' as never, name: 'm1', host: 'h', user: 'u', port: 22, remotePort: 3089 })
     expect(command).toContain('--use-system-ca')
     // 追加在远端已有的 NODE_OPTIONS 之后，而不是覆盖它。
-    expect(command).toContain('export NODE_OPTIONS="${NODE_OPTIONS:-} --use-system-ca"')
+    expect(command).toMatch(/export NODE_OPTIONS="\$\{NODE_OPTIONS:-\} --use-system-ca"/)
     // 开关不被远端 node 认识时必须跳过，不能把远端核心带崩。
     expect(command).toContain('"$NODE" --use-system-ca -e')
   })
