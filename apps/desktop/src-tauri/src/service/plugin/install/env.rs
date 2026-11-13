@@ -126,6 +126,23 @@ pub(crate) fn build_plugin_envs(
     envs.extend(config::proxy::proxy_child_env(
         &config::get_store_dat_setting(app_handle).proxy_url,
     ));
+    // `dsh plugin` 子进程跑在随包 Electron 的 Node 模式里，TLS 信任库默认只有 Node
+    // 自带的 CA 列表：桌面端 Rust 侧读系统信任库、核心侧不读，走 TLS 中间人的企业
+    // 代理时子进程（pnpm 拉取元数据与仓库）会报 UNABLE_TO_VERIFY_LEAF_SIGNATURE。
+    // 与核心进程用同一个开关对齐（issue #1530）。
+    if let Some(version) = config::get_node_version_of_path(&node_abs)
+        && config::proxy::node_supports_system_ca(&version)
+    {
+        let base = envs
+            .get("NODE_OPTIONS")
+            .cloned()
+            .or_else(|| std::env::var("NODE_OPTIONS").ok())
+            .unwrap_or_default();
+        envs.insert(
+            "NODE_OPTIONS".to_string(),
+            config::proxy::node_options_with_system_ca(&base),
+        );
+    }
     // 用户 git 配置若把 GitHub HTTPS 改写为 SSH（url.<base>.insteadOf），pnpm 的
     // git 传输会落进 SSH 而硬失败；按需隔离子进程 git 配置强制 HTTPS
     // （见 [`git_https_isolation_env`]，未命中改写规则时返回空 map，零影响）。

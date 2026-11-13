@@ -115,6 +115,52 @@ pub async fn test(proxy_url: &str, target: &str, timeout: Duration) -> ProxyTest
     }
 }
 
+/// Node 的系统信任库开关：让 Node 用操作系统的 CA 信任库做 TLS 校验，而不是只信
+/// 自带的 CA 列表（Node 22.15 起提供，Electron 的 Node 模式同样支持）。
+///
+/// 桌面端 Rust 侧（reqwest + native-tls）读的本来就是系统信任库，核心侧不读就是
+/// 两侧信任不一致：走 TLS 中间人的企业代理时核心报 UNABLE_TO_VERIFY_LEAF_SIGNATURE，
+/// 桌面端却正常（issue #1530）。用 Node 自带的开关对齐，语义由 Node 维护，跨平台
+/// 不必自行解析 CA 文件。
+pub const NODE_SYSTEM_CA_FLAG: &str = "--use-system-ca";
+
+/// 该 Node 版本是否认识 [`NODE_SYSTEM_CA_FLAG`]。
+///
+/// 未知开关会让 Node 直接以 "bad option" 退出，必须先确认版本再下发。
+pub fn node_supports_system_ca(version: &str) -> bool {
+    let Some((major, minor)) = parse_node_version(version) else {
+        return false;
+    };
+    match major {
+        22 => minor >= 15,
+        23 => minor >= 5,
+        other => other >= 24,
+    }
+}
+
+/// 给 NODE_OPTIONS 追加系统信任库开关；已经带有时原样返回。
+pub fn node_options_with_system_ca(existing: &str) -> String {
+    if existing
+        .split_whitespace()
+        .any(|item| item == NODE_SYSTEM_CA_FLAG)
+    {
+        return existing.to_string();
+    }
+    let trimmed = existing.trim();
+    if trimmed.is_empty() {
+        return NODE_SYSTEM_CA_FLAG.to_string();
+    }
+    format!("{trimmed} {NODE_SYSTEM_CA_FLAG}")
+}
+
+/// 解析 Node 版本号的前两段（"24.21.0" → (24, 21)）。
+fn parse_node_version(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.trim().trim_start_matches('v').split('.');
+    let major = parts.next()?.trim().parse().ok()?;
+    let minor = parts.next()?.trim().parse().ok()?;
+    Some((major, minor))
+}
+
 /// 子进程代理环境（issue #110）：把配置页的代理地址翻译成核心与插件子进程能读的
 /// 环境变量。
 ///
@@ -343,6 +389,37 @@ mod tests {
         assert!(request
             .to_ascii_lowercase()
             .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n"));
+    }
+
+    #[test]
+    fn node_system_ca_flag_is_only_offered_to_runtimes_that_know_it() {
+        for (version, supported) in [
+            ("22.15.0", true),
+            ("22.19.0", true),
+            ("22.14.9", false),
+            ("23.5.0", true),
+            ("23.4.0", false),
+            ("24.21.0", true),
+            ("v24.21.0", true),
+            ("20.11.0", false),
+            ("garbage", false),
+            ("24", false),
+        ] {
+            assert_eq!(node_supports_system_ca(version), supported, "{version}");
+        }
+    }
+
+    #[test]
+    fn node_options_add_the_system_ca_flag_once() {
+        assert_eq!(node_options_with_system_ca(""), "--use-system-ca");
+        assert_eq!(
+            node_options_with_system_ca("--require ./hook.js"),
+            "--require ./hook.js --use-system-ca"
+        );
+        assert_eq!(
+            node_options_with_system_ca("--use-system-ca --require ./hook.js"),
+            "--use-system-ca --require ./hook.js"
+        );
     }
 
     #[test]
