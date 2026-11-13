@@ -61,9 +61,9 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
-          toolchain: stable
+          toolchain: 1.98.1
           targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
@@ -122,9 +122,9 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
-          toolchain: stable
+          toolchain: 1.98.1
 
       - name: Install system dependencies
         shell: bash
@@ -190,9 +190,9 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
-          toolchain: stable
+          toolchain: 1.98.1
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
