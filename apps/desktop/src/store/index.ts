@@ -1,3 +1,4 @@
+import { coreDownload } from './modules/core-download'
 import { desktopUpdater } from './modules/desktop-updater'
 import { harness } from './modules/harness'
 import { harnessUpdater } from './modules/harness-updater'
@@ -18,6 +19,7 @@ import { setting } from './modules/setting'
  * 重启服务。组件一律 `import { store } from '@/store'`。
  */
 export const store = {
+  coreDownload,
   harness,
   harnessUpdater,
   plugins,

@@ -65,6 +65,7 @@ vi.mock('@/hooks/use-dsh-shortcuts', () => ({
 vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (event: { payload: unknown }) => void) => {
   mocks.listeners.set(event, handler)
 } }))
+vi.mock('@/ui/core/core-download-widget', () => ({ CoreDownloadWidget: () => null }))
 vi.mock('@/ui/plugin/recovery', () => ({ Recovery: () => null }))
 vi.mock('./startup/setup', () => ({ Setup: () => null }))
 vi.mock('./startup/preinstall', () => ({ PreinstallSetup: () => null }))

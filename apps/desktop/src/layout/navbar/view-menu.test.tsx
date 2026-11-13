@@ -55,6 +55,7 @@ vi.mock('@tauri-apps/api/event', async (importOriginal) => {
   } }
 })
 vi.mock('@/ui/dialog/about', () => ({ DesktopAboutDialog: () => null }))
+vi.mock('@/ui/core/core-download-widget', () => ({ CoreDownloadWidget: () => null }))
 vi.mock('@/ui/dialog/config', () => ({ ConfigDialog: () => null }))
 vi.mock('@/ui/dialog/update', () => ({ DesktopUpdateDialog: () => null }))
 vi.mock('@/utils/clipboard', () => ({ writeClipboardText: vi.fn() }))

@@ -15,14 +15,12 @@ import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { useInvalidateOnSettingUpdated } from '@/hooks/use-invalidate-on-setting-updated'
 import { store } from '@/store'
-import { DownloadCoreDialog } from '@/ui/dialog/update-core'
 import { compareVersions, isCoreUnsupported, MIN_SUPPORTED_CORE_VERSION } from '@/utils/core-version'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
 export function ConfigCore() {
   const openDialog = useOverlay(Modal)
-  const openDownloadDialog = useOverlay(DownloadCoreDialog)
 
   const { t } = useTranslation()
 
@@ -49,10 +47,6 @@ export function ConfigCore() {
     mutationFn: (id: string) => invoke<HarnessCore>('set_active_core', { id }),
     onSuccess: invalidate,
   })
-  const download = useMutation({
-    mutationFn: (tag: string) => invoke<HarnessCore>('download_core', { tag }),
-    onSuccess: invalidate,
-  })
   const uninstall = useMutation({
     mutationFn: (id: string) => invoke<void>('remove_core', { id }),
     onSuccess: invalidate,
@@ -77,7 +71,7 @@ export function ConfigCore() {
   const loading = isLoading
   const error = coreError ? String(coreError) : ''
   /** 操作进行中标记（任一写操作 pending） */
-  const busy = activate.isPending || download.isPending || uninstall.isPending || updateLocal.isPending || setCoreAsar.isPending
+  const busy = activate.isPending || uninstall.isPending || updateLocal.isPending || setCoreAsar.isPending
 
   /** 行内操作进行中的核心 id（该行的下载/卸载按钮显示 Spinner 并禁用重复点击） */
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -187,27 +181,10 @@ export function ConfigCore() {
     }
   }
 
-  async function onDownload(core: HarnessCore) {
+  function onDownload(core: HarnessCore) {
     if (busy)
       return
-    // 下载过程在对话框内展示进度 + 日志（复用 install-progress 事件流）；
-    // 对话框 confirm（下载成功）或 cancel（失败后点关闭）都会结束本次等待。
-    try {
-      await openDownloadDialog({
-        tag: core.tag,
-        version: displayVersion(core),
-        runDownload: async (tag) => {
-          const downloaded = await download.mutateAsync(tag)
-          await refetch()
-          return downloaded
-        },
-      })
-      toast(t('core.downloaded_toast', { version: displayVersion(core) }), {})
-    }
-    catch (err) {
-      console.error('[ConfigCore] download failed:', err)
-      // 失败详情已在下载对话框内展示（含日志），此处不再重复 toast
-    }
+    void store.coreDownload.start(core.tag, displayVersion(core))
   }
 
   /** 打开核心所在目录（文件夹图标） */
@@ -514,7 +491,7 @@ export function ConfigCore() {
                         </Checkbox.Content>
                       </Checkbox>
                     </If>
-                    {/* 未下载（app 版本）：下载入口（进度与日志在下载对话框内展示） */}
+                    {/* 未下载（app 版本）：下载入口（进度与日志在右下角浮窗展示） */}
                     <If cond={!core.present && core.source === 'app'}>
                       <Button
                         size="sm"

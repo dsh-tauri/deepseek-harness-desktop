@@ -34,6 +34,7 @@ vi.mock('@/hooks/use-notification-action', () => ({ useNotificationAction: vi.fn
 vi.mock('@/hooks/use-notification-clicked', () => ({ useNotificationClicked: vi.fn() }))
 vi.mock('@overlastic/react', () => ({ useOverlay: () => vi.fn() }))
 vi.mock('@/ui/dialog/config', () => ({ ConfigDialog: () => null }))
+vi.mock('@/ui/core/core-download-widget', () => ({ CoreDownloadWidget: () => null }))
 vi.mock('@/ui/plugin/recovery', () => ({ Recovery: () => null }))
 vi.mock('./startup/preinstall', () => ({ PreinstallSetup: () => null }))
 vi.mock('./navbar/full-sidebar-navbar', () => ({ FullSidebarNavbar: () => null }))
