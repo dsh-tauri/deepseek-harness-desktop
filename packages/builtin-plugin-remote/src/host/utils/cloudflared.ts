@@ -95,15 +95,13 @@ export async function fetchCloudflaredRelease(asset: string, version?: string): 
   return { tag, digest, ...typeof found?.size === 'number' ? { size: found.size } : {} }
 }
 
-export function quickTunnelArgs(entryUrl: string): string[] {
-  return ['tunnel', '--no-autoupdate', '--url', entryUrl]
+/** 缺省协议是 QUIC（UDP 7844），被防火墙丢弃的网络里会反复重连；固定 http2 走 TCP 443。 */
+export function tunnelArgs(entryUrl?: string): string[] {
+  const args = ['tunnel', '--no-autoupdate', '--protocol', 'http2']
+  return entryUrl === undefined ? [...args, 'run'] : [...args, '--url', entryUrl]
 }
 
 /** 具名隧道：凭据经 `TUNNEL_TOKEN` 环境变量传入，避免出现在进程参数（`ps` 可见）里。 */
-export function tokenTunnelArgs(): string[] {
-  return ['tunnel', '--no-autoupdate', 'run']
-}
-
 export function tokenTunnelEnv(token: string): NodeJS.ProcessEnv {
   return { TUNNEL_TOKEN: token }
 }
