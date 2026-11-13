@@ -435,6 +435,9 @@ mod tests {
         fn count(node: &std::path::Path, expression: &str, node_options: Option<&str>) -> usize {
             let mut command = std::process::Command::new(node);
             command.arg("-p").arg(expression);
+            // NODE_USE_SYSTEM_CA turns the same switch on by itself, so both
+            // samples must start without it: only the computed options decide.
+            command.env_remove("NODE_USE_SYSTEM_CA");
             match node_options {
                 Some(value) => {
                     command.env("NODE_OPTIONS", value);

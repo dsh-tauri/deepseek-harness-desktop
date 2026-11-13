@@ -12,8 +12,8 @@ use super::templates::SH_USER_DSH_PRECEDENCE;
 #[cfg(not(windows))]
 use super::templates::SH_USER_NODE_PRECEDENCE;
 use super::templates::{
-    CMD_NODE_RESOLVE, CMD_USER_DSH_PRECEDENCE, CMD_USER_NODE_PRECEDENCE, PS1_NODE_RESOLVE,
-    PS1_USER_DSH_PRECEDENCE, SH_NODE_RESOLVE,
+    CMD_NODE_RESOLVE, CMD_USER_DSH_PRECEDENCE, CMD_USER_NODE_PRECEDENCE, PS1_NODE_OPTIONS_RESTORE,
+    PS1_NODE_RESOLVE, PS1_USER_DSH_PRECEDENCE, SH_NODE_RESOLVE,
 };
 
 /// shim 内烘焙的依赖路径：全部来自运行时解析（依赖映射表 + 清单 `entry`），
@@ -136,6 +136,7 @@ if (-not $systemGitWorks -and $gitDir -and (Test-Path -LiteralPath (Join-Path $g
 {user_dsh}
 $dshHome = '{dsh_home}'
 $env:DSH_TELEMETRY_DISABLED = '1'
+try {{
 {node_resolve}
 if (-not (Test-Path -LiteralPath '{dsh_file}')) {{
     Write-Error '[dsh] Harness CLI not found. Please run DeepSeek Harness Desktop to install it first.'
@@ -144,6 +145,9 @@ if (-not (Test-Path -LiteralPath '{dsh_file}')) {{
 $env:DSH_HOME = $dshHome
 & $node{native_bridge} --input-type=module '{carrier}' $dshBin @args
 exit $LASTEXITCODE
+}} finally {{
+{node_options_restore}
+}}
 "#,
         node_bin = escape_path_ps1(&paths.node_bin),
         node_dir = escape_path_ps1(&paths.node_dir()),
@@ -160,6 +164,7 @@ exit $LASTEXITCODE
             .replace('\'', "''"),
         user_dsh = PS1_USER_DSH_PRECEDENCE,
         node_resolve = PS1_NODE_RESOLVE,
+        node_options_restore = PS1_NODE_OPTIONS_RESTORE,
         dsh_home = escape_path_ps1(dsh_home),
     )
 }
@@ -423,18 +428,23 @@ if (-not $useBundled -and -not ($hasBundled -and $env:DSH_PNPM_SHIM_GUARD -eq '1
 
 {node_resolve}
 
+try {{
 if (-not (Test-Path -LiteralPath $pnpmBin)) {{
     Write-Error '[pnpm] pnpm not found. Please run DeepSeek Harness Desktop to install it first.'
     exit 1
 }}
 & $node $pnpmBin @args
 exit $LASTEXITCODE
+}} finally {{
+{node_options_restore}
+}}
 "#,
         node_bin = escape_path_ps1(&paths.node_bin),
         node_dir = escape_path_ps1(&paths.node_dir()),
         git_dir = escape_path_ps1(&paths.git_dir()),
         pnpm_bin = escape_path_ps1(&paths.pnpm_bin),
         node_resolve = PS1_NODE_RESOLVE,
+        node_options_restore = PS1_NODE_OPTIONS_RESTORE,
     )
 }
 
@@ -641,6 +651,10 @@ if not defined DSH_NPM_SHIM_CHAIN goto :npm_forward_user
 for %%c in ("%DSH_NPM_SHIM_CHAIN:;=" "%") do if /i "%%~c"=="%USER_NPM%" goto :npm_reentry_limit
 :npm_forward_user
 set "DSH_NPM_SHIM_CHAIN=%DSH_NPM_SHIM_CHAIN%;%USER_NPM%"
+rem Forwarding to the user's own npm: their node may be older than the flag we
+rem added, and an unknown option makes Node exit. The flag is ours, not theirs.
+set "NODE_OPTIONS=%NODE_OPTIONS: --use-system-ca=%"
+set "NODE_OPTIONS=%NODE_OPTIONS:--use-system-ca=%"
 rem Forward by invoking the target directly, never through `call`: the extra
 rem interpretation layer re-expands %* and mangles already-escaped arguments.
 "%USER_NPM%" %*
@@ -703,6 +717,7 @@ if (-not $systemGitWorks -and $gitDir -and (Test-Path -LiteralPath (Join-Path $g
     $env:PATH = $gitDir + ';' + $env:PATH
 }}
 {node_resolve}
+try {{
 # The cli entry ships with npm, so it is looked up next to the node that will run
 # it: a version manager's node directory may hold no npm at all, and a relative
 # wrapper cannot reach one.
@@ -743,10 +758,15 @@ if (-not $cli) {{
         }}
         try {{
             $env:DSH_NPM_SHIM_CHAIN = $chainBefore + ';' + $userCommand.Source
+            # Forwarding to the user's own npm: their node may be older than the
+            # flag we added, and an unknown option makes Node exit.
+            $nodeOptionsBeforeForward = $env:NODE_OPTIONS
+            $env:NODE_OPTIONS = $env:NODE_OPTIONS -replace '(?i)\s*--use-system-ca', ''
             & $userCommand.Source @args
             $forwardExitCode = $LASTEXITCODE
         }} finally {{
             $env:DSH_NPM_SHIM_CHAIN = $chainBefore
+            $env:NODE_OPTIONS = $nodeOptionsBeforeForward
         }}
         exit $forwardExitCode
     }}
@@ -755,6 +775,9 @@ if (-not $cli) {{
 }}
 & $node $cli @args
 exit $LASTEXITCODE
+}} finally {{
+{node_options_restore}
+}}
 "#,
         node_bin = escape_path_ps1(&paths.node_bin),
         node_dir = escape_path_ps1(&paths.node_dir()),
@@ -762,6 +785,7 @@ exit $LASTEXITCODE
         shim_name = shim_name,
         cli_file = cli_file,
         node_resolve = PS1_NODE_RESOLVE,
+        node_options_restore = PS1_NODE_OPTIONS_RESTORE,
     )
 }
 
@@ -2090,4 +2114,68 @@ mod tests {
             assert!(!sh.contains("--use-system-ca"));
         }
     }
+
+    /// PowerShell 没有 cmd 的 `setlocal`：`$env:` 写入是进程级的，脚本返回后仍在
+    /// 调用者的会话里。留着开关会让用户随后跑的 node（早于 22.15 时不认这个选项）
+    /// 直接退出，因此 PS1 shim 必须记住原值并在返回前还原。
+    #[test]
+    fn powershell_shims_restore_node_options_before_returning() {
+        for content in [
+            build_ps1_shim(&sample_shim_paths(), &sample_dsh_home()),
+            build_pnpm_ps1_shim(&sample_shim_paths()),
+        ] {
+            assert!(
+                content.contains("$dshNodeOptionsBefore = $env:NODE_OPTIONS"),
+                "{content}"
+            );
+            assert!(content.contains("} finally {"), "{content}");
+            assert!(
+                content.contains("Remove-Item Env:NODE_OPTIONS"),
+                "{content}"
+            );
+        }
+        #[cfg(windows)]
+        for content in [
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npm", "npm-cli.js"),
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
+        ] {
+            assert!(
+                content.contains("$dshNodeOptionsBefore = $env:NODE_OPTIONS"),
+                "{content}"
+            );
+            assert!(content.contains("} finally {"), "{content}");
+        }
+    }
+
+    /// npm/npx shim 找不到可用的 npm cli 时会转发用户自己的 npm：那是用户的运行时，
+    /// 可能早于 22.15 而不认这个开关（未知开关会让 Node 直接退出），转发前必须摘掉。
+    #[test]
+    fn npm_shims_drop_the_system_ca_switch_before_forwarding_to_the_user_npm() {
+        for content in [
+            build_npm_cli_cmd_shim(&sample_shim_paths(), "npm", "npm-cli.js"),
+            build_npm_cli_cmd_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
+        ] {
+            let forward = content.find(":npm_forward_user").expect("forward branch");
+            let strip = content[forward..]
+                .find("--use-system-ca")
+                .expect("the switch is dropped before forwarding");
+            let invoke = content[forward..].find("\"%USER_NPM%\" %*").expect("invoke");
+            assert!(strip < invoke, "{content}");
+        }
+        #[cfg(windows)]
+        for content in [
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npm", "npm-cli.js"),
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
+        ] {
+            let forward = content.find("$userCommand").expect("forward branch");
+            let strip = content[forward..]
+                .find("--use-system-ca")
+                .expect("the switch is dropped before forwarding");
+            let invoke = content[forward..]
+                .find("& $userCommand.Source @args")
+                .expect("invoke");
+            assert!(strip < invoke, "{content}");
+        }
+    }
 }
+
