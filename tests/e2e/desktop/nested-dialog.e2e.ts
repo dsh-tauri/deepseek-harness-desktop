@@ -34,6 +34,13 @@ it('nested profile dialog blocks the parent and restores interaction after closi
     for (let cycle = 0; cycle < 2; cycle++) {
       await page.locator(PROFILE_MIGRATE_OPEN).click({ timeout: WINDOW_TIMEOUT_MS })
       await child.waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
+      await expect.poll(async () => ({
+        parentInert: await outer.evaluate(element => element.closest('[inert]') !== null),
+        childInert: await child.evaluate(element => element.closest('[inert]') !== null),
+      }), { message: '子弹窗就绪后必须隔离父弹窗并保持自身可交互' }).toEqual({
+        parentInert: true,
+        childInert: false,
+      })
       expect(await parentNav.getAttribute('aria-current')).toBeNull()
       const box = await parentNav.boundingBox()
       expect(box, '父弹窗导航必须具有真实点击区域').not.toBeNull()
