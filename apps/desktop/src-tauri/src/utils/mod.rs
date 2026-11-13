@@ -364,7 +364,7 @@ mod tests {
         #[cfg(target_os = "linux")]
         #[test]
         fn keeps_non_utf8_user_entries() {
-            use std::os::unix::ffi::OsStringExt;
+            use std::os::unix::ffi::{OsStrExt, OsStringExt};
             assert_eq!(
                 appimage_python_env(
                     Some(OsStr::new("/tmp/.mount_DSH")),
