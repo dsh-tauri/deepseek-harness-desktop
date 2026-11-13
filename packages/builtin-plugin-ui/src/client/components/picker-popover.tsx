@@ -1,8 +1,9 @@
 import type { CSSProperties, ReactNode, RefObject } from 'react'
-import { useAnchoredPosition, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import { tv, useEventListener } from 'dsh-tauri/client'
 import { useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useAnchoredPosition } from '../hooks/use-anchored-position'
 
 export const pickerTrigger = tv({
   base: 'inline-flex flex-[0_1_auto] min-w-0 items-center justify-end gap-[6px] px-[8px] py-[5px] border-none rounded-[18px] bg-transparent text-primary [font-family:inherit] text-[14px] leading-[1.6] text-right tabular-nums cursor-pointer transition-colors duration-150 hover:not-disabled:bg-hover disabled:text-tertiary disabled:cursor-default focus-visible:[outline:2px_solid_var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))] focus-visible:[outline-offset:1px]',

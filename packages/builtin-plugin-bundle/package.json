@@ -10,7 +10,6 @@
     "dsh-tauri-model": "workspace:*",
     "dsh-tauri-notification": "workspace:*",
     "dsh-tauri-remote": "workspace:*",
-    "dsh-tauri-rightclick": "workspace:*",
     "dsh-tauri-ui": "workspace:*"
   }
 }

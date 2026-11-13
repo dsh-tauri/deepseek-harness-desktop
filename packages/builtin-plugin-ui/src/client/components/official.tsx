@@ -42,7 +42,6 @@ export {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 
 export type {
-  AnchoredPositionOptions,
   BrandWordmarkProps,
   CodeBlockProps,
   ConnectionIndicatorState,
