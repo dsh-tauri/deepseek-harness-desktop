@@ -1,6 +1,6 @@
 import type { Config } from '../config/schema'
 import type { MachineProfile, RemoteMachineStage, RemoteSession } from '../types/index'
-import type { BootstrapHooks, BootstrapLogLine, EnvCredentials, RemoteInstallPlan } from './bootstrap.types'
+import type { BootstrapHooks, BootstrapLogLine, EnvCredentials, ReleaseAvailability, RemoteInstallPlan } from './bootstrap.types'
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
 import { messageOf } from '../../shared/error'
@@ -19,6 +19,31 @@ const DSH_ZIP_ENTRY = 'node_modules/@deepseek-ai/dsh/lib/bin.js'
 const DSH_NPM_ENTRY = 'lib/bin.js'
 
 const PNPM_ENTRY = 'bin/pnpm.cjs'
+
+/**
+ * HEAD 探测发行包是否真的可下载。用来区分「release 被删」与「本机网络不通」：
+ * 前者必须换候选 tag，后者只能照旧把 URL 交给远端（远端网络可能正常）。
+ */
+async function probeReleaseDownload(url: string, timeoutMs = 8000): Promise<ReleaseAvailability> {
+  if (url === '')
+    return 'unknown'
+  try {
+    const response = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(timeoutMs) })
+    if (response.ok)
+      return 'available'
+    return response.status === 404 ? 'missing' : 'unknown'
+  }
+  catch {
+    return 'unknown'
+  }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  const status = (error as { status?: number } | null)?.status
+  if (typeof status === 'number')
+    return status === 404
+  return messageOf(error).includes('HTTP 404')
+}
 
 const BOOTSTRAP_STAGES: Record<RemoteMachineStage, true> = {
   probe: true,
@@ -86,6 +111,7 @@ export async function planRemoteInstall(
     listReleases?: (repo: string) => Promise<{ tag: string, prerelease: boolean }[]>
     listAssets?: (repo: string, tag: string) => Promise<Array<{ name: string, url: string, digest?: string }>>
     npmDist?: (packageName: string, version: string) => Promise<{ url: string, mirrorUrl: string, integrity?: string }>
+    probe?: (url: string) => Promise<ReleaseAvailability>
   } = {},
 ): Promise<RemoteInstallPlan> {
   const { os, arch } = parsePlatform(unameOut)
@@ -101,6 +127,7 @@ export async function planRemoteInstall(
   const listReleases = fetchers.listReleases ?? listGithubReleases
   const listAssets = fetchers.listAssets ?? listGithubAssets
   const npmDist = fetchers.npmDist ?? npmDistMetadata
+  const probe = fetchers.probe ?? probeReleaseDownload
   let metas
   try {
     metas = await listReleases(repo)
@@ -123,30 +150,87 @@ export async function planRemoteInstall(
     const zipName = matrix.dshZipName ?? ''
     let urls: string[] | undefined
     let digest: string | undefined
-    try {
-      const assets = await listAssets(repo, resolved.tag)
-      const asset = assets.find(candidate => candidate.name === zipName)
-      if (asset !== undefined) {
-        urls = [asset.url, ...dshZipDownloadUrls(repo, resolved.tag, zipName).slice(1)]
-        digest = asset.digest
+    let tag = resolved.tag
+    // 候选 tag 逐个验证：上游删掉 release 后 git tag 还在，发行包已 404。
+    const candidates = resolved.candidates.length > 0 ? resolved.candidates : [resolved.tag]
+    const availability = new Map<string, ReleaseAvailability>()
+    // 元数据不可达说明网络整体不通，继续逐个查询只会把失败路径拖长。
+    let metadataUnreachable = false
+    for (const candidate of candidates) {
+      if (metadataUnreachable) {
+        availability.set(candidate, 'unknown')
+        continue
+      }
+      try {
+        const assets = await listAssets(repo, candidate)
+        const asset = assets.find(item => item.name === zipName)
+        if (asset !== undefined) {
+          tag = candidate
+          urls = [asset.url, ...dshZipDownloadUrls(repo, candidate, zipName).slice(1)]
+          digest = asset.digest
+          availability.set(candidate, 'available')
+          break
+        }
+        availability.set(candidate, 'missing')
+        notes.push(`release ${candidate} 没有 ${zipName}，尝试下一个候选 tag`)
+      }
+      catch (error) {
+        const state = isNotFoundError(error) ? 'missing' : 'unknown'
+        availability.set(candidate, state)
+        notes.push(`release 资产元数据获取失败（${candidate}: ${messageOf(error)}）`)
+        if (state === 'unknown') {
+          metadataUnreachable = true
+          notes.push('release 元数据不可达，剩余候选不再逐个查询')
+        }
       }
     }
-    catch (error) {
-      notes.push(`release 资产元数据获取失败（${messageOf(error)}）`)
+    if (urls === undefined) {
+      // 元数据不可用时按候选顺序探测，确认可下载才写进脚本。
+      let probeUnreachable = false
+      for (const candidate of candidates) {
+        if (availability.get(candidate) === 'missing')
+          continue
+        if (probeUnreachable) {
+          availability.set(candidate, 'unknown')
+          continue
+        }
+        const candidateUrls = dshZipDownloadUrls(repo, candidate, zipName)
+        const state = await probe(candidateUrls[0] ?? '')
+        availability.set(candidate, state)
+        if (state === 'available') {
+          tag = candidate
+          urls = candidateUrls
+          break
+        }
+        if (state === 'unknown')
+          probeUnreachable = true
+        notes.push(`候选 release ${candidate} ${state === 'missing' ? '已确认不存在' : '可用性未知（网络不可达）'}`)
+      }
+      if (urls === undefined) {
+        const unknown = candidates.find(candidate => availability.get(candidate) === 'unknown')
+        if (unknown === undefined)
+          throw new Error(`REMOTE_DSH_RELEASE_UNAVAILABLE: 候选 release 均已确认不存在（${candidates.join('、')}），无法安装 DSH 内核；请改用 installRef 指定其它版本`)
+        tag = unknown
+        urls = dshZipDownloadUrls(repo, tag, zipName)
+        notes.push(`候选 release 可用性未知，回退 ${tag}`)
+      }
     }
     if (digest === undefined)
       notes.push(`未取得 ${zipName} 的可信摘要，将跳过 SHA-256 校验；校验不了就不启用镜像`)
-    const dshUrls = urls ?? dshZipDownloadUrls(repo, resolved.tag, zipName)
+    const dshUrls = urls
+    // 版本以实际选中的 tag 为准，避免候选跨版本时上报的版本与安装物不符。
+    const dshVersion = parseVersionFromTag(tag) ?? resolved.version
+    assertSupportedDshVersion(dshVersion)
     return {
       os,
       arch,
       matrix,
       repo,
       dshEntry: DSH_ZIP_ENTRY,
-      dshVersion: resolved.version,
+      dshVersion,
       node,
       // 摘要缺失时脚本会跳过 SHA-256 校验：此时只留官方源，绝不额外放大可写入口。
-      dsh: { kind: 'pkg-zip', urls: digest === undefined ? dshUrls.slice(0, 1) : dshUrls, ...digest === undefined ? {} : { digest }, zipName, tag: resolved.tag },
+      dsh: { kind: 'pkg-zip', urls: digest === undefined ? dshUrls.slice(0, 1) : dshUrls, ...digest === undefined ? {} : { digest }, zipName, tag },
       pnpm,
       notes,
     }

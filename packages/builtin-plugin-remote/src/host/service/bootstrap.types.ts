@@ -6,6 +6,9 @@ export interface BootstrapLogLine {
   line: string
 }
 
+/** 发行包可用性：`available` 可下载；`missing` 已确认不存在（404）；`unknown` 网络不可达无法判定。 */
+export type ReleaseAvailability = 'available' | 'missing' | 'unknown'
+
 export interface DshNpmPlan {
   kind: 'npm-tgz'
   urls: string[]

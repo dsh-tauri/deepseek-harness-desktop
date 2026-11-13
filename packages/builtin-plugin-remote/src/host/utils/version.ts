@@ -14,11 +14,24 @@ export interface ResolvedDshTag {
   version: string
   source: DshTagSource
   notes: string[]
+  /** 可用候选 tag（按优先级排列）。第一个不一定还有 release，需要逐个验证。 */
+  candidates: string[]
 }
 
 export const MINIMUM_DSH_VERSION = __REMOTE_DSH_MINIMUM__
 
-export const FALLBACK_DSH_TAG = 'dsh-0.2.2-rc.1-41838008646'
+/**
+ * 回退 tag 列表（按新到旧）。必须是真实存在的 release：上游删掉 release 后
+ * git tag 仍在，但 `/releases/download/<tag>/<asset>` 会 404，远端安装以 exit 10 收场。
+ */
+export const FALLBACK_DSH_TAGS = [
+  'dsh-0.2.2-rc.1-43078653398',
+  'dsh-0.2.2-rc.1-43048423223',
+  'dsh-0.2.2-rc.1-42351650673',
+  'dsh-0.2.2-rc.1-42271285252',
+] as const
+
+export const FALLBACK_DSH_TAG = FALLBACK_DSH_TAGS[0]
 
 export function assertSupportedDshVersion(version: string): void {
   if (!semver.satisfies(version, `>=${MINIMUM_DSH_VERSION}`, { includePrerelease: true }))
@@ -92,23 +105,35 @@ export function pickReleaseTag(
       if (!listed)
         notes.push(`pin tag ${ref} 不在 release 列表中（列表截断或来源异常），按 pin 直用`)
       const version = parseVersionFromTag(ref) ?? ''
-      return { tag: ref, version, source: 'pin', notes }
+      return { tag: ref, version, source: 'pin', notes, candidates: [ref] }
     }
     const pinned = metas?.find(meta => parseVersionFromTag(meta.tag) === ref)
     if (pinned !== undefined)
-      return { tag: pinned.tag, version: ref, source: 'pin', notes }
+      return { tag: pinned.tag, version: ref, source: 'pin', notes, candidates: [pinned.tag] }
     notes.push(`版本 pin ${ref} 未找到匹配 release，回退最新稳定版`)
   }
   if (metas === undefined || metas.length === 0) {
     notes.push('release 列表不可用（网络/限流），回退已知稳定 tag')
-    return { tag: FALLBACK_DSH_TAG, version: parseVersionFromTag(FALLBACK_DSH_TAG) ?? '', source: 'fallback', notes }
+    return {
+      tag: FALLBACK_DSH_TAG,
+      version: parseVersionFromTag(FALLBACK_DSH_TAG) ?? '',
+      source: 'fallback',
+      notes,
+      candidates: [...FALLBACK_DSH_TAGS],
+    }
   }
   const fallback = metas.find(meta => !meta.prerelease && !isPreviewTag(meta.tag))
   if (fallback === undefined) {
     notes.push('release 列表里没有稳定 release，回退已知稳定 tag')
-    return { tag: FALLBACK_DSH_TAG, version: parseVersionFromTag(FALLBACK_DSH_TAG) ?? '', source: 'fallback', notes }
+    return {
+      tag: FALLBACK_DSH_TAG,
+      version: parseVersionFromTag(FALLBACK_DSH_TAG) ?? '',
+      source: 'fallback',
+      notes,
+      candidates: [...FALLBACK_DSH_TAGS],
+    }
   }
-  return { tag: fallback.tag, version: parseVersionFromTag(fallback.tag) ?? '', source: 'latest-stable', notes }
+  return { tag: fallback.tag, version: parseVersionFromTag(fallback.tag) ?? '', source: 'latest-stable', notes, candidates: [fallback.tag] }
 }
 
 export interface GithubAsset {
@@ -117,10 +142,20 @@ export interface GithubAsset {
   digest?: string
 }
 
+export class GithubHttpError extends Error {
+  readonly status: number
+
+  constructor(url: string, status: number) {
+    super(`GET ${url} → HTTP ${status}`)
+    this.name = 'GithubHttpError'
+    this.status = status
+  }
+}
+
 async function fetchJson(url: string, headers: Record<string, string>, timeoutMs: number): Promise<unknown> {
   const response = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) })
   if (!response.ok)
-    throw new Error(`GET ${url} → HTTP ${response.status}`)
+    throw new GithubHttpError(url, response.status)
   return await response.json() as unknown
 }
 
