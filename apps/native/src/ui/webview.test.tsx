@@ -22,6 +22,7 @@ const native = vi.hoisted(() => ({
   scheduleNotificationAsync: vi.fn<(...args: unknown[]) => Promise<string>>(),
   cancelAnimation: vi.fn(),
   setTheme: vi.fn<(theme: 'light' | 'dark' | 'system') => void>(),
+  clipboard: vi.fn<(content: string) => void>(),
 }))
 
 vi.mock('react-native', () => ({
@@ -30,6 +31,7 @@ vi.mock('react-native', () => ({
   Modal: 'Modal',
   Pressable: 'Pressable',
   Platform: native.platform,
+  Clipboard: { setString: native.clipboard, getString: async () => '' },
   Linking: { openURL: native.openURL },
   AppState: {
     get currentState() { return native.appState.currentState },
@@ -125,6 +127,9 @@ const nonce = 'webview-uuid-1'
 const failure = '连接失败，请检查主机地址、网络或访问令牌。'
 const slowLoading = '页面加载较慢，仍在等待响应。可以继续等待或重新连接。'
 const focusFailure = '已恢复连接，但未能定位通知对应会话，请在网页中手动选择。'
+const copyLog = '复制日志'
+const copyLogDone = '诊断日志已复制，可直接粘贴到问题反馈中。'
+const copyLogFailed = '复制失败，请检查系统的剪贴板权限。'
 let screen: ReactTestRenderer | undefined
 let store: typeof import('@/store/modules/connection')
 let connection: typeof import('@/store/modules/connection').connection
@@ -178,9 +183,9 @@ async function viewRef(): Promise<NativeViewRef> {
   return root().findByType(WebView).instance as NativeViewRef
 }
 
-async function mount() {
+async function mount(address = alpha) {
   await act(async () => {
-    screen = create(createElement(BridgeWebView, { address: alpha, generation: connection.viewGeneration }))
+    screen = create(createElement(BridgeWebView, { address, generation: connection.viewGeneration }))
   })
 }
 
@@ -946,6 +951,91 @@ describe('rendered Bridge WebView document lifecycle', () => {
     expect(connection.history).toEqual([])
     expect(texts()).toContain(failure)
     expect(root().findAll(node => String(node.type) === 'Button').map(text)).toContain('重新连接')
+  })
+})
+
+describe('rendered Bridge WebView connection diagnostics', () => {
+  function copyLogButton() {
+    const buttons = root().findAll(node => String(node.type) === 'Button')
+    const matches = buttons.filter(node => text(node) === copyLog)
+    expect(matches).toHaveLength(1)
+    return matches[0]!
+  }
+
+  it('offers a copy-log button on the hard failure screen and copies the diagnostics on press', async () => {
+    await mount()
+    await act(async () => {
+      webView().props.onError({ nativeEvent: { code: -2, description: 'net::ERR_NAME_NOT_RESOLVED' } })
+    })
+    expect(texts()).toContain(failure)
+
+    await act(async () => {
+      copyLogButton().props.onPress()
+    })
+
+    expect(native.clipboard).toHaveBeenCalledOnce()
+    const log = native.clipboard.mock.calls[0]![0]
+    expect(log).toContain('address: http://bridge.test:3080/tasks')
+    expect(log).toContain('host: bridge.test')
+    expect(log).toContain('port: 3080')
+    expect(log).toContain(`loadError: ${failure}`)
+    expect(log).toContain('hasToken: no')
+    expect(log).toContain('loadTimedOut: no')
+    expect(connection.notice).toBe(copyLogDone)
+  })
+
+  it('offers the same copy-log button after the slow-page deadline and reports the timeout', async () => {
+    await mount()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20000)
+    })
+    expect(texts()).toContain(slowLoading)
+
+    await act(async () => {
+      copyLogButton().props.onPress()
+    })
+
+    const log = native.clipboard.mock.calls[0]![0]
+    expect(log).toContain('loadTimedOut: yes')
+    expect(log).toContain('loadError: none')
+    expect(connection.notice).toBe(copyLogDone)
+  })
+
+  it('never writes the access token into the copied diagnostics', async () => {
+    const secret = `v1.1700000000000.0.${'b'.repeat(64)}`
+    await unmount()
+    runtime.connectAddress({ ...alpha, token: secret })
+    await mount(connection.current!)
+    await act(async () => {
+      webView().props.onError({ nativeEvent: { code: -6 } })
+    })
+    expect(texts()).toContain(failure)
+    await act(async () => {
+      copyLogButton().props.onPress()
+    })
+
+    const log = native.clipboard.mock.calls[0]![0]
+    expect(log).toContain('hasToken: yes')
+    expect(log).not.toContain(secret)
+    expect(log).not.toContain('b'.repeat(64))
+  })
+
+  it('reports a clipboard failure once without losing the failure screen', async () => {
+    native.clipboard.mockImplementationOnce(() => {
+      throw new Error('clipboard unavailable')
+    })
+    await mount()
+    await act(async () => {
+      webView().props.onError({ nativeEvent: { code: -6 } })
+    })
+    expect(connection.loadError).toBe(failure)
+
+    await act(async () => {
+      copyLogButton().props.onPress()
+    })
+
+    expect(connection.notice).toBe(copyLogFailed)
+    expect(texts()).toContain(failure)
   })
 })
 
