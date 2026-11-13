@@ -986,18 +986,15 @@ pub(super) async fn launch_prepared(
     // UNABLE_TO_VERIFY_LEAF_SIGNATURE 而桌面端正常（issue #1530）。改用 Node 自带的
     // 系统信任库开关对齐：语义由 Node 维护，跨平台不必自行解析 CA；开关经
     // NODE_OPTIONS 传递，核心的 worker 线程与它 spawn 的子进程同样继承。
-    if let Some(version) = crate::config::get_node_version_of_path(&node_abs)
-        && crate::config::proxy::node_supports_system_ca(&version)
-    {
-        let base = envs
-            .get("NODE_OPTIONS")
-            .cloned()
-            .or_else(|| std::env::var("NODE_OPTIONS").ok())
-            .unwrap_or_default();
-        envs.insert(
-            "NODE_OPTIONS".to_string(),
-            crate::config::proxy::node_options_with_system_ca(&base),
-        );
+    let system_ca = crate::config::proxy::node_system_ca_options(
+        &node_abs,
+        envs.get("NODE_OPTIONS").map(String::as_str),
+    );
+    match system_ca {
+        Ok(options) => {
+            envs.insert("NODE_OPTIONS".to_string(), options);
+        }
+        Err(reason) => log::warn!("{reason}"),
     }
     // 提示里说的上限必须与进程真正拿到的上限一致，否则用户会看到「已设置 8192
     // 还提示 8192」这种自相矛盾的诊断（详见 heap.rs 的优先级说明）。

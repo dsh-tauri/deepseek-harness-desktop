@@ -1,5 +1,6 @@
 use crate::{AppHandle};
 use std::collections::HashMap;
+use std::path::Path;
 
 use reqwest::{ClientBuilder, NoProxy, Proxy, Url};
 use std::time::{Duration, Instant};
@@ -159,6 +160,29 @@ fn parse_node_version(version: &str) -> Option<(u32, u32)> {
     let major = parts.next()?.trim().parse().ok()?;
     let minor = parts.next()?.trim().parse().ok()?;
     Some((major, minor))
+}
+
+/// 给 Node 进程算出带系统信任库开关的 NODE_OPTIONS。
+///
+/// 运行时不认识该开关时返回 `Err`（调用方记录告警）：未知开关会让 Node 直接以
+/// "bad option" 退出，比静默不信任系统 CA 更糟。`existing` 是调用方已有的
+/// NODE_OPTIONS；为 `None` 时取进程继承来的那份。
+pub fn node_system_ca_options(node: &Path, existing: Option<&str>) -> Result<String, String> {
+    let version = super::runtime::get_node_version_of_path(node).ok_or_else(|| {
+        "NODE_VERSION_UNKNOWN: cannot probe the Node runtime version; --use-system-ca not applied"
+            .to_string()
+    })?;
+    if !node_supports_system_ca(&version) {
+        return Err(format!(
+            "NODE_SYSTEM_CA_UNSUPPORTED: Node {version} does not support --use-system-ca; \
+             TLS trust stays on the bundled CA list"
+        ));
+    }
+    let base = existing
+        .map(str::to_string)
+        .or_else(|| std::env::var("NODE_OPTIONS").ok())
+        .unwrap_or_default();
+    Ok(node_options_with_system_ca(&base))
 }
 
 /// 子进程代理环境（issue #110）：把配置页的代理地址翻译成核心与插件子进程能读的

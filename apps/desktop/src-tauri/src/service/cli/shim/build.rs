@@ -2061,4 +2061,33 @@ mod tests {
             assert!(user_at < home_at);
         }
     }
+
+    /// shim 也要让核心信任系统 CA store：桌面端 Rust 侧读的是系统信任库，
+    /// Node 默认只信自带 CA 列表，走 TLS 中间人的代理时核心会校验失败
+    /// （issue #1530）。开关追加在用户自己的 NODE_OPTIONS 之后，不能覆盖它。
+    #[test]
+    fn shim_appends_the_system_ca_switch_to_node_options() {
+        let cmd = build_cmd_shim(&sample_shim_paths(), &sample_dsh_home());
+        assert!(cmd.contains(r#"set "NODE_OPTIONS=%NODE_OPTIONS% --use-system-ca""#));
+        let ps1 = build_ps1_shim(&sample_shim_paths(), &sample_dsh_home());
+        assert!(ps1.contains(r#"$env:NODE_OPTIONS = "$env:NODE_OPTIONS --use-system-ca""#));
+        #[cfg(not(windows))]
+        {
+            let sh = build_sh_shim(&sample_shim_paths(), &sample_dsh_home());
+            assert!(sh.contains(r#"export NODE_OPTIONS="${NODE_OPTIONS:-} --use-system-ca""#));
+        }
+    }
+
+    /// node 启动器会转发用户自己的 node（可能不认识该开关，未知开关会让 Node
+    /// 直接以 "bad option" 退出），因此不得带上系统信任库开关。
+    #[test]
+    fn node_launcher_shim_keeps_node_options_untouched() {
+        let cmd = build_node_cmd_shim(&sample_shim_paths());
+        assert!(!cmd.contains("--use-system-ca"));
+        #[cfg(not(windows))]
+        {
+            let sh = build_node_sh_shim(&sample_shim_paths());
+            assert!(!sh.contains("--use-system-ca"));
+        }
+    }
 }

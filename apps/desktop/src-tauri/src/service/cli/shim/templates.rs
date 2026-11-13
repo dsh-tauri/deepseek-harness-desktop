@@ -41,6 +41,10 @@ if exist "%NODE%" goto :launch
 if not exist "%NODE_BIN%" goto :no_node
 set "NODE=%NODE_BIN%"
 set "PATH=%NODE_DIR%;%PATH%"
+rem Trust the OS CA store, like the desktop's Rust side does: Node trusts only
+rem its bundled CA list by default, so a TLS-intercepting proxy breaks the core
+rem while the desktop works (issue #1530). Appended to the user's own value.
+set "NODE_OPTIONS=%NODE_OPTIONS% --use-system-ca"
 "#;
 
 pub(super) const PS1_NODE_RESOLVE: &str = r#"
@@ -65,6 +69,10 @@ if (-not $node) {
     exit 1
 }
 $env:ELECTRON_RUN_AS_NODE = '1'
+# Trust the OS CA store, like the desktop's Rust side does: Node trusts only
+# its bundled CA list by default, so a TLS-intercepting proxy breaks the core
+# while the desktop works (issue #1530). Appended to the user's own value.
+$env:NODE_OPTIONS = "$env:NODE_OPTIONS --use-system-ca"
 "#;
 
 pub(super) const SH_NODE_RESOLVE: &str = r#"
@@ -85,6 +93,10 @@ if [ -z "$NODE" ]; then
   exit 1
 fi
 export ELECTRON_RUN_AS_NODE=1
+# Trust the OS CA store, like the desktop's Rust side does: Node trusts only
+# its bundled CA list by default, so a TLS-interlecting proxy breaks the core
+# while the desktop works (issue #1530). Appended to the user's own value.
+export NODE_OPTIONS="${NODE_OPTIONS:-} --use-system-ca"
 "#;
 
 // ---------------------------------------------------------------------------
