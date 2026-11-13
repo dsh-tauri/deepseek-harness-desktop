@@ -6,8 +6,8 @@
 //! 下载后若有摘要则强制校验。
 
 use crate::AppHandle;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use futures_util::StreamExt;
 use tauri::{Emitter, Manager};
@@ -21,6 +21,11 @@ use super::version::current_version;
 #[cfg(target_os = "linux")]
 use super::version::{running_appimage, self_updatable};
 use super::{DOWNLOAD_TIMEOUT_SECS, UPDATES_DIR};
+
+const HANDOFF_DIR: &str = "handoff";
+const HANDOFF_PREFIX: &str = ".installer-handoff-";
+// 系统处理器可能异步读取安装包，且没有统一的完成回调。保留一周，供用户完成安装。
+const HANDOFF_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// 就地替换不了的媒介不发起更新：系统包安装（非 deb/rpm 宿主，或当前二进制不归该
 /// 家族的包管理）下载的任何格式都只会「另跑一份」，桌面条目仍指向旧版本，用户点完
@@ -94,7 +99,41 @@ fn prune_installers_in_dir(dir: &std::path::Path, protected: &[PathBuf]) -> std:
         if protected || dunce::canonicalize(&path)?.parent() != Some(root.as_path()) {
             continue;
         }
-        if let Err(error) = std::fs::remove_file(&path) {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(digest_path(&path));
+            }
+            Err(error) => log::warn!("UPDATE_PRUNE: failed to remove {}: {error}", path.display()),
+        }
+    }
+    Ok(())
+}
+
+fn prune_expired_handoffs(dir: &Path, now: SystemTime) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_name().to_string_lossy().starts_with(HANDOFF_PREFIX) {
+            continue;
+        }
+        let path = entry.path();
+        let meta = match entry.metadata() {
+            Ok(meta) if meta.is_file() => meta,
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if now
+            .duration_since(meta.modified()?)
+            .is_ok_and(|age| age >= HANDOFF_RETENTION)
+            && let Err(error) = std::fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
             log::warn!("UPDATE_PRUNE: failed to remove {}: {error}", path.display());
         }
     }
@@ -113,6 +152,9 @@ fn prune_old_installers(app_handle: &AppHandle) {
         protected.push(PathBuf::from(appimage));
     }
     let result = updates_dir(app_handle).and_then(|dir| {
+        if let Err(error) = prune_expired_handoffs(&dir.join(HANDOFF_DIR), SystemTime::now()) {
+            log::warn!("UPDATE_PRUNE: failed to clean installer handoffs: {error}");
+        }
         prune_installers_in_dir(&dir, &protected).map_err(|error| error.to_string())
     });
     if let Err(error) = result {
@@ -149,7 +191,13 @@ pub async fn check(app_handle: &AppHandle) -> Result<Option<DesktopUpdateInfo>, 
         None => Ok(None),
         Some(r) => {
             let path = installer_path(app_handle, &r.asset_name)?;
-            let downloaded = path.exists();
+            let cache_path = path.clone();
+            let expected = r.digest.clone();
+            let downloaded = tokio::task::spawn_blocking(move || {
+                cached_installer_is_ready(&cache_path, expected.as_deref())
+            })
+            .await
+            .unwrap_or(false);
             Ok(Some(DesktopUpdateInfo {
                 version: r.version,
                 current_version: current_version(),
@@ -264,9 +312,7 @@ fn ensure_installer_executable(path: &std::path::Path) -> Result<(), String> {
 /// 安装包可达数百 MB，先 `std::fs::read` 整块读进内存再校验会翻倍占用内存；
 /// 这里按块流式喂给 `Sha256`，完成时仅保留 32 字节摘要。摘要格式接受
 /// `sha256:<64hex>` 或裸 `<64hex>`（统一转小写比较）。
-fn verify_installer_sha256(path: &std::path::Path, expected: &str) -> Result<(), String> {
-    use sha2::Digest;
-    use std::io::Read;
+fn verify_installer_sha256(path: &Path, expected: &str) -> Result<String, String> {
     let expected = expected
         .strip_prefix("sha256:")
         .unwrap_or(expected)
@@ -274,6 +320,21 @@ fn verify_installer_sha256(path: &std::path::Path, expected: &str) -> Result<(),
         .to_ascii_lowercase();
     if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("INTEGRITY_METADATA_INVALID: expected SHA-256 is invalid".to_string());
+    }
+    let actual = installer_sha256(path)?;
+    if actual != expected {
+        return Err(format!(
+            "INTEGRITY_CHECK_FAILED: SHA-256 mismatch, expected {expected}, got {actual}"
+        ));
+    }
+    Ok(actual)
+}
+
+fn installer_sha256(path: &Path) -> Result<String, String> {
+    use sha2::Digest;
+    use std::io::Read;
+    if !std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() > 0) {
+        return Err("INTEGRITY_CHECK_FAILED: installer is empty or not a regular file".to_string());
     }
     let mut file = std::fs::File::open(path).map_err(|e| format!("UPDATE_FILE: {e}"))?;
     let mut hasher = sha2::Sha256::new();
@@ -287,12 +348,58 @@ fn verify_installer_sha256(path: &std::path::Path, expected: &str) -> Result<(),
         }
         hasher.update(&buf[..n]);
     }
-    let actual = format!("{:x}", hasher.finalize());
-    if actual != expected {
-        return Err(format!(
-            "INTEGRITY_CHECK_FAILED: SHA-256 mismatch, expected {expected}, got {actual}"
-        ));
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn digest_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".sha256");
+    PathBuf::from(name)
+}
+
+fn read_installer_digest(path: &Path) -> Result<String, String> {
+    let digest = digest_path(path);
+    if !std::fs::symlink_metadata(&digest).is_ok_and(|meta| meta.is_file() && meta.len() == 64) {
+        return Err("UPDATE_CACHE_UNVERIFIED: installer has no recorded SHA-256".to_string());
     }
+    let digest = std::fs::read_to_string(digest)
+        .map_err(|e| format!("UPDATE_CACHE_UNVERIFIED: cannot read recorded SHA-256: {e}"))?;
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(
+            "UPDATE_CACHE_UNVERIFIED: installer has an invalid recorded SHA-256".to_string(),
+        );
+    }
+    Ok(digest)
+}
+
+fn cached_installer_is_ready(path: &Path, expected: Option<&str>) -> bool {
+    let Ok(digest) = read_installer_digest(path) else {
+        return false;
+    };
+    if let Some(expected) = expected
+        && !digest.eq_ignore_ascii_case(expected.strip_prefix("sha256:").unwrap_or(expected))
+    {
+        return false;
+    }
+    verify_installer_sha256(path, &digest).is_ok()
+}
+
+fn write_installer_digest(path: &Path, digest: &str) -> Result<(), String> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or("UPDATE_FILE: installer has no parent directory")?;
+    let mut staging = tempfile::Builder::new()
+        .prefix(".installer-")
+        .suffix(".part")
+        .tempfile_in(parent)
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
+    staging
+        .write_all(digest.as_bytes())
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
+    staging
+        .persist(digest_path(path))
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
     Ok(())
 }
 
@@ -312,13 +419,11 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
         .await?
         .ok_or_else(|| "UPDATE_NONE".to_string())?;
     let path = installer_path(app_handle, &release.asset_name)?;
-    if !path.exists() {
-        let client = download_client(app_handle)?;
-        download_installer(&client, &release, &path, |progress| {
-            let _ = app_handle.emit("desktop-update-progress", progress);
-        })
-        .await?;
-    }
+    let client = download_client(app_handle)?;
+    download_installer(&client, &release, &path, |progress| {
+        let _ = app_handle.emit("desktop-update-progress", progress);
+    })
+    .await?;
     super::pending::set(app_handle, Some((path.as_path(), &release.version)));
     Ok(DesktopUpdateInfo {
         version: release.version,
@@ -400,8 +505,23 @@ async fn download_installer(
             parent.display()
         ),
     }
-    if path.exists() {
-        return Ok(());
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            let expected = release
+                .digest
+                .clone()
+                .map_or_else(|| read_installer_digest(path), Ok);
+            match expected.and_then(|digest| verify_installer_sha256(path, &digest)) {
+                Ok(digest) => return write_installer_digest(path, &digest),
+                Err(error) => log::warn!(
+                    "Discarding unusable installer cache for {}: {error}",
+                    release.asset_name
+                ),
+            }
+            std::fs::remove_file(path).map_err(|e| format!("UPDATE_FILE: {e}"))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("UPDATE_FILE: {error}")),
     }
     // 官方直连 → （可选）多个 GitHub 代理镜像兜底。安装包无 SHA-256 元数据，切换源时
     // 丢弃上一源的部分字节从头下载，避免混用两个源的字节流。
@@ -455,17 +575,17 @@ async fn download_installer(
 
     // 完整性校验：摘要存在（镜像路径必有）则强制校验，校验失败即拒绝，
     // 不保留为可安装文件，也不能被 open_installer 打开。流式校验避免整块读入内存。
-    if let Some(digest) = &release.digest {
-        verify_installer_sha256(&tmp, digest).map_err(|e| format!("UPDATE_DOWNLOAD: {e}"))?;
-        log::info!("Installer SHA-256 verified for {}", release.asset_name);
+    let digest = match release.digest.as_deref() {
+        Some(expected) => verify_installer_sha256(&tmp, expected),
+        None => installer_sha256(&tmp),
     }
+    .map_err(|e| format!("UPDATE_DOWNLOAD: {e}"))?;
 
     #[cfg(unix)]
     ensure_installer_executable(&tmp)?;
     tmp.persist_noclobber(path)
         .map_err(|e| format!("UPDATE_FILE: {e}"))?;
-
-    Ok(())
+    write_installer_digest(path, &digest)
 }
 
 /// 校验已规范化的安装包路径确实位于 updates 目录内（防 `..`、符号链接、路径穿越）。
@@ -495,11 +615,21 @@ fn ensure_within_updates_dir(
     Ok(())
 }
 
-/// 校验安装包路径：必须是 `AppData/updates/` 目录内的真实文件，并返回其规范化路径。
+pub(super) struct PreparedInstaller {
+    staged: tempfile::TempPath,
+    #[cfg(target_os = "linux")]
+    running_appimage: Option<PathBuf>,
+}
+
+/// 校验缓存并准备系统处理器或 AppImage 替换所需的临时文件，完成后才停服。
 ///
 /// 安全边界：任意路径、绝对/相对遍历、`..`、指向目录外的符号链接都会拒绝，
 /// 避免被伪装的 frame 或插件利用去执行任意文件。
-fn resolve_installer_path(app_handle: &AppHandle, path: &str) -> Result<PathBuf, String> {
+pub(super) fn prepare_installer(
+    app_handle: &AppHandle,
+    path: &str,
+) -> Result<PreparedInstaller, String> {
+    ensure_self_updatable()?;
     let updates_dir = updates_dir(app_handle)?;
     let p = std::path::Path::new(path);
     if !p.exists() || !p.is_file() {
@@ -511,7 +641,41 @@ fn resolve_installer_path(app_handle: &AppHandle, path: &str) -> Result<PathBuf,
     let canonical = dunce::canonicalize(p).map_err(|e| format!("UPDATE_OPEN: {e}"))?;
     let updates_real = dunce::canonicalize(&updates_dir).map_err(|e| format!("UPDATE_DIR: {e}"))?;
     ensure_within_updates_dir(&canonical, &updates_real)?;
-    Ok(canonical)
+    let digest = read_installer_digest(&canonical)?;
+    // 便携镜像在原目录暂存，发布时原子替换用户实际启动的文件（issue #1410）。
+    #[cfg(target_os = "linux")]
+    let running_appimage = if is_appimage(&canonical) {
+        Some(running_appimage().ok_or(
+            "UPDATE_MEDIA_UNSUPPORTED: portable image cannot replace this install",
+        )?)
+    } else {
+        None
+    };
+    #[cfg(target_os = "linux")]
+    let running_path = running_appimage.as_deref();
+    #[cfg(not(target_os = "linux"))]
+    let running_path: Option<&Path> = None;
+    let staging_dir = match running_path {
+        Some(path) => path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .to_path_buf(),
+        None => {
+            let dir = updates_real.join(HANDOFF_DIR);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("UPDATE_FILE: {e}"))?;
+            if !std::fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir()) {
+                return Err("UPDATE_FILE: invalid installer handoff directory".into());
+            }
+            dir
+        }
+    };
+    let staged = stage_verified_installer(&canonical, &digest, &staging_dir)?;
+    Ok(PreparedInstaller {
+        staged,
+        #[cfg(target_os = "linux")]
+        running_appimage,
+    })
 }
 
 /// 是否是 AppImage 安装包（Linux 便携格式，自带运行时可执行）。
@@ -523,46 +687,16 @@ fn is_appimage(path: &std::path::Path) -> bool {
 
 /// 把下载好的新镜像覆盖到用户启动时使用的那个 AppImage 上（issue #1410）。
 ///
-/// 只 exec 下载目录里的副本时，桌面条目与命令名仍指向旧镜像，用户下次从原路径启动
-/// 还是旧版本。先复制到原文件同目录的暂存文件再 `rename` 覆盖：旧镜像已映射进当前
-/// 进程，替换目录项不影响运行中的实例，且 `rename` 本身是原子的，中途失败不会留下
-/// 半截镜像。暂存名带进程号并用 `create_new` 独占创建——固定名会被残留文件或符号
-/// 链接接管，把新镜像写到别处、还会在失败清理时删掉别人的文件。原目录不可写
-/// （例如放在 root 拥有的 `/opt`）时明确拒绝，不做「另跑一份」。
+/// 同目录原子替换保留桌面条目指向的路径，且不会在原路径留下写了一半的镜像。
 #[cfg(target_os = "linux")]
-fn replace_running_appimage(
-    target: &std::path::Path,
-    downloaded: &std::path::Path,
-) -> Result<(), String> {
-    let staging = target.with_extension(format!("AppImage.{}.new", std::process::id()));
-    // 独占创建：名字已被占用（残留文件或符号链接）就放弃，不覆盖、也不认领别人的文件，
-    // 后面的清理因此只会删掉本次真正创建的那个。
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&staging)
-        .map_err(|error| {
-            format!(
-                "UPDATE_MEDIA_UNSUPPORTED: cannot create {}: {error}",
-                staging.display()
-            )
-        })?;
-    let result = std::fs::copy(downloaded, &staging)
-        .map_err(|error| error.to_string())
-        .and_then(|_| ensure_installer_executable(&staging))
-        .and_then(|()| std::fs::rename(&staging, target).map_err(|error| error.to_string()));
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&staging);
-        return Err(format!(
+fn replace_running_appimage(target: &Path, staged: tempfile::TempPath) -> Result<(), String> {
+    staged.persist(target).map_err(|error| {
+        format!(
             "UPDATE_MEDIA_UNSUPPORTED: cannot replace {}: {error}",
             target.display()
-        ));
-    }
-    log::info!(
-        "Replaced running AppImage {} with {}",
-        target.display(),
-        downloaded.display()
-    );
+        )
+    })?;
+    log::info!("Replaced running AppImage {}", target.display());
     Ok(())
 }
 
@@ -851,7 +985,31 @@ fn open_with_system_handler(file: &std::path::Path) -> Result<(), String> {
     spawn_waited_handler(&command).map(|_| ())
 }
 
-/// 校验安装包并交给系统默认处理器打开（不停服务、不动「待安装」标记）。
+fn stage_verified_installer(
+    path: &Path,
+    digest: &str,
+    staging_dir: &Path,
+) -> Result<tempfile::TempPath, String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or("UPDATE_FILE: installer has no file extension")?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(HANDOFF_PREFIX)
+        .suffix(&format!(".{extension}"))
+        .tempfile_in(staging_dir)
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
+    let mut source = std::fs::File::open(path)
+        .map_err(|e| format!("UPDATE_CACHE_UNVERIFIED: cannot open installer: {e}"))?;
+    std::io::copy(&mut source, staged.as_file_mut()).map_err(|e| format!("UPDATE_FILE: {e}"))?;
+    verify_installer_sha256(staged.path(), digest)
+        .map_err(|e| format!("UPDATE_CACHE_UNVERIFIED: {e}"))?;
+    #[cfg(unix)]
+    ensure_installer_executable(staged.path())?;
+    Ok(staged.into_temp_path())
+}
+
+/// 将已验证的暂存安装包交给系统处理器，或发布并启动新的 AppImage。
 ///
 /// **调用方必须先停 Harness**（见 [`stop_for_installer`](crate::service::workflow::stop_for_installer)）：
 /// 安装器会强杀桌面端进程，桌面端先消失就没人回收 Harness 子进程，它变成孤儿继续
@@ -859,31 +1017,17 @@ fn open_with_system_handler(file: &std::path::Path) -> Result<(), String> {
 /// 「对话框立即更新」用 async 的 `workflow::stop`（要更新状态），「退出时自动更新」
 /// 用同步的 `stop_for_installer`（退出路径没有 async 运行时可用）。停止动作不放在
 /// 这里，是为了让每条路径都能按自己的时序等待端口释放。
-pub(super) fn open_installer_now(app_handle: &AppHandle, path: &str) -> Result<(), String> {
-    ensure_self_updatable()?;
-    let resolved = resolve_installer_path(app_handle, path)?;
-    log::info!("Opening desktop installer: {}", resolved.display());
-    // 兜底补充可执行权限：兼容老版本下载的 AppImage（0644）被打包用户留存，
-    // 直接打开仍会失败；此处幂等修复后再交给系统处理器。
-    #[cfg(unix)]
-    ensure_installer_executable(&resolved)?;
-
+pub(super) fn open_installer_now(
+    app_handle: &AppHandle,
+    installer: PreparedInstaller,
+) -> Result<(), String> {
+    log::info!("Opening desktop installer: {}", installer.staged.display());
     // Linux：AppImage 自带运行时，直接执行；xdg-open 依赖桌面注册的 MIME
     // 处理器，COSMIC 等未注册的环境会静默失败（open::that_detached 只检查
     // 进程是否 spawn 成功，看不到 xdg-open 的退出码）。
     #[cfg(target_os = "linux")]
-    if is_appimage(&resolved) {
-        // 便携镜像的更新目标是「用户启动时用的那个文件」，不是下载目录里的副本：
-        // 只 exec 副本，桌面条目与命令名仍指向旧镜像（issue #1410）。替换成功后就
-        // 从原路径重启，新实例的 `APPIMAGE` 也回到原路径，不留第二条升级链。
-        // 当前不是镜像启动的（系统包安装却拿到 AppImage 兜底），替换目标不存在，
-        // 一律拒绝，不做「另跑一份」的假升级。
-        let Some(running) = running_appimage() else {
-            return Err(
-                "UPDATE_MEDIA_UNSUPPORTED: portable image cannot replace this install".to_string(),
-            );
-        };
-        replace_running_appimage(&running, &resolved)?;
+    if let Some(running) = installer.running_appimage {
+        replace_running_appimage(&running, installer.staged)?;
         std::process::Command::new(&running)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -896,16 +1040,25 @@ pub(super) fn open_installer_now(app_handle: &AppHandle, path: &str) -> Result<(
     // .deb/.rpm 仍交给系统默认处理器（软件中心 / 包管理器），但由本进程启动，
     // 让处理器有活着的父进程，否则其提权按钮会被 pkexec 的孤儿检查拒绝
     // （issue #865）。处理器解析失败时退回 opener 的分离式交接：至少能打开。
+    // 处理器可能在本进程退出后读取文件；更新检查会按保留期清理成功交付的副本。
+    let handoff = installer
+        .staged
+        .keep()
+        .map_err(|e| format!("UPDATE_FILE: {e}"))?;
     #[cfg(target_os = "linux")]
-    match open_with_system_handler(&resolved) {
+    match open_with_system_handler(&handoff) {
         Ok(()) => return Ok(()),
         Err(error) => log::warn!("UPDATE_OPEN: system handler launch failed: {error}"),
     }
 
-    app_handle
+    let result = app_handle
         .opener()
-        .open_path(resolved.to_string_lossy(), None::<&str>)
-        .map_err(|e| format!("UPDATE_OPEN: {e}"))
+        .open_path(handoff.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("UPDATE_OPEN: {e}"));
+    if result.is_err() {
+        let _ = std::fs::remove_file(handoff);
+    }
+    result
 }
 
 /// 打开安装包：交给系统默认处理器（Windows 会触发 UAC 执行安装器）。
@@ -916,6 +1069,13 @@ pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), 
         );
     }
     let _transition = workflow::acquire_core_transition().await?;
+    let preparation_handle = app_handle.clone();
+    let installer =
+        tokio::task::spawn_blocking(move || prepare_installer(&preparation_handle, &path))
+            .await
+            .map_err(|e| format!("UPDATE_FILE: failed to prepare installer: {e}"))??;
+    #[cfg(target_os = "linux")]
+    let replaces_appimage = installer.running_appimage.is_some();
     for profile in workflow::instances::profiles() {
         workflow::instances::scope(profile, async {
             if workflow::has_owned_process() {
@@ -925,7 +1085,7 @@ pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), 
         })
         .await?;
     }
-    open_installer_now(app_handle, &path)?;
+    open_installer_now(app_handle, installer)?;
     // 安装包已交给系统 → 清除「待安装」标记，避免退出应用时重复拉起安装器。
     super::pending::set(app_handle, None);
 
@@ -934,7 +1094,7 @@ pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), 
     // 释放单实例名并退出，让已拉起的新版本接管；.deb/.rpm 由包管理器处理，
     // 无需结束当前实例。
     #[cfg(target_os = "linux")]
-    if is_appimage(std::path::Path::new(&path)) {
+    if replaces_appimage {
         release_appimage_instance(app_handle).await?;
         app_handle.exit(0);
     }
@@ -982,11 +1142,84 @@ mod tests {
         let mut files: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .map(|entry| entry.unwrap())
-            .filter(|entry| entry.file_name() != ".installer-download.lock")
+            .filter(|entry| {
+                entry.file_name() != ".installer-download.lock"
+                    && entry.path().extension().is_none_or(|ext| ext != "sha256")
+            })
             .map(|entry| entry.path())
             .collect();
         files.sort();
         files
+    }
+
+    #[test]
+    fn unreadable_digest_uses_the_cache_retry_error() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("installer.dmg");
+        std::fs::write(digest_path(&path), [0xff; 64]).unwrap();
+        let error = read_installer_digest(&path).unwrap_err();
+        assert!(error.starts_with("UPDATE_CACHE_UNVERIFIED:"), "{error}");
+    }
+
+    #[test]
+    fn system_handoff_keeps_verified_bytes_when_cache_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("installer.dmg");
+        std::fs::write(&path, b"abc").unwrap();
+        let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let staged = stage_verified_installer(&path, digest, root.path()).unwrap();
+        std::fs::write(&path, b"changed").unwrap();
+
+        assert_eq!(staged.extension().unwrap(), "dmg");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"abc");
+        let error = stage_verified_installer(&path, digest, root.path()).unwrap_err();
+        assert!(error.starts_with("UPDATE_CACHE_UNVERIFIED:"), "{error}");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn download_replaces_corrupt_cache_then_reuses_verified_bytes_offline() {
+        use tokio::io::AsyncWriteExt;
+        let _download = TEST_DOWNLOAD_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("installer.AppImage");
+        std::fs::write(&path, b"corrupt").unwrap();
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        write_installer_digest(&path, expected).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut release = local_release(format!(
+            "http://{}/installer",
+            listener.local_addr().unwrap()
+        ));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_http_request(&mut socket).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc")
+                .await
+                .unwrap();
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        download_installer(&client, &release, &path, |_| {})
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+        assert_eq!(read_installer_digest(&path).unwrap(), expected);
+        assert!(cached_installer_is_ready(&path, Some(expected)));
+        assert!(!cached_installer_is_ready(&path, Some(&"0".repeat(64))));
+        release.url = "http://127.0.0.1:0".into();
+        download_installer(&client, &release, &path, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
     }
 
     #[tokio::test]
@@ -1331,6 +1564,7 @@ mod tests {
             assert!(!path.exists());
             assert!(download_cache_files(dir.path()).is_empty());
             std::fs::write(&path, b"complete").unwrap();
+            write_installer_digest(&path, "eebbf6457e46a7f63acdf9b97390f790ba443d60cfa44b607da7e5c40aa1cc1d").unwrap();
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
@@ -1506,6 +1740,9 @@ mod tests {
         let profiles = opening
             .find("for profile in workflow::instances::profiles()")
             .unwrap();
+        let preparation = opening
+            .find("prepare_installer(&preparation_handle, &path)")
+            .unwrap();
         let scope = opening
             .find("workflow::instances::scope(profile, async {")
             .unwrap();
@@ -1513,9 +1750,10 @@ mod tests {
             .find("workflow::stop(app_handle.clone()).await?")
             .unwrap();
         let handoff = opening
-            .find("open_installer_now(app_handle, &path)?")
+            .find("open_installer_now(app_handle, installer)?")
             .unwrap();
-        assert!(transition < profiles && profiles < scope && scope < stop && stop < handoff);
+        assert!(transition < preparation && preparation < profiles);
+        assert!(profiles < scope && scope < stop && stop < handoff);
         assert!(opening[stop..handoff].contains(".await?;"));
     }
 
@@ -1528,6 +1766,38 @@ mod tests {
             prune_installers_in_dir(dir.path(), &[]).unwrap();
             assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), i + 1);
         }
+    }
+
+    #[test]
+    fn handoffs_are_pruned_by_age_separately_from_the_installer_cache() {
+        let updates = tempfile::tempdir().unwrap();
+        let handoffs = updates.path().join(HANDOFF_DIR);
+        std::fs::create_dir(&handoffs).unwrap();
+        let now = SystemTime::now();
+        let old = handoffs.join(format!("{HANDOFF_PREFIX}old.exe"));
+        let recent = handoffs.join(format!("{HANDOFF_PREFIX}recent.exe"));
+        let other = handoffs.join("other.exe");
+        for (path, age) in [
+            (&old, HANDOFF_RETENTION + Duration::from_secs(60)),
+            (&recent, Duration::from_secs(60)),
+            (&other, HANDOFF_RETENTION + Duration::from_secs(60)),
+        ] {
+            std::fs::File::create(path)
+                .unwrap()
+                .set_modified(now - age)
+                .unwrap();
+        }
+        for index in 0..6 {
+            std::fs::write(updates.path().join(format!("cache-{index}.exe")), b"cache").unwrap();
+        }
+
+        prune_installers_in_dir(updates.path(), &[]).unwrap();
+        assert_eq!(std::fs::read_dir(updates.path()).unwrap().count(), 6);
+        assert!(old.exists() && recent.exists() && other.exists());
+
+        prune_expired_handoffs(&handoffs, now).unwrap();
+        assert!(!old.exists());
+        assert!(recent.exists() && other.exists());
     }
 
     #[test]
@@ -1649,7 +1919,14 @@ mod tests {
         std::fs::write(&running, b"old-image").unwrap();
         std::fs::write(&downloaded, b"new-image").unwrap();
 
-        replace_running_appimage(&running, &downloaded).unwrap();
+        let staged = stage_verified_installer(
+            &downloaded,
+            &installer_sha256(&downloaded).unwrap(),
+            dir.path(),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&running).unwrap(), b"old-image");
+        replace_running_appimage(&running, staged).unwrap();
         assert_eq!(std::fs::read(&running).unwrap(), b"new-image");
         let mode = std::fs::metadata(&running).unwrap().permissions().mode();
         assert_eq!(mode & 0o111, 0o111, "替换后的镜像必须可执行，mode={mode:o}");
@@ -1666,7 +1943,11 @@ mod tests {
         let target = read_only.join("DSH.AppImage");
         std::fs::write(&target, b"old-image").unwrap();
         std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let result = replace_running_appimage(&target, &downloaded);
+        let result = stage_verified_installer(
+            &downloaded,
+            &installer_sha256(&downloaded).unwrap(),
+            &read_only,
+        );
         std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o755)).unwrap();
         // root 无视目录权限位，该断言只在普通用户下有意义
         if unsafe { libc::geteuid() } != 0 {
@@ -1675,23 +1956,44 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"old-image");
     }
 
-    /// 暂存文件独占创建：同名残留文件不会被覆盖，失败清理也不会删掉别人的文件。
     #[cfg(target_os = "linux")]
     #[test]
-    fn replace_running_appimage_never_reuses_a_stale_staging_file() {
+    fn changed_cached_image_cannot_replace_the_running_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = dir.path().join("current.AppImage");
+        let downloaded = dir.path().join("next.AppImage");
+        std::fs::write(&running, b"working").unwrap();
+        std::fs::write(&downloaded, b"verified").unwrap();
+        let digest = installer_sha256(&downloaded).unwrap();
+
+        for corrupt in [b"".as_slice(), b"changed!"] {
+            std::fs::write(&downloaded, corrupt).unwrap();
+            let error = stage_verified_installer(&downloaded, &digest, dir.path()).unwrap_err();
+            assert!(error.starts_with("UPDATE_CACHE_UNVERIFIED:"), "{error}");
+            assert!(error.contains("INTEGRITY_CHECK_FAILED"), "{error}");
+            assert_eq!(std::fs::read(&running).unwrap(), b"working");
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+        }
+    }
+
+    /// 两次准备各自拥有暂存文件，取消其中一次不会清理另一次的安装包。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn appimage_preparations_do_not_reuse_staged_files() {
         let dir = tempfile::tempdir().unwrap();
         let running = dir.path().join("DSH.AppImage");
         let downloaded = dir.path().join("DSH_0.30.5.AppImage");
         std::fs::write(&running, b"old-image").unwrap();
         std::fs::write(&downloaded, b"new-image").unwrap();
-        let stale = dir
-            .path()
-            .join(format!("DSH.AppImage.{}.new", std::process::id()));
-        std::fs::write(&stale, b"someone-else").unwrap();
-
-        assert!(replace_running_appimage(&running, &downloaded).is_err());
+        let digest = installer_sha256(&downloaded).unwrap();
+        let first = stage_verified_installer(&downloaded, &digest, dir.path()).unwrap();
+        let second = stage_verified_installer(&downloaded, &digest, dir.path()).unwrap();
+        assert_ne!(&*first, &*second);
+        let first_path = first.to_path_buf();
+        drop(first);
+        assert!(!first_path.exists());
+        assert_eq!(std::fs::read(&second).unwrap(), b"new-image");
         assert_eq!(std::fs::read(&running).unwrap(), b"old-image");
-        assert_eq!(std::fs::read(&stale).unwrap(), b"someone-else");
     }
 
     /// AppImage 识别按扩展名匹配且大小写不敏感；其它安装包格式不受影响。

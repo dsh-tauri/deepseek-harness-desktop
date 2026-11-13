@@ -10,11 +10,11 @@
 
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
 use crate::AppHandle;
+use serde::{Deserialize, Serialize};
 use tauri_plugin_store::StoreExt;
 
-use crate::config::{store_dat_file_name, STORE_PENDING_INSTALLER_KEY};
+use crate::config::{STORE_PENDING_INSTALLER_KEY, store_dat_file_name};
 use crate::service::workflow;
 
 /// 「待安装」标记：安装包路径 + 它对应的版本号。
@@ -101,6 +101,14 @@ pub fn launch_pending_installer(app_handle: &AppHandle) {
         return;
     }
 
+    let installer = match super::install::prepare_installer(app_handle, &pending.path) {
+        Ok(installer) => installer,
+        Err(error) => {
+            log::warn!("UPDATE_OPEN: rejecting pending installer: {error}");
+            return;
+        }
+    };
+
     log::info!(
         "Launching pending desktop installer on exit: {} ({})",
         pending.path,
@@ -115,7 +123,7 @@ pub fn launch_pending_installer(app_handle: &AppHandle) {
         log::error!("UPDATE_STOP_FAILED: refusing installer handoff: {error}");
         return;
     }
-    if let Err(error) = super::install::open_installer_now(app_handle, &pending.path) {
+    if let Err(error) = super::install::open_installer_now(app_handle, installer) {
         log::warn!("UPDATE_OPEN: failed to launch pending installer on exit: {error}");
     }
 }

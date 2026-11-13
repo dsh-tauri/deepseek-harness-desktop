@@ -158,6 +158,10 @@ export const desktopUpdater = defineStore({
         }
         catch (err) {
           console.error('[DesktopUpdater] failed to open installer:', err)
+          const current = this.updateInfo
+          const error = err instanceof Error ? err.message : String(err)
+          if (current?.path === path && /^(?:UPDATE_CACHE_UNVERIFIED|UPDATE_NOT_FOUND):/.test(error))
+            this.updateInfo = { ...current, downloaded: false }
           toast(i18next.t('update.desktop_open_failed'), {
             variant: 'danger',
             placement: 'bottom end',
