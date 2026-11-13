@@ -465,6 +465,7 @@
   "core.downloading": "코어 버전 {{version}} 다운로드 중",
   "core.downloading_hint": "{{version}} 다운로드 및 압축 해제 중입니다. 잠시 기다려 주십시오…",
   "core.download_close": "닫기",
+  "core.download_switch": "이 버전으로 전환",
   "core.open_dir": "폴더 열기",
   "core.open_dir_failed": "폴더를 열지 못했습니다.",
   "core.remove_failed": "코어 버전을 제거하지 못했습니다",

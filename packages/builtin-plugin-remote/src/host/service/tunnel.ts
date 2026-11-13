@@ -3,7 +3,7 @@ import type { TunnelProcess } from './tunnel.types'
 import { defineService } from 'dsh-tauri'
 import { messageOf } from '../../shared/error'
 import { localUpstream, mintAuthenticatedUrl, tunnelRuntimeDeps } from '../config/runtime'
-import { parseQuickTunnelUrl, quickTunnelArgs, tokenTunnelArgs, tokenTunnelEnv } from '../utils/cloudflared'
+import { parseQuickTunnelUrl, tokenTunnelEnv, tunnelArgs } from '../utils/cloudflared'
 import { readAccessDocument, writeAccessDocument } from './access.utils'
 import { gateway } from './gateway'
 
@@ -22,6 +22,8 @@ const STOP_GRACE_MS = 5_000
 const PROGRESS_STEP_PERCENT = 5
 
 const PROGRESS_MIN_INTERVAL_MS = 400
+
+const RESTART_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000]
 
 const NO_LOCAL_UPSTREAM = '无法确定本机 DSH 端口（宿主 webserver 未暴露端口且进程缺少 DSH_WEB_PORT），未启动隧道'
 
@@ -54,6 +56,10 @@ let progress: RemoteTunnelProgress | undefined
 let lastProgressAt = 0
 
 let lastProgressPercent = -1
+
+let restartTimer: NodeJS.Timeout | undefined
+
+let restartAttempt = 0
 
 export const tunnel = defineService({
   async status(): Promise<RemoteTunnelStatus> {
@@ -204,59 +210,64 @@ function persist(config: RemoteTunnelConfig): void {
 
 async function activate(): Promise<void> {
   await deactivate(undefined)
-  const config = tunnelConfig()
-  const upstream = localUpstream()
-  if (upstream === undefined) {
-    await fail(NO_LOCAL_UPSTREAM)
-    return
-  }
   state = 'starting'
   failure = undefined
   url = undefined
   setProgress({ stage: 'check' })
   try {
     const binary = await tunnelRuntimeDeps().resolveBinary(setProgress)
-    const entry = await gateway.start({
-      id: ENTRY_ID,
-      kind: 'tunnel',
-      upstream,
-      port: ENTRY_PORT,
-      host: ENTRY_HOST,
-      tokenProvider: mintAuthenticatedUrl,
-      auth: () => tunnelRuntimeDeps().policy(),
-      publicHost: () => publicHostOf(url),
-    })
-    bound = entry.port
-    setProgress({ stage: 'spawn' })
-    const args = config.mode === 'token' ? tokenTunnelArgs() : quickTunnelArgs(`http://${ENTRY_HOST}:${entry.port}`)
-    const env = config.mode === 'token' ? tokenTunnelEnv(config.token ?? '') : undefined
-    const generation = ++activation
-    child = tunnelRuntimeDeps().spawn(binary, args, {
-      onLine: line => onLine(config.mode, line, generation),
-      onExit: (code, signal) => onExit(code, signal, generation),
-    }, env)
-    if (generation !== activation) {
-      // 本次激活已被并发 stop 取代：立刻回收刚起的进程，避免留下孤儿 cloudflared
-      child.kill('SIGTERM')
-      child = undefined
-      return
-    }
-    note('state', `隧道入口已监听 ${ENTRY_HOST}:${entry.port}`)
-    if (config.mode === 'token') {
-      await ready(`https://${config.hostname ?? ''}`)
-    }
-    else {
-      setProgress({ stage: 'domain' })
-      note('process', 'cloudflared 已启动，等待分配 trycloudflare 域名')
-    }
+    bound = await listenGateway()
+    launch(tunnelConfig(), binary, ++activation)
   }
   catch (error) {
     await fail(messageOf(error))
   }
 }
 
+/** 网关入口复用：自动重建沿用首次监听成功的端口，不打断已建立的本地回环入口。 */
+async function listenGateway(): Promise<number> {
+  const listing = gateway.status(ENTRY_ID)
+  if (listing?.state === 'listening')
+    return listing.port
+  const upstream = localUpstream()
+  if (upstream === undefined)
+    throw new Error(NO_LOCAL_UPSTREAM)
+  const entry = await gateway.start({
+    id: ENTRY_ID,
+    kind: 'tunnel',
+    upstream,
+    port: ENTRY_PORT,
+    host: ENTRY_HOST,
+    tokenProvider: mintAuthenticatedUrl,
+    auth: () => tunnelRuntimeDeps().policy(),
+    publicHost: () => publicHostOf(url),
+  })
+  return entry.port
+}
+
+/// 代次由调用方持有并递增：spawn 抛错时不能把代次一起推进，否则重试会拿着失效代次被丢弃。
+function launch(config: RemoteTunnelConfig, executable: string, generation: number): void {
+  setProgress({ stage: 'spawn' })
+  const args = tunnelArgs(config.mode === 'token' ? undefined : `http://${ENTRY_HOST}:${bound}`)
+  const env = config.mode === 'token' ? tokenTunnelEnv(config.token ?? '') : undefined
+  child = tunnelRuntimeDeps().spawn(executable, args, {
+    onLine: line => onLine(config.mode, line, generation),
+    onExit: (code, signal) => onExit(code, signal, generation),
+  }, env)
+  note('state', `隧道入口已监听 ${ENTRY_HOST}:${bound}`)
+  setProgress({ stage: 'domain' })
+  note('process', config.mode === 'token'
+    ? 'cloudflared 已启动，等待连接 Cloudflare 边缘'
+    : 'cloudflared 已启动，等待分配 trycloudflare 域名')
+}
+
 async function deactivate(reason: string | undefined): Promise<void> {
   activation += 1
+  restartAttempt = 0
+  if (restartTimer !== undefined) {
+    clearTimeout(restartTimer)
+    restartTimer = undefined
+  }
   progress = undefined
   lastProgressPercent = -1
   const running = child
@@ -292,6 +303,7 @@ async function fail(reason: string): Promise<void> {
 }
 
 async function ready(next: string): Promise<void> {
+  restartAttempt = 0
   setProgress({ stage: 'ready' })
   state = 'running'
   url = next
@@ -328,17 +340,53 @@ function onExit(code: number | null, signal: NodeJS.Signals | null, generation: 
   if (generation !== activation)
     return
   child = undefined
-  bound = 0
   if (stopping)
     return
-  state = 'error'
+  // gateway 是长驻入口：异常退出只重建 cloudflared，隧道域名失效但本地端口留着给重试复用。
+  state = 'starting'
   url = undefined
-  failure = `cloudflared 已退出（${signal ?? code ?? '未知原因'}）`
+  scheduleRestart(generation, `cloudflared 已退出（${signal ?? code ?? '未知原因'}）`)
+}
+
+/** 退避重建：重试期间保持 starting 且不写 failure，面板继续显示「启动中」而不是「异常」。 */
+function scheduleRestart(generation: number, reason: string): void {
+  note('state', reason)
+  const delay = RESTART_DELAYS_MS[restartAttempt]
+  if (delay === undefined) {
+    void enqueue(async () => {
+      if (generation !== activation)
+        return
+      await exhaust(`${reason}；已自动重建 ${RESTART_DELAYS_MS.length} 次仍失败，请手动重试`)
+    })
+    return
+  }
+  restartAttempt += 1
+  note('state', `${delay / 1000} 秒后重建隧道（第 ${restartAttempt}/${RESTART_DELAYS_MS.length} 次）`)
+  restartTimer = setTimeout(() => {
+    restartTimer = undefined
+    void enqueue(() => retry(generation))
+  }, delay)
+}
+
+async function retry(generation: number): Promise<void> {
+  if (generation !== activation)
+    return
+  try {
+    const binary = await tunnelRuntimeDeps().resolveBinary()
+    bound = await listenGateway()
+    launch(tunnelConfig(), binary, ++activation)
+  }
+  catch (error) {
+    scheduleRestart(generation, `隧道重建失败：${messageOf(error)}`)
+  }
+}
+
+/** 重试耗尽才进入 error：此时隧道确实不可用，才拆掉本地入口并留给用户手动重试。 */
+async function exhaust(reason: string): Promise<void> {
+  failure = reason
+  state = 'error'
   note('state', failure)
-  void enqueue(async () => {
-    if (generation === activation)
-      await gateway.stop(ENTRY_ID)
-  })
+  await deactivate(undefined)
 }
 
 function hostOf(value: string): string | null {

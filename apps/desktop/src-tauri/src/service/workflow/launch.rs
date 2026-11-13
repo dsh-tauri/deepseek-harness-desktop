@@ -82,8 +82,9 @@ fn build_harness_args(
     port: u16,
     heap_mb: Option<u32>,
     report_path: &Path,
+    use_system_ca: bool,
 ) -> Vec<OsString> {
-    let mut args = Vec::with_capacity(12);
+    let mut args = Vec::with_capacity(13);
     args.extend(super::heap::heap_option_arg(heap_mb));
     let mut directory = OsString::from("--report-directory=");
     directory.push(report_path.parent().unwrap_or(Path::new(".")));
@@ -94,9 +95,9 @@ fn build_harness_args(
         directory,
         filename,
     ]);
-    if profile == crate::service::profile::DESKTOP_PROFILE
-        || config::asar_ancestor(dsh_binary).is_some()
-    {
+    let carrier = profile == crate::service::profile::DESKTOP_PROFILE
+        || config::asar_ancestor(dsh_binary).is_some();
+    if carrier {
         args.extend(crate::service::profile::carrier_node_args(
             profile == crate::service::profile::DESKTOP_PROFILE,
         ));
@@ -115,7 +116,59 @@ fn build_harness_args(
         OsString::from(port.to_string()),
         OsString::from("--no-open"),
     ]);
+    if use_system_ca {
+        let script = args
+            .iter()
+            .position(|arg| arg.as_os_str() == dsh_binary.as_os_str())
+            .unwrap_or(3);
+        args.insert(script, OsString::from(SYSTEM_CA_FLAG));
+    }
     args
+}
+
+const SYSTEM_CA_FLAG: &str = "--use-system-ca";
+
+/// issue #1530：核心 Node 自带 CA bundle，不认系统/代理信任库，TLS 中间人代理下
+/// `fetch` / undici 一律 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`，远程插件查 release、
+/// 下载 cloudflared 全挂；桌面 Rust 侧读系统信任库所以看起来一切正常。
+///
+/// flag 走命令行而非 `NODE_OPTIONS`：后者会被堆逻辑改写并可能被用户自带的
+/// `--require` 抢先，命令行在 Node 的选项解析里更靠前。Node < 22.15 不认识这个
+/// flag，只能降级为不注入（此时核心保持原行为，不会因为未知参数启动失败）。
+fn should_use_system_ca(node: &Path, node_version: Option<&str>) -> bool {
+    if inherited_has_system_ca_flag() {
+        log::info!("--use-system-ca is already supplied through NODE_OPTIONS, not adding it again");
+        return false;
+    }
+    if !system_ca_supported(node_version) {
+        log::info!(
+            "Skipping --use-system-ca for the Harness process: runtime {} reports node {node_version:?} (needs 22.15+)",
+            node.display()
+        );
+        return false;
+    }
+    log::info!(
+        "Using the system trust store for the Harness process (--use-system-ca, runtime={})",
+        node.display()
+    );
+    true
+}
+
+fn system_ca_supported(node_version: Option<&str>) -> bool {
+    node_version
+        .and_then(|version| semver::Version::parse(version.trim_start_matches('v')).ok())
+        .is_some_and(|version| version >= semver::Version::new(22, 15, 0))
+}
+
+fn inherited_has_system_ca_flag() -> bool {
+    std::env::var("NODE_OPTIONS").is_ok_and(|options| node_options_has_system_ca_flag(&options))
+}
+
+/// 该 flag 没有取值形式，因此只认整词相等，`--use-system-ca-xxx` 不算。
+fn node_options_has_system_ca_flag(node_options: &str) -> bool {
+    node_options
+        .split_whitespace()
+        .any(|token| token.trim_matches(['"', '\'']) == SYSTEM_CA_FLAG)
 }
 
 /// 从起始端口向上查找第一个空闲端口，绝不结束未知的端口占用进程。
@@ -926,12 +979,27 @@ pub(super) async fn launch_prepared(
         envs.insert("DSH_TAURI_CORE_VERSION".to_string(), version.to_string());
     }
 
-    // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
+    // issue #1064 / #1531：AppImage 注入的旧库与 Python 运行时不能泄漏给核心进程及其
+    // 拉起的外部应用。Python 两项是覆盖式环境表表达不了的「移除」，只能在 spawn 边界
+    // 用 env_remove / 环境块剔除落地，两侧（Unix Command、Windows CreateProcessW）都要覆盖。
     #[cfg(target_os = "linux")]
-    let library_path = crate::utils::child_library_path(
+    let appimage_library_path = crate::utils::child_library_path(
         std::env::var_os("APPDIR").as_deref(),
         std::env::var_os("LD_LIBRARY_PATH").as_deref(),
     );
+    // 保留的条目直接进覆盖式环境表；需要「移除」的条目只能在 spawn 边界剔除。
+    let mut removed_env: Vec<&str> = Vec::new();
+    let appdir = std::env::var_os("APPDIR");
+    for name in ["PYTHONHOME", "PYTHONPATH"] {
+        let value = std::env::var_os(name);
+        match crate::utils::appimage_python_env(appdir.as_deref(), name, value.as_deref()) {
+            Some(Some(kept)) => {
+                envs.insert(name.to_string(), kept.to_string_lossy().into_owned());
+            }
+            Some(None) => removed_env.push(name),
+            None => {}
+        }
+    }
 
     // 日志文件（前端日志面板读取）。
     // 每次真实启动前轮转：只保留最近 3 次启动的日志，旧文件后退为
@@ -1061,6 +1129,10 @@ pub(super) async fn launch_prepared(
                     &mut started,
                     guards,
                     |report_path| {
+                        let use_system_ca = should_use_system_ca(
+                            &node_abs,
+                            config::get_node_version_of_path(&node_abs).as_deref(),
+                        );
                         let mut args = build_harness_args(
                             &dsh_binary_path,
                             &active_profile,
@@ -1068,6 +1140,7 @@ pub(super) async fn launch_prepared(
                             port,
                             heap_mb,
                             report_path,
+                            use_system_ca,
                         );
                         if let Some(bridge) = &native_bridge {
                             args.splice(
@@ -1088,6 +1161,7 @@ pub(super) async fn launch_prepared(
                                     Some(&core_dir),
                                     &envs,
                                     job,
+                                    &removed_env,
                                 )
                             } else {
                                 super::win_spawn::spawn_with_hidden_console_owned(
@@ -1095,6 +1169,7 @@ pub(super) async fn launch_prepared(
                                     &args,
                                     Some(&core_dir),
                                     &envs,
+                                    &removed_env,
                                 )
                             };
                             let (stdout, stderr, pid, handle) = spawned
@@ -1124,8 +1199,11 @@ pub(super) async fn launch_prepared(
                                 .stderr(Stdio::piped())
                                 .process_group(0);
                             #[cfg(target_os = "linux")]
-                            if let Some(path) = &library_path {
+                            if let Some(path) = &appimage_library_path {
                                 command.env("LD_LIBRARY_PATH", path);
+                            }
+                            for name in &removed_env {
+                                command.env_remove(name);
                             }
                             let mut child = command
                                 .spawn()
@@ -1215,6 +1293,7 @@ mod tests {
             3080,
             None,
             Path::new("D:/app-data/logs/fatal.json"),
+            false,
         );
         assert_eq!(
             text_args(&args),
@@ -1244,6 +1323,7 @@ mod tests {
             3080,
             Some(4096),
             Path::new("D:/fatal.json"),
+            false,
         );
         let text = text_args(&args);
         assert_eq!(text[0], "--max-old-space-size=4096");
@@ -1275,6 +1355,7 @@ mod tests {
             3081,
             None,
             Path::new("D:/用户 data/logs/fatal.json"),
+            false,
         );
         let text = text_args(&args);
         assert_eq!(text[0], "--report-on-fatalerror");
@@ -1327,12 +1408,68 @@ mod tests {
             3081,
             Some(4096),
             Path::new("D:/logs/fatal.json"),
+            false,
         );
         let text = text_args(&args);
         assert_eq!(text[0], "--max-old-space-size=4096");
         assert_eq!(text[1], "--report-on-fatalerror");
         assert_eq!(text[4], "D:/core/lib/bin.js");
         assert!(!text.contains(&"--patch".to_string()));
+    }
+
+    /// issue #1530：`--use-system-ca` 是 Node 的进程级选项，必须落在脚本路径之前；
+    /// 落到脚本之后会被当成 dsh 的业务参数。桌面载体（--input-type/--eval）同理。
+    #[test]
+    fn system_ca_flag_precedes_the_script_path() {
+        let bin = Path::new("D:/core/lib/bin.js");
+        let plain = text_args(&build_harness_args(
+            bin,
+            "tauri",
+            None,
+            3080,
+            None,
+            Path::new("D:/logs/fatal.json"),
+            true,
+        ));
+        assert_eq!(plain[3], "--use-system-ca");
+        assert_eq!(plain[4], "D:/core/lib/bin.js");
+
+        let carrier = text_args(&build_harness_args(
+            bin,
+            "desktop",
+            None,
+            3080,
+            None,
+            Path::new("D:/logs/fatal.json"),
+            true,
+        ));
+        assert_eq!(carrier[5], "--use-system-ca");
+        assert_eq!(carrier[6], "D:/core/lib/bin.js");
+    }
+
+    /// 幂等：环境已给过该 flag 时不再追加，但参数布局（脚本之前）不变。
+    #[test]
+    fn system_ca_flag_is_not_duplicated_when_already_inherited() {
+        assert!(node_options_has_system_ca_flag("--use-system-ca"));
+        assert!(node_options_has_system_ca_flag(
+            "--trace-warnings --use-system-ca --max-old-space-size=4096"
+        ));
+        assert!(node_options_has_system_ca_flag("'--use-system-ca'"));
+        assert!(!node_options_has_system_ca_flag("--trace-warnings"));
+        assert!(!node_options_has_system_ca_flag("--use-system-ca-enabled"));
+        assert!(!node_options_has_system_ca_flag(""));
+    }
+
+    /// Node < 22.15 不认识该 flag，注入会让核心直接退出，必须降级为不注入。
+    #[test]
+    fn system_ca_flag_only_applies_to_supported_runtimes() {
+        assert!(system_ca_supported(Some("24.21.0")));
+        assert!(system_ca_supported(Some("22.15.0")));
+        assert!(system_ca_supported(Some("v22.15.0")));
+        assert!(!system_ca_supported(Some("22.14.9")));
+        assert!(!system_ca_supported(Some("20.11.1")));
+        assert!(!system_ca_supported(None));
+        assert!(!system_ca_supported(Some("not-a-version")));
     }
 
     struct SupervisedNode {
@@ -1446,6 +1583,7 @@ mod tests {
                                             &[script_path.clone().into_os_string()],
                                             Some(&path),
                                             &envs,
+                                            &[],
                                         )
                                         .map_err(
                                             |error| format!("PROCESS_START_FAILED: {error}"),

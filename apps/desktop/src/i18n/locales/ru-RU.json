@@ -465,6 +465,7 @@
   "core.downloading": "Загрузка версии ядра {{version}}",
   "core.downloading_hint": "Загрузка и распаковка {{version}}, подождите…",
   "core.download_close": "Закрыть",
+  "core.download_switch": "Переключиться на эту версию",
   "core.open_dir": "Открыть папку",
   "core.open_dir_failed": "Не удалось открыть папку",
   "core.remove_failed": "Не удалось удалить версию ядра",

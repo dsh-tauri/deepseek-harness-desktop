@@ -491,7 +491,7 @@ pub(crate) async fn run_plugin_process(
     #[cfg(windows)]
     {
         let (stdout, stderr, pid, handle) =
-            workflow::win_spawn::spawn_with_hidden_console_owned(node, args, Some(cwd), envs)
+            workflow::win_spawn::spawn_with_hidden_console_owned(node, args, Some(cwd), envs, &[])
                 .map_err(|e| format!("PREINSTALL_SPAWN: {e}"))?;
         let pid_guard = PidGuard::set(owner, pid);
         log::info!("dsh plugin install started, pid {pid}");

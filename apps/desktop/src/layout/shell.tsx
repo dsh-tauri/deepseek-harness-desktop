@@ -16,6 +16,7 @@ import { useNativeNotifications } from '@/hooks/use-native-notifications'
 import { useNotificationAction } from '@/hooks/use-notification-action'
 import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { store } from '@/store'
+import { CoreDownloadWidget } from '@/ui/core/core-download-widget'
 import { ConfigDialog } from '@/ui/dialog/config'
 import { Recovery } from '@/ui/plugin/recovery'
 import { isFullSidebarWindow, isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
@@ -225,6 +226,7 @@ export function Shell() {
           <div className="absolute inset-0 z-10" data-testid="dsh-full-sidebar-cover" style={{ background: dshStyle.sidebar?.background }} />
         </If>
       </div>
+      <CoreDownloadWidget />
     </main>
   )
 }

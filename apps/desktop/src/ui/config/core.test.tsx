@@ -56,6 +56,14 @@ let updateError: string | Error | null
 let coreAsar: boolean
 let coreAsarError: string | Error | null
 
+let dialogsOpened = 0
+
+/** 打开确认框；登记次数好让 afterEach 知道要等 overlastic 的消失延迟落定 */
+function findDialog() {
+  dialogsOpened += 1
+  return screen.findByRole('alertdialog')
+}
+
 function renderCore() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.add(client)
@@ -126,7 +134,13 @@ beforeEach(async () => {
   })
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // overlastic 关闭对话框后有 300ms 消失延迟，定时器必须在本文件的 jsdom 环境销毁前
+  // 落定，否则它的 setState 会在下一个测试文件里执行并撞上 window 未定义（CI 上
+  // 稳定复现，本地因时序恰好不触发）。只有真正开过对话框的用例才付这份等待。
+  if (dialogsOpened > 0)
+    await new Promise<void>(resolve => setTimeout(resolve, 400))
+  dialogsOpened = 0
   cleanup()
   for (const client of clients)
     client.clear()
@@ -178,7 +192,7 @@ describe('核心激活兼容性', () => {
     expect((checkbox as HTMLInputElement).disabled).toBe(false)
     fireEvent.click(target === 'row' ? screen.getByText('0.2.2-rc.2') : checkbox)
 
-    const dialog = await screen.findByRole('alertdialog')
+    const dialog = await findDialog()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }))
 
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('set_active_core', { id: managedFixture.id }))
@@ -288,7 +302,7 @@ describe('本地核心更新档案安全', () => {
     const updatedLocal = await screen.findByRole('checkbox', { name: '0.2.2' })
     fireEvent.click(updatedLocal)
 
-    const dialog = await screen.findByRole('alertdialog')
+    const dialog = await findDialog()
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     expect(within(dialog).getByRole('heading').textContent).toBe('Switch version')
     expectNoCoreOrProfileSwitch()
@@ -325,7 +339,7 @@ describe('核心格式（ASAR）开关', () => {
     const toggle = await openAdvanced()
     fireEvent.click(toggle)
 
-    const dialog = await screen.findByRole('alertdialog')
+    const dialog = await findDialog()
     expect(within(dialog).getByRole('heading').textContent).toBe(enUS['core.asar_confirm_title'])
     const description = enUS['core.asar_confirm_desc']
     expect(within(dialog).getByText(description).textContent).toBe(description)
@@ -347,7 +361,7 @@ describe('核心格式（ASAR）开关', () => {
     const toggle = await openAdvanced()
     fireEvent.click(toggle)
 
-    const dialog = await screen.findByRole('alertdialog')
+    const dialog = await findDialog()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
 
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
@@ -377,7 +391,7 @@ describe('核心格式（ASAR）开关', () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
     const toggle = await openAdvanced()
     fireEvent.click(toggle)
-    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirm' }))
+    fireEvent.click(within(await findDialog()).getByRole('button', { name: 'Confirm' }))
 
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to switch the core format', { variant: 'danger', description: coreAsarError }))
     expect(errorLog).toHaveBeenCalledWith('[ConfigCore] switch core format failed:', coreAsarError)

@@ -46,7 +46,7 @@ test('native wrapper and complete scoped package resources use the same cache pa
   assert.equal(f.load('@scope/native'), path.join(f.cache, 'node_modules/@scope/native/lib'))
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/native/bin/helper'), 'utf8'), 'native helper')
   assert.equal(fs.statSync(path.join(f.cache, 'node_modules/@scope/native/bin/helper')).mode, fs.statSync(helper).mode)
-  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/native/.dsh-native-complete'), 'utf8'), '1')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/native/.dsh-native-complete'), 'utf8'), '2')
 })
 
 test('cache wrapper resolves nested JavaScript dependencies from its original archive parent', (t) => {
@@ -58,7 +58,7 @@ test('cache wrapper resolves nested JavaScript dependencies from its original ar
   f.write('node_modules/dep/binding.node', 'not loaded')
   assert.equal(f.load('dep'), 'root')
   assert.equal(f.load('native'), 'nested')
-  assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/native/node_modules/dep/index.js')), false)
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/native/node_modules/dep/index.js'), 'utf8'), 'module.exports = "nested"')
 })
 
 test('missing cache dependency falls back to archive without mixing a hoisted version', (t) => {
@@ -87,7 +87,7 @@ test('deregister restores the CommonJS resolver and remains idempotent', (t) => 
 })
 
 for (const nested of [false, true]) {
-  test('HMR pre-resolution keeps ' + (nested ? 'nested' : 'hoisted') + ' dependencies on their archive parent', (t) => {
+  test(`HMR pre-resolution keeps ${nested ? 'nested' : 'hoisted'} dependencies on their archive parent`, (t) => {
     const f = fixture(t)
     f.write('node_modules/dep/index.js', 'module.exports = "root"')
     f.write('node_modules/dep/binding.node', 'not loaded')
@@ -174,7 +174,7 @@ for (const [runtime, platform, electron] of [
   ['plain Node on Linux', 'linux', undefined],
   ['Electron on Windows', 'win32', '44.7.0'],
 ]) {
-  test(runtime + ' still materializes sharp prebuilt binaries from the archive', (t) => {
+  test(`${runtime} still materializes sharp prebuilt binaries from the archive`, (t) => {
     const f = fixture(t)
     f.write('node_modules/@img/sharp-linux-x64/sharp.node', 'prebuilt binary')
     runtimeVariant(t, platform, electron)
@@ -215,7 +215,7 @@ for (const [runtime, platform, electron] of [
   ['plain Node on Linux', 'linux', undefined],
   ['Electron on Windows', 'win32', '44.7.0'],
 ]) {
-  test(runtime + ' keeps the sharp entry point loadable without a WebAssembly fallback', (t) => {
+  test(`${runtime} keeps the sharp entry point loadable without a WebAssembly fallback`, (t) => {
     const f = fixture(t)
     f.write('node_modules/sharp/index.js', 'module.exports = "sharp entry"')
     runtimeVariant(t, platform, electron)
@@ -248,6 +248,145 @@ test('completed package cache is reused without rewriting content', (t) => {
   delete require.cache[path.join(f.cache, 'node_modules/native/index.js')]
   assert.equal(f.load('native'), path.join(f.cache, 'node_modules/native'))
   assert.equal(fs.statSync(filename).mtimeMs, before)
+})
+
+test('materialized package carries its hoisted dependency beside the entry so a bare child process can resolve it', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'lib/index.js', dependencies: { fflate: '^0.8.2' } }))
+  f.write('node_modules/@scope/pkg/lib/index.js', 'const fflate = require("fflate"); if (require.main === module) process.stdout.write(fflate); module.exports = fflate')
+  f.write('node_modules/@scope/pkg/lib/pkg.node', 'not loaded')
+  f.write('node_modules/fflate/package.json', JSON.stringify({ main: 'lib/index.cjs', dependencies: { saxes: '^6.0.0' } }))
+  f.write('node_modules/fflate/lib/index.cjs', 'module.exports = "fflate"')
+  f.write('node_modules/saxes/package.json', JSON.stringify({ main: 'lib/saxes.js' }))
+  f.write('node_modules/saxes/lib/saxes.js', 'module.exports = "saxes"')
+  assert.equal(f.load('@scope/pkg'), 'fflate')
+  assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/@scope/pkg/lib/pkg.node')), true)
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/lib/index.cjs'), 'utf8'), 'module.exports = "fflate"')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/node_modules/saxes/lib/saxes.js'), 'utf8'), 'module.exports = "saxes"')
+  const entry = path.join(f.cache, 'node_modules/@scope/pkg/lib/index.js')
+  const script = 'process.stdout.write(require.resolve("fflate", { paths: [require("node:path").dirname(process.env.DSH_PROBE_ENTRY)] }))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_ENTRY: entry } })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.equal(bare.stdout, path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/lib/index.cjs'))
+})
+
+test('materialized package keeps its private node_modules copy of a hoisted dependency', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { koffi: '^3.1.1' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = require("koffi")')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/pkg/node_modules/koffi/index.js', 'module.exports = "private koffi"')
+  f.write('node_modules/koffi/index.js', 'module.exports = "hoisted koffi"')
+  f.write('node_modules/koffi/build/koffi.node', 'ffi binding')
+  assert.equal(f.load('pkg'), 'private koffi')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/pkg/node_modules/koffi/index.js'), 'utf8'), 'module.exports = "private koffi"')
+})
+
+test('hoisted dependency keeps the private node_modules tree it needs at runtime', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = require("fflate")')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/fflate/index.js', 'module.exports = require("vendor-only")')
+  f.write('node_modules/fflate/node_modules/vendor-only/index.js', 'module.exports = "vendor only"')
+  assert.equal(f.load('pkg'), 'vendor only')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/pkg/node_modules/fflate/node_modules/vendor-only/index.js'), 'utf8'), 'module.exports = "vendor only"')
+})
+
+test('two different versions of the same dependency keep their own copies instead of merging by name', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = [require("a"), require("x")]')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  f.write('node_modules/@scope/pkg/node_modules/x/package.json', JSON.stringify({ main: 'index.js', version: '1.0.0' }))
+  f.write('node_modules/@scope/pkg/node_modules/x/index.js', 'module.exports = "x@1"')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^2.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("x")')
+  f.write('node_modules/x/package.json', JSON.stringify({ main: 'index.js', version: '2.0.0' }))
+  f.write('node_modules/x/index.js', 'module.exports = "x@2"')
+  assert.deepEqual(f.load('@scope/pkg'), ['x@2', 'x@1'])
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/a/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@2"')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@1"')
+})
+
+test('a hoisted copy outside the archive resolves its own dependencies through the real archive source', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = require("fflate")')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  f.write('node_modules/fflate/package.json', JSON.stringify({ main: 'lib/index.cjs', dependencies: { saxes: '^6.0.0' } }))
+  f.write('node_modules/fflate/lib/index.cjs', 'module.exports = require("saxes")')
+  f.write('node_modules/saxes/package.json', JSON.stringify({ main: 'lib/saxes.js' }))
+  f.write('node_modules/saxes/lib/saxes.js', 'module.exports = "saxes"')
+  assert.equal(f.load('@scope/pkg'), 'saxes')
+  const entry = path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/lib/index.cjs')
+  const script = 'process.stdout.write(require(process.env.DSH_PROBE_ENTRY))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_ENTRY: entry } })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.equal(bare.stdout, 'saxes')
+})
+
+test('cache marker without the current version rebuilds the materialized package', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/native/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
+  f.write('node_modules/native/index.js', 'module.exports = __dirname')
+  f.write('node_modules/native/binding.node', 'not loaded')
+  f.write('node_modules/fflate/index.js', 'module.exports = "fflate"')
+  const stale = path.join(f.cache, 'node_modules/native')
+  fs.mkdirSync(stale, { recursive: true })
+  fs.writeFileSync(path.join(stale, 'index.js'), 'module.exports = "stale"')
+  fs.writeFileSync(path.join(stale, '.dsh-native-complete'), '1')
+  assert.equal(f.load('native'), path.join(f.cache, 'node_modules/native'))
+  assert.equal(fs.readFileSync(path.join(stale, 'index.js'), 'utf8'), 'module.exports = __dirname')
+  assert.equal(fs.readFileSync(path.join(stale, 'node_modules/fflate/index.js'), 'utf8'), 'module.exports = "fflate"')
+  assert.equal(fs.readFileSync(path.join(stale, '.dsh-native-complete'), 'utf8'), '2')
+})
+
+test('cache marker with the current version keeps the materialized package untouched', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/native/index.js', 'module.exports = __dirname')
+  f.write('node_modules/native/binding.node', 'not loaded')
+  const stale = path.join(f.cache, 'node_modules/native')
+  fs.mkdirSync(stale, { recursive: true })
+  fs.writeFileSync(path.join(stale, 'index.js'), 'module.exports = "kept"')
+  fs.writeFileSync(path.join(stale, '.dsh-native-complete'), '2')
+  assert.equal(f.load('native'), 'kept')
+  assert.equal(fs.readFileSync(path.join(stale, 'index.js'), 'utf8'), 'module.exports = "kept"')
+  assert.equal(fs.existsSync(path.join(stale, 'binding.node')), false)
+})
+
+function cacheEntryFixture(t) {
+  const f = fixture(t)
+  f.write('node_modules/koffi/index.js', 'module.exports = __dirname')
+  f.write('node_modules/koffi/build/koffi.node', 'ffi binding')
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
+  f.write('node_modules/@scope/pkg/index.js', `const result = [require("fflate"), require(require("node:path").join(process.env.DSH_CORE_ARCHIVE, "node_modules", "koffi", "index.js"))]; if (require.main === module) { if (process.send) process.send(result); else process.stdout.write(JSON.stringify(result)) } module.exports = result`)
+  f.write('node_modules/@scope/pkg/pkg.node', 'not loaded')
+  f.write('node_modules/fflate/index.js', 'module.exports = "fflate"')
+  f.load('@scope/pkg')
+  return { f, entry: path.join(f.cache, 'node_modules/@scope/pkg/index.js') }
+}
+
+test('materialized entry outside the archive receives the preload and resolves sibling native packages through the cache', (t) => {
+  const { f, entry } = cacheEntryFixture(t)
+  const result = childProcess.spawnSync(process.execPath, [entry], { encoding: 'utf8', timeout: 10000 })
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(JSON.parse(result.stdout), ['fflate', path.join(f.cache, 'node_modules/koffi')])
+})
+
+test('fork on a materialized entry injects the preload without any script argument to inspect', { timeout: 15000 }, async (t) => {
+  const { f } = cacheEntryFixture(t)
+  const child = childProcess.fork(path.join(f.cache, 'node_modules/@scope/pkg/index.js'), [], { execArgv: [], stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
+  const [[message], [code]] = await Promise.all([once(child, 'message'), once(child, 'exit')])
+  assert.deepEqual(message, ['fflate', path.join(f.cache, 'node_modules/koffi')])
+  assert.equal(code, 0)
+})
+
+test('promisified execFile on a materialized entry injects the same preload', { timeout: 15000 }, async (t) => {
+  const { f, entry } = cacheEntryFixture(t)
+  const output = await promisify(childProcess.execFile)(process.execPath, ['--eval', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', entry], { timeout: 10000 })
+  assert.deepEqual(JSON.parse(output.stdout), ['fflate', path.join(f.cache, 'node_modules/koffi')])
+  assert.equal(output.stderr, '')
 })
 
 test('ESM native package resolves its missing JavaScript dependency from archive', async (t) => {
