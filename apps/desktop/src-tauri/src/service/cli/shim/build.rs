@@ -613,6 +613,11 @@ rem Never export it as GIT_DIR: that variable names a repository, not a bin dir.
 set "SYSTEM_GIT_WORKS="
 for /f "delims=" %%g in ('git --exec-path 2^>nul') do if exist "%%g\git-remote-https.exe" set "SYSTEM_GIT_WORKS=1"
 if not defined SYSTEM_GIT_WORKS if exist "{git_dir}\git.exe" set "PATH={git_dir};%PATH%"
+rem Remember the caller's NODE_OPTIONS: forwarding to the user's own npm must
+rem hand it back exactly as it was, not a rewritten copy of it.
+set "DSH_NODE_OPTIONS_WAS_SET=1"
+if not defined NODE_OPTIONS set "DSH_NODE_OPTIONS_WAS_SET="
+set "DSH_NODE_OPTIONS_BEFORE=%NODE_OPTIONS%"
 {node_resolve}
 rem CMD_NODE_RESOLVE jumps here for every node it accepts, so the cli lookup
 rem below must sit at :launch rather than after a separate label.
@@ -652,9 +657,11 @@ for %%c in ("%DSH_NPM_SHIM_CHAIN:;=" "%") do if /i "%%~c"=="%USER_NPM%" goto :np
 :npm_forward_user
 set "DSH_NPM_SHIM_CHAIN=%DSH_NPM_SHIM_CHAIN%;%USER_NPM%"
 rem Forwarding to the user's own npm: their node may be older than the flag we
-rem added, and an unknown option makes Node exit. The flag is ours, not theirs.
-set "NODE_OPTIONS=%NODE_OPTIONS: --use-system-ca=%"
-set "NODE_OPTIONS=%NODE_OPTIONS:--use-system-ca=%"
+rem added, and an unknown option makes Node exit. Hand back the caller's own
+rem value unchanged: rewriting it would also hit paths that merely contain the
+rem flag as part of a file name.
+if not defined DSH_NODE_OPTIONS_WAS_SET set "NODE_OPTIONS="
+if defined DSH_NODE_OPTIONS_WAS_SET set "NODE_OPTIONS=%DSH_NODE_OPTIONS_BEFORE%"
 rem Forward by invoking the target directly, never through `call`: the extra
 rem interpretation layer re-expands %* and mangles already-escaped arguments.
 "%USER_NPM%" %*
@@ -759,14 +766,14 @@ if (-not $cli) {{
         try {{
             $env:DSH_NPM_SHIM_CHAIN = $chainBefore + ';' + $userCommand.Source
             # Forwarding to the user's own npm: their node may be older than the
-            # flag we added, and an unknown option makes Node exit.
-            $nodeOptionsBeforeForward = $env:NODE_OPTIONS
-            $env:NODE_OPTIONS = $env:NODE_OPTIONS -replace '(?i)\s*--use-system-ca', ''
+            # flag we added, and an unknown option makes Node exit. Hand back
+            # the caller's own value unchanged: rewriting it would also hit
+            # paths that merely contain the flag as part of a file name.
+            if ($dshNodeOptionsWasSet) {{ $env:NODE_OPTIONS = $dshNodeOptionsBefore }} else {{ Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }}
             & $userCommand.Source @args
             $forwardExitCode = $LASTEXITCODE
         }} finally {{
             $env:DSH_NPM_SHIM_CHAIN = $chainBefore
-            $env:NODE_OPTIONS = $nodeOptionsBeforeForward
         }}
         exit $forwardExitCode
     }}
@@ -2148,19 +2155,26 @@ mod tests {
     }
 
     /// npm/npx shim 找不到可用的 npm cli 时会转发用户自己的 npm：那是用户的运行时，
-    /// 可能早于 22.15 而不认这个开关（未知开关会让 Node 直接退出），转发前必须摘掉。
+    /// 可能早于 22.15 而不认这个开关（未知开关会让 Node 直接退出），转发前必须把
+    /// 调用者原来的 NODE_OPTIONS 原样还回去——改写它会误伤路径里恰好含该开关的文件名。
     #[test]
-    fn npm_shims_drop_the_system_ca_switch_before_forwarding_to_the_user_npm() {
+    fn npm_shims_hand_the_caller_node_options_back_unchanged() {
         for content in [
             build_npm_cli_cmd_shim(&sample_shim_paths(), "npm", "npm-cli.js"),
             build_npm_cli_cmd_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
         ] {
+            assert!(
+                content.contains(r#"set "DSH_NODE_OPTIONS_BEFORE=%NODE_OPTIONS%""#),
+                "{content}"
+            );
             let forward = content.find(":npm_forward_user").expect("forward branch");
-            let strip = content[forward..]
-                .find("--use-system-ca")
-                .expect("the switch is dropped before forwarding");
+            let restore = content[forward..]
+                .find("DSH_NODE_OPTIONS_BEFORE")
+                .expect("the caller's value is restored");
             let invoke = content[forward..].find("\"%USER_NPM%\" %*").expect("invoke");
-            assert!(strip < invoke, "{content}");
+            assert!(restore < invoke, "{content}");
+            // 不得改写调用者的取值：路径里可能出现同名片段。
+            assert!(!content.contains(": --use-system-ca="), "{content}");
         }
         #[cfg(windows)]
         for content in [
@@ -2168,13 +2182,14 @@ mod tests {
             build_npm_cli_ps1_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
         ] {
             let forward = content.find("$userCommand").expect("forward branch");
-            let strip = content[forward..]
-                .find("--use-system-ca")
-                .expect("the switch is dropped before forwarding");
+            let restore = content[forward..]
+                .find("$dshNodeOptionsBefore")
+                .expect("the caller's value is restored");
             let invoke = content[forward..]
                 .find("& $userCommand.Source @args")
                 .expect("invoke");
-            assert!(strip < invoke, "{content}");
+            assert!(restore < invoke, "{content}");
+            assert!(!content.contains("-replace"), "{content}");
         }
     }
 }
