@@ -2,14 +2,14 @@
   "expo": {
     "name": "DSH Mobile",
     "slug": "dsh-bridge",
-    "version": "0.31.4",
+    "version": "0.31.5",
     "scheme": "dshbridge",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/native/icon.png",
     "android": {
       "package": "com.dshtauri.dshbridge",
-      "versionCode": 21040,
+      "versionCode": 21041,
       "adaptiveIcon": {
         "foregroundImage": "./assets/native/adaptive-icon.png",
         "backgroundColor": "#ffffff"
