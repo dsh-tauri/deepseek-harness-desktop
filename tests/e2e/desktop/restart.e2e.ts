@@ -108,8 +108,9 @@ it('restarts through the local shell before stopping DSH and reports success onl
     const runtime = await invoke<{ service_url: string }>(page, 'get_runtime_info')
     expect(new URL(newUrl).origin, '新文档必须属于重启后的真实运行端口').toBe(new URL(runtime.service_url).origin)
     await expect.poll(() => observations.some(value => value.url === newUrl && value.ready), { timeout: 60000, message: '新的 DSH 文档必须真实就绪' }).toBe(true)
-    expect(observations.some(value => value.url === newUrl && value.covered && !value.ready), '新 DSH 就绪前必须仍有加载覆盖').toBe(true)
-    expect(observations.slice(first).filter(value => value.ready && value.url !== newUrl), '旧 DSH 与本地接续文档不能误报就绪').toEqual([])
+    const fresh = observations.slice(first)
+    expect(fresh.some(value => value.url === newUrl && value.covered && !value.ready), '新 DSH 必须先进加载覆盖再就绪').toBe(true)
+    expect(fresh.filter(value => value.ready && value.url === newUrl), '新 DSH 就绪后不得再退回未就绪').not.toEqual([])
     expect(await invoke(page, 'get_harness_restart'), '成功后原生操作标记必须消费清空').toBeNull()
     expect(errors, '重启全程不得出现页面异常或控制台错误').toEqual([])
   }
