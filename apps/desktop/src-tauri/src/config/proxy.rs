@@ -129,9 +129,14 @@ pub async fn test(proxy_url: &str, target: &str, timeout: Duration) -> ProxyTest
 /// 关注点是用户自己装的 CA（企业根证书、代理签发 CA）：它们进系统信任库即可。
 pub const NODE_SYSTEM_CA_FLAG: &str = "--use-system-ca";
 
-/// 该 Node 版本是否认识 [`NODE_SYSTEM_CA_FLAG`]。
+/// 该 Node 版本是否**认识** [`NODE_SYSTEM_CA_FLAG`]。
 ///
-/// 未知开关会让 Node 直接以 "bad option" 退出，必须先确认版本再下发。
+/// 这个门槛只防“炸”：不认识这个开关时，Node 会以 "bad option" 直接退出，核心根本起不来。
+///
+/// **给了选项不等于有效果**：开关被接受只说明运行时认得它，不保证它在本平台真的接上了
+/// 系统信任库（Node 23.8 认得这个开关，但只有 Windows 与 macOS 接上了实现，在 Linux 等
+/// 平台上它就是个空开关）。“认不认”与“有没用”是两件事，后者取决于平台与版本；
+/// 探针（直接问运行时）也只能回答前者。要防的是“炸”，不是“未预期行为”。
 ///
 /// 版本沿革（Node 官方发布说明）：
 /// - 22.15 起三个平台都支持（Windows #56833、macOS #56599、其余平台 #57009 同期回合）；
@@ -181,6 +186,9 @@ fn parse_node_version(version: &str) -> Option<(u32, u32)> {
 /// 运行时不认识该开关时返回 `Err`（调用方记录告警）：未知开关会让 Node 直接以
 /// "bad option" 退出，比静默不信任系统 CA 更糟。`existing` 是调用方已有的
 /// NODE_OPTIONS；为 `None` 时取进程继承来的那份。
+///
+/// 与 [`node_supports_system_ca`] 一样，这里只管“会不会炸”：开关被接受并不保证它在本平台
+/// 有效果（见该函数的说明）。
 pub fn node_system_ca_options(node: &Path, existing: Option<&str>) -> Result<String, String> {
     let version = super::runtime::get_node_version_of_path(node).ok_or_else(|| {
         "NODE_VERSION_UNKNOWN: cannot probe the Node runtime version; --use-system-ca not applied"
@@ -488,6 +496,8 @@ mod tests {
         }
     }
 
+    /// 门槛只保证“运行时不会因为不认这个开关而起不来”（防炸），**不保证**给了开关就有效果：
+    /// 认得开关与开关在本平台生效是两件事（Node 23.8 认得，但 Linux 上是空开关）。
     #[test]
     fn node_system_ca_flag_is_only_offered_to_runtimes_that_know_it() {
         for (version, supported) in [

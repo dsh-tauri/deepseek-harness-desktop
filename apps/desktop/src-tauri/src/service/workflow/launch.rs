@@ -135,6 +135,11 @@ const SYSTEM_CA_FLAG: &str = "--use-system-ca";
 /// flag 走命令行而非 `NODE_OPTIONS`：后者会被堆逻辑改写并可能被用户自带的
 /// `--require` 抢先，命令行在 Node 的选项解析里更靠前。Node < 22.15 不认识这个
 /// flag，只能降级为不注入（此时核心保持原行为，不会因为未知参数启动失败）。
+///
+/// 门槛本身只有一处定义：[`config::proxy::node_supports_system_ca`]。它只防“炸”
+/// （运行时不认这个开关 → Node 以 "bad option" 退出 → 核心起不来），**不保证**给了
+/// 开关就有效果：认得开关与开关在本平台生效是两件事（Node 23.8 认得，但只有
+/// Windows 与 macOS 接上了实现）。
 fn should_use_system_ca(node: &Path, node_version: Option<&str>) -> bool {
     if inherited_has_system_ca_flag() {
         log::info!("--use-system-ca is already supplied through NODE_OPTIONS, not adding it again");
@@ -142,7 +147,7 @@ fn should_use_system_ca(node: &Path, node_version: Option<&str>) -> bool {
     }
     if !system_ca_supported(node_version) {
         log::info!(
-            "Skipping --use-system-ca for the Harness process: runtime {} reports node {node_version:?} (needs 22.15+)",
+            "Skipping --use-system-ca for the Harness process: runtime {} reports node {node_version:?} (the runtime does not know this switch)",
             node.display()
         );
         return false;
@@ -154,10 +159,11 @@ fn should_use_system_ca(node: &Path, node_version: Option<&str>) -> bool {
     true
 }
 
+/// 运行时是否认识 `--use-system-ca`；版本未知时按“不认识”处理（不注入）。
+///
+/// 门槛与 CLI shim、插件安装子进程共用一份：[`config::proxy::node_supports_system_ca`]。
 fn system_ca_supported(node_version: Option<&str>) -> bool {
-    node_version
-        .and_then(|version| semver::Version::parse(version.trim_start_matches('v')).ok())
-        .is_some_and(|version| version >= semver::Version::new(22, 15, 0))
+    node_version.is_some_and(config::proxy::node_supports_system_ca)
 }
 
 fn inherited_has_system_ca_flag() -> bool {
@@ -1461,6 +1467,9 @@ mod tests {
     }
 
     /// Node < 22.15 不认识该 flag，注入会让核心直接退出，必须降级为不注入。
+    ///
+    /// 这里只防“炸”，不保证“给了开关就有效果”：门槛只看运行时认不认这个开关
+    /// （Node 23.8 认得，但只有 Windows 与 macOS 接上了实现）。
     #[test]
     fn system_ca_flag_only_applies_to_supported_runtimes() {
         assert!(system_ca_supported(Some("24.21.0")));
@@ -1470,6 +1479,9 @@ mod tests {
         assert!(!system_ca_supported(Some("20.11.1")));
         assert!(!system_ca_supported(None));
         assert!(!system_ca_supported(Some("not-a-version")));
+        // 23.5–23.7 根本没有这个开关：注入会让核心直接退出。
+        assert!(!system_ca_supported(Some("23.5.0")));
+        assert!(!system_ca_supported(Some("23.7.0")));
     }
 
     struct SupervisedNode {
