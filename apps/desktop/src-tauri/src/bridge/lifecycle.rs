@@ -296,68 +296,98 @@ pub async fn install_dependencies(
     }).await
 }
 
-/// 静默检查是否有新版 Harness 可用（只查不装，供进入页面后后台调用）
+/// 静默检查是否有新版 Harness 可用（只查不装，供进入页面后后台调用）。
 ///
-/// 以“实际安装文件”为准核对，而不是只看本地记录：记录可能因安装时 API
-/// 失败或外围途径更新而滞后于文件，此时修正记录并免打扰；同版本热修
-/// （版本相同但 commit 不同）仍正常提示。
+/// 判定只看「正在用的核心」：最新 release 高于它才提示。历史下载槽位不参与
+/// 抑制——旧实现把槽位也算「已装」，用户下载过一次新版（哪怕没切换、或切换
+/// 失败留下残槽）更新提示就被永久吞掉，只能自己去核心面板手动下载。
 #[tauri::command]
 pub async fn check_dsh_update(
     app_handle: AppHandle,
 ) -> Result<Option<download::LatestDshPkg>, String> {
-    // 本地没有安装时无需提示更新
-    let dsh_files_ok = download::Dsh.check_installed(&app_handle);
-    if !dsh_files_ok {
+    if !download::Dsh.check_installed(&app_handle) {
         return Ok(None);
     }
 
-    // 当前运行的是预览版时不提示稳定/RC 更新：预览版可能高于当前 release，
-    // 但不能把用户主动选择的 alpha/beta 版本降级成较旧的 rc。
-    if config::get_store_dat_setting(&app_handle)
-        .active_core
-        .as_deref()
-        == Some("app")
-        && config::get_dsh_pkg_tag(&app_handle)
-            .as_deref()
-            .is_some_and(download::is_preview_tag)
-    {
-        log::info!("Suppressing dsh update because a preview core is active");
-        return Ok(None);
-    }
-
-    let latest = download::fetch_latest_dsh_pkg_info(&app_handle).await?;
-
-    // 最新 release 的版本号已经在已装核心列表里（含 active 和非 active
-    // 槽位），就不提示更新。避免「老版本激活 + 新版已下载但未切换」场景下白点一次
-    // 「立即更新」做整包重下——版本号（用户视角的版本）已经在那了，没必要再拉一遍。
-    if let Some(version) = download::parse_version_from_tag(&latest.tag)
-        && core::has_installed_version(&app_handle, &version).await
-    {
-        log::info!(
-            "Suppressing dsh update toast because latest version is already installed: {}",
-            version
-        );
-        return Ok(None);
-    }
-
-    // latest 不高于当前运行核心时不提示。pkg 仓库的「Current latest」
-    // 可能被指向更旧的 release（dsh-0.1.7-rc.2），而用户运行的核心已是更高的
-    // 0.2.0-rc.1；此时提示会把用户引向降级，且「立即更新」也会因保留更高版本
-    // 而实际什么都没做，最终只弹一个「更新校验失败」。
-    // 版本无从比较时不进入本分支，保留原有的「照常提示」行为。
-    if let Some(version) = download::parse_version_from_tag(&latest.tag) {
-        let active = active_dsh_version(&app_handle);
-        if is_update_suppressed(Some(&version), active.as_deref()) {
-            log::info!(
-                "Suppressing dsh update toast because latest {} does not outrank the active core {}",
-                version,
+    let preview_active = active_is_preview_core(&app_handle);
+    let active = active_dsh_version(&app_handle);
+    let latest = match download::fetch_latest_dsh_pkg_info(&app_handle).await {
+        Ok(latest) => latest,
+        Err(e) => {
+            log::warn!(
+                "DSH_UPDATE_CHECK_FAILED: cannot resolve the latest dsh release while running {}: {e}",
                 active.as_deref().unwrap_or_default()
             );
-            return Ok(None);
+            return Err(e);
+        }
+    };
+
+    match update_prompt(
+        preview_active,
+        download::parse_version_from_tag(&latest.tag).as_deref(),
+        active.as_deref(),
+    ) {
+        UpdatePrompt::Available => {
+            log::info!(
+                "DSH_UPDATE_AVAILABLE: latest {} outranks the active core {}",
+                latest.tag,
+                active.as_deref().unwrap_or_default()
+            );
+            Ok(Some(latest))
+        }
+        UpdatePrompt::NotNewer => {
+            log::info!(
+                "Suppressing dsh update because latest {} does not outrank the active core {}",
+                latest.tag,
+                active.as_deref().unwrap_or_default()
+            );
+            Ok(None)
+        }
+        UpdatePrompt::PreviewActive => {
+            log::info!("Suppressing dsh update because a preview core is active");
+            Ok(None)
         }
     }
+}
 
-    Ok(Some(latest))
+/// 更新提示的判定结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdatePrompt {
+    /// 正在用的就是预览版：不提示，也绝不覆盖用户的主动选择。
+    PreviewActive,
+    /// 最新 release 不高于正在用的核心（已是最新或更旧）：不提示。
+    NotNewer,
+    /// 有高于在用核心的 release：提示。
+    Available,
+}
+
+/// 是否提示有新版核心可用。
+///
+/// 只看正在用的核心版本，**不看磁盘上还有哪些槽位**：历史上「最新版本已在某个
+/// 已装槽位里」曾被当成「无需提示」，于是一次未切换的下载、或切换失败留下的残槽
+/// 就把提示永久静音，用户只能自己去核心面板手动下载。槽位只影响「要不要重新
+/// 下载」，不影响「有没有新版」这个事实。
+fn update_prompt(preview_active: bool, latest: Option<&str>, active: Option<&str>) -> UpdatePrompt {
+    if preview_active {
+        return UpdatePrompt::PreviewActive;
+    }
+    if is_update_suppressed(latest, active) {
+        UpdatePrompt::NotNewer
+    } else {
+        UpdatePrompt::Available
+    }
+}
+
+/// 当前运行的核心是否是用户主动选择的预览版（alpha/beta/preview）。
+///
+/// 预览版可能高于最新稳定 release，但不能把用户的选择降级成更旧的 rc：此时
+/// 既不提示、也不许自动更新覆盖它。必须同时确认生效的是托管核心——本地核心
+/// 生效时 store 里的 tag 属于上一次下载，拿它判定会把本地核心也一起静音。
+fn active_is_preview_core(app_handle: &AppHandle) -> bool {
+    core::active_source(app_handle) == core::CoreSource::App
+        && config::get_dsh_pkg_tag(app_handle)
+            .as_deref()
+            .is_some_and(download::is_preview_tag)
 }
 
 /// 启动 Harness 服务
@@ -508,6 +538,33 @@ mod tests {
         // 释放后可重新获取
         drop(guard);
         assert!(lock.try_lock().is_ok());
+    }
+
+    #[test]
+    fn update_prompt_only_compares_the_active_core() {
+        use super::UpdatePrompt;
+        let prompt =
+            |latest: &str, active: Option<&str>| super::update_prompt(false, Some(latest), active);
+        // 「曾经下载过」不再参与判定：判定函数根本拿不到槽位列表，只要正在用的
+        // 核心更旧就必须提示（症状：下载过新版但没切换 → 提示被永久吞掉）
+        assert_eq!(
+            prompt("0.2.2-rc.3", Some("0.2.2-rc.1")),
+            UpdatePrompt::Available
+        );
+        assert_eq!(
+            prompt("0.2.2-rc.1", Some("0.2.2-rc.1")),
+            UpdatePrompt::NotNewer
+        );
+        assert_eq!(
+            prompt("0.1.7-rc.2", Some("0.2.0-rc.1")),
+            UpdatePrompt::NotNewer
+        );
+        // 版本无法比较（核心尚未安装/清单读不到）时宁可提示，也不静音
+        assert_eq!(prompt("0.2.2-rc.3", None), UpdatePrompt::Available);
+        assert_eq!(
+            super::update_prompt(true, Some("0.2.2-rc.3"), Some("0.2.2-rc.1")),
+            UpdatePrompt::PreviewActive
+        );
     }
 
     #[test]

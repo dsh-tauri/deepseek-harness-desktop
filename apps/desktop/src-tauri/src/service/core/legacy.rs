@@ -64,7 +64,7 @@ fn needs_retirement<R: tauri::Runtime>(app: &AppHandle<R>, root: &Path, core_asa
 }
 
 pub fn retire_directory_core<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let deps = config::get_base_dir(app).join("dependencies");
+    let deps = config::dependencies::deps_root(app);
     let default = deps.join("dsh");
     let active = config::dependencies::active_root(app, config::dependencies::DEP_DSH);
     let core_asar = config::get_store_dat_setting(app).core_asar;

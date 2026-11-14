@@ -11,6 +11,7 @@ import { Info } from '@/components/info'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { useListen } from '@/hooks/use-listen'
+import { changeLanguage } from '@/i18n'
 import { store } from '@/store'
 import { HARNESS_HEAP_MAX_MB, HARNESS_HEAP_MIN_MB } from '@/store/modules/setting'
 import { ConfigAutoUpdate } from '@/ui/config/components/auto-update'
@@ -196,6 +197,14 @@ export function ConfigDebug() {
     },
   })
 
+  const { mutate: onChangeLanguage } = useMutation({
+    mutationFn: (language: string) => changeLanguage(language),
+    onError: (err: unknown) => {
+      console.error('[ConfigDebug] save language failed:', err)
+      toast(t('messages.language_save_failed'), { variant: 'danger' })
+    },
+  })
+
   const { mutate: onSaveHeap } = useMutation({
     mutationFn: async (mb: number | null) => {
       // 空输入 = 交回自动值；Rust 侧把 0 归一化为 None（物理内存一半，见 workflow/heap.rs）
@@ -344,7 +353,7 @@ export function ConfigDebug() {
           <Select
             variant="secondary"
             selectedKey={i18n.language}
-            onSelectionChange={key => i18n.changeLanguage(String(key))}
+            onSelectionChange={key => onChangeLanguage(String(key))}
             className="w-[80px]"
             aria-label={t('ui.language')}
           >

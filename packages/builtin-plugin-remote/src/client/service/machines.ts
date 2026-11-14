@@ -145,9 +145,12 @@ export async function disconnect(input: { machineId: string }): Promise<ServiceR
   })
 }
 
-export async function install(input: { machineId: string }): Promise<ServiceResult> {
+export async function install(input: { machineId: string, reinstall?: boolean }): Promise<ServiceResult> {
   return withBusy(input.machineId, 'install', async () => {
-    store.machines.commitInstallResult(input.machineId, installResultOf(await api.postMachinesInstall({ machineId: input.machineId })))
+    store.machines.commitInstallResult(input.machineId, installResultOf(await api.postMachinesInstall({
+      machineId: input.machineId,
+      ...input.reinstall === true ? { reinstall: true } : {},
+    })))
     await load()
   })
 }

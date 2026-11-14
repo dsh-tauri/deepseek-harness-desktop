@@ -1,14 +1,11 @@
-//! macOS activation policy（应用级前台形态）切换。
+//! 窗口前台形态与前台激活。
 //!
-//! 窗口隐藏时切 `.accessory` 让 Dock 图标消失，恢复时切回 `.regular` 让 Dock
-//! 图标与菜单栏同步出现。策略是**应用级**状态而非窗口级，一次切换对全部屏幕的
-//! Dock 一并生效，因此本模块不做任何窗口级/屏幕级判断（多显示器无需特殊处理）。
+//! macOS 侧切应用级 activation policy：窗口隐藏时切 `.accessory` 隐藏 Dock 图标，
+//! 恢复时切回 `.regular`。策略是应用级状态而非窗口级，一次切换对全部屏幕的 Dock
+//! 一并生效，因此不做窗口级/屏幕级判断。
 //!
-//! 关于 ⌘-Tab：本模块**不为 ⌘-Tab 留任何钩子**。`.accessory` 会把应用同时从
-//! Dock 与 ⌘-Tab 切换器移除，且 `tauri::RunEvent` 全枚举中没有「应用被切换为
-//! 前台」的事件可挂（D-18 取代 D-06 与 D-13 的 ⌘-Tab 部分）。驻留期间的前台
-//! 恢复路径只有：托盘左键 / 托盘菜单「打开面板」/ `RunEvent::Reopen`
-//! （启动台·Spotlight）/ release single-instance。
+//! `bring_to_front` 是托盘、`RunEvent::Reopen`、single-instance、通知点击四条
+//! 恢复路径的唯一入口，只组合官方窗口 API（unminimize / show / set_focus）。
 
 use crate::{AppHandle, Window};
 pub use crate::config::{CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
@@ -16,10 +13,56 @@ pub use crate::config::{CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
-use tauri::{ Runtime};
-// macOS 侧需要 Manager（从窗口取回 AppHandle）与 ActivationPolicy 下发应用级策略
+use tauri::Runtime;
+
 #[cfg(target_os = "macos")]
-use tauri::{ActivationPolicy, Manager};
+use tauri::Manager;
+
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
+
+/// 置前前要做的原生动作。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForegroundAction {
+    /// 已在前台且未最小化：重复激活只会让任务栏闪一下。
+    Skip,
+    /// 最小化态：`SetForegroundWindow` 对图标化窗口无效，必须先还原。
+    Restore,
+    /// 可见但不在前台。
+    Raise,
+}
+
+pub fn foreground_action(is_focused: bool, is_minimized: bool) -> ForegroundAction {
+    if is_minimized {
+        ForegroundAction::Restore
+    } else if is_focused {
+        ForegroundAction::Skip
+    } else {
+        ForegroundAction::Raise
+    }
+}
+
+/// 把窗口带到前台并抢到焦点。
+///
+/// 宿主只决定「要不要激活」；窗口归 Electron 子进程所有，`set_focus` 里的前台
+/// 提升由运行时按平台分流（Windows 见运行时的 activation 模块）。
+pub fn bring_to_front<R: Runtime>(window: &Window<R>) {
+    if foreground_action(
+        window.is_focused().unwrap_or(false),
+        window.is_minimized().unwrap_or(false),
+    ) == ForegroundAction::Skip
+    {
+        return;
+    }
+    let _ = window.unminimize();
+    if let Err(error) = window.show() {
+        log::warn!("[activation] WINDOW_SHOW_FAILED: {error}");
+    }
+    if let Err(error) = window.set_focus() {
+        log::warn!("[activation] WINDOW_FOCUS_FAILED: {error}");
+    }
+}
+
 
 /// 关窗时是否应切到 Accessory（隐藏 Dock）。
 ///
@@ -183,7 +226,42 @@ pub fn rearm_pending_accessory_if_fullscreen<R: Runtime>(window: &Window<R>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_switch_to_accessory, CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
+    use super::{
+        foreground_action, should_switch_to_accessory, ForegroundAction, CLOSE_ACTION_QUIT,
+        CLOSE_ACTION_TRAY,
+    };
+
+    #[test]
+    fn minimized_windows_restore_before_raising() {
+        assert_eq!(
+            foreground_action(false, true),
+            ForegroundAction::Restore,
+            "图标化窗口必须还原后再置前，SetForegroundWindow 对最小化窗口无效"
+        );
+        assert_eq!(
+            foreground_action(true, true),
+            ForegroundAction::Restore,
+            "最小化与前台标记同时存在时应以还原为准"
+        );
+    }
+
+    #[test]
+    fn visible_window_out_of_foreground_is_raised() {
+        assert_eq!(
+            foreground_action(false, false),
+            ForegroundAction::Raise,
+            "可见但不在前台必须重新置前"
+        );
+    }
+
+    #[test]
+    fn foreground_window_skips_redundant_activation() {
+        assert_eq!(
+            foreground_action(true, false),
+            ForegroundAction::Skip,
+            "已在前台时重复激活只会闪任务栏"
+        );
+    }
 
     #[test]
     fn close_action_constants_match_store_values() {

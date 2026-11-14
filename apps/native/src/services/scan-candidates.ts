@@ -12,10 +12,7 @@ export interface ScanOptions {
   onFound?: (host: BridgeAddress) => void
 }
 
-/**
- * 并发探测候选地址（/24 网段扫描），受总预算 budgetMs 与外部 signal 双重约束。
- * 参数不合法直接抛 RangeError —— 调用方（store action）把它们当作编程错误而非网络错误。
- */
+/** 并发探测 /24 网段候选地址，受总预算与外部 signal 双重约束；参数非法属于编程错误。 */
 export async function scanCandidates(candidates: readonly ScanCandidate[], {
   signal,
   concurrency = SCAN_CONCURRENCY,
@@ -45,10 +42,10 @@ export async function scanCandidates(candidates: readonly ScanCandidate[], {
       const address = parseQrPayload(`http://${candidate.host}:${candidate.port}`)
       if (!address)
         continue
-      const result = await probeBridge(address, controller.signal, timeoutMs)
-      if (result && !controller.signal.aborted) {
-        found.push(result)
-        onFound?.(result)
+      const result = await probeBridge(address, { signal: controller.signal, timeoutMs })
+      if (result.address && !controller.signal.aborted) {
+        found.push(result.address)
+        onFound?.(result.address)
       }
     }
   }

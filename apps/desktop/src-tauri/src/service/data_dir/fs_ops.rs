@@ -16,7 +16,7 @@ const PROGRESS_EVERY_FILES: u64 = 256;
 /// 目录树统计。`links` 单列：重复解析点不复制内容，因此不参与「文件数 + 字节数」
 /// 校验，但必须让用户知道有多少条链接需要重建。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct TreeStats {
+pub(crate) struct TreeStats {
     pub files: u64,
     pub bytes: u64,
     pub links: u64,
@@ -27,7 +27,7 @@ impl TreeStats {
     ///
     /// 只用「不少于」而不是「相等」：迁移期间用户可能有程序在往源目录写新文件，
     /// 目标比源多不算失败；目标比源少才是真丢数据。
-    pub(super) fn covers(&self, source: &TreeStats) -> bool {
+    pub(crate) fn covers(&self, source: &TreeStats) -> bool {
         self.files >= source.files && self.bytes >= source.bytes
     }
 }
@@ -56,7 +56,7 @@ fn is_skipped(name: &str) -> bool {
 }
 
 /// 递归统计目录树（跳过运行时产物，不跟随重复解析点）。
-pub(super) fn scan_tree(root: &Path, stats: &mut TreeStats) -> Result<(), String> {
+pub(crate) fn scan_tree(root: &Path, stats: &mut TreeStats) -> Result<(), String> {
     let read_dir =
         fs::read_dir(root).map_err(|e| format!("DATA_DIR_SCAN_READ: {}: {e}", root.display()))?;
     for entry in read_dir {
@@ -81,7 +81,7 @@ pub(super) fn scan_tree(root: &Path, stats: &mut TreeStats) -> Result<(), String
 }
 
 /// 复制进度：并行分支共享的计数器 + 节流后的回调。
-pub(super) struct CopyProgress<'a> {
+pub(crate) struct CopyProgress<'a> {
     files: AtomicU64,
     bytes: AtomicU64,
     links: AtomicU64,
@@ -89,7 +89,7 @@ pub(super) struct CopyProgress<'a> {
 }
 
 impl<'a> CopyProgress<'a> {
-    pub(super) fn new(on_tick: &'a (dyn Fn(u64, u64) + Send + Sync)) -> Self {
+    pub(crate) fn new(on_tick: &'a (dyn Fn(u64, u64) + Send + Sync)) -> Self {
         Self {
             files: AtomicU64::new(0),
             bytes: AtomicU64::new(0),
@@ -99,7 +99,7 @@ impl<'a> CopyProgress<'a> {
     }
 
     /// 已复制的累计量（复制结束后即为目标树的实际内容量）。
-    pub(super) fn stats(&self) -> TreeStats {
+    pub(crate) fn stats(&self) -> TreeStats {
         TreeStats {
             files: self.files.load(Ordering::Relaxed),
             bytes: self.bytes.load(Ordering::Relaxed),
@@ -124,7 +124,7 @@ impl<'a> CopyProgress<'a> {
 ///
 /// 顶层条目并行处理（同 `service::profile::copy_dir_tree`）：pnpm 档案下
 /// `node_modules` 层级深、文件多，串行复制会让 900MB 的迁移明显变慢。
-pub(super) fn copy_tree(src: &Path, dst: &Path, progress: &CopyProgress) -> Result<(), String> {
+pub(crate) fn copy_tree(src: &Path, dst: &Path, progress: &CopyProgress) -> Result<(), String> {
     let roots = CopyRoots {
         source: std::path::absolute(src).map_err(|e| format!("DATA_DIR_COPY_SOURCE: {e}"))?,
         canonical_source: fs::canonicalize(src)
@@ -243,7 +243,7 @@ fn copy_link(src: &Path, dst: &Path, roots: &CopyRoots) {
 ///
 /// 读不到目录时返回 false（当成非空）：回滚时据此决定「删掉空目录」还是「挪到
 /// 一边」，宁可多留一份，也不冒删数据的风险。
-pub(super) fn is_dir_empty(path: &Path) -> bool {
+pub(crate) fn is_dir_empty(path: &Path) -> bool {
     if fs::symlink_metadata(path).is_err() {
         return true;
     }

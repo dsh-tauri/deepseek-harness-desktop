@@ -125,7 +125,7 @@ vi.mock('heroui-native/dialog', async () => {
 })
 vi.mock('react-native-gesture-handler', () => ({ GestureHandlerRootView: 'GestureHandlerRootView' }))
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaProvider: 'SafeAreaProvider', SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 59, bottom: 34, left: 0, right: 0 }) }))
-vi.mock('react-native-lucide', () => ({ History: 'Icon', Radar: 'Icon', ScanLine: 'Icon', RefreshCw: 'Icon', X: 'Icon', ArrowLeft: 'Icon', Hand: 'Icon' }))
+vi.mock('react-native-lucide', () => ({ History: 'Icon', Radar: 'Icon', ScanLine: 'Icon', RefreshCw: 'Icon', PencilLine: 'Icon', X: 'Icon', ArrowLeft: 'Icon', Hand: 'Icon' }))
 vi.mock('react-native-svg', () => ({ default: 'Svg', Path: 'SvgPath', Rect: 'SvgRect', G: 'SvgGroup', Defs: 'SvgDefs', ClipPath: 'SvgClipPath' }))
 vi.mock('react-native', () => ({
   View: 'View',
@@ -793,9 +793,14 @@ describe('rendered root lifecycle resources', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15000)
     })
-    expect(connection.health[alpha.id]).toBe('unavailable')
     const { i18n } = await import('@/i18n')
-    expect(connection.notice).toBe(i18n.t('connection.hostOffline'))
+    expect(connection.health[alpha.id]).toBe('available')
+    expect(connection.notice).toBeNull()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000)
+    })
+    expect(connection.health[alpha.id]).toBe('unavailable')
+    expect(connection.notice).toBe(`${i18n.t('connection.hostOffline')} · ${i18n.t('connection.probeManifest')}`)
     expect(native.scheduleNotificationAsync).not.toHaveBeenCalled()
     expect(await webViewInstance()).toBe(instance)
   })
@@ -820,7 +825,12 @@ describe('rendered root lifecycle resources', () => {
     native.fetch.mockResolvedValue(new Response(null, { status: 503 }))
     await changeAppState('active')
     expect(native.fetch).toHaveBeenCalledTimes(1)
-    expect(texts()).toContain('主机暂时不可用')
+    expect(button('bridge.local:3080，可用').props.accessibilityLabel).toBe('bridge.local:3080，可用')
+    expect(texts()).not.toContain('主机暂时不可用')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000)
+    })
+    expect(native.fetch).toHaveBeenCalledTimes(2)
     expect(button('bridge.local:3080，不可用').props.accessibilityLabel).toBe('bridge.local:3080，不可用')
     native.fetch.mockClear()
     native.fetch.mockImplementation(async () => Response.json({ name: 'DeepSeek Harness', short_name: 'DSH' }))

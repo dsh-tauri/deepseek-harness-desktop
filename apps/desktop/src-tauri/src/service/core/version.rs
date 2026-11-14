@@ -27,11 +27,12 @@ const BUNDLED_CORE_ID: &str = "app-bundled";
 
 /// `dependencies` 目录（下载的核心槽位与普通安装的 `dsh` 激活目录的共同父级）。
 ///
-/// 恒落在应用数据目录之下：槽位是桌面端自己下载的产物，即使清单把激活核心托管到安装
-/// 包资源（离线包 `$Resources/dsh`）也不能让下载产物写进安装目录——那里在 macOS `.app`
-/// 上是签名的只读内容、在 Linux deb 里属于 root，且会随应用升级被覆盖。
+/// 位置由依赖根决定（默认 AppData，用户可搬到别的盘，见 `config::dependencies::deps_root`）：
+/// 槽位是桌面端自己下载的产物，即使清单把激活核心托管到安装包资源（离线包
+/// `$Resources/dsh`）也不能让下载产物写进安装目录——那里在 macOS `.app` 上是签名的
+/// 只读内容、在 Linux deb 里属于 root，且会随应用升级被覆盖。
 fn dependencies_dir<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
-    config::get_base_dir(app_handle).join("dependencies")
+    config::dependencies::deps_root(app_handle)
 }
 
 /// 槽位是否可用：盘上的形态必须与 `core_asar` 要求的一致（asar 模式下是归档、目录模式下
@@ -376,37 +377,6 @@ fn rows_with_release_catalog<R: tauri::Runtime>(
     }
 
     rows
-}
-
-/// 已装核心列表中是否有「带着 release 身份」的槽位包含给定 semver 版本。
-///
-/// `check_dsh_update` 用它跳过「最新版本的核心已下载但未激活」场景的 toast：
-/// 只要最新 release 的 semver 已存在于某个已装槽位（或随包内核）就不提示，避免用户白点
-/// 一次「立即更新」做无意义的整包重下。版本号按字符串相等比较（dsh 的版本
-/// 字符串已是 semver，build-id 不参与版本号识别——同 semver 的不同 build-id
-/// 在用户视角下都算「同版本」）。就地安装的激活副本只有引擎版本号、没有 release
-/// 身份，不能凭它判定某个 release 已安装，否则会吞掉核心更新提示（issue #790）。
-pub async fn has_installed_version(app_handle: &AppHandle, version: &str) -> bool {
-    any_release_installed(&list(app_handle).await, version)
-}
-
-/// 已装核心列表里是否有行的 semver 等于给定版本、且带着 release 身份（见
-/// [`release_installed_on_disk`]）。
-fn any_release_installed(cores: &[HarnessCore], version: &str) -> bool {
-    cores
-        .iter()
-        .any(|c| release_installed_on_disk(c) && c.version == version)
-}
-
-/// 这一行能否作为「对应版本的核心已经装好」的证据：release 身份在盘上——磁盘槽位目录
-/// （tag 即目录名，含已不在目录里的历史槽位）或 store 里与清单一致的 tag 记录；随包
-/// 内核随应用分发也算。无 release 身份的 `app` 兜底行只是"激活目录里有一份版本号相同
-/// 的副本"，证明不了某个 release 已下载（issue #790）。
-fn release_installed_on_disk(core: &HarnessCore) -> bool {
-    core.present
-        && !core.orphaned
-        && core.source == CoreSource::App
-        && (core.bundled || !core.tag.is_empty())
 }
 
 /// 就地安装的激活副本（`dependencies/dsh`）的 release 身份：只认 store 里的 tag 记录，
@@ -1156,7 +1126,6 @@ mod tests {
                 .as_deref()
                 .is_some_and(|error| error.starts_with("CORE_VERSION_LEGACY_DIRECTORY:"))
         );
-        assert!(!any_release_installed(&rows, "0.2.2-rc.1"));
         let offline = rows_with_release_catalog(app, Vec::new(), false);
         assert!(
             offline
@@ -1230,7 +1199,6 @@ mod tests {
             rows.iter()
                 .any(|row| row.id == format!("app-retired-.retired-{tag}") && row.orphaned)
         );
-        assert!(any_release_installed(&rows, "0.2.2-rc.1"));
         assert!(ensure_app_core_supported(&deps.join(tag), Some(tag), Some("0.2.2-rc.1")).is_ok());
 
         // 目录版核心是当前要求的格式：关闭 asar 后刚下载的目录核心必须原地保留，
@@ -1330,99 +1298,5 @@ mod tests {
             trusted_release_version(Some("dsh-0.2.0-rc.2-36556493178"), None),
             None
         );
-    }
-
-    fn core_row(
-        id: &str,
-        source: CoreSource,
-        tag: &str,
-        present: bool,
-        bundled: bool,
-    ) -> HarnessCore {
-        HarnessCore {
-            id: id.to_string(),
-            source,
-            version: "0.2.0-rc.2".to_string(),
-            tag: tag.to_string(),
-            path: String::new(),
-            dir: String::new(),
-            present,
-            active: false,
-            removable: false,
-            preview: false,
-            orphaned: false,
-            bundled,
-            error: None,
-        }
-    }
-
-    #[test]
-    fn release_installed_on_disk_needs_release_identity() {
-        // 槽位行（tag 即目录名）：算已装
-        assert!(release_installed_on_disk(&core_row(
-            "app-dsh-0.2.0-rc.2-36556493178",
-            CoreSource::App,
-            "dsh-0.2.0-rc.2-36556493178",
-            true,
-            false
-        )));
-        // 随包内核（版本由清单给出，没有独立 tag）：算已装
-        assert!(release_installed_on_disk(&core_row(
-            "app-bundled",
-            CoreSource::App,
-            "",
-            true,
-            true
-        )));
-        // 无 release 身份的兜底行：只是激活目录里有一份版本号相同的副本，证明不了
-        // 某个 release 已下载——凭它判定会吞掉核心更新提示（issue #790）
-        assert!(!release_installed_on_disk(&core_row(
-            "app",
-            CoreSource::App,
-            "",
-            true,
-            false
-        )));
-        // 本地核心与文件缺失的行都不算
-        assert!(!release_installed_on_disk(&core_row(
-            "local",
-            CoreSource::Local,
-            "dsh-0.2.0-rc.2-36556493178",
-            true,
-            false
-        )));
-        assert!(!release_installed_on_disk(&core_row(
-            "app-dsh-0.2.0-rc.2-36556493178",
-            CoreSource::App,
-            "dsh-0.2.0-rc.2-36556493178",
-            false,
-            false
-        )));
-    }
-
-    #[test]
-    fn ghost_row_does_not_report_the_version_as_installed() {
-        let tag = "dsh-0.2.0-rc.2-36556493178";
-        // 修复后：只有带 release 身份的槽位行才算已装
-        assert!(any_release_installed(
-            &[core_row(
-                &format!("app-{tag}"),
-                CoreSource::App,
-                tag,
-                true,
-                false
-            )],
-            "0.2.0-rc.2"
-        ));
-        // 修复前：无 tag 的兜底行（激活目录里有一份版本号相同的副本）也会被当成
-        // 「已下载」，于是 check_dsh_update 吞掉更新提示（issue #790）
-        assert!(!any_release_installed(
-            &[core_row("app", CoreSource::App, "", true, false)],
-            "0.2.0-rc.2"
-        ));
-        assert!(!any_release_installed(
-            &[core_row("local", CoreSource::Local, tag, true, false)],
-            "0.2.0-rc.2"
-        ));
     }
 }

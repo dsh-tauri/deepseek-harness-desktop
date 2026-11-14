@@ -2,6 +2,7 @@ import type { NotificationActionEvent } from '@/hooks/use-notification-action'
 import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
 import type { NotificationOwnerMetadata, NotificationResult } from '@/utils/notification'
 import { useWatch } from '@reause/core'
+import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { getAllWindows, getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useRef } from 'react'
@@ -137,21 +138,7 @@ export function useNativeNotifications(source: string) {
     if (!await owns(data))
       return
     try {
-      const appWindow = getCurrentWindow()
-      if (await appWindow.isMinimized())
-        await appWindow.unminimize()
-      await appWindow.show()
-      await appWindow.setFocus()
-      if (!await appWindow.isFocused()) {
-        await appWindow.setAlwaysOnTop(true)
-        try {
-          await appWindow.show()
-          await appWindow.setFocus()
-        }
-        finally {
-          await appWindow.setAlwaysOnTop(false)
-        }
-      }
+      await invoke('activate_window')
     }
     catch (error) {
       console.error('[notification] focus window failed:', error)

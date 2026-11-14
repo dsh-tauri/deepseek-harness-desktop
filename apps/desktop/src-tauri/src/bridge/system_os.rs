@@ -147,7 +147,6 @@ pub async fn reveal_data_dir(app_handle: AppHandle) -> Result<(), String> {
     let dsh_home = config::get_dsh_data_path(&app_handle);
     // 目录可能尚未创建（全新安装），先建好再打开，避免资源管理器报路径不存在
     std::fs::create_dir_all(&dsh_home).map_err(|e| e.to_string())?;
-
     tauri_plugin_opener::open_path(&dsh_home, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -324,7 +323,10 @@ fn is_frontend_log_line(line: &str) -> bool {
         .any(|lvl| trimmed.contains(&format!("{lvl} frontend:")))
 }
 
-/// 在系统浏览器中打开任意 http(s) 链接（更新说明 / 关于对话框仓库链接等）
+/// 在系统浏览器中打开任意 http(s) 链接（更新说明 / 关于对话框仓库链接等）。
+///
+/// 交接前台发生在交给系统之前：浏览器被拉起时前台处置权已在它手上，窗口才会真的
+/// 顶到最前，而不是被壳窗口挡住（issue #1462）。
 #[tauri::command]
 pub async fn open_external_url(app_handle: AppHandle, url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {

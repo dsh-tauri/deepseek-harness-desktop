@@ -97,7 +97,7 @@ vi.mock('heroui-native/dialog', async () => {
   return { Dialog: Object.assign(Dialog, { Portal: 'Portal', Overlay: 'Overlay', Content: 'Content', Title: 'Text', Description: 'Text' }) }
 })
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView' }))
-vi.mock('react-native-lucide', () => ({ History: 'HistoryIcon', Radar: 'RadarIcon', QrCode: 'QrCodeIcon', ScanLine: 'ScanLineIcon', RefreshCw: 'RefreshIcon', X: 'Icon', ArrowLeft: 'Icon', Hand: 'Icon' }))
+vi.mock('react-native-lucide', () => ({ History: 'HistoryIcon', Radar: 'RadarIcon', QrCode: 'QrCodeIcon', ScanLine: 'ScanLineIcon', RefreshCw: 'RefreshIcon', PencilLine: 'PencilLineIcon', X: 'Icon', ArrowLeft: 'Icon', Hand: 'Icon' }))
 vi.mock('react-native-reanimated', async () => {
   const { useRef } = await import('react')
   return {
@@ -452,6 +452,25 @@ describe('rendered Home scanning and idle actions', () => {
     expect(drawer().props.open).toBe(false)
     expect(connection.stage).toBe('idle')
   })
+
+  it('places a disabled-until-hydrated edit icon left of the scan action and connects a typed public address', async () => {
+    const { i18n } = await import('@/i18n')
+    await mount()
+    expect(button(i18n.t('scan.addressTitle')).props).toMatchObject({ variant: 'outline', size: 'lg', isIconOnly: true, isDisabled: true })
+
+    await act(async () => hydrate())
+    const row = root().findAll(node => String(node.type) === 'View').find(node => node.props.className === 'flex-row items-center gap-3' && node.findAll(child => String(child.type) === 'PencilLineIcon').length === 1)
+    expect(row?.findAll(node => String(node.type) === 'Button').map(node => node.props.accessibilityLabel ?? text(node))).toEqual([i18n.t('scan.addressTitle'), i18n.t('scan.scanQr')])
+
+    await act(async () => button(i18n.t('scan.addressTitle')).props.onPress())
+    const dialog = root().find(node => String(node.type) === 'Dialog')
+    const input = dialog.find(node => String(node.type) === 'Input')
+    await act(async () => input.props.onChangeText('tunnel.example.com'))
+    await act(async () => dialog.findAll(node => String(node.type) === 'Button').find(node => text(node) === i18n.t('scan.connect'))!.props.onPress())
+
+    expect(connection.current).toEqual({ id: 'https://tunnel.example.com', url: 'https://tunnel.example.com/', host: 'tunnel.example.com', port: 443, remote: true })
+    expect(root().findAll(node => String(node.type) === 'Dialog')).toHaveLength(0)
+  })
 })
 
 describe('rendered Home connection editing', () => {
@@ -468,6 +487,7 @@ describe('rendered Home connection editing', () => {
     expect(root().find(node => String(node.type) === 'Portal').props.unstable_accessibilityContainerViewIsModal).toBe(true)
     expect(content.props.className).toBe('gap-5')
     expect(content.findAll(node => String(node.type) === 'Button').map(text)).toEqual([
+      i18n.t('connection.editAddress'),
       i18n.t('connection.rename'),
       i18n.t('connection.delete'),
       i18n.t('common.cancel'),
@@ -475,7 +495,7 @@ describe('rendered Home connection editing', () => {
     expect(texts()).toContain(alpha.url)
     expect(button(i18n.t('connection.delete')).props.variant).toBe('danger-soft')
     expect(button(i18n.t('common.cancel')).props.className).toBe('mt-1')
-    expect(content.find(node => String(node.type) === 'View' && node.props.className === 'gap-3').children).toHaveLength(3)
+    expect(content.find(node => String(node.type) === 'View' && node.props.className === 'gap-3').children).toHaveLength(4)
     expect(native.alert).not.toHaveBeenCalled()
 
     await press(i18n.t('connection.rename'))
@@ -510,6 +530,50 @@ describe('rendered Home connection editing', () => {
     expect(connection.viewGeneration).toBe(generation)
     expect(webView().props.source).toEqual({ uri: 'http://one.local:3080/tasks?auth=saved-token' })
     expect(root().findAll(node => String(node.type) === 'Dialog')).toHaveLength(0)
+  })
+
+  it('edits a saved connection address from the drawer dialog and reuses its saved token', async () => {
+    const { i18n } = await import('@/i18n')
+    hydrate(history)
+    connection.cancelScan()
+    await mount()
+    await press(i18n.t('connection.recentConnections'))
+    const host = i18n.t('connection.hostStatus', { host: 'one.local:3080', status: i18n.t('connection.available') })
+    await act(async () => button(host).props.onLongPress())
+
+    await press(i18n.t('connection.editAddress'))
+    const dialogs = root().findAll(node => String(node.type) === 'Dialog')
+    expect(dialogs).toHaveLength(2)
+    const addressDialog = dialogs[1]!
+    const input = addressDialog.find(node => String(node.type) === 'Input')
+    expect(input.props).toMatchObject({ accessibilityLabel: i18n.t('scan.address'), value: '', autoFocus: true })
+    await act(async () => input.props.onChangeText('tunnel.example.com'))
+    await act(async () => addressDialog.findAll(node => String(node.type) === 'Button').find(node => text(node) === i18n.t('scan.connect'))!.props.onPress())
+
+    expect(connection.history[0]).toMatchObject({ id: 'https://tunnel.example.com', host: 'tunnel.example.com', port: 443 })
+    expect(connection.current).toBeNull()
+    expect(root().findAll(node => String(node.type) === 'Dialog')).toHaveLength(0)
+    expect(native.fetch).toHaveBeenCalledWith('https://tunnel.example.com/manifest.webmanifest', expect.anything())
+  })
+
+  it('keeps an invalid edited address in the dialog with a readable error', async () => {
+    const { i18n } = await import('@/i18n')
+    hydrate(history)
+    connection.cancelScan()
+    await mount()
+    await press(i18n.t('connection.recentConnections'))
+    const host = i18n.t('connection.hostStatus', { host: 'one.local:3080', status: i18n.t('connection.available') })
+    await act(async () => button(host).props.onLongPress())
+    await press(i18n.t('connection.editAddress'))
+    const dialog = root().findAll(node => String(node.type) === 'Dialog')[1]!
+    const input = dialog.find(node => String(node.type) === 'Input')
+
+    await act(async () => input.props.onChangeText('bridge local'))
+    await act(async () => dialog.findAll(node => String(node.type) === 'Button').find(node => text(node) === i18n.t('scan.connect'))!.props.onPress())
+
+    expect(texts()).toContain(i18n.t('scan.invalidAddress'))
+    expect(connection.history.map(entry => entry.id)).toEqual(history.map(entry => entry.id))
+    expect(root().findAll(node => String(node.type) === 'Dialog')).toHaveLength(2)
   })
 
   it('rejects blank names on keyboard submission and discards cancelled drafts', async () => {
@@ -814,6 +878,10 @@ describe('rendered Home connection drawer', () => {
     await press('刷新最近连接')
 
     expect(native.fetch).toHaveBeenCalledTimes(2)
+    expect(button('one.local:3080，可用').findAll(node => String(node.type) === 'View' && node.props.className?.includes('bg-success'))).toHaveLength(1)
+    await press('刷新最近连接')
+
+    expect(native.fetch).toHaveBeenCalledTimes(3)
     expect(button('one.local:3080，不可用').findAll(node => String(node.type) === 'View' && node.props.className?.includes('bg-danger'))).toHaveLength(1)
     expect(texts()).not.toContain('不可用')
     expect(connection.current).toBeNull()
@@ -821,8 +889,8 @@ describe('rendered Home connection drawer', () => {
     holdNetwork()
     await press('刷新最近连接')
     await press('刷新最近连接')
-    expect(native.fetch).toHaveBeenCalledTimes(3)
-    expect(native.fetch.mock.calls[2]![0]).toBe('http://one.local:3080/manifest.webmanifest')
+    expect(native.fetch).toHaveBeenCalledTimes(4)
+    expect(native.fetch.mock.calls[3]![0]).toBe('http://one.local:3080/manifest.webmanifest')
     expect(connection.viewGeneration).toBe(0)
   })
 

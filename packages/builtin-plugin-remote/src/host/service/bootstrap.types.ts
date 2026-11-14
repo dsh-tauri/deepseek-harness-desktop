@@ -47,3 +47,9 @@ export interface BootstrapHooks {
   onProgress?: (progress: RemoteProgress) => void
   onEvent?: (stage: RemoteMachineStage, line: string, options?: { terminal?: RemoteMachineTerminal, reason?: string }) => void
 }
+
+export interface BootstrapInstallOptions {
+  /** 无视远端既有的安装标记，强制重跑安装脚本的全部组件安装段。 */
+  force?: boolean
+  failureLine?: string
+}

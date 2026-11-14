@@ -11,6 +11,10 @@
 //! 入口相对路径由清单 `dependencies.<key>.entry` 决定，因此「装在哪」与「入口形状」
 //! 各有一处真值。将来做本地捆绑版只需把清单（或映射表）指向 `resources/*`，路径解析
 //! 逻辑无需改动。写入单点收口到 [`record`]，且内容不变时不落盘。
+//!
+//! 「整个依赖根装在哪」另有两处来源：用户自定义的依赖根（store 的 `dependencies_root`，
+//! issue #1285，见 [`crate::service::deps_root`]）优先，其次才是
+//! `<AppData>/dependencies`。两者都只决定**托管根的默认位置**，不覆盖单键映射。
 
 use crate::AppHandle;
 use serde::{Deserialize, Serialize};
@@ -23,6 +27,9 @@ use super::manifest;
 
 /// 映射表文件名（debug 构建与其它依赖同处 `<base>/dev/` 之下）
 pub const MAPPING_FILE: &str = "dependencies.json";
+
+/// `dependencies` 目录名（默认依赖根 = `<AppData>[/dev]/dependencies`）
+pub const DEPS_DIR_NAME: &str = "dependencies";
 
 /// 逻辑依赖键
 pub const DEP_PNPM: &str = "pnpm";
@@ -133,6 +140,63 @@ pub fn write_mapping<R: Runtime>(
     Ok(())
 }
 
+/// 把落在 `from` 之下的映射值整体搬到 `to` 之下（依赖根迁移用）。
+///
+/// 迁移会把旧根改名，留在映射表里的旧路径随即失效，`active_root_from` 的存在性检查
+/// 会把它回落到清单默认根——用户选的核心就悄悄换了。这里按相对位置重写绝对路径，
+/// 返回被改动的键，供失败时恢复。
+fn relocate_in(
+    mapping: &DependencyMapping,
+    from: &Path,
+    to: &Path,
+) -> (DependencyMapping, Vec<String>) {
+    let mut next = mapping.clone();
+    let mut changed = Vec::new();
+    for (key, value) in &mapping.0 {
+        let Some(raw) = value else { continue };
+        let Ok(rest) = Path::new(raw).strip_prefix(from) else {
+            continue;
+        };
+        next.set(key, Some(to.join(rest)));
+        changed.push(key.clone());
+    }
+    (next, changed)
+}
+
+pub fn relocate_mapping<R: Runtime>(
+    app: &AppHandle<R>,
+    from: &Path,
+    to: &Path,
+) -> Result<Vec<String>, String> {
+    let _guard = MAPPING_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let (next, changed) = relocate_in(&read_mapping(app), from, to);
+    if changed.is_empty() {
+        return Ok(changed);
+    }
+    write_mapping(app, &next)?;
+    Ok(changed)
+}
+
+/// 恢复 [`relocate_mapping`] 之前的映射值（迁移失败回滚用）。
+pub fn restore_mapping<R: Runtime>(
+    app: &AppHandle<R>,
+    entries: &[(String, Option<PathBuf>)],
+) -> Result<(), String> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let _guard = MAPPING_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut next = read_mapping(app);
+    for (key, value) in entries {
+        next.set(key, value.clone());
+    }
+    write_mapping(app, &next)
+}
+
 /// 记录单个依赖的安装根（`None` = 系统环境）。
 ///
 /// 映射表的唯一写入口；写入失败只告警——解析链路在下次启动时按清单默认根兜底，
@@ -160,18 +224,45 @@ pub fn record<R: Runtime>(app: &AppHandle<R>, key: &str, value: Option<PathBuf>)
     }
 }
 
+/// 依赖根（`dependencies` 的父级，issue #1285）：用户自定义的绝对路径优先，否则
+/// `<AppData>[/dev]`。
+///
+/// 这是「整个依赖根装在哪」的唯一真值：默认托管根 `dependencies/<key>`、核心槽位
+/// `dependencies/<tag>` 与迁移时的搬家用它拼，任何写死 `get_base_dir().join("dependencies")`
+/// 的地方都会在用户搬过依赖根之后指向一个空目录。
+pub fn deps_root<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
+    let base = super::runtime::get_base_dir(app);
+    let recorded = super::setting::get_store_dat_setting(app).dependencies_root;
+    deps_root_from(&base, recorded.as_deref())
+}
+
+/// [`deps_root`] 的纯函数版本（单测与解析链路共用）。
+pub(crate) fn deps_root_from(base: &Path, recorded: Option<&str>) -> PathBuf {
+    recorded
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| base.join(DEPS_DIR_NAME))
+}
+
+/// 未自定义时依赖根所在的位置（面板展示「默认在哪里」）。
+pub fn default_deps_root<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
+    super::runtime::get_base_dir(app).join(DEPS_DIR_NAME)
+}
+
 /// 清单声明的默认托管根（映射未记录或为系统时使用）
 pub fn managed_root<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
     let base = super::runtime::get_base_dir(app);
+    let deps = deps_root(app);
     let resources = manifest::resource_root(app);
     manifest::with_manifest(app, |manifest| {
-        managed_root_from(&base, resources.as_deref(), Some(manifest), key)
+        managed_root_from(&base, &deps, resources.as_deref(), Some(manifest), key)
     })
-    .unwrap_or_else(|| managed_root_from(&base, resources.as_deref(), None, key))
+    .unwrap_or_else(|| managed_root_from(&base, &deps, resources.as_deref(), None, key))
 }
 
 pub(crate) fn managed_root_from(
     base: &Path,
+    deps: &Path,
     resources: Option<&Path>,
     manifest: Option<&manifest::Manifest>,
     key: &str,
@@ -180,9 +271,31 @@ pub(crate) fn managed_root_from(
         .and_then(|manifest| manifest.dependencies.get(key))
         .and_then(|spec| spec.managed_root.as_deref())
     {
-        Some(raw) => manifest::resolve_location_from(base, resources, raw),
-        None => base.join(default_managed_root(key)),
+        // 清单的 `$AppData/dependencies/<key>` 以 AppData 为基准书写：用户把依赖根
+        // 搬到别处后必须整体换成新的父级，否则 `managedRoot` 会把安装写回系统盘。
+        Some(raw) => relocate_managed_root(
+            &manifest::resolve_location_from(base, resources, raw),
+            base,
+            deps,
+        ),
+        None => relocate_managed_root(&base.join(default_managed_root(key)), base, deps),
     }
+}
+
+/// 把按清单解析出的托管根换到当前依赖根之下。
+///
+/// 清单写的是 `$AppData/dependencies/dsh`（相对 AppData 的默认布局），只有落在
+/// **默认**依赖根之内的托管根才跟着搬；`$Resources/dsh` 这类随包路径与用户手工写过
+/// 的其它位置保持原样。
+fn relocate_managed_root(resolved: &Path, base: &Path, deps: &Path) -> PathBuf {
+    let default_root = base.join(DEPS_DIR_NAME);
+    let Ok(rest) = dunce::simplified(resolved).strip_prefix(dunce::simplified(&default_root)) else {
+        return resolved.to_path_buf();
+    };
+    if rest.as_os_str().is_empty() {
+        return deps.to_path_buf();
+    }
+    deps.join(rest)
 }
 
 /// 当前生效的依赖根：映射指定的根优先，否则回落清单默认托管根
@@ -201,16 +314,18 @@ pub(crate) fn managed_root_from(
 /// 悬空回落不影响既有行为。
 pub fn active_root<R: Runtime>(app: &AppHandle<R>, key: &str) -> PathBuf {
     let base = super::runtime::get_base_dir(app);
+    let deps = deps_root(app);
     let resources = manifest::resource_root(app);
     let mapping = read_mapping(app);
     manifest::with_manifest(app, |manifest| {
-        active_root_from(&base, resources.as_deref(), Some(manifest), &mapping, key)
+        active_root_from(&base, &deps, resources.as_deref(), Some(manifest), &mapping, key)
     })
-    .unwrap_or_else(|| active_root_from(&base, resources.as_deref(), None, &mapping, key))
+    .unwrap_or_else(|| active_root_from(&base, &deps, resources.as_deref(), None, &mapping, key))
 }
 
 pub(crate) fn active_root_from(
     base: &Path,
+    deps: &Path,
     resources: Option<&Path>,
     manifest: Option<&manifest::Manifest>,
     mapping: &DependencyMapping,
@@ -226,7 +341,7 @@ pub(crate) fn active_root_from(
             return resolved;
         }
     }
-    managed_root_from(base, resources, manifest, key)
+    managed_root_from(base, deps, resources, manifest, key)
 }
 
 /// 随包资源构建的随包核心根（`$Resources/dsh`）；非随包构建为 None。
@@ -366,8 +481,11 @@ mod tests {
         )
         .unwrap();
         let mut mapping = DependencyMapping::default();
+        // 依赖根固定为 AppData 默认布局：本用例验的是映射/清单的优先级，
+        // 自定义依赖根另有 relocate 用例。
+        let deps = deps_root_from(&base, None);
         let resolve = |manifest: Option<&manifest::Manifest>, mapping: &DependencyMapping| {
-            active_root_from(&base, Some(&resources), manifest, mapping, DEP_DSH)
+            active_root_from(&base, &deps, Some(&resources), manifest, mapping, DEP_DSH)
         };
         assert_eq!(
             resolve(Some(&manifest), &mapping),
@@ -394,7 +512,7 @@ mod tests {
         mapping.set(DEP_DSH, Some("$AppData/missing".into()));
         assert_eq!(resolve(None, &mapping), base.join("dependencies/dsh"));
         assert_eq!(
-            managed_root_from(&base, None, Some(&manifest), DEP_DSH),
+            managed_root_from(&base, &deps, None, Some(&manifest), DEP_DSH),
             base.join("default-core")
         );
         assert_eq!(
@@ -404,6 +522,72 @@ mod tests {
         assert_eq!(
             entry_relative_from(None, DEP_PNPM),
             PathBuf::from("bin").join("pnpm.cjs")
+        );
+    }
+
+    #[test]
+    fn custom_deps_root_relocates_the_default_managed_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("data");
+        let custom = dir.path().join("other-disk/dependencies");
+        let resources = dir.path().join("resources");
+        std::fs::create_dir_all(resources.join("dsh")).unwrap();
+        let manifest = manifest::parse(
+            r#"{"dependencies":{
+                "dsh":{"managedRoot":"$AppData/dependencies/dsh","overridable":true,"entry":"lib\\bin.js"},
+                "git":{"managedRoot":"$Resources/dsh","overridable":true,"entry":"cmd/git.exe"}
+            }}"#,
+        )
+        .unwrap();
+        let deps = deps_root_from(&base, Some(&custom.to_string_lossy()));
+
+        // 清单里按 AppData 书写的托管根整体挪到自定义依赖根之下……
+        assert_eq!(
+            managed_root_from(&base, &deps, None, Some(&manifest), DEP_DSH),
+            custom.join("dsh")
+        );
+        // ……随包资源路径与依赖根无关，保持原样
+        assert_eq!(
+            managed_root_from(&base, &deps, Some(&resources), Some(&manifest), DEP_GIT),
+            resources.join("dsh")
+        );
+        // 清单没有 managedRoot 时同样落在自定义依赖根里
+        assert_eq!(
+            managed_root_from(&base, &deps, None, None, DEP_PNPM),
+            custom.join("pnpm")
+        );
+        // 未自定义时行为与迁移前逐字一致
+        let default = deps_root_from(&base, None);
+        assert_eq!(default, base.join(DEPS_DIR_NAME));
+        assert_eq!(
+            managed_root_from(&base, &default, None, Some(&manifest), DEP_DSH),
+            base.join("dependencies/dsh")
+        );
+    }
+
+    #[test]
+    fn deps_root_ignores_a_relative_or_empty_record() {
+        let base = Path::new("/appdata");
+        assert_eq!(deps_root_from(base, None), base.join(DEPS_DIR_NAME));
+        assert_eq!(deps_root_from(base, Some("")), base.join(DEPS_DIR_NAME));
+        assert_eq!(deps_root_from(base, Some("   ")), base.join(DEPS_DIR_NAME));
+        assert_eq!(
+            deps_root_from(base, Some("relative/deps")),
+            base.join(DEPS_DIR_NAME)
+        );
+        let absolute = if cfg!(windows) {
+            "D:/DSH/dependencies"
+        } else {
+            "/mnt/dsh/dependencies"
+        };
+        assert_eq!(
+            deps_root_from(base, Some(absolute)),
+            Path::new(absolute).to_path_buf()
+        );
+        // 空白记录已被 normalize_dependencies_root 清成 None；这里再兜一次首尾空白
+        assert_eq!(
+            deps_root_from(base, Some("  D:/DSH/dependencies  ")),
+            base.join(DEPS_DIR_NAME)
         );
     }
 
@@ -419,6 +603,28 @@ mod tests {
         std::fs::write(&archive, b"asar").unwrap();
         assert_eq!(binary_path_in(&dir, entry, DEP_DSH), archive.join(entry));
         assert_eq!(binary_path_in(&dir, entry, DEP_PNPM), dir.join(entry));
+    }
+
+    #[test]
+    fn relocate_rewrites_only_the_entries_under_the_old_root() {
+        let mut mapping = DependencyMapping::default();
+        mapping.set(DEP_DSH, Some(PathBuf::from("/data/dependencies/dsh")));
+        mapping.set(DEP_PNPM, Some(PathBuf::from("/opt/pnpm")));
+        mapping.set("system", None);
+        let (next, changed) = relocate_in(&mapping, Path::new("/data/dependencies"), Path::new("/big/deps"));
+        assert_eq!(changed, vec![DEP_DSH.to_string()]);
+        assert_eq!(next.get(DEP_DSH), Some(Some(PathBuf::from("/big/deps/dsh"))));
+        assert_eq!(next.get(DEP_PNPM), Some(Some(PathBuf::from("/opt/pnpm"))));
+        assert_eq!(next.get("system"), Some(None));
+    }
+
+    #[test]
+    fn relocate_leaves_the_mapping_alone_when_nothing_is_under_the_old_root() {
+        let mut mapping = DependencyMapping::default();
+        mapping.set(DEP_DSH, Some(PathBuf::from("/opt/dsh")));
+        let (next, changed) = relocate_in(&mapping, Path::new("/data/dependencies"), Path::new("/big/deps"));
+        assert!(changed.is_empty());
+        assert_eq!(next.0, mapping.0);
     }
 
     #[test]

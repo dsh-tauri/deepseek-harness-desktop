@@ -3,7 +3,7 @@ import type { RemoteKey } from '../locales/index'
 import type { MachinesNotice } from '../store/modules/machines.types'
 import type { InstallResult, MachineLifecycleState, MachineRow, MachineStatus, ProgressPhase, RemoteBridge, SecretValues } from '../types/index'
 import { Button, Input, Modal, StateDot, Switch } from 'dsh-tauri-ui/client'
-import { cn, useStore } from 'dsh-tauri/client'
+import { cn, If, useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { messageOf } from '../../shared/error'
@@ -223,13 +223,13 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
   bridgeError: string | undefined
   installResult: InstallResult | undefined
   t: (key: RemoteKey) => string
-  onInstall: (id: string) => void
+  onInstall: (id: string, reinstall: boolean) => void
 }): ReactNode {
   return (
     <>
-      {status?.dshMissing === true
-        ? <InstallPanel status={status} busy={busy} t={t} onInstall={() => onInstall(id)} />
-        : null}
+      {status === undefined
+        ? null
+        : <InstallPanel status={status} busy={busy} t={t} onInstall={reinstall => onInstall(id, reinstall)} />}
       {status?.lastError !== undefined ? <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">{status.lastError}</p> : null}
       {bridgeError !== undefined
         ? (
@@ -268,26 +268,32 @@ function LogStream({ id, lines, fallback }: { id: string, lines: readonly string
   )
 }
 
+/** dshMissing 只决定文案与按钮：两种情况都提供安装入口，已装好的机器走「重新安装」 */
+const INSTALL_VIEW_OF = {
+  missing: { hint: 'install.hint', action: 'install.action', variant: 'primary', reinstall: false },
+  ready: { hint: 'install.reinstall_hint', action: 'install.reinstall', variant: 'outline', reinstall: true },
+} as const satisfies Record<string, { hint: RemoteKey, action: RemoteKey, variant: 'primary' | 'outline', reinstall: boolean }>
+
 function InstallPanel({ status, busy, t, onInstall }: {
   status: MachineStatus
   busy: 'test' | 'connect' | 'disconnect' | 'install' | undefined
   t: (key: RemoteKey) => string
-  onInstall: () => void
+  onInstall: (reinstall: boolean) => void
 }): ReactNode {
   const installing = busy === 'install' || status.progress?.phase === 'installing'
-  if (installing) {
-    return (
-      <div className="flex flex-col gap-[8px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]">
-        <p className="m-0 text-[12px] leading-[18px] text-secondary">{t('progress.installing')}</p>
-      </div>
-    )
-  }
+  // 后端在重连/握手期拒绝新的 install 请求，按钮同步禁用，避免点了才报错。
+  const held = status.state === 'connecting' || status.state === 'testing' || status.state === 'reconnecting'
+  const view = status.dshMissing === true ? INSTALL_VIEW_OF.missing : INSTALL_VIEW_OF.ready
   return (
-    <div className="flex flex-col gap-[8px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]">
-      <p className="m-0 text-[12px] leading-[18px] text-secondary">{t('install.hint')}</p>
-      <Button variant="primary" size="sm" disabled={busy !== undefined} onClick={onInstall}>
-        {t('install.action')}
-      </Button>
+    <div className="flex items-center gap-[12px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]" data-testid={`install-panel-${status.dshMissing === true ? 'missing' : 'ready'}`}>
+      <p className="m-0 min-w-0 flex-1 text-[12px] leading-[18px] text-secondary">
+        {t(installing ? 'progress.installing' : view.hint)}
+      </p>
+      <If cond={!installing}>
+        <Button variant={view.variant} size="sm" disabled={busy !== undefined || held} onClick={() => onInstall(view.reinstall)}>
+          {t(view.action)}
+        </Button>
+      </If>
     </div>
   )
 }
@@ -863,7 +869,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                   bridgeError={bridgeErrors[row.id]}
                   installResult={state.installResults[row.id]}
                   t={t}
-                  onInstall={id => void service.install({ machineId: id })}
+                  onInstall={(id, reinstall) => void service.install({ machineId: id, reinstall })}
                 />
               </RowShell>
             )
@@ -912,7 +918,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                         bridgeError={bridgeErrors[row.id]}
                         installResult={state.installResults[row.id]}
                         t={t}
-                        onInstall={id => void service.install({ machineId: id })}
+                        onInstall={(id, reinstall) => void service.install({ machineId: id, reinstall })}
                       />
                     </RowShell>
                   ))}

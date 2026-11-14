@@ -93,7 +93,7 @@ pub(super) fn clear_user_home() -> Result<(), String> {
 /// 与恢复脚本的 `Get-Date -Format 'yyyy-MM-ddTHH-mm-ss'` 逐字一致：两边留下的
 /// `.moved-*` 目录必须能互相识别（脚本用正则 `[0-9T-]+` 反推原路径，字符集必须一致）。
 #[cfg(windows)]
-pub(super) fn now_stamp() -> String {
+pub(crate) fn now_stamp() -> String {
     use windows_sys::Win32::Foundation::SYSTEMTIME;
     use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 
@@ -112,7 +112,7 @@ pub(super) fn now_stamp() -> String {
 /// 时退回 UTC，**绝不返回空串**——空串会让旧目录名退化成 `.moved-`，
 /// `state::moved_stamp` 与 `find_moved_dirs` 的长度判据随之全部失效。
 #[cfg(not(windows))]
-pub(super) fn now_stamp() -> String {
+pub(crate) fn now_stamp() -> String {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as libc::time_t)
@@ -152,7 +152,7 @@ pub(super) fn now_stamp() -> String {
 /// 目标目录通常还不存在，因此从最近的存在祖先取卷信息；连祖先都探不到
 /// （相对路径、非法字符）时返回 `None`，调用方跳过预检而不是误报空间不足。
 #[cfg(windows)]
-pub(super) fn free_bytes(path: &std::path::Path) -> Option<u64> {
+pub(crate) fn free_bytes(path: &std::path::Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 
@@ -180,7 +180,7 @@ pub(super) fn free_bytes(path: &std::path::Path) -> Option<u64> {
 /// Unix：`statvfs` 取目标所在文件系统的可用字节数（与 Windows 的 `GetDiskFreeSpaceExW`
 /// 同款语义：从最近的存在祖先取卷信息）。
 #[cfg(not(windows))]
-pub(super) fn free_bytes(path: &std::path::Path) -> Option<u64> {
+pub(crate) fn free_bytes(path: &std::path::Path) -> Option<u64> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 

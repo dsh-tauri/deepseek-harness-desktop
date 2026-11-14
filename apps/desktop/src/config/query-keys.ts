@@ -35,6 +35,8 @@ export const queryKeys = {
   dataDir: ['data_dir'] as const,
   /** 数据目录下的一级子项体积（issue #871） */
   dataDirEntries: ['data_dir_entries'] as const,
+  /** 依赖（核心运行时）安装根（issue #1285） */
+  dependenciesRoot: ['dependencies_root'] as const,
   remoteMachines: ['remote_machines'] as const,
   remoteEvents: ['remote_events'] as const,
 } as const

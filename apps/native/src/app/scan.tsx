@@ -8,24 +8,25 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Else, If, Then } from 'react-if-lite'
 import { Linking, Text, View } from 'react-native'
-import { X } from 'react-native-lucide'
+import { PencilLine, X } from 'react-native-lucide'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { BreathingLight } from '@/components/breathing-light'
 import { useAppState } from '@/hooks/use-app-state'
 import { connectAddress } from '@/store/modules/connection/runtime'
-import { parseQrPayload } from '@/utils/bridge-protocol'
+import { AddressDialog } from '@/ui/address-dialog'
+import { parseAddressInput, parseQrPayload } from '@/utils/bridge-protocol'
 
 export default function ScanScreen() {
   const { t } = useTranslation()
   const [permission, requestPermission, refreshPermission] = useCameraPermissions()
   const appState = useAppState()
-  // 模态路由挂在独立的原生视图树上，SafeAreaView 沿 superview 找不到根 provider，insets 恒为 0，只能取 context。
   const insets = useSafeAreaInsets()
   const [error, setError] = useState<string | null>(null)
   const [scanned, setScanned] = useState(false)
   const [manual, setManual] = useState(false)
   const [typedAddress, setTypedAddress] = useState('')
   const [invalidAddress, setInvalidAddress] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const lockedRef = useRef(false)
   const [background, foreground] = useThemeColor(['background', 'foreground'])
   // keep:effect Recheck the native camera permission when returning from system settings.
@@ -71,12 +72,23 @@ export default function ScanScreen() {
     const text = typedAddress.trim()
     if (!text || lockedRef.current)
       return
-    const address = parseQrPayload(text) ?? (text.includes('://') ? null : parseQrPayload(`https://${text}`))
+    const { address } = parseAddressInput(text)
     if (!address) {
       setInvalidAddress(true)
       return
     }
     lockedRef.current = true
+    connectAddress(address)
+    router.back()
+  }
+  function submitDialog(url: string) {
+    if (lockedRef.current)
+      return
+    const { address } = parseAddressInput(url)
+    if (!address)
+      return
+    lockedRef.current = true
+    setDialogOpen(false)
     connectAddress(address)
     router.back()
   }
@@ -149,7 +161,12 @@ export default function ScanScreen() {
                         <Button variant="outline" onPress={retry}>{t('scan.qrRetry')}</Button>
                       </Then>
                     </If>
-                    <Button variant="ghost" onPress={() => switchMode(true)}>{t('scan.enterAddress')}</Button>
+                    <View className="flex-row items-center gap-3">
+                      <Button variant="outline" isIconOnly accessibilityLabel={t('scan.addressTitle')} onPress={() => setDialogOpen(true)}>
+                        <PencilLine size={20} color={foreground} />
+                      </Button>
+                      <Button className="flex-1" variant="ghost" onPress={() => switchMode(true)}>{t('scan.enterAddress')}</Button>
+                    </View>
                   </View>
                 </Else>
               </If>
@@ -165,6 +182,7 @@ export default function ScanScreen() {
         </Then>
         <Else><View className="flex-1 items-center justify-center"><BreathingLight /></View></Else>
       </If>
+      <AddressDialog isOpen={dialogOpen} onClose={() => setDialogOpen(false)} onSubmit={submitDialog} />
     </View>
   )
 }

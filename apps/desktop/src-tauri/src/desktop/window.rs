@@ -87,6 +87,17 @@ fn harness_guest_url(value: &str) -> Result<Url, String> {
     Ok(url)
 }
 
+/// 把当前窗口提到前台（通知点击激活）。
+///
+/// 只组合官方窗口 API：最小化先还原，再 show + set_focus。前端做同样几步会因为拿不到
+/// 窗口状态而漏掉还原，也可能在文档切换中途被丢弃（issue #1462）。
+#[tauri::command]
+pub fn activate_window(webview: Webview) -> Result<(), String> {
+    require_shell(&webview)?;
+    crate::desktop::activation::bring_to_front(&webview.window());
+    Ok(())
+}
+
 pub(crate) fn require_shell(webview: &Webview) -> Result<(), String> {
     let url = webview.url().map_err(|error| error.to_string())?;
     let packaged = (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
@@ -692,6 +703,9 @@ pub async fn prepare_harness_webview(
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
         .initialization_script(include_str!("browser.js.inc"))
         .initialization_script(super::builder::native_notifications_script(&app))
+        .initialization_script(super::builder::page_locale_script(
+            &crate::config::get_store_dat_setting(&app),
+        ))
         // 「打开方式」必须由 Electron 主进程的 shell 交给系统，页内 detached spawn
         // 在 Windows 上无法激活目标窗口（issue #1346）。只注入本地 guest：远程
         // Harness 的操作不该让本机窗口让位。

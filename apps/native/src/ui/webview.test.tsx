@@ -121,7 +121,7 @@ vi.mock('react-native-webview', async () => {
 })
 
 const alpha = { id: 'http://bridge.test:3080', url: 'http://bridge.test:3080/tasks', host: 'bridge.test', port: 3080 }
-const beta = { id: 'https://second.test', url: 'https://second.test/workspaces', host: 'second.test', port: 443 }
+const beta = { id: 'https://second.test', url: 'https://second.test/workspaces', host: 'second.test', port: 443, remote: true }
 const focus: NotificationFocus = { origin: 'http://bridge.test:3080', sessionId: 'session-alpha', title: 'Answer complete', tag: 'tag-alpha' }
 const nonce = 'webview-uuid-1'
 const failure = '连接失败，请检查主机地址、网络或访问令牌。'
@@ -1156,7 +1156,8 @@ describe('rendered Bridge WebView acknowledged notification focus', () => {
 
     expect(connection.pendingFocus).toBeNull()
     expect(connection.notice).toBe(focusFailure)
-    expect(texts()).toContain(focusFailure)
+    expect(texts()).toContain('向左滑查看连接信息')
+    expect(root().findAll(node => node.props.accessibilityLabel === focusFailure)).toHaveLength(0)
   })
 
   it('cancels superseded focus and cannot clear a newer pending session with an old or wrong request acknowledgment', async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildConnectUrl, connectionLabel, isBridgeManifest, isRecord, isTrustedOrigin, parseQrPayload } from './bridge-protocol'
+import { buildConnectUrl, connectionLabel, isBridgeManifest, isRecord, isRemoteHost, isTrustedOrigin, parseAddressInput, parseQrPayload, rebuildAddress } from './bridge-protocol'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -80,15 +80,110 @@ describe('parseQrPayload', () => {
   })
 
   it.each([
-    ['http://BRIDGE.local', 'http://bridge.local', 'http://bridge.local/', 'bridge.local', 80],
-    ['http://bridge.local:80/a', 'http://bridge.local', 'http://bridge.local/a', 'bridge.local', 80],
-    ['https://bridge.local', 'https://bridge.local', 'https://bridge.local/', 'bridge.local', 443],
-    ['https://bridge.local:443/b', 'https://bridge.local', 'https://bridge.local/b', 'bridge.local', 443],
-    ['http://bridge.local:65535/c', 'http://bridge.local:65535', 'http://bridge.local:65535/c', 'bridge.local', 65535],
-    ['https://bridge.local:8443/d', 'https://bridge.local:8443', 'https://bridge.local:8443/d', 'bridge.local', 8443],
-    ['http://[2001:db8::1]:3080/e', 'http://[2001:db8::1]:3080', 'http://[2001:db8::1]:3080/e', '[2001:db8::1]', 3080],
-  ])('normalizes the stable origin and port of %s', (raw, id, url, host, port) => {
-    expect(parseQrPayload(raw)).toEqual({ id, url, host, port })
+    ['http://BRIDGE.local', 'http://bridge.local', 'http://bridge.local/', 'bridge.local', 80, false],
+    ['http://bridge.local:80/a', 'http://bridge.local', 'http://bridge.local/a', 'bridge.local', 80, false],
+    ['https://bridge.local', 'https://bridge.local', 'https://bridge.local/', 'bridge.local', 443, false],
+    ['https://bridge.local:443/b', 'https://bridge.local', 'https://bridge.local/b', 'bridge.local', 443, false],
+    ['http://bridge.local:65535/c', 'http://bridge.local:65535', 'http://bridge.local:65535/c', 'bridge.local', 65535, false],
+    ['https://bridge.local:8443/d', 'https://bridge.local:8443', 'https://bridge.local:8443/d', 'bridge.local', 8443, false],
+    ['http://[2001:db8::1]:3080/e', 'http://[2001:db8::1]:3080', 'http://[2001:db8::1]:3080/e', '[2001:db8::1]', 3080, true],
+    ['http://[fd00::1]:3080/e', 'http://[fd00::1]:3080', 'http://[fd00::1]:3080/e', '[fd00::1]', 3080, false],
+  ])('normalizes the stable origin and port of %s', (raw, id, url, host, port, remote) => {
+    expect(parseQrPayload(raw)).toEqual(remote ? { id, url, host, port, remote: true } : { id, url, host, port })
+  })
+})
+
+describe('remote host detection', () => {
+  it.each([
+    ['tunnel.example.com', true],
+    ['dsh.example.com', true],
+    ['8.8.8.8', true],
+    ['[2001:db8::1]', true],
+    ['192.168.1.10', false],
+    ['10.0.0.2', false],
+    ['172.16.4.4', false],
+    ['127.0.0.1', false],
+    ['169.254.1.1', false],
+    ['bridge.local', false],
+    ['dsh.lan', false],
+    ['printer.internal', false],
+    ['[fd00::1]', false],
+    ['[::1]', false],
+  ])('treats %s as remote=%s', (host, remote) => {
+    expect(isRemoteHost(host)).toBe(remote)
+  })
+
+  it('marks a parsed public address as remote while leaving LAN addresses unmarked', () => {
+    expect(parseQrPayload('https://dsh.example.com/')).toMatchObject({ remote: true })
+    expect(parseQrPayload('http://192.168.1.10:3088/')?.remote).toBeUndefined()
+  })
+})
+
+describe('parseAddressInput', () => {
+  it('keeps an empty draft neutral instead of flagging it as invalid', () => {
+    expect(parseAddressInput('   ')).toEqual({ address: null, invalid: false })
+  })
+
+  it.each([
+    ['192.168.1.10:3088', 'http://192.168.1.10:3088', 3088],
+    ['0.0.0.0:3088', 'http://0.0.0.0:3088', 3088],
+    ['dsh.example.com', 'https://dsh.example.com', 443],
+    ['https://tunnel.example.com/', 'https://tunnel.example.com', 443],
+    ['http://bridge.local:3080/workspaces?theme=dark', 'http://bridge.local:3080', 3080],
+  ])('connects the typed address %s', (raw, id, port) => {
+    const { address, invalid } = parseAddressInput(raw)
+
+    expect(invalid).toBe(false)
+    expect(address).toMatchObject({ id, port })
+  })
+
+  it('keeps the typed route on the connect URL while the origin stays stable', () => {
+    expect(parseAddressInput('http://bridge.local:3080/workspaces?theme=dark').address).toEqual({
+      id: 'http://bridge.local:3080',
+      url: 'http://bridge.local:3080/workspaces?theme=dark',
+      host: 'bridge.local',
+      port: 3080,
+    })
+  })
+
+  it('keeps a typed pairing code out of the address and into the token', () => {
+    expect(parseAddressInput('192.168.1.10:3088/?auth=K7M2Q9XA').address).toEqual({
+      id: 'http://192.168.1.10:3088',
+      url: 'http://192.168.1.10:3088/',
+      host: '192.168.1.10',
+      port: 3088,
+      token: 'K7M2Q9XA',
+    })
+  })
+
+  it.each([
+    'ftp://files.local',
+    'bridge local',
+    'http://bridge.local:99999',
+    'http://bridge.local:99999/x',
+    'bridge local',
+  ])('flags %s as invalid instead of failing silently', (raw) => {
+    expect(parseAddressInput(raw)).toEqual({ address: null, invalid: true })
+  })
+})
+
+describe('rebuildAddress', () => {
+  const existing = { id: 'http://old.local:3080', url: 'http://old.local:3080/tasks', host: 'old.local', port: 3080, token: 'saved-token', name: '工作电脑' }
+
+  it('replaces the origin while keeping the saved token and display name', () => {
+    expect(rebuildAddress(existing, 'https://new.example.com')).toEqual({
+      id: 'https://new.example.com',
+      url: 'https://new.example.com/',
+      host: 'new.example.com',
+      port: 443,
+      token: 'saved-token',
+      name: '工作电脑',
+      remote: true,
+    })
+  })
+
+  it('returns null for an invalid replacement so the caller can keep the old address', () => {
+    expect(rebuildAddress(existing, 'ftp://nope.local')).toBeNull()
   })
 })
 

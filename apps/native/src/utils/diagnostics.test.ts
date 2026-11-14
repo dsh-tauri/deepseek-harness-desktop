@@ -16,6 +16,7 @@ function inputOf(overrides: Partial<Parameters<typeof buildDiagnosticLog>[0]> = 
     health: 'unavailable' as const,
     loadError: null,
     notice: null,
+    probe: null,
     authenticated: false,
     timedOut: false,
     ...overrides,
@@ -25,22 +26,30 @@ function inputOf(overrides: Partial<Parameters<typeof buildDiagnosticLog>[0]> = 
 describe('buildDiagnosticLog', () => {
   it('列出连接地址、端口、状态与最近错误', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
-    const log = buildDiagnosticLog(inputOf({ loadError: '连接失败', notice: '主机暂时不可用' }))
+    const log = buildDiagnosticLog(inputOf({ loadError: '连接失败', notice: '主机暂时不可用', probe: '探测超时' }))
     expect(log.split('\n')).toEqual([
       'DSH Mobile connection diagnostics',
       'time: 2026-01-01T00:00:00.000Z',
       'stage: connected',
       'health: unavailable',
+      'probe: 探测超时',
       'loadError: 连接失败',
       'notice: 主机暂时不可用',
       'loadTimedOut: no',
       'address: http://bridge.test:3080/tasks',
       'host: bridge.test',
       'port: 3080',
+      'remote: no',
       'hasToken: no',
       'hasDeviceSession: no',
     ])
     vi.useRealTimers()
+  })
+
+  it('标记公网隧道地址，方便区分隧道问题与局域网问题', () => {
+    const log = buildDiagnosticLog(inputOf({ address: { ...address, remote: true }, probe: null }))
+    expect(log).toContain('probe: none')
+    expect(log).toContain('remote: yes')
   })
 
   it('只标记令牌有无，绝不写明文', () => {

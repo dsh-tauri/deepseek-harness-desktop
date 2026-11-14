@@ -1,5 +1,6 @@
 export * from './core'
 export * from './data-dir'
+export * from './deps-root'
 export * from './plugin'
 export * from './profile'
 export * from './runtime'

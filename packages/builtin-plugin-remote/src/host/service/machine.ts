@@ -15,6 +15,7 @@ import { DEFAULT_MACHINE_TRANSPORT, REMOTE_ROOT } from '../config/constants'
 import { harnessHome, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
 import { MachineId, RemoteError } from '../types/index'
 import { carryWorkspaceAllowlist } from '../utils/allowlist'
+import { remoteInstanceStopCommand } from '../utils/instance'
 import { syncBundledPlugins } from '../utils/plugins-sync'
 import { discoverableHosts, loadSshConfigBlocks, lookupSshConfig, resolveSshAuth } from '../utils/ssh-config'
 import { bootstrap } from './bootstrap'
@@ -232,15 +233,17 @@ export const machine = defineService({
     await Promise.all([...machineStates.keys()].map(id => machine.disconnect(id)))
   },
 
-  async install(machineId: MachineId, signal?: AbortSignal): Promise<RemoteInstallResult> {
+  async install(machineId: MachineId, options: { force?: boolean } = {}, signal?: AbortSignal): Promise<RemoteInstallResult> {
     const profile = requireProfile(machineId)
     requireCapabilities(machineId, profile, ['exec'])
     const target = ensureState(machineId)
     refuseWhileReconnecting(machineId, target)
     if (target.installing === undefined) {
+      if (options.force === true && target.link !== undefined)
+        await machine.disconnect(machineId)
       target.progress = { phase: 'installing' }
       emit(machineId)
-      const attempt = performInstall(machineId, profile, signal)
+      const attempt = performInstall(machineId, profile, options, signal)
       target.installing = attempt.finally(() => {
         delete machineStates.get(machineId)?.installing
       })
@@ -798,7 +801,8 @@ function redacted(machineId: MachineId, text: string): string {
   return out
 }
 
-async function performInstall(machineId: MachineId, profile: MachineProfile, signal?: AbortSignal): Promise<RemoteInstallResult> {
+async function performInstall(machineId: MachineId, profile: MachineProfile, options: { force?: boolean }, signal?: AbortSignal): Promise<RemoteInstallResult> {
+  const force = options.force === true
   const config = hostConfig()
   const target = ensureState(machineId)
   const generation = target.generation
@@ -817,10 +821,14 @@ async function performInstall(machineId: MachineId, profile: MachineProfile, sig
     for (const note of plan.notes)
       onEvent('probe', note)
     await assertRemoteDshVersion(session, true)
+    if (force) {
+      const stopped = await session.exec(remoteInstanceStopCommand(safeProfileName(profile.profileName), profile.remotePort).join('\n'))
+      onEvent('probe', stopped.code === 0 ? '重新安装: 已停止远端旧实例' : '重新安装: 停止远端旧实例失败，继续安装')
+    }
     const missing = missingComponentsOf((await session.exec(checkMissingCommand())).stdout)
     const skips: string[] = []
-    if (missing.length > 0) {
-      onEvent('probe', `缺失组件: ${missing.join(', ')}`)
+    if (missing.length > 0 || force) {
+      onEvent('probe', missing.length > 0 ? `缺失组件: ${missing.join(', ')}` : '重新安装: 按请求强制重装远端三件套')
       skips.push(...await bootstrap.install(session, plan, {
         onEvent,
         onProgress: (progress) => {
@@ -829,7 +837,7 @@ async function performInstall(machineId: MachineId, profile: MachineProfile, sig
           target.progress = progress
           emit(machineId)
         },
-      }, 'install 失败'))
+      }, { force, failureLine: 'install 失败' }))
       if (generation !== target.generation)
         throw new AttemptCancelled()
     }

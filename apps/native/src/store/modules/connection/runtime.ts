@@ -1,6 +1,7 @@
+import type { ProbeResult } from '@/services/probe-bridge'
 import type { BridgeAddress } from '@/utils/bridge-protocol'
 import * as Network from 'expo-network'
-import { EXTRA_SCAN_PORTS, HISTORY_PROBE_TIMEOUT_MS, SCAN_BUDGET_MS } from '@/config/constants'
+import { EXTRA_SCAN_PORTS, HEALTH_FAILURE_THRESHOLD, HISTORY_PROBE_TIMEOUT_MS, REMOTE_PROBE_TIMEOUT_MS, SCAN_BUDGET_MS, TRANSITION_PROBE_TIMEOUT_MS } from '@/config/constants'
 import { sendNativeNotification } from '@/hooks/use-notifications'
 import { i18n } from '@/i18n'
 import { probeBridge } from '@/services/probe-bridge'
@@ -18,6 +19,20 @@ function withSavedToken(address: BridgeAddress): BridgeAddress {
   if (token)
     return { ...address, token }
   return address
+}
+
+/** 公网隧道/远程入口的网络抖动明显大于局域网：拉长超时并多探一次，局域网直连单次即返回。 */
+function probePlan({ remote }: BridgeAddress, timeoutMs: number): { timeoutMs: number, attempts: number } {
+  if (!remote)
+    return { timeoutMs, attempts: 1 }
+  return { timeoutMs: Math.max(timeoutMs, REMOTE_PROBE_TIMEOUT_MS), attempts: 2 }
+}
+
+/** 探测失败原因 → 可读文案 key，用户据此区分隧道超时还是根本连不上。 */
+const PROBE_REASON_KEYS: Record<Exclude<ProbeResult['reason'], 'ok'>, string> = {
+  timeout: 'connection.probeTimeout',
+  manifest: 'connection.probeManifest',
+  network: 'connection.probeNetwork',
 }
 
 export function cancelAutoScan(): void {
@@ -46,10 +61,11 @@ export async function startAutoScan({ skipId, historyOnly = false }: { skipId?: 
     const history = connection.history.filter(entry => entry.id !== skipId)
     const previous = await Promise.all(history.map(async (entry) => {
       connection.setHealth(entry.id, 'checking')
-      const host = await probeBridge(withSavedToken(entry), controller.signal, HISTORY_PROBE_TIMEOUT_MS)
+      const host = withSavedToken(entry)
+      const probe = await probeBridge(host, { signal: controller.signal, ...probePlan(host, HISTORY_PROBE_TIMEOUT_MS) })
       if (!controller.signal.aborted)
-        connection.setHealth(entry.id, host ? 'available' : 'unavailable')
-      return host
+        connection.setHealth(entry.id, probe.address ? 'available' : 'unavailable')
+      return probe.address
     }))
     if (controller.signal.aborted || generation !== connection.scanGeneration)
       return
@@ -91,12 +107,10 @@ export async function startAutoScan({ skipId, historyOnly = false }: { skipId?: 
     })
     if (expired || generation !== connection.scanGeneration)
       return
-    if (chosen) {
+    if (chosen)
       connection.accept(chosen, generation)
-    }
-    else {
+    else
       connection.finishScan(generation, i18n.t('connection.noHosts'))
-    }
   }
   catch (error) {
     if (!controller.signal.aborted) {
@@ -118,6 +132,10 @@ export function disconnectAndScan(): void {
   void startAutoScan({ skipId: previousId })
 }
 
+/**
+ * 健康检查：已连接主机只降级状态、不打断界面，连续失败达到阈值才提示离线并通知；
+ * 正在连接/加载中的主机（界面仍在加载页，没有失败页可用）才在首次失败后显示失败页。
+ */
 export async function refreshHealth(): Promise<void> {
   if (healthController)
     return
@@ -129,24 +147,38 @@ export async function refreshHealth(): Promise<void> {
     addresses.set(connection.current.id, connection.current)
   try {
     await Promise.all([...addresses.values()].map(async (address) => {
-      const wasAvailable = connection.health[address.id] === 'available'
-      const host = await probeBridge(address, controller.signal, HISTORY_PROBE_TIMEOUT_MS)
+      const probe = await probeBridge(address, { signal: controller.signal, ...probePlan(address, TRANSITION_PROBE_TIMEOUT_MS) })
       if (controller.signal.aborted || (address.id === connection.current?.id && viewGeneration !== connection.viewGeneration))
         return
-      connection.setHealth(address.id, host ? 'available' : 'unavailable')
-      if (wasAvailable && !host && address.id === connection.current?.id) {
-        connection.setNotice(i18n.t('connection.hostOffline'))
-        void sendNativeNotification({
-          type: 'dsh://native-notification',
-          title: i18n.t('app.name'),
-          body: i18n.t('connection.hostOffline'),
-          tag: `connection:${address.id}`,
-          sessionId: '',
-          silent: false,
-        }, address.id)
+      const current = address.id === connection.current?.id
+      if (probe.address) {
+        connection.setHealth(address.id, 'available')
+        if (current && connection.notice === connection.diagnostic)
+          connection.setNotice(null)
+        connection.setDiagnostic(null)
+        return
       }
-      if (host && address.id === connection.current?.id && connection.notice === i18n.t('connection.hostOffline'))
-        connection.setNotice(null)
+      const reason = probe.reason === 'ok' ? 'network' : probe.reason
+      const message = `${i18n.t('connection.hostOffline')} · ${i18n.t(PROBE_REASON_KEYS[reason])}`
+      if (current && connection.loading) {
+        connection.markLoadFailed(connection.viewGeneration, message)
+        connection.setDiagnostic(message)
+        return
+      }
+      const wasAvailable = connection.health[address.id] === 'available'
+      const escalated = connection.recordUnavailable(address.id, HEALTH_FAILURE_THRESHOLD)
+      if (!current || !escalated || !wasAvailable)
+        return
+      connection.setNotice(message)
+      connection.setDiagnostic(message)
+      void sendNativeNotification({
+        type: 'dsh://native-notification',
+        title: i18n.t('app.name'),
+        body: message,
+        tag: `connection:${address.id}`,
+        sessionId: '',
+        silent: false,
+      }, address.id)
     }))
   }
   finally {
