@@ -41,6 +41,10 @@ if exist "%NODE%" goto :launch
 if not exist "%NODE_BIN%" goto :no_node
 set "NODE=%NODE_BIN%"
 set "PATH=%NODE_DIR%;%PATH%"
+rem Trust the OS CA store, like the desktop's Rust side does: Node trusts only
+rem its bundled CA list by default, so a TLS-intercepting proxy breaks the core
+rem while the desktop works (issue #1530). Appended to the user's own value.
+set "NODE_OPTIONS=%NODE_OPTIONS% --use-system-ca"
 "#;
 
 pub(super) const PS1_NODE_RESOLVE: &str = r#"
@@ -65,6 +69,28 @@ if (-not $node) {
     exit 1
 }
 $env:ELECTRON_RUN_AS_NODE = '1'
+# Trust the OS CA store, like the desktop's Rust side does: Node trusts only
+# its bundled CA list by default, so a TLS-intercepting proxy breaks the core
+# while the desktop works (issue #1530). Appended to the user's own value.
+# `$env:` writes are process-wide in PowerShell, so the caller's value is
+# remembered here and restored in the finally block of the script: a flag left
+# behind would reach a later node run that may reject it (an unknown option
+# makes Node exit).
+$dshNodeOptionsBefore = $env:NODE_OPTIONS
+$dshNodeOptionsWasSet = Test-Path Env:NODE_OPTIONS
+$dshNodeOptionsChanged = $true
+$env:NODE_OPTIONS = "$env:NODE_OPTIONS --use-system-ca"
+"#;
+
+/// PowerShell shim 的收尾片段：把 NODE_OPTIONS 还原成调用者原来的值。
+///
+/// PowerShell 没有 cmd 的 `setlocal`：`$env:` 写入是进程级的，脚本返回后仍在调用者的
+/// 会话里。留着 `--use-system-ca` 会让用户随后跑的 node（版本早于 22.15 时不认这个
+/// 选项）直接退出。
+pub(super) const PS1_NODE_OPTIONS_RESTORE: &str = r#"
+if ($dshNodeOptionsChanged) {
+    if ($dshNodeOptionsWasSet) { $env:NODE_OPTIONS = $dshNodeOptionsBefore } else { Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }
+}
 "#;
 
 pub(super) const SH_NODE_RESOLVE: &str = r#"
@@ -85,6 +111,10 @@ if [ -z "$NODE" ]; then
   exit 1
 fi
 export ELECTRON_RUN_AS_NODE=1
+# Trust the OS CA store, like the desktop's Rust side does: Node trusts only
+# its bundled CA list by default, so a TLS-interlecting proxy breaks the core
+# while the desktop works (issue #1530). Appended to the user's own value.
+export NODE_OPTIONS="${NODE_OPTIONS:-} --use-system-ca"
 "#;
 
 // ---------------------------------------------------------------------------

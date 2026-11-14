@@ -12,8 +12,8 @@ use super::templates::SH_USER_DSH_PRECEDENCE;
 #[cfg(not(windows))]
 use super::templates::SH_USER_NODE_PRECEDENCE;
 use super::templates::{
-    CMD_NODE_RESOLVE, CMD_USER_DSH_PRECEDENCE, CMD_USER_NODE_PRECEDENCE, PS1_NODE_RESOLVE,
-    PS1_USER_DSH_PRECEDENCE, SH_NODE_RESOLVE,
+    CMD_NODE_RESOLVE, CMD_USER_DSH_PRECEDENCE, CMD_USER_NODE_PRECEDENCE, PS1_NODE_OPTIONS_RESTORE,
+    PS1_NODE_RESOLVE, PS1_USER_DSH_PRECEDENCE, SH_NODE_RESOLVE,
 };
 
 /// shim 内烘焙的依赖路径：全部来自运行时解析（依赖映射表 + 清单 `entry`），
@@ -136,6 +136,7 @@ if (-not $systemGitWorks -and $gitDir -and (Test-Path -LiteralPath (Join-Path $g
 {user_dsh}
 $dshHome = '{dsh_home}'
 $env:DSH_TELEMETRY_DISABLED = '1'
+try {{
 {node_resolve}
 if (-not (Test-Path -LiteralPath '{dsh_file}')) {{
     Write-Error '[dsh] Harness CLI not found. Please run DeepSeek Harness Desktop to install it first.'
@@ -144,6 +145,9 @@ if (-not (Test-Path -LiteralPath '{dsh_file}')) {{
 $env:DSH_HOME = $dshHome
 & $node{native_bridge} --input-type=module '{carrier}' $dshBin @args
 exit $LASTEXITCODE
+}} finally {{
+{node_options_restore}
+}}
 "#,
         node_bin = escape_path_ps1(&paths.node_bin),
         node_dir = escape_path_ps1(&paths.node_dir()),
@@ -160,6 +164,7 @@ exit $LASTEXITCODE
             .replace('\'', "''"),
         user_dsh = PS1_USER_DSH_PRECEDENCE,
         node_resolve = PS1_NODE_RESOLVE,
+        node_options_restore = PS1_NODE_OPTIONS_RESTORE,
         dsh_home = escape_path_ps1(dsh_home),
     )
 }
@@ -423,18 +428,23 @@ if (-not $useBundled -and -not ($hasBundled -and $env:DSH_PNPM_SHIM_GUARD -eq '1
 
 {node_resolve}
 
+try {{
 if (-not (Test-Path -LiteralPath $pnpmBin)) {{
     Write-Error '[pnpm] pnpm not found. Please run DeepSeek Harness Desktop to install it first.'
     exit 1
 }}
 & $node $pnpmBin @args
 exit $LASTEXITCODE
+}} finally {{
+{node_options_restore}
+}}
 "#,
         node_bin = escape_path_ps1(&paths.node_bin),
         node_dir = escape_path_ps1(&paths.node_dir()),
         git_dir = escape_path_ps1(&paths.git_dir()),
         pnpm_bin = escape_path_ps1(&paths.pnpm_bin),
         node_resolve = PS1_NODE_RESOLVE,
+        node_options_restore = PS1_NODE_OPTIONS_RESTORE,
     )
 }
 
@@ -603,6 +613,11 @@ rem Never export it as GIT_DIR: that variable names a repository, not a bin dir.
 set "SYSTEM_GIT_WORKS="
 for /f "delims=" %%g in ('git --exec-path 2^>nul') do if exist "%%g\git-remote-https.exe" set "SYSTEM_GIT_WORKS=1"
 if not defined SYSTEM_GIT_WORKS if exist "{git_dir}\git.exe" set "PATH={git_dir};%PATH%"
+rem Remember the caller's NODE_OPTIONS: forwarding to the user's own npm must
+rem hand it back exactly as it was, not a rewritten copy of it.
+set "DSH_NODE_OPTIONS_WAS_SET=1"
+if not defined NODE_OPTIONS set "DSH_NODE_OPTIONS_WAS_SET="
+set "DSH_NODE_OPTIONS_BEFORE=%NODE_OPTIONS%"
 {node_resolve}
 rem CMD_NODE_RESOLVE jumps here for every node it accepts, so the cli lookup
 rem below must sit at :launch rather than after a separate label.
@@ -641,6 +656,12 @@ if not defined DSH_NPM_SHIM_CHAIN goto :npm_forward_user
 for %%c in ("%DSH_NPM_SHIM_CHAIN:;=" "%") do if /i "%%~c"=="%USER_NPM%" goto :npm_reentry_limit
 :npm_forward_user
 set "DSH_NPM_SHIM_CHAIN=%DSH_NPM_SHIM_CHAIN%;%USER_NPM%"
+rem Forwarding to the user's own npm: their node may be older than the flag we
+rem added, and an unknown option makes Node exit. Hand back the caller's own
+rem value unchanged: rewriting it would also hit paths that merely contain the
+rem flag as part of a file name.
+if not defined DSH_NODE_OPTIONS_WAS_SET set "NODE_OPTIONS="
+if defined DSH_NODE_OPTIONS_WAS_SET set "NODE_OPTIONS=%DSH_NODE_OPTIONS_BEFORE%"
 rem Forward by invoking the target directly, never through `call`: the extra
 rem interpretation layer re-expands %* and mangles already-escaped arguments.
 "%USER_NPM%" %*
@@ -703,6 +724,7 @@ if (-not $systemGitWorks -and $gitDir -and (Test-Path -LiteralPath (Join-Path $g
     $env:PATH = $gitDir + ';' + $env:PATH
 }}
 {node_resolve}
+try {{
 # The cli entry ships with npm, so it is looked up next to the node that will run
 # it: a version manager's node directory may hold no npm at all, and a relative
 # wrapper cannot reach one.
@@ -743,6 +765,11 @@ if (-not $cli) {{
         }}
         try {{
             $env:DSH_NPM_SHIM_CHAIN = $chainBefore + ';' + $userCommand.Source
+            # Forwarding to the user's own npm: their node may be older than the
+            # flag we added, and an unknown option makes Node exit. Hand back
+            # the caller's own value unchanged: rewriting it would also hit
+            # paths that merely contain the flag as part of a file name.
+            if ($dshNodeOptionsWasSet) {{ $env:NODE_OPTIONS = $dshNodeOptionsBefore }} else {{ Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }}
             & $userCommand.Source @args
             $forwardExitCode = $LASTEXITCODE
         }} finally {{
@@ -755,6 +782,9 @@ if (-not $cli) {{
 }}
 & $node $cli @args
 exit $LASTEXITCODE
+}} finally {{
+{node_options_restore}
+}}
 "#,
         node_bin = escape_path_ps1(&paths.node_bin),
         node_dir = escape_path_ps1(&paths.node_dir()),
@@ -762,6 +792,7 @@ exit $LASTEXITCODE
         shim_name = shim_name,
         cli_file = cli_file,
         node_resolve = PS1_NODE_RESOLVE,
+        node_options_restore = PS1_NODE_OPTIONS_RESTORE,
     )
 }
 
@@ -2060,5 +2091,221 @@ mod tests {
             let home_at = content.find("export DSH_HOME").unwrap();
             assert!(user_at < home_at);
         }
+    }
+
+    /// shim 也要让核心信任系统 CA store：桌面端 Rust 侧读的是系统信任库，
+    /// Node 默认只信自带 CA 列表，走 TLS 中间人的代理时核心会校验失败
+    /// （issue #1530）。开关追加在用户自己的 NODE_OPTIONS 之后，不能覆盖它。
+    #[test]
+    fn shim_appends_the_system_ca_switch_to_node_options() {
+        let cmd = build_cmd_shim(&sample_shim_paths(), &sample_dsh_home());
+        assert!(cmd.contains(r#"set "NODE_OPTIONS=%NODE_OPTIONS% --use-system-ca""#));
+        let ps1 = build_ps1_shim(&sample_shim_paths(), &sample_dsh_home());
+        assert!(ps1.contains(r#"$env:NODE_OPTIONS = "$env:NODE_OPTIONS --use-system-ca""#));
+        #[cfg(not(windows))]
+        {
+            let sh = build_sh_shim(&sample_shim_paths(), &sample_dsh_home());
+            assert!(sh.contains(r#"export NODE_OPTIONS="${NODE_OPTIONS:-} --use-system-ca""#));
+        }
+    }
+
+    /// node 启动器会转发用户自己的 node（可能不认识该开关，未知开关会让 Node
+    /// 直接以 "bad option" 退出），因此不得带上系统信任库开关。
+    #[test]
+    fn node_launcher_shim_keeps_node_options_untouched() {
+        let cmd = build_node_cmd_shim(&sample_shim_paths());
+        assert!(!cmd.contains("--use-system-ca"));
+        #[cfg(not(windows))]
+        {
+            let sh = build_node_sh_shim(&sample_shim_paths());
+            assert!(!sh.contains("--use-system-ca"));
+        }
+    }
+
+    /// PowerShell 没有 cmd 的 `setlocal`：`$env:` 写入是进程级的，脚本返回后仍在
+    /// 调用者的会话里。留着开关会让用户随后跑的 node（早于 22.15 时不认这个选项）
+    /// 直接退出，因此 PS1 shim 必须记住原值并在返回前还原。
+    #[test]
+    fn powershell_shims_restore_node_options_before_returning() {
+        for content in [
+            build_ps1_shim(&sample_shim_paths(), &sample_dsh_home()),
+            build_pnpm_ps1_shim(&sample_shim_paths()),
+        ] {
+            assert!(
+                content.contains("$dshNodeOptionsBefore = $env:NODE_OPTIONS"),
+                "{content}"
+            );
+            assert!(content.contains("} finally {"), "{content}");
+            assert!(
+                content.contains("Remove-Item Env:NODE_OPTIONS"),
+                "{content}"
+            );
+        }
+        #[cfg(windows)]
+        for content in [
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npm", "npm-cli.js"),
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
+        ] {
+            assert!(
+                content.contains("$dshNodeOptionsBefore = $env:NODE_OPTIONS"),
+                "{content}"
+            );
+            assert!(content.contains("} finally {"), "{content}");
+        }
+    }
+
+    /// npm/npx shim 找不到可用的 npm cli 时会转发用户自己的 npm：那是用户的运行时，
+    /// 可能早于 22.15 而不认这个开关（未知开关会让 Node 直接退出），转发前必须把
+    /// 调用者原来的 NODE_OPTIONS 原样还回去——改写它会误伤路径里恰好含该开关的文件名。
+    #[test]
+    fn npm_shims_hand_the_caller_node_options_back_unchanged() {        for content in [
+            build_npm_cli_cmd_shim(&sample_shim_paths(), "npm", "npm-cli.js"),
+            build_npm_cli_cmd_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
+        ] {
+            assert!(
+                content.contains(r#"set "DSH_NODE_OPTIONS_BEFORE=%NODE_OPTIONS%""#),
+                "{content}"
+            );
+            let forward = content.find(":npm_forward_user").expect("forward branch");
+            let restore = content[forward..]
+                .find("DSH_NODE_OPTIONS_BEFORE")
+                .expect("the caller's value is restored");
+            let invoke = content[forward..].find("\"%USER_NPM%\" %*").expect("invoke");
+            assert!(restore < invoke, "{content}");
+            // 不得改写调用者的取值：路径里可能出现同名片段。
+            assert!(!content.contains(": --use-system-ca="), "{content}");
+        }
+        #[cfg(windows)]
+        for content in [
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npm", "npm-cli.js"),
+            build_npm_cli_ps1_shim(&sample_shim_paths(), "npx", "npx-cli.js"),
+        ] {
+            let forward = content.find("$userCommand").expect("forward branch");
+            let restore = content[forward..]
+                .find("$dshNodeOptionsBefore")
+                .expect("the caller's value is restored");
+            let invoke = content[forward..]
+                .find("& $userCommand.Source @args")
+                .expect("invoke");
+            assert!(restore < invoke, "{content}");
+            assert!(!content.contains("-replace"), "{content}");
+        }
+    }
+
+    /// 真实执行生成的 npm cmd shim：转发到用户自己的 npm 时，调用者原来的
+    /// NODE_OPTIONS 必须原样送达——既不能带上我们注入的开关，也不能被改写（路径里
+    /// 可能恰好含同名片段的文件名，见 #1534 的评审意见）。
+    #[cfg(windows)]
+    #[test]
+    fn npm_cmd_shim_hands_the_callers_node_options_to_the_user_npm() {
+        let dir = dunce::canonicalize(temp_dir("npm-node-options")).unwrap();
+        let shim_dir = dir.join("desktop-bin");
+        let user_dir = dir.join("user-bin");
+        std::fs::create_dir_all(&shim_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        let mut paths = shim_paths_for(&dir.join("app"));
+        paths.node_bin = dir.join("node-stub.cmd");
+        std::fs::write(&paths.node_bin, "@echo off\r\nexit /b 0\r\n").unwrap();
+        std::fs::write(
+            shim_dir.join("npm.cmd"),
+            build_npm_cli_cmd_shim(&paths, "npm", "npm-cli.js"),
+        )
+        .unwrap();
+        std::fs::write(
+            user_dir.join("npm.cmd"),
+            "@echo off\r\necho USER_NPM_NODE_OPTIONS=[%NODE_OPTIONS%]\r\n",
+        )
+        .unwrap();
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let system32 = PathBuf::from(&system_root).join("System32");
+        let path = std::env::join_paths([&shim_dir, &user_dir, &system32]).unwrap();
+        let run = |node_options: Option<&str>| {
+            let mut command = std::process::Command::new(system32.join("cmd.exe"));
+            command
+                .args(["/d", "/c"])
+                .arg(shim_dir.join("npm.cmd"))
+                .env("PATH", &path)
+                .env("SystemRoot", &system_root);
+            match node_options {
+                Some(value) => {
+                    command.env("NODE_OPTIONS", value);
+                }
+                None => {
+                    command.env_remove("NODE_OPTIONS");
+                }
+            }
+            command.output().unwrap()
+        };
+        let stdout =
+            String::from_utf8_lossy(&run(Some(r"--require=C:\modules\--use-system-ca-hook.js")).stdout)
+                .to_string();
+        assert!(
+            stdout.contains(r"USER_NPM_NODE_OPTIONS=[--require=C:\modules\--use-system-ca-hook.js]"),
+            "unexpected stdout: {stdout:?}"
+        );
+        let stdout = String::from_utf8_lossy(&run(None).stdout).to_string();
+        assert!(
+            stdout.contains("USER_NPM_NODE_OPTIONS=[]"),
+            "unexpected stdout: {stdout:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 同上，PowerShell 版本：`$env:` 是进程级的，还原必须同样逐字生效。
+    #[cfg(windows)]
+    #[test]
+    fn npm_ps1_shim_hands_the_callers_node_options_to_the_user_npm() {
+        let dir = dunce::canonicalize(temp_dir("npm-ps1-node-options")).unwrap();
+        let shim_dir = dir.join("desktop-bin");
+        let user_dir = dir.join("user-bin");
+        std::fs::create_dir_all(&shim_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        let mut paths = shim_paths_for(&dir.join("app"));
+        paths.node_bin = dir.join("node-stub.cmd");
+        std::fs::write(&paths.node_bin, "@echo off\r\nexit /b 0\r\n").unwrap();
+        std::fs::write(
+            shim_dir.join("npm.ps1"),
+            build_npm_cli_ps1_shim(&paths, "npm", "npm-cli.js"),
+        )
+        .unwrap();
+        std::fs::write(
+            user_dir.join("npm.cmd"),
+            "@echo off\r\necho USER_NPM_NODE_OPTIONS=[%NODE_OPTIONS%]\r\n",
+        )
+        .unwrap();
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let system32 = PathBuf::from(&system_root).join("System32");
+        let path = std::env::join_paths([&shim_dir, &user_dir, &system32]).unwrap();
+        let powershell = system32.join("WindowsPowerShell/v1.0/powershell.exe");
+        let run = |node_options: Option<&str>| {
+            let mut command = std::process::Command::new(&powershell);
+            command
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(shim_dir.join("npm.ps1"))
+                .env("PATH", &path)
+                .env("SystemRoot", &system_root);
+            match node_options {
+                Some(value) => {
+                    command.env("NODE_OPTIONS", value);
+                }
+                None => {
+                    command.env_remove("NODE_OPTIONS");
+                }
+            }
+            command.output().unwrap()
+        };
+        let stdout =
+            String::from_utf8_lossy(&run(Some(r"--require=C:\modules\--use-system-ca-hook.js")).stdout)
+                .to_string();
+        assert!(
+            stdout.contains(r"USER_NPM_NODE_OPTIONS=[--require=C:\modules\--use-system-ca-hook.js]"),
+            "unexpected stdout: {stdout:?}"
+        );
+        let stdout = String::from_utf8_lossy(&run(None).stdout).to_string();
+        assert!(
+            stdout.contains("USER_NPM_NODE_OPTIONS=[]"),
+            "unexpected stdout: {stdout:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
