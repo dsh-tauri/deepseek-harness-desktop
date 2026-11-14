@@ -180,6 +180,35 @@ describe('配置面板代理地址保存', () => {
     await waitFor(() => expect(proxyInput().value).toBe(SAVED))
   })
 })
+describe('配置面板 SOCKS 代理提示', () => {
+  it('已保存 SOCKS 代理时提示核心侧直连', async () => {
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+    expect(screen.getByTestId('dsh-proxy-socks-warning').textContent).toContain('network.socks_warning')
+  })
+
+  it('http 代理不显示该提示', async () => {
+    mocks.settingState.proxy_url = EDITED
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(EDITED))
+    expect(screen.queryByTestId('dsh-proxy-socks-warning')).toBeNull()
+  })
+
+  it('输入框里改成 SOCKS 时立即提示', async () => {
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    fireEvent.change(proxyInput(), { target: { value: 'http://127.0.0.1:7897' } })
+    expect(screen.queryByTestId('dsh-proxy-socks-warning')).toBeNull()
+
+    fireEvent.change(proxyInput(), { target: { value: 'socks5://127.0.0.1:1080' } })
+    expect(screen.getByTestId('dsh-proxy-socks-warning')).toBeTruthy()
+  })
+})
+
 describe('配置面板代理连通性测试', () => {
   it('测试按钮在保存值上直接发起测试并提示成功', async () => {
     renderDebug()
@@ -189,8 +218,45 @@ describe('配置面板代理连通性测试', () => {
     fireEvent.click(screen.getByTestId('dsh-proxy-test'))
 
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('test_proxy'))
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('network.test_ok', { variant: 'success' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('network.test_ok', { variant: 'success', description: 'network.test_scope' }))
     expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('代理不是 SOCKS 时不附带只覆盖桌面端通路的说明', async () => {
+    mocks.settingState.proxy_url = EDITED
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(EDITED))
+
+    fireEvent.click(screen.getByTestId('dsh-proxy-test'))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('network.test_ok', { variant: 'success' }))
+  })
+
+  it('测试结果说明跟着本次被测的地址，不跟当前输入走', async () => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fallback = mocks.invoke.getMockImplementation()!
+    mocks.invoke.mockImplementation((command: string) =>
+      command === 'test_proxy'
+        ? pending.then(() => ({ ...mocks.proxyTestResult }))
+        : fallback(command),
+    )
+    renderDebug()
+
+    await waitFor(() => expect(proxyInput().value).toBe(SAVED))
+
+    fireEvent.click(screen.getByTestId('dsh-proxy-test'))
+    fireEvent.change(proxyInput(), { target: { value: EDITED } })
+
+    await act(async () => {
+      release()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('network.test_ok', { variant: 'success', description: 'network.test_scope' }))
   })
 
   it('输入框有未保存修改时先保存再测试', async () => {
