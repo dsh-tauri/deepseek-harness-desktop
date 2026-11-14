@@ -27,6 +27,11 @@ mod env;
 mod fs_ops;
 mod migrate;
 mod state;
+
+/// 迁移原语（树统计 / 复制 / 空间探测）与依赖根迁移共用：两处都是「整目录搬家」，
+/// 复制、校验与空间预检的语义必须逐字一致，各写一份只会让其中一处先漂移。
+pub(crate) use env::{free_bytes, now_stamp};
+pub(crate) use fs_ops::{CopyProgress, TreeStats, copy_tree, is_dir_empty, scan_tree};
 #[cfg(unix)]
 mod unix_env;
 
@@ -113,7 +118,7 @@ pub struct MigrationOutcome {
 
 /// 进度回调：迁移在阻塞线程里跑，回调必须能跨线程共享（`CopyProgress` 会在
 /// rayon 工作线程上触发它）。
-pub(super) type ProgressSink<'a> = &'a (dyn Fn(ProgressPayload) + Send + Sync);
+pub(crate) type ProgressSink<'a> = &'a (dyn Fn(ProgressPayload) + Send + Sync);
 
 /// 进度事件载荷（camelCase 与前端字段一致）。
 #[derive(Debug, Clone, serde::Serialize)]

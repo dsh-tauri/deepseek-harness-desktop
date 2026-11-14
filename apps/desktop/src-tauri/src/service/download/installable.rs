@@ -85,11 +85,11 @@ impl Installable for Dsh {
     }
     fn get_install_path(&self, app: &AppHandle) -> PathBuf {
         let root = config::get_dsh_install_path(app);
-        let base = config::get_base_dir(app).join("dependencies");
-        if root.starts_with(&base) && config::core_archive_in(&root).is_some() {
+        let deps = config::dependencies::deps_root(app);
+        if root.starts_with(&deps) && config::core_archive_in(&root).is_some() {
             root
         } else {
-            base.join("dsh")
+            deps.join("dsh")
         }
     }
     fn check_installed(&self, app: &AppHandle) -> bool {

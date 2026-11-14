@@ -1,4 +1,4 @@
-import type { HarnessCore } from '@/types'
+import type { DependenciesRootPreview, DependenciesRootProgress, DependenciesRootStatus, HarnessCore } from '@/types'
 import { ArrowRotateRight, ChevronRight, CircleArrowDown as DownloadIcon, FolderOpen } from '@gravity-ui/icons'
 import { Button, Checkbox, Chip, Description, Label, Spinner, Switch } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
@@ -14,10 +14,15 @@ import { Modal } from '@/components/modal'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { useInvalidateOnSettingUpdated } from '@/hooks/use-invalidate-on-setting-updated'
+import { useListen } from '@/hooks/use-listen'
 import { store } from '@/store'
 import { compareVersions, isCoreUnsupported, MIN_SUPPORTED_CORE_VERSION } from '@/utils/core-version'
+import { formatBytes } from '@/utils/format-bytes'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
+
+/** 迁移进度面板保留的日志行数 */
+const PROGRESS_LOG_LIMIT = 8
 
 export function ConfigCore() {
   const openDialog = useOverlay(Modal)
@@ -36,8 +41,13 @@ export function ConfigCore() {
     queryKey: queryKeys.coreAsar,
     queryFn: () => invoke<boolean>('get_core_asar'),
   })
+  const { data: depsRoot } = useQuery({
+    queryKey: queryKeys.dependenciesRoot,
+    queryFn: () => invoke<DependenciesRootStatus>('get_dependencies_root_status'),
+  })
   useInvalidateOnSettingUpdated(queryKeys.cores)
   useInvalidateOnSettingUpdated(queryKeys.coreAsar)
+  useInvalidateOnSettingUpdated(queryKeys.dependenciesRoot)
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.cores })
@@ -79,6 +89,9 @@ export function ConfigCore() {
   const [showIncompatible, setShowIncompatible] = useState(false)
   const [refreshing, toggleRefreshing] = useToggle()
   const [advanced, toggleAdvanced] = useToggle()
+  /** 依赖根迁移进度（事件推送；迁移结束由 onSuccess/onError 清空） */
+  const [depsProgress, setDepsProgress] = useState<DependenciesRootProgress | null>(null)
+  const [depsLogs, setDepsLogs] = useState<string[]>([])
 
   // 本地核心未检测到时不渲染 local 行（保留 local_missing_hint 提示）
   // 后端列表在部分缓存/旧版本返回路径中可能仍保持远程顺序，前端统一按版本从高到低排序。
@@ -116,6 +129,97 @@ export function ConfigCore() {
   // 随包内核永远是最新候选的首行，但它是安装包自带的那份，不代表远程已有更新。
   const latestVersion = cores.find(c => c.source === 'app' && !c.bundled && !c.preview)?.version ?? ''
   const hasLocalUpdate = !!(localCore?.present && localVersion && latestVersion && compareVersions(localVersion, latestVersion) < 0)
+
+  /** 依赖根：查询未落地时不渲染该行，避免闪一个空路径 */
+  const depsRootPath = depsRoot?.root ?? ''
+  const depsRootMovable = depsRoot?.movable ?? false
+  const depsProgressPercentage = depsProgress !== null && depsProgress.totalBytes > 0
+    ? (depsProgress.copiedBytes / depsProgress.totalBytes) * 100
+    : undefined
+
+  const migrateDepsRoot = useMutation({
+    mutationFn: async (path: string) => {
+      // 阶段 A: 预检目标（体积 / 空间 / 合法性），不合格时不必搬
+      const plan = await invoke<DependenciesRootPreview>('preview_dependencies_root_migration', { path })
+      if (!plan.enoughSpace) {
+        throw new Error(t('core.deps_root_no_space', {
+          needed: formatBytes(plan.totalBytes),
+          free: formatBytes(plan.targetFreeBytes),
+        }))
+      }
+      // 阶段 B: 停服 + 复制校验 + 记录新根 + 旧根改名（后端命令内部完成）
+      return invoke('migrate_dependencies_root', { path })
+    },
+    onSuccess: () => {
+      setDepsProgress(null)
+      setDepsLogs([])
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dependenciesRoot })
+      invalidate()
+      toast(t('core.deps_root_migrated_toast'), { variant: 'success' })
+      void store.harness.restart()
+    },
+    onError: (err) => {
+      setDepsProgress(null)
+      setDepsLogs([])
+      console.error('[ConfigCore] migrate dependencies root failed:', err)
+      toast(t('core.deps_root_migrate_failed'), { variant: 'danger', description: String(err) })
+    },
+  })
+
+  /** 把进度载荷翻成一行日志 */
+  function describeDepsProgress(payload: DependenciesRootProgress): string {
+    if (payload.phase === 'scan')
+      return t('core.deps_root_phase_scan')
+    if (payload.phase === 'copy')
+      return t('core.deps_root_phase_copy', { files: payload.copiedFiles, total: payload.totalFiles, bytes: formatBytes(payload.copiedBytes) })
+    if (payload.phase === 'verify')
+      return t('core.deps_root_phase_verify')
+    if (payload.phase === 'finalize')
+      return t('core.deps_root_phase_finalize')
+    return t('core.deps_root_phase_done')
+  }
+
+  useListen<DependenciesRootProgress>('deps-root://progress', (event) => {
+    const payload = event.payload
+    setDepsProgress(payload)
+    setDepsLogs(prev => [...prev, describeDepsProgress(payload)].slice(-PROGRESS_LOG_LIMIT))
+  })
+
+  /** 选新目录 → 确认 → 迁移；取消或选目录失败都不改任何东西 */
+  async function onDepsRootChange() {
+    if (busy || migrateDepsRoot.isPending)
+      return
+    let picked: string | null = null
+    try {
+      picked = await invoke<string | null>('pick_dependencies_root')
+    }
+    catch (err) {
+      console.error('[ConfigCore] pick dependencies root failed:', err)
+      toast(t('core.deps_root_pick_failed'), { variant: 'danger', description: String(err) })
+      return
+    }
+    if (picked === null)
+      return
+    try {
+      await openDialog({
+        status: 'warning',
+        title: t('core.deps_root_confirm_title'),
+        description: (
+          <p>
+            {t('core.deps_root_confirm_desc', { source: depsRootPath, target: picked })}
+          </p>
+        ),
+        confirmText: t('core.deps_root_confirm'),
+      })
+    }
+    catch (e) {
+      silence(e, 'core deps root: dialog cancelled')
+      return
+    }
+    setDepsProgress(null)
+    setDepsLogs([])
+    migrateDepsRoot.mutate(picked)
+  }
 
   /** 包裹行内操作：全局单例守卫 + 该行 busy 标记 */
   async function runBusy(id: string, action: () => Promise<unknown>) {
@@ -388,6 +492,34 @@ export function ConfigCore() {
                 </Switch>
               </div>
               <Description className="text-[10px] text-muted/70">{t('core.asar_hint')}</Description>
+              {/* 核心目录：与 ASAR 同一布局的一条设置，用分隔线断开 */}
+              <If cond={depsRoot !== undefined}>
+                <div className="mt-2 flex flex-col gap-1 border-t border-line/30 pt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-ink">{t('core.deps_root')}</span>
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      className="h-7 text-xs"
+                      isDisabled={busy || migrateDepsRoot.isPending || !depsRootMovable}
+                      aria-label={t('core.deps_root_change')}
+                      onPress={onDepsRootChange}
+                    >
+                      <If cond={migrateDepsRoot.isPending} then={<Spinner size="sm" color="current" />} />
+                      {t('core.deps_root_change')}
+                    </Button>
+                  </div>
+                  <Description className="truncate font-mono text-[10px] text-muted/70">{depsRootPath}</Description>
+                  <If cond={!depsRootMovable}>
+                    <Description className="text-[10px] text-muted/70">{t('core.deps_root_locked')}</Description>
+                  </If>
+                </div>
+              </If>
+              <If cond={depsProgress !== null}>
+                <div className="mt-2">
+                  <Panel.Progress percentage={depsProgressPercentage} logs={depsLogs} />
+                </div>
+              </If>
             </div>
           </If>
           {/* 本地核心提示：未检测到时说明如何安装。放在列表首位，先解释「为什么没有本地行」 */}

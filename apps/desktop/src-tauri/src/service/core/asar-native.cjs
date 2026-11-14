@@ -215,9 +215,14 @@ module.exports = function registerNativePackages(archive, cache) {
           continue
         handled.add(source)
         const destination = path.join(target, 'node_modules', ...segments)
-        fs.mkdirSync(path.dirname(destination), { recursive: true })
-        copy(source, destination, false)
-        copies.push({ relative: path.relative(staging, destination), source })
+        // 包自身的 node_modules 已由 copy(root, staging, false) 原样带入，这里只补
+        // 被提升到归档根、因此不在私有目录里的那些；重复写同一目标会让 publish 的
+        // rename 撞上仍被打开的文件（Windows 上表现为 EPERM）。
+        if (!fs.existsSync(destination)) {
+          fs.mkdirSync(path.dirname(destination), { recursive: true })
+          copy(source, destination, false)
+          copies.push({ relative: path.relative(staging, destination), source })
+        }
         pending.push({ directory: source, target: destination })
       }
     }

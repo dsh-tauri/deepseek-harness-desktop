@@ -15,6 +15,7 @@ import { queryKeys } from '@/config/query-keys'
 import { useInvalidateOnSettingUpdated } from '@/hooks/use-invalidate-on-setting-updated'
 import { useListen } from '@/hooks/use-listen'
 import { store } from '@/store'
+import { formatBytes } from '@/utils/format-bytes'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
@@ -41,18 +42,6 @@ const EMPTY_PLAN: MigrationPlan = {
   enoughSpace: false,
   parentExists: false,
   remembered: false,
-}
-
-/** 把字节转成人类可读体积（保留 1 位小数）。 */
-function formatBytes(bytes: number): string {
-  const kb = 1024
-  if (bytes < kb)
-    return `${bytes} B`
-  if (bytes < kb * kb)
-    return `${(bytes / kb).toFixed(1)} KB`
-  if (bytes < kb * kb * kb)
-    return `${(bytes / kb / kb).toFixed(1)} MB`
-  return `${(bytes / kb / kb / kb).toFixed(1)} GB`
 }
 
 /** 取路径最后一段（跨盘符时 \\ 与 / 都算分隔符）。 */
