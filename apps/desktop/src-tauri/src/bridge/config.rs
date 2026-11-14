@@ -171,13 +171,21 @@ pub fn get_cli_link_status(app_handle: AppHandle) -> Result<cli::CliLinkStatus, 
     Ok(cli::get_status(&app_handle))
 }
 
-/// 保存界面语言偏好
+/// 保存界面语言偏好。
+///
+/// 落盘统一存完整资源 id（`zh-CN` / `en-US` / `ko-KR` / `ru-RU`）：页面注入、
+/// 壳层菜单与 `locale.preference` 都从这一份值派生，短码在任意一端补全都会让
+/// 另一端拿到不一致的形态。未知语言回落默认值，不写入非法值。
 #[tauri::command]
 pub fn set_language(app_handle: AppHandle, lang: String) {
-    let mut setting = config::get_store_dat_setting(&app_handle);
-    setting.language = lang.clone();
-    config::set_store_dat_setting(&app_handle, setting);
-    config::i18n::set_language(config::i18n::lang_from_setting(&lang));
+    let normalized = config::i18n::normalize_language(&lang)
+        .unwrap_or(config::i18n::DEFAULT_LANGUAGE)
+        .to_string();
+    config::update_store_dat_setting(&app_handle, |setting| {
+        setting.language.clone_from(&normalized);
+        setting.language_explicit = true;
+    });
+    config::i18n::set_language(config::i18n::lang_from_setting(&normalized));
     #[cfg(target_os = "macos")]
     if let Err(error) = crate::desktop::builder::install_macos_menu(&app_handle) {
         log::warn!("[menu] failed to refresh macOS menu language: {error}");

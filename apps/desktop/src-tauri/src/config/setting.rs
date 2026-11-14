@@ -24,6 +24,12 @@ pub struct Setting {
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
     pub language: String,
+    /// 用户是否手动选过界面语言。
+    ///
+    /// `language` 恒有值（默认简体中文），单看它无法区分「用户选的」与「默认的」；
+    /// 不区分就会把默认值当成显式选择下发给核心，让英文系统的用户被强制成中文。
+    #[serde(default)]
+    pub language_explicit: bool,
     #[serde(default)]
     pub dsh_pkg_commit: Option<String>,
     /// 已安装 Harness 发行版对应的 GitHub release tag（与 dsh_pkg_commit 配套，
@@ -81,6 +87,10 @@ pub struct Setting {
     /// 只决定下载哪种资产；磁盘上实际是哪一种以文件为准（见 config::dependencies::binary_path_at）。
     #[serde(default = "default_core_asar")]
     pub core_asar: bool,
+    /// 依赖（核心运行时）安装根：`None` = `<AppData>/dependencies`（issue #1285）。
+    /// 记录绝对路径即可把约 1GB 的 dsh/pnpm/git 运行时搬出系统盘；入口与槽位布局不变。
+    #[serde(default)]
+    pub dependencies_root: Option<String>,
 }
 
 pub const ZOOM_FACTOR_MIN: f64 = 0.5;
@@ -173,6 +183,14 @@ fn normalize_setting(setting: &mut Setting) {
     setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
     setting.close_action = normalize_close_action(&setting.close_action);
     setting.backup_retention_count = normalize_backup_retention(setting.backup_retention_count);
+    setting.dependencies_root = normalize_dependencies_root(setting.dependencies_root.take());
+}
+
+/// 依赖根归一化：空白视为未设置（注册表/store 可被手工编辑成空串）。
+fn normalize_dependencies_root(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
 }
 
 /// 默认服务端口：debug 构建与生产隔离，避免开发时与已运行的桌面端争用 3080。
@@ -194,7 +212,8 @@ impl Default for Setting {
             harness_max_heap_mb: None,
             auto_start: true,
             auto_update: default_auto_update(),
-            language: "zh-CN".to_string(),
+            language: super::i18n::DEFAULT_LANGUAGE.to_string(),
+            language_explicit: false,
             dsh_pkg_commit: None,
             dsh_pkg_tag: None,
             cli_link_enabled: default_cli_link_enabled(),
@@ -210,6 +229,7 @@ impl Default for Setting {
             force_xwayland: false,
             local_plugin_hmr: default_local_plugin_hmr(),
             core_asar: default_core_asar(),
+            dependencies_root: None,
         }
     }
 }
@@ -336,9 +356,11 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.harness_max_heap_mb = normalize_harness_max_heap_mb(current.harness_max_heap_mb);
     replacement.close_action = normalize_close_action(&current.close_action);
     replacement.auto_update = current.auto_update;
+    replacement.language_explicit = current.language_explicit;
     replacement.force_xwayland = current.force_xwayland;
     replacement.local_plugin_hmr = current.local_plugin_hmr;
     replacement.core_asar = current.core_asar;
+    replacement.dependencies_root.clone_from(&current.dependencies_root);
     replacement
 }
 
@@ -793,6 +815,38 @@ mod tests {
             merged.local_plugin_hmr,
             "整对象写入不得覆盖最新的本地插件热重载开关"
         );
+    }
+
+    /// 整对象写入不得把「用户选过语言」的标记抹回默认，否则下次启动会把默认值
+    /// 当成显式选择下发给核心，英文系统用户被重新刷成中文。
+    #[test]
+    fn explicit_language_choice_survives_stale_full_writes() {
+        let current = Setting {
+            language: "en-US".into(),
+            language_explicit: true,
+            ..Default::default()
+        };
+        let stale = Setting {
+            language: "zh-CN".into(),
+            language_explicit: false,
+            ..Default::default()
+        };
+        let merged = preserve_persisted_fields(stale, &current);
+        assert!(merged.language_explicit);
+        assert_eq!(merged.language, "zh-CN");
+    }
+
+    /// 旧版本 store 里没有该字段，反序列化必须落到「未手动选择」。
+    #[test]
+    fn legacy_settings_without_the_marker_mean_no_explicit_choice() {
+        let legacy = serde_json::json!({
+            "installed": true,
+            "port": 4099,
+            "auto_start": true,
+            "language": "zh-CN"
+        });
+        assert!(!setting_from_value(Some(&legacy)).language_explicit);
+        assert!(!Setting::default().language_explicit);
     }
 
     #[test]

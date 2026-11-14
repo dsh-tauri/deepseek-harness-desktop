@@ -13,14 +13,16 @@ const mocks = vi.hoisted(() => ({
   harnessState: { serviceRunning: true, busyAction: null } as Record<string, unknown>,
   harnessUpdaterState: { updateInfo: null } as Record<string, unknown>,
   proxyTestResult: { ok: true, reason: null, status: 200, latency_ms: 12 } as Record<string, unknown>,
+  changeLanguage: vi.fn(async () => {}),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN', changeLanguage: vi.fn() } }),
+  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN' } }),
 }))
+vi.mock('@/i18n', () => ({ changeLanguage: mocks.changeLanguage }))
 vi.mock('@/hooks/use-listen', () => ({ useListen: () => {} }))
 vi.mock('@/ui/config/components/close-action', () => ({ ConfigCloseAction: () => null }))
 vi.mock('@/ui/config/components/auto-update', () => ({ ConfigAutoUpdate: () => null }))

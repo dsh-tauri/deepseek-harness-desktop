@@ -21,6 +21,7 @@ pub fn on_new_window(
             .inner()
             .clone();
         let target = url.to_string();
+        crate::desktop::activation::handoff_to_external(&app_handle);
         tauri::async_runtime::spawn(async move {
             if let Err(e) = tauri_runtime_electron::open_external(&client, &target).await {
                 log::warn!("[new-window] open in browser failed {e}");
@@ -85,6 +86,17 @@ fn harness_guest_url(value: &str) -> Result<Url, String> {
         return Err("HARNESS_WEBVIEW_INVALID_URL".into());
     }
     Ok(url)
+}
+
+/// 把当前窗口提到前台（通知点击激活）。
+///
+/// 激活必须发生在壳进程：Windows 的前台锁由原生 API 决定，前端只能触发一个
+/// 普通 show/focus，被拒后既无重试空间也无从得知是否成功（issue #1462）。
+#[tauri::command]
+pub fn activate_window(webview: Webview) -> Result<(), String> {
+    require_shell(&webview)?;
+    crate::desktop::activation::bring_to_front(&webview.window());
+    Ok(())
 }
 
 pub(crate) fn require_shell(webview: &Webview) -> Result<(), String> {
@@ -692,6 +704,9 @@ pub async fn prepare_harness_webview(
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
         .initialization_script(include_str!("browser.js.inc"))
         .initialization_script(super::builder::native_notifications_script(&app))
+        .initialization_script(super::builder::page_locale_script(
+            &crate::config::get_store_dat_setting(&app),
+        ))
         // 「打开方式」必须由 Electron 主进程的 shell 交给系统，页内 detached spawn
         // 在 Windows 上无法激活目标窗口（issue #1346）。只注入本地 guest：远程
         // Harness 的操作不该让本机窗口让位。

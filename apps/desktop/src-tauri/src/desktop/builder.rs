@@ -752,6 +752,35 @@ pub(super) fn native_notifications_script(app: &crate::AppHandle<ElectronRuntime
     )
 }
 
+/// 页面语言初始化脚本：壳层语言与内嵌 dsh 页面语言是两条独立链路。
+///
+/// 壳层读桌面端 `.store.dat`，页面里的 dsh 客户端读核心的 `locale.preference`
+/// ——后者默认只按 `navigator` 探测，于是「菜单中文、页面英文」。这里把壳层已经
+/// 知道的结论一次性交给页面：系统语言顺序（AppImage / 桌面快捷方式拿不到 `LANG`，
+/// 只有 Rust 侧能问 `gsettings` 与 `/etc/default/locale`）与用户显式选择。
+///
+/// `__DSH_LOCALE__` 是 dsh 客户端 `@deepseek-ai/dsh-client-locale` 约定的原生壳桥：
+/// `read()` 返回初始化数据，`onChange()` 接收页面切换后的语言，两条链路由此保持同步。
+pub(super) fn page_locale_script(setting: &crate::config::Setting) -> String {
+    let explicit = setting.language_explicit.then_some(setting.language.as_str());
+    let locale = crate::config::i18n::page_locale(explicit);
+    let payload = serde_json::json!({
+        "language": locale.language,
+        "languages": locale.languages,
+        "preference": locale.core_preference,
+    });
+    format!(
+        "(() => {{
+  const locale = {payload};
+  globalThis.__DSH_DESKTOP_LOCALE__ = {{ language: locale.language, languages: locale.languages }};
+  globalThis.__DSH_LOCALE__ = {{
+    read: async () => ({{ languages: locale.languages, preference: locale.preference }}),
+    onChange: () => {{}},
+  }};
+}})();"
+    )
+}
+
 fn with_shell_chrome<'a>(
     app: &'a crate::AppHandle<ElectronRuntime>,
     builder: WebviewWindowBuilder<'a, ElectronRuntime, crate::AppHandle<ElectronRuntime>>,
@@ -852,10 +881,12 @@ pub fn build_main_window(
             .browser_host()
             .preload_script(include_str!("preload.js.inc"));
 
+    let setting = crate::config::get_store_dat_setting(app);
     let mut webview_builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
             .title(crate::desktop::product_name(app))
-            .initialization_script(include_str!("browser.js.inc"));
+            .initialization_script(include_str!("browser.js.inc"))
+            .initialization_script(page_locale_script(&setting));
     if let Some(injection) = (!cfg!(debug_assertions)
         || cfg!(feature = "dsh-shell-dev")
         || app.config().build.dev_url.is_none())
@@ -931,11 +962,13 @@ pub fn build_shell_window(
         )
         .browser_host()
         .preload_script(include_str!("preload.js.inc"));
+    let setting = crate::config::get_store_dat_setting(app);
     let mut webview_builder = with_shell_chrome(
         app,
         WebviewWindowBuilder::new(app, label, WebviewUrl::App(path))
             .title(title)
-            .initialization_script(include_str!("browser.js.inc")),
+            .initialization_script(include_str!("browser.js.inc"))
+            .initialization_script(page_locale_script(&setting)),
     )?;
     if let Some(injection) = (!cfg!(debug_assertions)
         || cfg!(feature = "dsh-shell-dev")
@@ -1017,6 +1050,53 @@ mod tests {
         }
 
         assert!(load_exe_icons(std::path::Path::new("C:/dsh-missing-icon.exe")).is_none());
+    }
+}
+
+#[cfg(test)]
+mod page_locale_tests {
+    use super::page_locale_script;
+
+    fn setting(language: &str, explicit: bool) -> crate::config::Setting {
+        crate::config::Setting {
+            language: language.to_string(),
+            language_explicit: explicit,
+            ..Default::default()
+        }
+    }
+
+    /// 注入的 `__DSH_DESKTOP_LOCALE__` 必须与客户端读取的字段同名。
+    #[test]
+    fn script_publishes_the_shared_bootstrap_fields() {
+        let script = page_locale_script(&setting("zh-CN", true));
+        for needle in [
+            "__DSH_DESKTOP_LOCALE__",
+            "__DSH_LOCALE__",
+            "read:",
+            "onChange:",
+            "languages",
+            "preference",
+        ] {
+            assert!(script.contains(needle), "missing {needle}: {script}");
+        }
+    }
+
+    /// 用户没手动选过语言时，脚本不得把默认值当成显式选择下发。
+    #[test]
+    fn script_omits_the_explicit_choice_until_the_user_picks_one() {
+        let implicit = page_locale_script(&setting("zh-CN", false));
+        assert!(implicit.contains("\"language\":null"), "{implicit}");
+
+        let explicit = page_locale_script(&setting("en-US", true));
+        assert!(explicit.contains("\"language\":\"en-US\""), "{explicit}");
+    }
+
+    /// 核心只认 zh / en 两个偏好值，其余语言必须留空让页面自己探测。
+    #[test]
+    fn script_only_forwards_a_core_supported_preference() {
+        assert!(page_locale_script(&setting("zh-CN", true)).contains("\"preference\":\"zh\""));
+        assert!(page_locale_script(&setting("en-US", true)).contains("\"preference\":\"en\""));
+        assert!(page_locale_script(&setting("ko-KR", true)).contains("\"preference\":null"));
     }
 }
 
@@ -1357,6 +1437,10 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::preview_data_dir_migration,
         crate::bridge::migrate_data_dir,
         crate::bridge::rollback_data_dir,
+        crate::bridge::get_dependencies_root_status,
+        crate::bridge::pick_dependencies_root,
+        crate::bridge::preview_dependencies_root_migration,
+        crate::bridge::migrate_dependencies_root,
         crate::bridge::reveal_in_folder,
         crate::bridge::open_dir,
         crate::bridge::read_service_logs,
@@ -1375,6 +1459,7 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::read_clipboard_text,
         crate::bridge::write_clipboard_text,
         crate::desktop::window::create_app_window,
+        crate::desktop::window::activate_window,
         crate::desktop::builder::sync_view_menu,
         crate::desktop::window::quit_app,
         crate::desktop::window::toggle_devtools,

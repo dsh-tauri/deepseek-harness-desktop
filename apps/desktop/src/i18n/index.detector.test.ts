@@ -1,70 +1,114 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { LANGUAGE_STORAGE_KEY, languageDetector } from './index.detector'
+import { LANGUAGE_STORAGE_KEY, languageDetector, normalizeLanguage, resolveLanguage } from './index.detector'
 
-const mocks = vi.hoisted(() => ({
-  setting: { language: null as string | null },
-  invoke: vi.fn(() => Promise.resolve()),
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('../store', () => ({ store: { setting: mocks.setting } }))
+const store = new Map<string, string>()
 
 function detect() {
   return (languageDetector.detect as () => string)()
 }
 
+function inject(locale: { language?: string | null, languages?: string[] } | undefined) {
+  if (locale === undefined) {
+    delete (globalThis as { __DSH_DESKTOP_LOCALE__?: unknown }).__DSH_DESKTOP_LOCALE__
+    return
+  }
+  ;(globalThis as { __DSH_DESKTOP_LOCALE__?: unknown }).__DSH_DESKTOP_LOCALE__ = locale
+}
+
 beforeEach(() => {
-  const items = new Map<string, string>()
+  store.clear()
   vi.stubGlobal('localStorage', {
-    getItem: (key: string) => items.get(key) ?? null,
-    setItem: (key: string, value: string) => items.set(key, value),
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value),
   })
-  vi.stubGlobal('navigator', { language: 'en-US' })
+  vi.stubGlobal('navigator', { language: 'en-US', languages: ['en-US'] })
+  inject(undefined)
 })
 
 afterEach(() => {
-  mocks.setting.language = null
+  inject(undefined)
   vi.unstubAllGlobals()
-  vi.clearAllMocks()
+})
+
+describe('normalizeLanguage', () => {
+  it.each([
+    ['zh', 'zh-CN'],
+    ['zh-CN', 'zh-CN'],
+    ['zh_CN', 'zh-CN'],
+    ['zh_CN.UTF-8', 'zh-CN'],
+    ['zh-Hans', 'zh-CN'],
+    ['zh-Hans-CN', 'zh-CN'],
+    ['zh-TW', 'zh-CN'],
+    ['ZH_cn', 'zh-CN'],
+    ['en', 'en-US'],
+    ['en_GB.UTF-8', 'en-US'],
+    ['ko_KR.UTF-8', 'ko-KR'],
+    ['ru_RU@euro', 'ru-RU'],
+  ])('folds %s onto the bundled %s', (raw, expected) => {
+    expect(normalizeLanguage(raw)).toBe(expected)
+  })
+
+  it.each(['', '   ', 'C', 'POSIX', 'C.UTF-8', 'fr-FR', 'ja_JP.UTF-8'])(
+    'returns null for the unsupported tag %s',
+    (raw) => {
+      expect(normalizeLanguage(raw)).toBeNull()
+    },
+  )
+
+  it('returns null for missing values', () => {
+    expect(normalizeLanguage(null)).toBeNull()
+    expect(normalizeLanguage(undefined)).toBeNull()
+  })
+})
+
+describe('resolveLanguage', () => {
+  it('takes the first candidate that resolves to a bundled language', () => {
+    expect(resolveLanguage(['fr-FR', 'zh_CN.UTF-8', 'en-US'])).toBe('zh-CN')
+  })
+
+  it('falls back to English only when every candidate is unusable', () => {
+    expect(resolveLanguage(['fr-FR', null, 'C'])).toBe('en-US')
+  })
 })
 
 describe('languageDetector.detect', () => {
-  it.each([
-    ['zh', 'zh-CN'],
-    ['ko', 'ko-KR'],
-    ['ru', 'ru-RU'],
-    ['en', 'en-US'],
-  ])('expands the backend short code %s to %s', (stored, expected) => {
-    mocks.setting.language = stored
-    expect(detect()).toBe(expected)
-  })
-
-  it('expands a short code saved in localStorage', () => {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, 'ZH')
+  it('prefers the language the user picked before', () => {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, 'zh_CN.UTF-8')
+    vi.stubGlobal('navigator', { language: 'en-US', languages: ['en-US'] })
     expect(detect()).toBe('zh-CN')
   })
 
-  it('keeps a full tag unchanged', () => {
+  it('falls back to the system languages the desktop probed', () => {
+    inject({ languages: ['zh_CN.UTF-8', 'en-US'] })
+    vi.stubGlobal('navigator', { language: 'en-US', languages: ['en-US'] })
+    expect(detect()).toBe('zh-CN')
+  })
+
+  it('uses the injected explicit choice from the desktop shell', () => {
+    inject({ language: 'zh-CN', languages: ['en-US'] })
+    expect(detect()).toBe('zh-CN')
+  })
+
+  it('keeps an explicit choice ahead of a conflicting system language', () => {
     localStorage.setItem(LANGUAGE_STORAGE_KEY, 'ko-KR')
-    mocks.setting.language = 'zh'
+    inject({ language: 'zh-CN', languages: ['zh-CN'] })
     expect(detect()).toBe('ko-KR')
   })
 
-  it('falls back to the navigator language when nothing is saved', () => {
-    vi.stubGlobal('navigator', { language: 'zh-TW' })
+  it('falls back to the navigator languages when nothing is injected', () => {
+    vi.stubGlobal('navigator', { language: 'zh-TW', languages: ['zh-TW', 'en-US'] })
     expect(detect()).toBe('zh-CN')
   })
 
-  it('falls back to en-US for unsupported navigator languages', () => {
-    vi.stubGlobal('navigator', { language: 'fr-FR' })
+  it('never leaves an unsupported system language unmapped to a bundled resource', () => {
+    inject({ languages: ['fr_FR.UTF-8'] })
+    vi.stubGlobal('navigator', { language: 'de-DE', languages: ['de-DE'] })
     expect(detect()).toBe('en-US')
   })
-})
 
-describe('languageDetector.cacheUserLanguage', () => {
-  it('keeps sending the short code to the backend', () => {
-    languageDetector.cacheUserLanguage!('zh-CN')
-    expect(mocks.invoke).toHaveBeenCalledWith('set_language', { lang: 'zh' })
-    expect(localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('zh-CN')
+  it('does not persist anything while detecting', () => {
+    inject({ languages: ['zh_CN.UTF-8'] })
+    expect(detect()).toBe('zh-CN')
+    expect(store.size).toBe(0)
   })
 })
