@@ -36,14 +36,32 @@ pub fn http_client_builder<R: Runtime>(app: &AppHandle<R>) -> Result<ClientBuild
 }
 
 pub(crate) fn client_builder(value: &str) -> Result<ClientBuilder, String> {
+    client_builder_with_bypass(value, &rust_no_proxy())
+}
+
+/// 带指定绕过列表的客户端构造。
+///
+/// 绕过列表与下发给核心/子进程的那份同源：同一批回环条目、同一批用户例外
+/// （issue #1542 的 no_proxy 对齐）。
+///
+/// 两侧只承诺同一类写法：**主机名与域名后缀**。其余写法各消费者各认各的，
+/// 这里不替它们统一：端口条目只有核心与 undici 认，`reqwest` 不认；CIDR 只有
+/// `reqwest` 认，且只对 IP 字面量的目标生效（按主机名访问时匹配不上）；
+/// 空白分隔只有核心与 undici 认，`reqwest` 只按逗号切。
+fn client_builder_with_bypass(value: &str, bypass: &str) -> Result<ClientBuilder, String> {
     let url = normalize_proxy_url(value)?;
     let builder = reqwest::Client::builder();
     if url.is_empty() {
         return Ok(builder);
     }
+    // `NO_PROXY=*` 的语义是「全部直连」：核心侧按此判定，这里必须一样，
+    // 否则桌面会照旧把请求发给代理，而核心直连，两侧行为分裂。
+    if no_proxy_disables_proxy(bypass) {
+        return Ok(builder.no_proxy());
+    }
     let proxy = Proxy::all(&url)
         .map_err(|_| "PROXY_INVALID: unsupported proxy URL".to_string())?
-        .no_proxy(NoProxy::from_string("localhost,.localhost,127.0.0.0/8,::1"));
+        .no_proxy(NoProxy::from_string(bypass));
     Ok(builder.no_proxy().proxy(proxy))
 }
 
@@ -215,10 +233,9 @@ pub fn node_system_ca_options(node: &Path, existing: Option<&str>) -> Result<Str
 /// 桌面端 spawn 的进程不在那条链路上，必须显式下发。
 ///
 /// 只写小写名：核心的读取顺序是小写优先、大写兜底，值相同故不重复写；curl、git、
-/// pnpm 同样认小写。`no_proxy` 与 [`client_builder`] 的绕过列表保持一致并补上
-/// Node 自己的匹配规则只认的写法，再逐条追加进程已有的 `NO_PROXY` / `no_proxy`
-/// （见 [`child_no_proxy`]）。空值返回空 map：用户没配代理时不注入任何键，子进程
-/// 照旧继承系统环境。
+/// pnpm 同样认小写。`no_proxy` 与 [`client_builder`] 的绕过列表同源（同一批回环
+/// 条目），再逐条追加进程已有的 `NO_PROXY` / `no_proxy`（见 [`child_no_proxy`]）。
+/// 空值返回空 map：用户没配代理时不注入任何键，子进程照旧继承系统环境。
 ///
 /// SOCKS 值原样下发：curl/git/pnpm 认，Node 侧由核心判为不支持后保持直连（与只配
 /// 代理不改代码时一致）。
@@ -262,28 +279,109 @@ fn child_no_proxy() -> String {
     merge_no_proxy(&inherited)
 }
 
+/// 桌面 Rust 侧的绕过列表：回环基线加上用户已有的例外。
+///
+/// 与下发给核心的那份同源（同一批回环条目、同一批用户例外），差异只在形式：
+/// `reqwest` 认 CIDR（`127.0.0.0/8` 靠它才覆盖整段回环），核心与 undici 不认，
+/// 但核心自己按 `isLoopbackHost` 绕开整段回环，Node 子进程只绕 `127.0.0.1`。
+/// 用户例外两边都带上（写法展开，见 [`expand_bypass_entry`]），否则桌面侧会把
+/// 本该直连的内网地址送去代理，而核心侧直连。
+fn rust_no_proxy() -> String {
+    rust_no_proxy_from(&inherited_no_proxy())
+}
+
+/// [`rust_no_proxy`] 的纯函数形态：回环基线 + 给定的继承条目。
+fn rust_no_proxy_from(inherited: &str) -> String {
+    merge_entries(LOOPBACK_NO_PROXY, inherited)
+}
+
+/// 进程已有的 `NO_PROXY` / `no_proxy` 条目（两个名字都读，按原样拼接）。
+fn inherited_no_proxy() -> String {
+    ["NO_PROXY", "no_proxy"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// 绕过列表是否为「全部直连」（用户写了 `*`）。
+fn no_proxy_disables_proxy(list: &str) -> bool {
+    list.split(',').any(|entry| entry.trim() == "*")
+}
+
 /// 固定回环条目与继承条目合并成一份列表。
 ///
-/// Node 的匹配规则只认裸主机名与「起-止」IPv4 段、不认 CIDR，所以回环段除保留
-/// `127.0.0.0/8`（curl、git、pnpm 认）外再补一条 `127.0.0.1-127.255.255.255`。
+/// 只保留各消费者都认的写法。「起-止」IPv4 段（`127.0.0.1-127.255.255.255`）曾经
+/// 在这里，理由是「Node 认这种区间」——实测不成立：curl、undici、reqwest 都不解析
+/// 区间，那条在每个消费者那里都只当一个字面主机名，匹配不到任何东西，已删。
 fn merge_no_proxy(inherited: &str) -> String {
-    let mut entries = CHILD_NO_PROXY
-        .split(',')
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+    merge_entries(CHILD_NO_PROXY, inherited)
+}
+
+/// 按基线 + 继承条目合并出一份绕过列表（去重、保持顺序）。
+///
+/// 继承条目先展开成各消费者都认的写法（见 [`expand_bypass_entry`]），基线条目原样保留。
+fn merge_entries(base: &str, inherited: &str) -> String {
+    let mut entries = base.split(',').map(str::to_string).collect::<Vec<_>>();
     for entry in inherited.split(',') {
-        let entry = entry.trim();
-        if !entry.is_empty() && !entries.iter().any(|item| item == entry) {
-            entries.push(entry.to_string());
+        for form in expand_bypass_entry(entry) {
+            if !entries.contains(&form) {
+                entries.push(form);
+            }
         }
     }
     entries.join(",")
 }
 
-/// 子进程代理绕过列表的固定部分：回环地址与 [`client_builder`] 的约定保持一致，
-/// 并补上 Node 自己那套匹配规则认得的形式（见 [`merge_no_proxy`]）。
-const CHILD_NO_PROXY: &str =
-    "localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1],127.0.0.1-127.255.255.255";
+/// 把一条用户例外展开成各消费者都认的写法。
+///
+/// 同一个域名给两种形式：裸的 `corp.example` 与带点的 `.corp.example`。各消费者
+/// 的匹配规则不同，但两种形式的并集在每一家里都是「这个域名和它的所有子域」：
+///
+/// - 核心（`bypassesProxy`）：两种写法都含顶级域与子域；
+/// - `reqwest`：两种写法都含顶级域与子域；
+/// - curl：两种写法都含顶级域与子域；
+/// - undici 7/8：两种写法都含顶级域与子域；
+/// - undici 6（Node 22 内建）：裸写法只匹顶级域、带点写法只匹子域——两种一起
+///   给才等于「顶级域 + 子域」，只给一种就少覆盖一半。
+///
+/// 所以两种都写进列表，而不是挑一种：挑一种必然有一家少覆盖。`*.` 前缀同样
+/// 展开成这两种写法（核心把它当成「这个域名」，`reqwest` 根本不认这种写法，
+/// undici 6/7 只把它当成「子域」）。
+///
+/// IP、网段与端口条目不展开：它们不是域名，加个前导点只会变成另一个匹配不到
+/// 的字面量。
+fn expand_bypass_entry(entry: &str) -> Vec<String> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if trimmed == "*" {
+        return vec![trimmed.to_string()];
+    }
+    let host = trimmed
+        .strip_prefix("*.")
+        .or_else(|| trimmed.strip_prefix('.'))
+        .unwrap_or(trimmed);
+    if host.is_empty() {
+        return Vec::new();
+    }
+    let mut forms = vec![host.to_string()];
+    if host.chars().any(char::is_alphabetic) {
+        forms.push(format!(".{host}"));
+    }
+    forms
+}
+
+/// 桌面 Rust 侧的固定回环条目：与下发给核心的那份同源。
+///
+/// `127.0.0.0/8` 只有 `reqwest` 认（它按网段判断），但它正是桌面访问核心服务
+/// （`http://127.0.0.1:3080`，IP 字面量）时唯一能覆盖整段回环的写法。
+const LOOPBACK_NO_PROXY: &str = "localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1]";
+
+/// 子进程代理绕过列表的固定部分：回环地址与 [`client_builder`] 的约定保持一致。
+const CHILD_NO_PROXY: &str = "localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1]";
 
 #[cfg(test)]
 mod tests {
@@ -536,6 +634,139 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn explicit_proxy_still_honours_cidr_entries_from_the_bypass_list() {
+        // 本地代理监听：任何经过它的请求都会拿到 502，而绕过代理的请求直连目标。
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let proxy = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_headers(&mut stream).await;
+            stream
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        // 192.0.2.0/24 是 TEST-NET-1，不可路由：绕过代理时必然连接失败。
+        let client = client_builder_with_bypass(
+            &format!("http://{address}"),
+            "localhost,127.0.0.0/8,192.0.2.0/24",
+        )
+        .unwrap()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap();
+        assert!(
+            client
+                .get("http://192.0.2.1/resource")
+                .send()
+                .await
+                .is_err(),
+            "a CIDR bypass entry must keep the request off the proxy"
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(3), proxy)
+                .await
+                .is_err(),
+            "the proxy must not see a bypassed request"
+        );
+    }
+
+    /// 用户自己写的例外条目必须让桌面自己的请求离开代理。
+    ///
+    /// 目标主机名不可解析，直连时必然失败（或被解析器劫持成别的页面，都与本用例
+    /// 无关）；本用例只断言代理没有看到这次请求——这正是「用户例外对桌面自己的
+    /// 请求生效」这件事本身。用的是前导点的写法（用户最常写的形式）：归一后
+    /// `reqwest` 认的是「顶级域 + 子域」，与核心、curl 一致。
+    #[tokio::test]
+    async fn a_user_bypass_entry_keeps_the_desktop_request_off_the_proxy() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let proxy = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_headers(&mut stream).await;
+            stream
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let bypass = rust_no_proxy_from(".dsh-proxy-test.invalid");
+        let client = client_builder_with_bypass(&format!("http://{address}"), &bypass)
+            .unwrap()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let _ = client
+            .get("http://sub.dsh-proxy-test.invalid/resource")
+            .send()
+            .await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(3), proxy)
+                .await
+                .is_err(),
+            "the proxy must not see a request the user excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_star_bypass_entry_turns_the_configured_proxy_off() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_headers(&mut stream).await;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\ndirect")
+                .await
+                .unwrap();
+        });
+        let client = client_builder_with_bypass(&format!("http://{address}"), "*")
+            .unwrap()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let response = client
+            .get(format!("http://{address}/health"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.text().await.unwrap(), "direct");
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn the_rust_bypass_list_carries_the_loopback_baseline_and_the_user_entries() {
+        let list = rust_no_proxy_from(" .corp.example ,localhost,, 10.0.0.0/8 ");
+        let entries = list.split(',').collect::<Vec<_>>();
+        for entry in [
+            "localhost",
+            ".localhost",
+            "127.0.0.1",
+            "127.0.0.0/8",
+            "::1",
+            "[::1]",
+        ] {
+            assert!(entries.contains(&entry), "missing {entry}");
+        }
+        assert!(entries.contains(&"corp.example"));
+        assert!(entries.contains(&".corp.example"));
+        assert!(entries.contains(&"10.0.0.0/8"));
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| **entry == "localhost")
+                .count(),
+            1
+        );
+        assert!(!entries.contains(&""));
+    }
+
+    #[test]
+    fn a_star_entry_disables_the_proxy_for_every_request() {
+        assert!(no_proxy_disables_proxy("*,localhost"));
+        assert!(!no_proxy_disables_proxy("localhost,127.0.0.0/8"));
+    }
+
     #[test]
     fn proxy_child_env_exports_policy_names_for_usable_urls_only() {
         assert!(proxy_child_env("").is_empty());
@@ -750,6 +981,7 @@ mod tests {
 
         let merged = merge_no_proxy(" .corp.example ,localhost,, 10.0.0.0/8 ");
         let entries = merged.split(',').collect::<Vec<_>>();
+        assert!(entries.contains(&"corp.example"));
         assert!(entries.contains(&".corp.example"));
         assert!(entries.contains(&"10.0.0.0/8"));
         assert_eq!(
@@ -759,8 +991,31 @@ mod tests {
                 .count(),
             1
         );
-        assert!(entries.contains(&"127.0.0.1-127.255.255.255"));
+        assert!(!entries.contains(&"127.0.0.1-127.255.255.255"));
         assert!(!entries.contains(&""));
+    }
+
+    /// 用户条目的写法展开：同一个域名给两种形式，两种形式的并集在每个消费者那里
+    /// 都是「这个域名和它的所有子域」。
+    #[test]
+    fn a_user_entry_is_written_in_both_forms() {
+        assert_eq!(
+            expand_bypass_entry(".corp.example"),
+            vec!["corp.example".to_string(), ".corp.example".to_string()]
+        );
+        assert_eq!(
+            expand_bypass_entry("*.corp.example"),
+            vec!["corp.example".to_string(), ".corp.example".to_string()]
+        );
+        assert_eq!(
+            expand_bypass_entry(" corp.example "),
+            vec!["corp.example".to_string(), ".corp.example".to_string()]
+        );
+        assert_eq!(expand_bypass_entry("10.0.0.0/8"), vec!["10.0.0.0/8".to_string()]);
+        assert_eq!(expand_bypass_entry("127.0.0.1"), vec!["127.0.0.1".to_string()]);
+        assert_eq!(expand_bypass_entry("*"), vec!["*".to_string()]);
+        assert!(expand_bypass_entry(".").is_empty());
+        assert!(expand_bypass_entry("").is_empty());
     }
 
     #[tokio::test]
