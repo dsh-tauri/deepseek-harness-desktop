@@ -200,7 +200,11 @@ module.exports = function registerNativePackages(archive, cache) {
 
   /// 依赖按「解析到它的那个包」的私有目录落地：owner 的目录相对归档的路径 P 对应
   /// staging/P，于是依赖落 staging/P/node_modules/<name>，与 node 在归档里的查找顺序
-  /// 完全一致。按来源目录而不是包名去重，两个版本因此各留一份，不会互相顶掉。
+  /// 完全一致。按「来源 + 目标」而不是包名去重，两个版本因此各留一份，不会互相顶掉。
+  ///
+  /// 去重必须带上目标：node 只逐级向上解析，兄弟目录里的副本互相不可见。若只按来源
+  /// 去重，两个兄弟包（如 fontkit 下的 brotli 与 unicode-properties）共同依赖的传递
+  /// 依赖（如 base64-js）只会落到第一个所有者下，第二个所有者在裸子进程里就断了链。
   ///
   /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
   function hoist(root, staging) {
@@ -211,10 +215,13 @@ module.exports = function registerNativePackages(archive, cache) {
       const { directory, target } = pending.shift()
       for (const [, segments] of declarations(directory)) {
         const source = locate(directory, segments)
-        if (!source || handled.has(source))
-          continue
-        handled.add(source)
         const destination = path.join(target, 'node_modules', ...segments)
+        if (!source)
+          continue
+        const key = `${source}\0${destination}`
+        if (handled.has(key))
+          continue
+        handled.add(key)
         // 包自身的 node_modules 已由 copy(root, staging, false) 原样带入，这里只补
         // 被提升到归档根、因此不在私有目录里的那些；重复写同一目标会让 publish 的
         // rename 撞上仍被打开的文件（Windows 上表现为 EPERM）。

@@ -309,6 +309,34 @@ test('two different versions of the same dependency keep their own copies instea
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@1"')
 })
 
+test('a shared transitive dependency is hoisted beside each sibling owner so a bare child resolves it from both', (t) => {
+  // #1547：node 只逐级向上解析，兄弟目录里的副本互相不可见。按来源去重会让
+  // 兄弟包共同依赖的传递依赖只落到第一个所有者下，第二个所有者裸跑即断链。
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0', b: '^1.0.0' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = [require("a"), require("b")]')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("x")')
+  f.write('node_modules/b/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^1.0.0' } }))
+  f.write('node_modules/b/index.js', 'module.exports = require("x")')
+  f.write('node_modules/x/package.json', JSON.stringify({ main: 'index.js' }))
+  f.write('node_modules/x/index.js', 'module.exports = "x-shared"')
+  assert.deepEqual(f.load('pkg'), ['x-shared', 'x-shared'])
+  const cacheRoot = path.join(f.cache, 'node_modules/pkg/node_modules')
+  assert.equal(fs.readFileSync(path.join(cacheRoot, 'a/node_modules/x/index.js'), 'utf8'), 'module.exports = "x-shared"')
+  assert.equal(fs.readFileSync(path.join(cacheRoot, 'b/node_modules/x/index.js'), 'utf8'), 'module.exports = "x-shared"')
+  // 与生产故障一致的消费方式：裸子进程直接 require 物化入口（无归档 hook）。
+  const script = 'process.stdout.write(JSON.stringify(require(process.env.DSH_PROBE_ENTRY)))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env: { ...process.env, DSH_PROBE_ENTRY: path.join(f.cache, 'node_modules/pkg/index.js') },
+  })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.deepEqual(JSON.parse(bare.stdout), ['x-shared', 'x-shared'])
+})
+
 test('a hoisted copy outside the archive resolves its own dependencies through the real archive source', (t) => {
   const f = fixture(t)
   f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
