@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { NavbarProps } from '@/layout/navbar/navbar'
+import { invoke } from '@tauri-apps/api/core'
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Shell } from './shell'
@@ -20,15 +21,7 @@ const mocks = vi.hoisted(() => ({
   clicked: null as null | ((event: { data?: { tag?: string, sessionId?: string, windowLabel?: string, sourceOrigin?: string, deliveryKey?: string } }) => Promise<void>),
   window: {
     label: 'window-2',
-    isMinimized: vi.fn().mockResolvedValue(false),
-    isVisible: vi.fn().mockResolvedValue(true),
-    isFocused: vi.fn().mockResolvedValue(true),
-    unminimize: vi.fn().mockResolvedValue(undefined),
-    show: vi.fn().mockResolvedValue(undefined),
-    setFocus: vi.fn().mockResolvedValue(undefined),
-    setAlwaysOnTop: vi.fn().mockResolvedValue(undefined),
-    onFocusChanged: vi.fn().mockResolvedValue(vi.fn()),
-    onResized: vi.fn().mockResolvedValue(vi.fn()),
+    close: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -128,9 +121,7 @@ beforeEach(() => {
   mocks.listeners.clear()
   mocks.emit.mockResolvedValue(undefined)
   mocks.getAllWindows.mockResolvedValue([{ label: 'window-3' }, mocks.window])
-  mocks.window.isMinimized.mockResolvedValue(false)
-  mocks.window.isVisible.mockResolvedValue(true)
-  mocks.window.isFocused.mockResolvedValue(true)
+  vi.mocked(invoke).mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -238,7 +229,7 @@ it('coalesces duplicate notification actions without losing the response text', 
   expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
     ['dsh://notification-clicked', { tag: 'session-tag', sourceOrigin: 'http://127.0.0.1:3081', action: 'reply', inputValue: 'answer' }],
   ])
-  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(invoke).not.toHaveBeenCalled()
 })
 
 it('keeps actions with a reused tag and different interaction identities separate', async () => {
@@ -256,8 +247,7 @@ it('keeps actions with a reused tag and different interaction identities separat
   ])
 })
 
-it('activates a minimized window before delivering a native notification click', async () => {
-  mocks.window.isMinimized.mockResolvedValue(true)
+it('asks the shell to raise the window before delivering a native notification click', async () => {
   render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { tag: 'session-tag', sessionId: 'session-1', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
@@ -265,23 +255,21 @@ it('activates a minimized window before delivering a native notification click',
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
-  expect(mocks.window.unminimize).toHaveBeenCalledOnce()
-  expect(mocks.window.show).toHaveBeenCalledOnce()
-  expect(mocks.window.setFocus).toHaveBeenCalledOnce()
+  expect(invoke).toHaveBeenCalledTimes(1)
+  expect(invoke).toHaveBeenCalledWith('activate_window')
   expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
     ['dsh://notification-clicked', { tag: 'session-tag', sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081' }],
   ])
 })
 
-it('re-raises a window whose first focus was refused by the foreground lock', async () => {
-  mocks.window.isFocused.mockResolvedValueOnce(false)
+it('delivers the click even when the shell cannot raise the window', async () => {
+  vi.mocked(invoke).mockRejectedValueOnce('ACTIVATE_WINDOW_FAILED')
   render(<Shell />)
   await act(async () => {
     await mocks.clicked!({ data: { tag: 'session-tag', sessionId: 'session-1', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
-  expect(mocks.window.setAlwaysOnTop.mock.calls).toEqual([[true], [false]])
-  expect(mocks.window.setFocus).toHaveBeenCalledTimes(2)
+  expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: 'session-tag', sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081' })
 })
 
 it('ignores native notification clicks and actions owned by another live window', async () => {
@@ -291,8 +279,7 @@ it('ignores native notification clicks and actions owned by another live window'
     await mocks.action!({ actionId: 'approve', extra: { tag: 'session-tag', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
     vi.advanceTimersByTime(250)
   })
-  expect(mocks.window.show).not.toHaveBeenCalled()
-  expect(mocks.window.setFocus).not.toHaveBeenCalled()
+  expect(invoke).not.toHaveBeenCalled()
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
 })
 
@@ -303,15 +290,15 @@ it.each(['window-closed', undefined])('elects one live shell for notification ow
     await mocks.clicked!({ data: { tag: 'historical', sessionId: 'session-old', windowLabel, sourceOrigin: 'http://127.0.0.1:3081' } })
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
-  expect(mocks.window.show).toHaveBeenCalledOnce()
+  expect(invoke).toHaveBeenCalledOnce()
   expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: 'historical', sessionId: 'session-old', sourceOrigin: 'http://127.0.0.1:3081' })
-  mocks.window.show.mockClear()
+  vi.mocked(invoke).mockClear()
   mocks.emit.mockClear()
   mocks.getAllWindows.mockResolvedValue([mocks.window, { label: 'window-1' }, { label: 'popup' }])
   await act(async () => {
     await mocks.clicked!({ data: { sessionId: 'session-old', windowLabel, sourceOrigin: 'http://127.0.0.1:3081' } })
   })
-  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(invoke).not.toHaveBeenCalled()
   expect(mocks.emit).not.toHaveBeenCalled()
 })
 
@@ -327,7 +314,7 @@ it.each(['click', 'action'])('waits for a live notification owner with unknown s
     await vi.advanceTimersByTimeAsync(250)
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: metadata.sourceOrigin } })
   })
-  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(invoke).not.toHaveBeenCalled()
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
   otherShell.unmount()
   mocks.window.label = 'window-3'
@@ -353,7 +340,7 @@ it.each(['click', 'action'])('waits for a live notification owner with unknown s
     ? { tag: 'owner-tag', sessionId: 'owner-session', sourceOrigin: metadata.sourceOrigin }
     : { tag: 'owner-tag', sessionId: 'owner-session', deliveryKey: 'owner-interaction', action: 'approve', inputValue: undefined, sourceOrigin: metadata.sourceOrigin }
   expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([['dsh://notification-clicked', payload]])
-  expect(mocks.window.show).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
+  expect(invoke).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
 })
 
 it.each(['http://127.0.0.1:4000', undefined])('rejects a notification from incompatible or unknown source %s even for its owner', async (sourceOrigin) => {
@@ -364,7 +351,7 @@ it.each(['http://127.0.0.1:4000', undefined])('rejects a notification from incom
     vi.advanceTimersByTime(250)
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
-  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(invoke).not.toHaveBeenCalled()
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
 })
 
@@ -378,7 +365,7 @@ it('takes over only matching origins when other profile and remote shells sort f
     await mocks.clicked!({ data: { sessionId: 'same-profile', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
-  expect(mocks.window.show).toHaveBeenCalledOnce()
+  expect(invoke).toHaveBeenCalledOnce()
   expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: undefined, sessionId: 'same-profile', sourceOrigin: 'http://127.0.0.1:3081' })
 })
 
@@ -417,7 +404,7 @@ it.each([
       await mocks.action!({ actionId: 'approve', extra: metadata })
     await vi.advanceTimersByTimeAsync(250)
   })
-  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(invoke).not.toHaveBeenCalled()
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
   await act(async () => {
     mocks.harness.webviewSrc = sourceOrigin
@@ -433,11 +420,11 @@ it.each([
     expect(deliveries).toEqual([['dsh://notification-clicked', kind === 'click'
       ? { tag: 'cold-tag', sessionId: 'cold-session', sourceOrigin }
       : { tag: 'cold-tag', sessionId: 'cold-session', deliveryKey: 'cold-interaction', action: 'approve', inputValue: undefined, sourceOrigin }]])
-    expect(mocks.window.show).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
+    expect(invoke).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
   }
   else {
     expect(deliveries).toEqual([])
-    expect(mocks.window.show).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
   }
 })
 

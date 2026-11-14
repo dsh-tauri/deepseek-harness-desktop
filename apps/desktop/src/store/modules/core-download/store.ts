@@ -7,6 +7,7 @@ import { listen } from '@tauri-apps/api/event'
 import { defineStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { queryKeys } from '@/config/query-keys'
+import { installPercent } from '@/utils/install-percent'
 import { harness } from '../harness'
 
 /** 浮窗保留的日志行数 */
@@ -46,11 +47,12 @@ export const coreDownload = defineStore({
           if (!current)
             return
           const { percentage, log } = event.payload
-          if (percentage < current.percentage)
+          const next = installPercent(percentage, current.percentage)
+          if (next < current.percentage)
             return
           this.task = {
             ...current,
-            percentage,
+            percentage: next,
             logs: log ? [...current.logs, log].slice(-LOG_LIMIT) : current.logs,
           }
         })

@@ -88,36 +88,43 @@ export interface PanelProgressProps {
   logs?: readonly string[]
 }
 
-/**
- * 安装/下载进度面板：进度条 + 日志面板。
- * 供首次安装（setup）与核心版本下载对话框共用：两处都要展示
- * `install-progress` 事件驱动的百分比与日志流。
- */
+/** 进度条宽度、无障碍值与右侧数字的唯一取值：先取整再钳制，三者不会因精度分叉 */
+function progressPercent(percentage: number): number {
+  if (!Number.isFinite(percentage))
+    return 0
+  return Math.min(100, Math.max(0, Math.round(percentage)))
+}
+
+/** 安装/下载进度面板：宽度、`aria-valuenow` 与右侧数字共用同一个整数百分比，且不加宽度过渡（后端 50ms 一推，过渡会被每次新值重置，条会长期落后于数字） */
 function Progress({ percentage, logs }: PanelProgressProps) {
   const hasLogs = logs != null
-  const showPanel = hasLogs || percentage != null
-
-  if (!showPanel) {
-    return null
-  }
+  const percent = percentage == null ? null : progressPercent(percentage)
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      {percentage != null && (
-        <div className="flex items-center gap-3">
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-panel2" role="progressbar" aria-valuenow={Math.round(percentage)}>
-            <div className="h-full bg-gradient-to-r from-info to-info-hover transition-[width] duration-150" style={{ width: `${Math.min(percentage, 100)}%` }} />
+    <If cond={hasLogs || percent != null}>
+      <div className="flex w-full flex-col gap-4">
+        <If cond={percent != null}>
+          <div className="flex items-center gap-3">
+            <div
+              className="h-2 flex-1 overflow-hidden rounded-full bg-panel2"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent ?? 0}
+            >
+              <div className="h-full bg-gradient-to-r from-info to-info-hover" style={{ width: `${percent ?? 0}%` }} />
+            </div>
+            <span className="min-w-[44px] text-right text-[13px] font-semibold tabular-nums text-info-hover">
+              {percent ?? 0}
+              %
+            </span>
           </div>
-          <span className="min-w-[44px] text-right text-[13px] font-semibold tabular-nums text-info-hover">
-            {Math.round(percentage)}
-            %
-          </span>
-        </div>
-      )}
-      {hasLogs && (
-        <Logs logs={logs ?? []} limit={LOG_LIMIT} bodyClassName="max-h-[184px]" />
-      )}
-    </div>
+        </If>
+        <If cond={hasLogs}>
+          <Logs logs={logs ?? []} limit={LOG_LIMIT} bodyClassName="max-h-[184px]" />
+        </If>
+      </div>
+    </If>
   )
 }
 
