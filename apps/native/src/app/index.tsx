@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { Else, If, Then } from 'react-if-lite'
 import { BackHandler, ScrollView, Text, useWindowDimensions, View } from 'react-native'
 import { Drawer } from 'react-native-drawer-layout'
-import { History, Radar, RefreshCw, ScanLine, X } from 'react-native-lucide'
+import { History, PencilLine, Radar, RefreshCw, ScanLine, X } from 'react-native-lucide'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'valtio-define'
 import { BreathingLight } from '@/components/breathing-light'
@@ -17,8 +17,9 @@ import { Dot } from '@/components/dot'
 import { Logo, Wordmark } from '@/components/icons'
 import { connection } from '@/store/modules/connection'
 import { cancelAutoScan, connectAddress, disconnectAndScan, refreshHealth, startAutoScan, stopConnectionRuntime } from '@/store/modules/connection/runtime'
+import { AddressDialog } from '@/ui/address-dialog'
 import { BridgeWebView } from '@/ui/webview'
-import { connectionLabel } from '@/utils/bridge-protocol'
+import { connectionLabel, parseAddressInput } from '@/utils/bridge-protocol'
 
 function openScanner() {
   cancelAutoScan()
@@ -40,6 +41,20 @@ function ConnectionDrawer() {
   const [editing, setEditing] = useState<BridgeAddress | null>(null)
   const [dialogMode, setDialogMode] = useState<'actions' | 'rename' | 'delete'>('actions')
   const [name, setName] = useState('')
+  const [addressDialogOpen, setAddressDialogOpen] = useState(false)
+  function openAddressDialog() {
+    setDialogMode('actions')
+    setAddressDialogOpen(true)
+  }
+  function saveAddress(url: string) {
+    if (!editing)
+      return
+    const id = editing.id
+    setEditing(null)
+    setAddressDialogOpen(false)
+    if (connection.editAddress(id, url) && connection.current?.id !== id)
+      void refreshHealth()
+  }
   function editConnection(entry: BridgeAddress) {
     setName(connectionLabel(entry))
     setDialogMode('actions')
@@ -162,6 +177,7 @@ function ConnectionDrawer() {
                   <Dialog.Description>{editing?.url}</Dialog.Description>
                 </View>
                 <View className="gap-3">
+                  <Button variant="secondary" onPress={() => openAddressDialog()}>{t('connection.editAddress')}</Button>
                   <Button variant="secondary" onPress={() => setDialogMode('rename')}>{t('connection.rename')}</Button>
                   <Button variant="danger-soft" onPress={() => setDialogMode('delete')}>{t('connection.delete')}</Button>
                   <Button variant="ghost" className="mt-1" onPress={() => setEditing(null)}>{t('common.cancel')}</Button>
@@ -191,6 +207,12 @@ function ConnectionDrawer() {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog>
+      <AddressDialog
+        isOpen={addressDialogOpen && editing !== null}
+        title={t('connection.editAddress')}
+        onClose={() => setAddressDialogOpen(false)}
+        onSubmit={saveAddress}
+      />
       <View className="gap-3 border-t border-border px-5 pb-4 pt-5">
         <Button variant="danger" isDisabled={!state.current} onPress={disconnectAndScan}>{t('connection.disconnect')}</Button>
         <Button variant="ghost" accessibilityLabel={t('connection.closeDrawer')} onPress={() => connection.setDrawerOpen(false)}>
@@ -208,6 +230,7 @@ export default function HomeScreen() {
   const navigation = useNavigation()
   const { width } = useWindowDimensions()
   const [background, foreground, backdrop, accentForeground] = useThemeColor(['background', 'foreground', 'backdrop', 'accent-foreground'])
+  const [addressDialogOpen, setAddressDialogOpen] = useState(false)
   const scanning = state.stage === 'scanning'
   let scanText: string = t('connection.scanning')
   if (state.history.length > 0)
@@ -248,10 +271,15 @@ export default function HomeScreen() {
                 <Radar size={20} color={accentForeground} />
                 <Button.Label>{t('connection.autoScan')}</Button.Label>
               </Button>
-              <Button variant="outline" size="lg" isDisabled={!state.hydrated} onPress={openScanner}>
-                <ScanLine size={20} color={foreground} />
-                <Button.Label>{t('scan.scanQr')}</Button.Label>
-              </Button>
+              <View className="flex-row items-center gap-3">
+                <Button variant="outline" size="lg" isIconOnly isDisabled={!state.hydrated} accessibilityLabel={t('scan.addressTitle')} onPress={() => setAddressDialogOpen(true)}>
+                  <PencilLine size={20} color={foreground} />
+                </Button>
+                <Button className="flex-1" variant="outline" size="lg" isDisabled={!state.hydrated} onPress={openScanner}>
+                  <ScanLine size={20} color={foreground} />
+                  <Button.Label>{t('scan.scanQr')}</Button.Label>
+                </Button>
+              </View>
               <Button variant="outline" size="lg" isDisabled={!state.hydrated} onPress={openConnections}>
                 <History size={19} color={foreground} />
                 <Button.Label>{t('connection.recentConnections')}</Button.Label>
@@ -279,6 +307,17 @@ export default function HomeScreen() {
       style={{ flex: 1 }}
     >
       {renderContent()}
+      <AddressDialog
+        isOpen={addressDialogOpen}
+        onClose={() => setAddressDialogOpen(false)}
+        onSubmit={(url) => {
+          const { address } = parseAddressInput(url)
+          if (!address)
+            return
+          setAddressDialogOpen(false)
+          connectAddress(address)
+        }}
+      />
     </Drawer>
   )
 }

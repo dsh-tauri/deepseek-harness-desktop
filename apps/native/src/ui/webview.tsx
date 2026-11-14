@@ -260,6 +260,7 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
       health: connection.health[address.id],
       loadError: state.loadError,
       notice: state.notice,
+      probe: state.diagnostic,
       authenticated: connection.tokens[address.id] !== undefined,
       timedOut: loadingTimedOut,
     })
@@ -311,10 +312,10 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
           onRenderProcessGone={() => connection.markLoadFailed(generation, t('connection.connectionFailed'))}
           onContentProcessDidTerminate={() => connection.markLoadFailed(generation, t('connection.connectionFailed'))}
         />
-        <If cond={state.notice && !state.drawerOpen}>
+        <If cond={state.notice && !state.drawerOpen && Boolean(state.loadError || (loadingTimedOut && !documentReady))}>
           <Then>
             <Pressable
-              className="absolute left-3 right-3 top-3 rounded-xl border border-border bg-surface px-4 py-3"
+              className="absolute bottom-6 left-6 right-6 rounded-xl border border-border bg-surface px-4 py-3"
               accessibilityRole="button"
               accessibilityLabel={state.notice ?? t('connection.connectionInfo')}
               onPress={openDrawer}

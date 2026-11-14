@@ -185,6 +185,56 @@ describe('connection editing', () => {
     expect(connection.history).toEqual([{ ...beta, lastConnectedAt: 20 }])
   })
 
+  it('edits a saved address in place, keeping its name, token and history slot', () => {
+    load(alpha, 10)
+    connection.rename(alpha.id, '工作电脑')
+    connection.markHydrated({ [alpha.id]: deviceToken })
+    connection.disconnect('idle')
+
+    expect(connection.editAddress(alpha.id, 'https://tunnel.example.com')).toBe(true)
+
+    expect(connection.history).toEqual([{
+      id: 'https://tunnel.example.com',
+      url: 'https://tunnel.example.com/',
+      host: 'tunnel.example.com',
+      port: 443,
+      name: '工作电脑',
+      lastConnectedAt: 10,
+    }])
+    expect(connection.current).toBeNull()
+    expect(connection.tokens).toEqual({ 'https://tunnel.example.com': deviceToken })
+    expect(connection.health).toEqual({})
+  })
+
+  it('moves the current connection to the edited address and prunes the old origin state', () => {
+    load(alpha, 10)
+    connection.setHealth(alpha.id, 'unavailable')
+    const generation = connection.viewGeneration
+
+    expect(connection.editAddress(alpha.id, 'http://192.168.1.44:3088/workspaces')).toBe(true)
+
+    expect(connection.current).toEqual({ id: 'http://192.168.1.44:3088', url: 'http://192.168.1.44:3088/workspaces', host: '192.168.1.44', port: 3088 })
+    expect(connection.health).toEqual({})
+    expect(connection.failures).toEqual({})
+    expect(connection.viewGeneration).toBe(generation)
+  })
+
+  it('rejects an invalid edited address and keeps the stored one untouched', () => {
+    load(alpha, 10)
+
+    expect(connection.editAddress(alpha.id, 'ftp://nope.local')).toBe(false)
+    expect(connection.editAddress('http://unknown.local:3080', 'https://x.example.com')).toBe(false)
+    expect(connection.history).toEqual([{ ...alpha, lastConnectedAt: 10 }])
+  })
+
+  it('leaves an unnamed entry unnamed after an edit instead of inventing a label', () => {
+    load(alpha, 10)
+
+    expect(connection.editAddress(alpha.id, 'https://tunnel.example.com')).toBe(true)
+
+    expect(connection.history[0]?.name).toBeUndefined()
+  })
+
   it('normalizes only string display names at the persistence boundary', () => {
     const snapshot = parseConnectionSnapshot({ version: 1, history: [
       { ...alpha, name: '  工作电脑  ', lastConnectedAt: 10 },
@@ -204,12 +254,14 @@ describe('connection hydration', () => {
       history: [],
       tokens: {},
       health: {},
+      failures: {},
       guidedHosts: [],
       drawerOpen: false,
       swipeHintVisible: false,
       loading: false,
       loadError: null,
       notice: null,
+      diagnostic: null,
       scanGeneration: 0,
       viewGeneration: 0,
       pendingFocus: null,

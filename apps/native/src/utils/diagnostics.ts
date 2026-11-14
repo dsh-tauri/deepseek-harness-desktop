@@ -7,6 +7,7 @@ export interface DiagnosticInput {
   health: HostHealth | undefined
   loadError: string | null
   notice: string | null
+  probe: string | null
   authenticated: boolean
   timedOut: boolean
 }
@@ -18,6 +19,7 @@ export function buildDiagnosticLog(input: DiagnosticInput): string {
     `time: ${new Date().toISOString()}`,
     `stage: ${input.stage}`,
     `health: ${input.health ?? 'unknown'}`,
+    `probe: ${input.probe ?? 'none'}`,
     `loadError: ${input.loadError ?? 'none'}`,
     `notice: ${input.notice ?? 'none'}`,
     `loadTimedOut: ${yesNo(input.timedOut)}`,
@@ -30,6 +32,7 @@ export function buildDiagnosticLog(input: DiagnosticInput): string {
     `address: ${input.address.url}`,
     `host: ${input.address.host}`,
     `port: ${String(input.address.port)}`,
+    `remote: ${yesNo(input.address.remote === true)}`,
     `hasToken: ${yesNo(Boolean(input.address.token))}`,
     `hasDeviceSession: ${yesNo(input.authenticated)}`,
   )

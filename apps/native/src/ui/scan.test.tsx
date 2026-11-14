@@ -74,8 +74,17 @@ vi.mock('heroui-native/button', async () => {
   return { Button: Object.assign(Button, { Label: 'Text' }) }
 })
 vi.mock('heroui-native/input', () => ({ Input: 'Input' }))
+vi.mock('heroui-native/dialog', async () => {
+  const { createElement } = await import('react')
+  function Dialog({ children, isOpen, ...props }: { children?: ReactNode, isOpen: boolean }) {
+    if (!isOpen)
+      return null
+    return createElement('Dialog', props, children)
+  }
+  return { Dialog: Object.assign(Dialog, { Portal: 'Portal', Overlay: 'Overlay', Content: 'Content', Title: 'Text', Description: 'Text' }) }
+})
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => native.insets }))
-vi.mock('react-native-lucide', () => ({ X: 'Icon' }))
+vi.mock('react-native-lucide', () => ({ X: 'Icon', PencilLine: 'PencilLineIcon' }))
 vi.mock('react-native-reanimated', async () => {
   const { useRef } = await import('react')
   return {
@@ -466,7 +475,7 @@ describe('rendered scanner manual address entry', () => {
 
     await submitFromKeyboard()
 
-    expect(connection.current).toEqual({ id: 'https://dsh.example.com', url: 'https://dsh.example.com/', host: 'dsh.example.com', port: 443 })
+    expect(connection.current).toEqual({ id: 'https://dsh.example.com', url: 'https://dsh.example.com/', host: 'dsh.example.com', port: 443, remote: true })
     expect(native.back).toHaveBeenCalledExactlyOnceWith()
   })
 
@@ -522,5 +531,65 @@ describe('rendered scanner manual address entry', () => {
     expect(native.back).not.toHaveBeenCalled()
     await typeAddress('dsh.example.com')
     expect(button('连接').props.isDisabled).toBe(false)
+  })
+})
+
+describe('rendered scanner inline address dialog', () => {
+  function dialogInput() {
+    const content = root().find(node => String(node.type) === 'Content')
+    return content.find(node => String(node.type) === 'Input')
+  }
+
+  async function pressDialogButton(label: string) {
+    const content = root().find(node => String(node.type) === 'Content')
+    const target = content.findAll(node => String(node.type) === 'Button').find(node => text(node) === label)
+    if (!target)
+      throw new Error(`Dialog button ${label} is missing`)
+    await act(async () => {
+      target.props.onPress()
+    })
+  }
+
+  it('opens the address dialog from the edit icon left of the manual-entry action', async () => {
+    await mount()
+    const row = button('输入地址连接')
+
+    await press('输入地址连接')
+
+    expect(root().findAll(node => String(node.type) === 'Dialog')).toHaveLength(1)
+    expect(dialogInput().props).toMatchObject({ accessibilityLabel: '连接地址', value: '', autoFocus: true, keyboardType: 'url' })
+    expect(row.findAll(node => String(node.type) === 'PencilLineIcon')).toHaveLength(1)
+  })
+
+  it('connects a plain public host typed in the dialog without needing a remote DSH payload', async () => {
+    await mount()
+    await press('输入地址连接')
+    await act(async () => {
+      dialogInput().props.onChangeText('tunnel.example.com')
+    })
+
+    await pressDialogButton('连接')
+
+    expect(connection.current).toEqual({ id: 'https://tunnel.example.com', url: 'https://tunnel.example.com/', host: 'tunnel.example.com', port: 443, remote: true })
+    expect(native.back).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('keeps an invalid dialog address inside the dialog with a readable error', async () => {
+    await mount()
+    await press('输入地址连接')
+    await act(async () => {
+      dialogInput().props.onChangeText('ftp://files.local')
+    })
+
+    await pressDialogButton('连接')
+
+    expect(texts()).toContain('请输入有效的 HTTP/HTTPS 连接地址。')
+    expect(dialogInput().props.isInvalid).toBe(true)
+    expect(connection.current).toBeNull()
+    expect(native.back).not.toHaveBeenCalled()
+    await act(async () => {
+      dialogInput().props.onChangeText('https://files.local')
+    })
+    expect(texts()).not.toContain('请输入有效的 HTTP/HTTPS 连接地址。')
   })
 })

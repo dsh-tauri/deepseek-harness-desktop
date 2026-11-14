@@ -4,7 +4,7 @@ import { defineStore } from 'valtio-define'
 import { persist } from 'valtio-define/plugins/persist'
 import { CONNECTION_STORAGE_KEY, HISTORY_LIMIT, RECENT_LIMIT } from '@/config/constants'
 import { i18n } from '@/i18n'
-import { isDeviceSession, isRecord, parseQrPayload } from '@/utils/bridge-protocol'
+import { isDeviceSession, isRecord, parseQrPayload, rebuildAddress } from '@/utils/bridge-protocol'
 
 export type ConnectionStage = 'scanning' | 'idle' | 'connected'
 export type HostHealth = 'checking' | 'available' | 'unavailable'
@@ -34,12 +34,14 @@ export interface ConnectionState {
   history: HistoryEntry[]
   tokens: Record<string, string>
   health: Record<string, HostHealth>
+  failures: Record<string, number>
   guidedHosts: string[]
   drawerOpen: boolean
   swipeHintVisible: boolean
   loading: boolean
   loadError: string | null
   notice: string | null
+  diagnostic: string | null
   scanGeneration: number
   viewGeneration: number
   pendingFocus: NotificationFocus | null
@@ -173,12 +175,14 @@ export function createConnectionState(): ConnectionState {
     history: [],
     tokens: {},
     health: {},
+    failures: {},
     guidedHosts: [],
     drawerOpen: false,
     swipeHintVisible: false,
     loading: false,
     loadError: null,
     notice: null,
+    diagnostic: null,
     scanGeneration: 0,
     viewGeneration: 0,
     pendingFocus: null,
@@ -295,9 +299,55 @@ export const connection = defineStore({
     },
     setHealth(id: string, health: HostHealth) {
       this.health[id] = health
+      if (health !== 'unavailable')
+        delete this.failures[id]
+    },
+    /** 连续探测失败计数：达到阈值才把主机判为不可用并返回 true，避免一次网络抖动打回失败态。 */
+    recordUnavailable(id: string, threshold: number): boolean {
+      const failures = (this.failures[id] ?? 0) + 1
+      if (failures < threshold) {
+        this.failures[id] = failures
+        return false
+      }
+      this.health[id] = 'unavailable'
+      return true
+    },
+    editAddress(id: string, url: string): boolean {
+      const entry = this.history.find(entry => entry.id === id)
+      const current = this.current?.id === id ? this.current : null
+      const base = entry ?? current
+      if (!base)
+        return false
+      const next = rebuildAddress({ ...base, token: this.tokens[id] ?? current?.token }, url)
+      if (!next)
+        return false
+      const token = this.tokens[id]
+      if (token) {
+        this.tokens[next.id] = token
+        if (next.id !== id)
+          delete this.tokens[id]
+      }
+      if (entry) {
+        const replacement: HistoryEntry = { id: next.id, url: next.url, host: next.host, port: next.port, lastConnectedAt: entry.lastConnectedAt }
+        if (next.name)
+          replacement.name = next.name
+        this.history = this.history.map(item => (item.id === id ? replacement : item))
+      }
+      if (current)
+        this.current = next
+      if (next.id !== id) {
+        this.guidedHosts = this.guidedHosts.map(origin => (origin === id ? next.id : origin))
+        delete this.health[id]
+        delete this.failures[id]
+      }
+      return true
     },
     setNotice(notice: string | null) {
       this.notice = notice
+    },
+    /** 最近一次健康探测的失败原因：复制日志时带出，用户据此判断是隧道还是网络问题。 */
+    setDiagnostic(diagnostic: string | null) {
+      this.diagnostic = diagnostic
     },
     queueFocus(focus: NotificationFocus | null) {
       this.pendingFocus = focus
