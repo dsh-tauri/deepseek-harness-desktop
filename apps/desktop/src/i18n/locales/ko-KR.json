@@ -712,6 +712,8 @@
   "network.proxy_url": "프록시 URL",
   "network.description": "데스크톱 다운로드, 업데이트 확인, 플러그인 메타데이터와 Harness 및 플러그인 하위 프로세스에 프록시를 사용합니다. 비워 두면 시스템 또는 환경 변수의 프록시를 사용합니다. 데스크톱 요청과 플러그인 설치에는 즉시 적용되며, Harness 서비스 프로세스에는 다음 시작 시 적용됩니다. 저장한 뒤 실패한 다운로드를 다시 시도하십시오.",
   "network.formats": "HTTP, HTTPS, SOCKS5 및 SOCKS5H를 지원합니다. SOCKS5H는 프록시를 통해 대상 이름을 확인합니다. 로컬 연결은 직접 연결을 유지합니다. SOCKS 프록시는 데스크톱 요청과 curl, git, pnpm 등의 하위 프로세스에도 적용되지만, Harness 내부의 네트워크 요청은 직접 연결을 유지합니다.",
+  "network.socks_warning": "SOCKS 프록시는 데스크톱 요청과 curl, git, pnpm 등의 하위 프로세스에만 적용됩니다. Harness 내부의 모델 API, MCP, 플러그인 마켓 요청은 직접 연결합니다.",
+  "network.test_scope": "이번 테스트는 데스크톱 경로만 확인합니다. Harness 내부의 요청은 이 프록시를 사용하지 않습니다.",
   "network.saved": "프록시 설정을 저장했습니다",
   "network.invalid": "경로·쿼리·프래그먼트가 없는 올바른 프록시 URL을 입력하세요.",
   "network.save_failed": "프록시 설정을 저장하지 못했습니다",

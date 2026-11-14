@@ -1,5 +1,5 @@
 import type { RuntimeInfo } from '@/types'
-import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power } from '@gravity-ui/icons'
+import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power, TriangleExclamation } from '@gravity-ui/icons'
 import { Button, Chip, Description, Input, InputGroup, Link, ListBox, Select, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
@@ -18,6 +18,7 @@ import { ConfigAutoUpdate } from '@/ui/config/components/auto-update'
 import { ConfigCloseAction } from '@/ui/config/components/close-action'
 import { ConfigLaunchOnLogin } from '@/ui/config/components/launch-on-login'
 import { writeClipboardText } from '@/utils/clipboard'
+import { isSocksProxy } from '@/utils/proxy'
 import { toast } from '@/utils/toast'
 
 export interface CliLinkStatus {
@@ -66,6 +67,8 @@ export function ConfigDebug() {
   const { port: savedPort, proxy_url: savedProxy, harness_max_heap_mb: savedHeapMb } = useStore(store.setting)
   const port = portInput ?? savedPort
   const proxy = proxyInput ?? savedProxy
+  // SOCKS 只有桌面端认：核心侧拒绝该协议并直连，设置页必须如实说明，不能让「代理测试通过」误导
+  const proxyIsSocks = isSocksProxy(proxy)
   const heapValue = heapInput ?? String(savedHeapMb ?? '')
   /** 空输入代表自动值（null），其余按数字解析，非法值交给保存前的整数校验拦下 */
   const parsedHeap = heapValue.trim() === '' ? null : Number(heapValue)
@@ -183,10 +186,14 @@ export function ConfigDebug() {
   })
 
   const { mutate: runProxyTest, isPending: testingProxy } = useMutation({
-    mutationFn: () => invoke<ProxyTestResult>('test_proxy'),
-    onSuccess: (result) => {
+    mutationFn: (tested: { socks: boolean }) =>
+      invoke<ProxyTestResult>('test_proxy').then(result => ({ result, socks: tested.socks })),
+    onSuccess: ({ result, socks }) => {
       if (result.ok) {
-        toast(t('network.test_ok', { ms: result.latency_ms }), { variant: 'success' })
+        toast(t('network.test_ok', { ms: result.latency_ms }), {
+          variant: 'success',
+          ...(socks ? { description: t('network.test_scope') } : {}),
+        })
         return
       }
       const key = PROXY_TEST_MESSAGE[result.reason ?? ''] ?? 'network.test_failed'
@@ -402,12 +409,15 @@ export function ConfigDebug() {
                 variant="secondary"
                 className="h-8"
                 onPress={() => {
-                  // 测试只针对已保存的配置：输入框里有未保存的修改时先保存，避免测到旧值
+                  // 测试只针对已保存的配置：输入框里有未保存的修改时先保存，避免测到旧值。
+                  // SOCKS 的判定跟着本次被测的那份地址走，不能跟当前输入走：请求回来之前
+                  // 用户可能又改了输入框，那时说明就会与本次测试对不上。
+                  const socks = isSocksProxy(proxy)
                   if (proxy === savedProxy) {
-                    runProxyTest()
+                    runProxyTest({ socks })
                     return
                   }
-                  onSaveProxy(proxy, { onSuccess: () => runProxyTest() })
+                  onSaveProxy(proxy, { onSuccess: () => runProxyTest({ socks }) })
                 }}
                 isDisabled={testingProxy || savingProxy || proxy.trim() === ''}
                 data-testid="dsh-proxy-test"
@@ -428,6 +438,15 @@ export function ConfigDebug() {
             </Button>
           </div>
         </div>
+        {proxyIsSocks && (
+          <div
+            className="flex items-start gap-1.5 rounded-lg border border-warning/40 px-2.5 py-2"
+            data-testid="dsh-proxy-socks-warning"
+          >
+            <TriangleExclamation className="mt-0.5 size-3.5 shrink-0 text-warning" />
+            <span className="text-[11px] leading-4 text-warning">{t('network.socks_warning')}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-medium text-ink">{t('ui.port')}</span>
           <div className="flex items-center gap-1.5">
