@@ -140,6 +140,63 @@ pub fn write_mapping<R: Runtime>(
     Ok(())
 }
 
+/// 把落在 `from` 之下的映射值整体搬到 `to` 之下（依赖根迁移用）。
+///
+/// 迁移会把旧根改名，留在映射表里的旧路径随即失效，`active_root_from` 的存在性检查
+/// 会把它回落到清单默认根——用户选的核心就悄悄换了。这里按相对位置重写绝对路径，
+/// 返回被改动的键，供失败时恢复。
+fn relocate_in(
+    mapping: &DependencyMapping,
+    from: &Path,
+    to: &Path,
+) -> (DependencyMapping, Vec<String>) {
+    let mut next = mapping.clone();
+    let mut changed = Vec::new();
+    for (key, value) in &mapping.0 {
+        let Some(raw) = value else { continue };
+        let Ok(rest) = Path::new(raw).strip_prefix(from) else {
+            continue;
+        };
+        next.set(key, Some(to.join(rest)));
+        changed.push(key.clone());
+    }
+    (next, changed)
+}
+
+pub fn relocate_mapping<R: Runtime>(
+    app: &AppHandle<R>,
+    from: &Path,
+    to: &Path,
+) -> Result<Vec<String>, String> {
+    let _guard = MAPPING_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let (next, changed) = relocate_in(&read_mapping(app), from, to);
+    if changed.is_empty() {
+        return Ok(changed);
+    }
+    write_mapping(app, &next)?;
+    Ok(changed)
+}
+
+/// 恢复 [`relocate_mapping`] 之前的映射值（迁移失败回滚用）。
+pub fn restore_mapping<R: Runtime>(
+    app: &AppHandle<R>,
+    entries: &[(String, Option<PathBuf>)],
+) -> Result<(), String> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let _guard = MAPPING_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut next = read_mapping(app);
+    for (key, value) in entries {
+        next.set(key, value.clone());
+    }
+    write_mapping(app, &next)
+}
+
 /// 记录单个依赖的安装根（`None` = 系统环境）。
 ///
 /// 映射表的唯一写入口；写入失败只告警——解析链路在下次启动时按清单默认根兜底，
@@ -546,6 +603,28 @@ mod tests {
         std::fs::write(&archive, b"asar").unwrap();
         assert_eq!(binary_path_in(&dir, entry, DEP_DSH), archive.join(entry));
         assert_eq!(binary_path_in(&dir, entry, DEP_PNPM), dir.join(entry));
+    }
+
+    #[test]
+    fn relocate_rewrites_only_the_entries_under_the_old_root() {
+        let mut mapping = DependencyMapping::default();
+        mapping.set(DEP_DSH, Some(PathBuf::from("/data/dependencies/dsh")));
+        mapping.set(DEP_PNPM, Some(PathBuf::from("/opt/pnpm")));
+        mapping.set("system", None);
+        let (next, changed) = relocate_in(&mapping, Path::new("/data/dependencies"), Path::new("/big/deps"));
+        assert_eq!(changed, vec![DEP_DSH.to_string()]);
+        assert_eq!(next.get(DEP_DSH), Some(Some(PathBuf::from("/big/deps/dsh"))));
+        assert_eq!(next.get(DEP_PNPM), Some(Some(PathBuf::from("/opt/pnpm"))));
+        assert_eq!(next.get("system"), Some(None));
+    }
+
+    #[test]
+    fn relocate_leaves_the_mapping_alone_when_nothing_is_under_the_old_root() {
+        let mut mapping = DependencyMapping::default();
+        mapping.set(DEP_DSH, Some(PathBuf::from("/opt/dsh")));
+        let (next, changed) = relocate_in(&mapping, Path::new("/data/dependencies"), Path::new("/big/deps"));
+        assert!(changed.is_empty());
+        assert_eq!(next.0, mapping.0);
     }
 
     #[test]

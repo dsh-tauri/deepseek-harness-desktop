@@ -202,13 +202,35 @@ pub(super) fn run(
         expected.bytes,
     ));
     let previous = crate::config::get_store_dat_setting(app_handle).dependencies_root;
-    crate::config::update_store_dat_setting(app_handle, |setting| {
+    // 保存失败必须在这里就停住：旧根还没退役，源与目标都完好，报错让用户重试即可。
+    crate::config::try_update_store_dat_setting(app_handle, |setting| {
         setting.dependencies_root = Some(target.to_string_lossy().into_owned());
-    });
+    })
+    .map_err(|error| format!("DEPS_ROOT_TASK: {error}"))?;
+    // 映射表里的旧绝对路径也要一起搬，否则旧根改名后那些键解析失败，会回落到清单默认
+    // 根——用户选定的核心被悄悄换掉。
+    let before_mapping = crate::config::dependencies::read_mapping(app_handle);
+    let relocated = match crate::config::dependencies::relocate_mapping(app_handle, source, target) {
+        Ok(keys) => keys,
+        Err(error) => {
+            let _ = crate::config::try_update_store_dat_setting(app_handle, |setting| {
+                setting.dependencies_root = previous.clone();
+            });
+            return Err(format!("DEPS_ROOT_TASK: {error}"));
+        }
+    };
+    let rollback_mapping = || {
+        let entries: Vec<(String, Option<PathBuf>)> = relocated
+            .iter()
+            .filter_map(|key| before_mapping.get(key).map(|value| (key.clone(), value)))
+            .collect();
+        let _ = crate::config::dependencies::restore_mapping(app_handle, &entries);
+    };
     let moved = match retire_old_root(source) {
         Ok(moved) => moved,
         Err(error) => {
-            crate::config::update_store_dat_setting(app_handle, |setting| {
+            rollback_mapping();
+            let _ = crate::config::try_update_store_dat_setting(app_handle, |setting| {
                 setting.dependencies_root = previous.clone();
             });
             return Err(error);

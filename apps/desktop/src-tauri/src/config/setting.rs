@@ -331,14 +331,18 @@ pub(crate) fn read_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> S
 fn write_store_dat_setting<R: Runtime>(
     app_handle: &AppHandle<R>,
     setting: &Setting,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, String> {
     let store = app_handle
         .store(store_dat_file_name())
-        .expect("Failed to load store");
-    let value = serde_json::to_value(setting).unwrap();
+        .map_err(|error| format!("SETTING_STORE_UNAVAILABLE: {error}"))?;
+    let value =
+        serde_json::to_value(setting).map_err(|error| format!("SETTING_SERIALIZE: {error}"))?;
     store.set(STORE_SETTING_KEY, value.clone());
-    store.save().expect("Failed to save store");
-    value
+    // 保存失败必须让调用方看得见：迁移这类流程要靠这个错误回滚，panic 会把回滚路径一起带走。
+    store
+        .save()
+        .map_err(|error| format!("SETTING_SAVE_FAILED: {error}"))?;
+    Ok(value)
 }
 
 fn emit_setting<R: Runtime>(app_handle: &AppHandle<R>, value: &serde_json::Value) {
@@ -374,13 +378,24 @@ pub fn set_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>, mut setting:
         let current = read_store_dat_setting(app_handle);
         setting = preserve_persisted_fields(setting, &current);
         normalize_setting(&mut setting);
-        write_store_dat_setting(app_handle, &setting)
+        write_store_dat_setting(app_handle, &setting).unwrap_or_else(|error| panic!("{error}"))
     };
     emit_setting(app_handle, &value);
 }
 
 /// 在一个短临界区内读取、修改并写回设置，避免多个精确字段更新彼此丢失。
 pub fn update_store_dat_setting<R: Runtime, F>(app_handle: &AppHandle<R>, update: F) -> Setting
+where
+    F: FnOnce(&mut Setting),
+{
+    try_update_store_dat_setting(app_handle, update).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// [`update_store_dat_setting`] 的可失败版本：需要回滚的流程用它，避免 panic 越过回滚。
+pub fn try_update_store_dat_setting<R: Runtime, F>(
+    app_handle: &AppHandle<R>,
+    update: F,
+) -> Result<Setting, String>
 where
     F: FnOnce(&mut Setting),
 {
@@ -391,11 +406,11 @@ where
         let mut setting = read_store_dat_setting(app_handle);
         update(&mut setting);
         normalize_setting(&mut setting);
-        let value = write_store_dat_setting(app_handle, &setting);
+        let value = write_store_dat_setting(app_handle, &setting)?;
         (setting, value)
     };
     emit_setting(app_handle, &value);
-    setting
+    Ok(setting)
 }
 
 pub fn get_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
