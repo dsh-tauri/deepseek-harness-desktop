@@ -359,6 +359,55 @@ test('a dependency cycle in the chain terminates materialization instead of unfo
   assert.equal(fs.existsSync(path.join(pkgNodeModules, 'a/node_modules/b/node_modules')), false)
 })
 
+test('a dependency visible on the lookup path reuses its placed copy instead of splitting the module singleton', (t) => {
+  // #1548 评审：owner（a）的上行路径已有同来源副本（pkg/node_modules/x）时，
+  // 再落一份私有副本会让 node 按路径缓存把单例拆成两个实例——归档内
+  // require("a") === require("x")，物化树裸进程里却为 false。
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0', x: '^1.0.0' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = [require("a"), require("x")]')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("x")')
+  f.write('node_modules/x/package.json', JSON.stringify({ main: 'index.js' }))
+  f.write('node_modules/x/index.js', 'module.exports = { tag: "singleton" }')
+  const [viaA, direct] = f.load('pkg')
+  assert.equal(viaA, direct)
+  const pkgNodeModules = path.join(f.cache, 'node_modules/pkg/node_modules')
+  assert.deepEqual(fs.readdirSync(pkgNodeModules).sort(), ['a', 'x'])
+  // a 的上行路径上 x 已可见，不再落私有副本。
+  assert.equal(fs.existsSync(path.join(pkgNodeModules, 'a/node_modules')), false)
+  // 与生产一致的消费方式：裸子进程验证模块身份未被拆分。
+  const script = 'const m=require(process.env.DSH_PROBE_ENTRY); process.stdout.write(String(m[0]===m[1]))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env: { ...process.env, DSH_PROBE_ENTRY: path.join(f.cache, 'node_modules/pkg/index.js') },
+  })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.equal(bare.stdout, 'true')
+})
+
+test('a different-source dependency shadows the placed copy instead of being merged by name', (t) => {
+  // 上行可见性检查只复用同来源副本；不同来源的同名包必须落私有副本，版本不被顶掉。
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0', x: '^1.0.0' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = [require("a"), require("x")]')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("x")')
+  f.write('node_modules/a/node_modules/x/package.json', JSON.stringify({ main: 'index.js', version: '2.0.0' }))
+  f.write('node_modules/a/node_modules/x/index.js', 'module.exports = "x@2-private"')
+  f.write('node_modules/x/package.json', JSON.stringify({ main: 'index.js', version: '1.0.0' }))
+  f.write('node_modules/x/index.js', 'module.exports = "x@1-hoisted"')
+  // a 解析到自己的私有 x@2，pkg 直接解析到提升的 x@1——与归档内行为一致。
+  assert.deepEqual(f.load('pkg'), ['x@2-private', 'x@1-hoisted'])
+  const pkgNodeModules = path.join(f.cache, 'node_modules/pkg/node_modules')
+  assert.deepEqual(fs.readdirSync(pkgNodeModules).sort(), ['a', 'x'])
+  // a 的私有 x 来自其归档内私有目录（copy 原样带入），hoist 不重复落副本。
+  assert.equal(fs.readFileSync(path.join(pkgNodeModules, 'a/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@2-private"')
+})
+
 
 test('a hoisted copy outside the archive resolves its own dependencies through the real archive source', (t) => {
   const f = fixture(t)

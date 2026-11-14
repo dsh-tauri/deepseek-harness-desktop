@@ -210,9 +210,30 @@ module.exports = function registerNativePackages(archive, cache) {
   /// 不同，物化会沿环无限展开直到路径过长。因此入队时携带当前依赖链的来源集合，链上
   /// 出现重复来源即停——外层副本已存在，node 的逐级向上解析恰好会找到它，环语义不变。
   ///
+  /// 落副本前还要沿 owner 的上行路径查已落地的同名副本：node 按解析后的文件名缓存模块，
+  /// 上行路径上已有同来源副本时再落一份私有副本，会把单例拆成两个实例（归档内
+  /// require("a") === require("x")，物化树里却为 false，注册表等模块级状态随之分叉）。
+  /// 上行先命中不同来源的同名副本时才落私有副本，避免版本被顶掉。
+  ///
   /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
+  function visibleSource(destination, segments, staging, placed) {
+    // 从 owner 目标的父级开始逐级向上，与 node 的解析顺序一致；键为
+    // 「目录 → 该目录 node_modules 下同名依赖的来源」，与 placed 的登记一致。
+    let directory = path.dirname(destination)
+    const floor = path.dirname(staging)
+    for (;;) {
+      const source = placed.get(path.join(directory, 'node_modules', ...segments))
+      if (source !== undefined)
+        return source
+      if (directory === floor)
+        return undefined
+      directory = path.dirname(directory)
+    }
+  }
+
   function hoist(root, staging) {
     const handled = new Set()
+    const placed = new Map()
     const copies = []
     const pending = [{ directory: root, target: staging, chain: [] }]
     while (pending.length > 0) {
@@ -221,6 +242,8 @@ module.exports = function registerNativePackages(archive, cache) {
         const source = locate(directory, segments)
         const destination = path.join(target, 'node_modules', ...segments)
         if (!source || chain.includes(source))
+          continue
+        if (visibleSource(destination, segments, staging, placed) === source)
           continue
         const key = `${source}\0${destination}`
         if (handled.has(key))
@@ -234,6 +257,7 @@ module.exports = function registerNativePackages(archive, cache) {
           copy(source, destination, false)
           copies.push({ relative: path.relative(staging, destination), source })
         }
+        placed.set(destination, source)
         pending.push({ directory: source, target: destination, chain: [...chain, source] })
       }
     }
