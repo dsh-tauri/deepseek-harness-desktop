@@ -1,5 +1,6 @@
 use crate::{AppHandle};
 use std::collections::HashMap;
+use std::path::Path;
 
 use reqwest::{ClientBuilder, NoProxy, Proxy, Url};
 use std::time::{Duration, Instant};
@@ -113,6 +114,89 @@ pub async fn test(proxy_url: &str, target: &str, timeout: Duration) -> ProxyTest
         status: Some(status),
         latency_ms,
     }
+}
+
+/// Node 的系统信任库开关：让 Node 用操作系统的 CA 信任库做 TLS 校验，而不是只信
+/// 自带的 CA 列表（Node 22.15 起提供，Electron 的 Node 模式同样支持）。
+///
+/// 桌面端 Rust 侧（reqwest + native-tls）读的本来就是系统信任库，核心侧不读就是
+/// 两侧信任不一致：走 TLS 中间人的企业代理时核心报 UNABLE_TO_VERIFY_LEAF_SIGNATURE，
+/// 桌面端却正常（issue #1530）。用 Node 自带的开关对齐，语义由 Node 维护，跨平台
+/// 不必自行解析 CA 文件。
+///
+/// 平台差异由 Node 自己吸收（Linux 走 OpenSSL 默认路径、Windows 走 schannel、
+/// macOS 走 Security 框架）；本仓库的实测环境是 Linux，Windows/macOS 未实测。
+/// 关注点是用户自己装的 CA（企业根证书、代理签发 CA）：它们进系统信任库即可。
+pub const NODE_SYSTEM_CA_FLAG: &str = "--use-system-ca";
+
+/// 该 Node 版本是否认识 [`NODE_SYSTEM_CA_FLAG`]。
+///
+/// 未知开关会让 Node 直接以 "bad option" 退出，必须先确认版本再下发。
+///
+/// 版本沿革（Node 官方发布说明）：
+/// - 22.15 起三个平台都支持（Windows #56833、macOS #56599、其余平台 #57009 同期回合）；
+/// - 23.8 才引入这个开关，但只接了 Windows 与 macOS；
+/// - 23.9 才有其余平台（含 Linux）的实现（#57009）。
+///
+/// 23.8 在 Linux 上开关会被接受却不生效，因此按平台区分。
+pub fn node_supports_system_ca(version: &str) -> bool {
+    let Some((major, minor)) = parse_node_version(version) else {
+        return false;
+    };
+    match major {
+        22 => minor >= 15,
+        23 => match minor {
+            8 => cfg!(windows) || cfg!(target_os = "macos"),
+            _ => minor >= 9,
+        },
+        other => other >= 24,
+    }
+}
+
+/// 给 NODE_OPTIONS 追加系统信任库开关；已经带有时原样返回。
+pub fn node_options_with_system_ca(existing: &str) -> String {
+    if existing
+        .split_whitespace()
+        .any(|item| item == NODE_SYSTEM_CA_FLAG)
+    {
+        return existing.to_string();
+    }
+    let trimmed = existing.trim();
+    if trimmed.is_empty() {
+        return NODE_SYSTEM_CA_FLAG.to_string();
+    }
+    format!("{trimmed} {NODE_SYSTEM_CA_FLAG}")
+}
+
+/// 解析 Node 版本号的前两段（"24.21.0" → (24, 21)）。
+fn parse_node_version(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.trim().trim_start_matches('v').split('.');
+    let major = parts.next()?.trim().parse().ok()?;
+    let minor = parts.next()?.trim().parse().ok()?;
+    Some((major, minor))
+}
+
+/// 给 Node 进程算出带系统信任库开关的 NODE_OPTIONS。
+///
+/// 运行时不认识该开关时返回 `Err`（调用方记录告警）：未知开关会让 Node 直接以
+/// "bad option" 退出，比静默不信任系统 CA 更糟。`existing` 是调用方已有的
+/// NODE_OPTIONS；为 `None` 时取进程继承来的那份。
+pub fn node_system_ca_options(node: &Path, existing: Option<&str>) -> Result<String, String> {
+    let version = super::runtime::get_node_version_of_path(node).ok_or_else(|| {
+        "NODE_VERSION_UNKNOWN: cannot probe the Node runtime version; --use-system-ca not applied"
+            .to_string()
+    })?;
+    if !node_supports_system_ca(&version) {
+        return Err(format!(
+            "NODE_SYSTEM_CA_UNSUPPORTED: Node {version} does not support --use-system-ca; \
+             TLS trust stays on the bundled CA list"
+        ));
+    }
+    let base = existing
+        .map(str::to_string)
+        .or_else(|| std::env::var("NODE_OPTIONS").ok())
+        .unwrap_or_default();
+    Ok(node_options_with_system_ca(&base))
 }
 
 /// 子进程代理环境（issue #110）：把配置页的代理地址翻译成核心与插件子进程能读的
@@ -343,6 +427,103 @@ mod tests {
         assert!(request
             .to_ascii_lowercase()
             .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n"));
+    }
+
+    /// 真实跑一次 node，确认开关拼写被运行时接受且真的生效：拼错会让 node 直接以
+    /// "bad option" 退出，而生效时默认信任库会并入系统 CA 列表（默认信任库由 Node
+    /// 内建 CA 列表与系统信任库合并而成）。
+    #[test]
+    fn the_system_ca_switch_is_accepted_and_widens_the_trust_store() {
+        fn node_on_path() -> Option<std::path::PathBuf> {
+            let name = if cfg!(windows) { "node.exe" } else { "node" };
+            std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|dir| dir.join(name))
+                    .find(|candidate| candidate.is_file())
+            })
+        }
+        fn count(node: &std::path::Path, expression: &str, node_options: Option<&str>) -> usize {
+            let mut command = std::process::Command::new(node);
+            command.arg("-p").arg(expression);
+            // NODE_USE_SYSTEM_CA turns the same switch on by itself, so both
+            // samples must start without it: only the computed options decide.
+            command.env_remove("NODE_USE_SYSTEM_CA");
+            match node_options {
+                Some(value) => {
+                    command.env("NODE_OPTIONS", value);
+                }
+                None => {
+                    command.env_remove("NODE_OPTIONS");
+                }
+            }
+            let output = command.output().expect("run node");
+            assert!(
+                output.status.success(),
+                "node failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse()
+                .expect("node printed a count")
+        }
+        let Some(node) = node_on_path() else {
+            return;
+        };
+        // 运行时太旧不认这个开关时跳过：那种环境本来就用自带 CA 列表。
+        let Ok(options) = node_system_ca_options(&node, None) else {
+            return;
+        };
+        let default = "require('tls').getCACertificates('default').length";
+        let system = "require('tls').getCACertificates('system').length";
+        let without = count(&node, default, None);
+        let with = count(&node, default, Some(&options));
+        assert!(with >= without);
+        let system_count = count(&node, system, None);
+        if system_count > 0 {
+            assert!(
+                with > without,
+                "the system CA store must be merged: with={with} without={without} system={system_count}"
+            );
+        }
+    }
+
+    #[test]
+    fn node_system_ca_flag_is_only_offered_to_runtimes_that_know_it() {
+        for (version, supported) in [
+            ("22.15.0", true),
+            ("22.19.0", true),
+            ("22.14.9", false),
+            ("23.9.0", true),
+            ("23.9.1", true),
+            ("24.21.0", true),
+            ("v24.21.0", true),
+            ("20.11.0", false),
+            ("garbage", false),
+            ("24", false),
+        ] {
+            assert_eq!(node_supports_system_ca(version), supported, "{version}");
+        }
+        // 23.5–23.7 根本没有这个开关：不认识就会让 Node 以 "bad option" 退出。
+        for version in ["23.5.0", "23.6.2", "23.7.0"] {
+            assert!(!node_supports_system_ca(version), "{version}");
+        }
+        // 23.8 只接了 Windows 与 macOS，其余平台要到 23.9。
+        let expected = cfg!(windows) || cfg!(target_os = "macos");
+        assert_eq!(node_supports_system_ca("23.8.0"), expected);
+    }
+
+    #[test]
+    fn node_options_add_the_system_ca_flag_once() {
+        assert_eq!(node_options_with_system_ca(""), "--use-system-ca");
+        assert_eq!(
+            node_options_with_system_ca("--require ./hook.js"),
+            "--require ./hook.js --use-system-ca"
+        );
+        assert_eq!(
+            node_options_with_system_ca("--use-system-ca --require ./hook.js"),
+            "--use-system-ca --require ./hook.js"
+        );
     }
 
     #[test]
