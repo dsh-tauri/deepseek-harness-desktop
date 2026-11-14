@@ -35,6 +35,10 @@ export function machineIdOf(value: { machineId?: unknown }): MachineId {
   return MachineId(value.machineId)
 }
 
+export function reinstallOf(value: { reinstall?: unknown }): boolean {
+  return value.reinstall === true
+}
+
 export function enabledOf(value: { enabled?: unknown }): boolean {
   if (typeof value.enabled !== 'boolean')
     throw new Error('missing enabled')

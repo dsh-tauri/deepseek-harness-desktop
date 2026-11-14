@@ -268,12 +268,13 @@ function quoteUrls(urls: string[]): string {
   return urls.map(shQuote).join(' ')
 }
 
-export function buildInstallScript(plan: RemoteInstallPlan): string {
+export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: boolean } = {}): string {
   assertSupportedDshVersion(plan.dshVersion)
   assertSupportedDshVersion(plan.dsh.kind === 'pkg-zip' ? parseVersionFromTag(plan.dsh.tag) ?? '' : plan.dsh.version)
+  const reinstallMarker = options.force === true ? ['REINSTALL=1'] : ['REINSTALL=']
   const dshSection = plan.dsh.kind === 'pkg-zip'
     ? [
-        `if [ -f "$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}" ]; then`,
+        `if [ -f "$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}" ] && [ -z "$REINSTALL" ]; then`,
         `  log install "dsh 已就绪"`,
         `else`,
         `  log download "dsh ${plan.dsh.tag}"`,
@@ -294,7 +295,7 @@ export function buildInstallScript(plan: RemoteInstallPlan): string {
         `  log failed "pnpm install 失败: $(tail -n 5 "$TMP/pnpm.log" 2>/dev/null | tr '\n' ' ')"`,
         `  return 1`,
         `}`,
-        `if [ -f "$ROOT/dependencies/dsh/${DSH_NPM_ENTRY}" ]; then`,
+        `if [ -f "$ROOT/dependencies/dsh/${DSH_NPM_ENTRY}" ] && [ -z "$REINSTALL" ]; then`,
         `  log install "dsh 已就绪"`,
         `else`,
         `  log download "dsh ${plan.dsh.packageName}@${plan.dsh.version} (npm)"`,
@@ -309,6 +310,7 @@ export function buildInstallScript(plan: RemoteInstallPlan): string {
       ].join('\n')
   return [
     'set -eu',
+    ...reinstallMarker,
     'ROOT="$HOME/.dsh-desktop"',
     'TMP="$ROOT/tmp"',
     'mkdir -p "$ROOT/dependencies" "$TMP"',
@@ -855,6 +857,7 @@ export async function runInstallScript(
   installTimeoutMs: number,
   hooks: BootstrapHooks,
   failureLine = 'bootstrap 失败',
+  force = false,
 ): Promise<string[]> {
   const { onEvent, onProgress } = hooks
   let log = ''
@@ -865,7 +868,7 @@ export async function runInstallScript(
       skips.push(parsed.line)
     onEvent?.(parsed.stage, parsed.line)
   })
-  const result = await session.exec(buildInstallScript(plan), {
+  const result = await session.exec(buildInstallScript(plan, { force }), {
     timeoutMs: installTimeoutMs,
     onData: (chunk) => {
       log = `${log}${chunk}`.slice(-2000)

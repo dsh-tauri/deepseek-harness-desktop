@@ -132,6 +132,7 @@ export interface PostApiTauriRemoteMachinesDisconnectBody {
 }
 export interface PostApiTauriRemoteMachinesInstallBody {
   machineId?: string
+  reinstall?: false | true
 }
 export interface PostApiTauriRemoteSyncApplyBody {
   machineId?: string

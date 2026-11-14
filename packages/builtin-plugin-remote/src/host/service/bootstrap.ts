@@ -1,5 +1,5 @@
 import type { MachineProfile, RemoteSession } from '../types/index'
-import type { BootstrapHooks, RemoteInstallPlan } from './bootstrap.types'
+import type { BootstrapHooks, BootstrapInstallOptions, RemoteInstallPlan } from './bootstrap.types'
 import { defineService } from 'dsh-tauri'
 import { hostConfig } from '../config/runtime'
 import { ensureRemoteInstance, runInstallScript } from './bootstrap.utils'
@@ -17,8 +17,15 @@ export const bootstrap = defineService({
     session: RemoteSession,
     plan: RemoteInstallPlan,
     hooks: BootstrapHooks = {},
-    failureLine = 'bootstrap 失败',
+    options: BootstrapInstallOptions = {},
   ): Promise<string[]> {
-    return await runInstallScript(session, plan, hostConfig().installTimeoutMs!, hooks, failureLine)
+    return await runInstallScript(
+      session,
+      plan,
+      hostConfig().installTimeoutMs!,
+      hooks,
+      options.failureLine ?? 'bootstrap 失败',
+      options.force === true,
+    )
   },
 })

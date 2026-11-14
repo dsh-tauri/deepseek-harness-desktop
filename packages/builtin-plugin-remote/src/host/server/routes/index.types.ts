@@ -72,6 +72,11 @@ export interface RemoteMachineIdBody {
   machineId?: string
 }
 
+export interface RemoteInstallRequestBody {
+  machineId?: string
+  reinstall?: boolean
+}
+
 export interface RemoteAccessTunnelBody {
   mode?: RemoteTunnelMode
   token?: string
