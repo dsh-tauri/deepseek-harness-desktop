@@ -359,6 +359,49 @@ test('a dependency cycle in the chain terminates materialization instead of unfo
   assert.equal(fs.existsSync(path.join(pkgNodeModules, 'a/node_modules/b/node_modules')), false)
 })
 
+test('a shadowed cycle resolves each scope to its own version instead of the nearest chain source', (t) => {
+  // #1548 第三轮评审：pkg → a@1 → b → a@2(b 私有) → c → a@1。只凭「来源已在链上」
+  // 跳过，会让裸进程里 c 向上先撞到遮蔽它的 a@2，拿到错的版本——归档里 c 明明解析
+  // 到根上的 a@1。可见性检查统一裁决：最近同名副本同源才复用（环自然终止），被遮蔽
+  // 就落私有副本（版本与归档一致）。
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = require("a").version')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', version: '1.0.0', dependencies: { b: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = { version: "1" }')
+  f.write('node_modules/b/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/b/index.js', 'module.exports = { a: require("a").version }')
+  f.write('node_modules/b/node_modules/a/package.json', JSON.stringify({ main: 'index.js', version: '2.0.0', dependencies: { c: '^1.0.0' } }))
+  f.write('node_modules/b/node_modules/a/index.js', 'module.exports = { version: "2", c: require("c") }')
+  f.write('node_modules/c/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/c/index.js', 'module.exports = { a: require("a").version }')
+  assert.equal(f.load('pkg'), '1')
+  const pkgNodeModules = path.join(f.cache, 'node_modules/pkg/node_modules')
+  const bCopy = path.join(pkgNodeModules, 'a/node_modules/b')
+  const a2Copy = path.join(bCopy, 'node_modules/a')
+  const cCopy = path.join(a2Copy, 'node_modules/c')
+  // b 的私有 a@2 随 copy 落地；c 落在其下；c 的 a 被遮蔽，必须有自己的 a@1 副本。
+  assert.equal(fs.readFileSync(path.join(bCopy, 'node_modules/a/package.json'), 'utf8'), JSON.stringify({ main: 'index.js', version: '2.0.0', dependencies: { c: '^1.0.0' } }))
+  assert.equal(fs.existsSync(cCopy), true)
+  assert.equal(fs.existsSync(path.join(cCopy, 'node_modules/a')), true)
+  // 环终止：a@1 副本不再继续展开 b。
+  assert.equal(fs.existsSync(path.join(cCopy, 'node_modules/a/node_modules/b')), false)
+  // 与归档行为一致的消费方式：裸子进程验证各作用域解析到的版本。
+  const script = 'const m = require(process.env.DSH_PROBE_ENTRY); process.stdout.write(String(m.a))'
+  const bare = (entry) => childProcess.spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env: { ...process.env, DSH_PROBE_ENTRY: entry },
+  })
+  const fromB = bare(path.join(bCopy, 'index.js'))
+  assert.equal(fromB.status, 0, fromB.stderr)
+  assert.equal(fromB.stdout, '2')
+  const fromC = bare(path.join(cCopy, 'index.js'))
+  assert.equal(fromC.status, 0, fromC.stderr)
+  assert.equal(fromC.stdout, '1')
+})
+
 test('a dependency visible on the lookup path reuses its placed copy instead of splitting the module singleton', (t) => {
   // #1548 评审：owner（a）的上行路径已有同来源副本（pkg/node_modules/x）时，
   // 再落一份私有副本会让 node 按路径缓存把单例拆成两个实例——归档内

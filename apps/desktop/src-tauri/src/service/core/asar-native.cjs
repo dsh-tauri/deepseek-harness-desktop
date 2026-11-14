@@ -206,19 +206,17 @@ module.exports = function registerNativePackages(archive, cache) {
   /// 去重，两个兄弟包（如 fontkit 下的 brotli 与 unicode-properties）共同依赖的传递
   /// 依赖（如 base64-js）只会落到第一个所有者下，第二个所有者在裸子进程里就断了链。
   ///
-  /// 去重又不能只有「来源 + 目标」：依赖环（a → b → a）里每层目标都更深，组合键永远
-  /// 不同，物化会沿环无限展开直到路径过长。因此入队时携带当前依赖链的来源集合，链上
-  /// 出现重复来源即停——外层副本已存在，node 的逐级向上解析恰好会找到它，环语义不变。
-  ///
-  /// 落副本前还要沿 owner 的上行路径查已落地的同名副本：node 按解析后的文件名缓存模块，
-  /// 上行路径上已有同来源副本时再落一份私有副本，会把单例拆成两个实例（归档内
-  /// require("a") === require("x")，物化树里却为 false，注册表等模块级状态随之分叉）。
-  /// 上行先命中不同来源的同名副本时才落私有副本，避免版本被顶掉。
+  /// 是否落地由「物化树内的可见性」统一裁决：落副本前沿 owner 的上行路径查最近同名
+  /// 副本（含 copy 原样带入的私有副本），与裸进程的解析顺序一致。最近副本同来源 →
+  /// 复用不落：既保住模块单例（node 按解析后的文件名缓存），也让依赖环（a → b → a）
+  /// 自然终止——外层副本可见且同源，环边不再展开。最近副本不同来源（被中间私有副本
+  /// 遮蔽）→ 落私有副本，各作用域解析到的版本与归档一致；只凭「来源已在链上」判环，
+  /// 会在遮蔽场景把外层版本错配给被遮蔽的作用域。
   ///
   /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
   function visibleSource(destination, segments, staging, placed) {
     // 从 owner 目标的父级开始逐级向上，与 node 的解析顺序一致；键为
-    // 「目录 → 该目录 node_modules 下同名依赖的来源」，与 placed 的登记一致。
+    // 「候选路径 → 其归档来源」，与 placed 的登记一致。
     let directory = path.dirname(destination)
     const floor = path.dirname(staging)
     for (;;) {
@@ -235,14 +233,14 @@ module.exports = function registerNativePackages(archive, cache) {
     const handled = new Set()
     const placed = new Map()
     const copies = []
-    const pending = [{ directory: root, target: staging, chain: [] }]
+    const pending = [{ directory: root, target: staging }]
     while (pending.length > 0) {
-      const { directory, target, chain } = pending.shift()
+      const { directory, target } = pending.shift()
       for (const [, segments] of declarations(directory)) {
         const source = locate(directory, segments)
-        const destination = path.join(target, 'node_modules', ...segments)
-        if (!source || chain.includes(source))
+        if (!source)
           continue
+        const destination = path.join(target, 'node_modules', ...segments)
         if (visibleSource(destination, segments, staging, placed) === source)
           continue
         const key = `${source}\0${destination}`
@@ -258,7 +256,7 @@ module.exports = function registerNativePackages(archive, cache) {
           copies.push({ relative: path.relative(staging, destination), source })
         }
         placed.set(destination, source)
-        pending.push({ directory: source, target: destination, chain: [...chain, source] })
+        pending.push({ directory: source, target: destination })
       }
     }
     return copies
