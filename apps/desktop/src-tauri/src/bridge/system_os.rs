@@ -65,7 +65,6 @@ pub async fn open_in_browser(
     crate::service::workflow::instances::scope(profile, async move {
         let url =
             config::get_dsh_service_url(crate::service::workflow::instances::port(&app_handle));
-        crate::desktop::activation::handoff_to_external(&app_handle);
         let client = app_handle.state::<tauri_runtime_electron::ElectronClient>();
         tauri_runtime_electron::open_external(client.inner(), &url).await
     })
@@ -128,7 +127,6 @@ pub fn reveal_in_folder(app_handle: AppHandle, path: String) -> Result<(), Strin
     if !crate::bridge::guard::is_allowed_path(&app_handle, std::path::Path::new(&path)) {
         return Err(format!("REVEAL_PATH_REJECTED: {path}"));
     }
-    crate::desktop::activation::handoff_to_external(&app_handle);
     tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| format!("REVEAL_FAILED: {e}"))
 }
 
@@ -140,7 +138,6 @@ pub fn open_dir(app_handle: AppHandle, path: String) -> Result<(), String> {
     if !crate::bridge::guard::is_allowed_path(&app_handle, std::path::Path::new(&path)) {
         return Err(format!("OPEN_DIR_REJECTED: {path}"));
     }
-    crate::desktop::activation::handoff_to_external(&app_handle);
     tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| format!("OPEN_DIR_FAILED: {e}"))
 }
 
@@ -150,8 +147,6 @@ pub async fn reveal_data_dir(app_handle: AppHandle) -> Result<(), String> {
     let dsh_home = config::get_dsh_data_path(&app_handle);
     // 目录可能尚未创建（全新安装），先建好再打开，避免资源管理器报路径不存在
     std::fs::create_dir_all(&dsh_home).map_err(|e| e.to_string())?;
-
-    crate::desktop::activation::handoff_to_external(&app_handle);
     tauri_plugin_opener::open_path(&dsh_home, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -337,7 +332,6 @@ pub async fn open_external_url(app_handle: AppHandle, url: String) -> Result<(),
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!("EXTERNAL_URL_INVALID: {url}"));
     }
-    crate::desktop::activation::handoff_to_external(&app_handle);
     let client = app_handle.state::<tauri_runtime_electron::ElectronClient>();
     tauri_runtime_electron::open_external(client.inner(), &url).await
 }

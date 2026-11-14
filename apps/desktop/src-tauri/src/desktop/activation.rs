@@ -5,7 +5,7 @@
 //! 一并生效，因此不做窗口级/屏幕级判断。
 //!
 //! `bring_to_front` 是托盘、`RunEvent::Reopen`、single-instance、通知点击四条
-//! 恢复路径的唯一入口。窗口归 Electron 子进程所有，前台 API 必须按平台分流。
+//! 恢复路径的唯一入口，只组合官方窗口 API（unminimize / show / set_focus）。
 
 use crate::{AppHandle, Window};
 pub use crate::config::{CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
@@ -63,15 +63,6 @@ pub fn bring_to_front<R: Runtime>(window: &Window<R>) {
     }
 }
 
-/// 把前台处置权交给即将被系统拉起的外部程序。
-///
-/// 界面里点链接时 URL 由 Electron 主进程交给系统，但新窗口只能在前台权利被交出后
-/// 顶到最前；全程不调用任何聚焦 API，否则焦点会被抢回来（issue #1462）。
-#[cfg_attr(not(windows), allow(unused_parameters))]
-pub fn handoff_to_external<R: Runtime>(_app: &AppHandle<R>) {
-    #[cfg(windows)]
-    tauri_runtime_electron::release_foreground();
-}
 
 /// 关窗时是否应切到 Accessory（隐藏 Dock）。
 ///

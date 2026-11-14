@@ -21,7 +21,6 @@ pub fn on_new_window(
             .inner()
             .clone();
         let target = url.to_string();
-        crate::desktop::activation::handoff_to_external(&app_handle);
         tauri::async_runtime::spawn(async move {
             if let Err(e) = tauri_runtime_electron::open_external(&client, &target).await {
                 log::warn!("[new-window] open in browser failed {e}");
@@ -90,8 +89,8 @@ fn harness_guest_url(value: &str) -> Result<Url, String> {
 
 /// 把当前窗口提到前台（通知点击激活）。
 ///
-/// 激活必须发生在壳进程：Windows 的前台锁由原生 API 决定，前端只能触发一个
-/// 普通 show/focus，被拒后既无重试空间也无从得知是否成功（issue #1462）。
+/// 只组合官方窗口 API：最小化先还原，再 show + set_focus。前端做同样几步会因为拿不到
+/// 窗口状态而漏掉还原，也可能在文档切换中途被丢弃（issue #1462）。
 #[tauri::command]
 pub fn activate_window(webview: Webview) -> Result<(), String> {
     require_shell(&webview)?;
