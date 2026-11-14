@@ -30,8 +30,6 @@ beforeEach(async () => {
   vi.stubGlobal('__DSH_BOOT__', { entries: [] })
   vi.spyOn(console, 'error').mockImplementation(() => {})
   await i18next.init({ lng: 'en', keySeparator: false, resources: { en: { translation: {
-    'messages.harness_restarting': 'Restarting Harness…',
-    'messages.harness_restarted': 'Harness restarted',
     'messages.harness_restart_failed': 'Harness restart failed',
   } } } })
   shutdown = async () => {}
@@ -112,7 +110,7 @@ it('restarts from the bootstrap through native phases and consumes the loading o
   await harness.completeRestartDocument()
   expect(marker).toBeNull()
   expect(harness.restartPending).toBe(false)
-  expect(toast).toHaveBeenCalledWith('Harness restarted', expect.objectContaining({ variant: 'success' }))
+  expect(toast).not.toHaveBeenCalled()
 })
 
 it('leaves the hosted renderer before stopping its backend', async () => {
@@ -194,7 +192,7 @@ it('reports a rejected navigation preparation without stopping the hosted backen
   expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({ description: 'Error: HARNESS_RESTART_PREPARE_REJECTED' }))
 })
 
-it('shows one sticky bottom-right loading toast before a bootstrap restart shutdown completes', async () => {
+it('single-flights a bootstrap restart without any toast', async () => {
   vi.stubGlobal('__DSH_BOOT__', undefined)
   let release!: () => void
   shutdown = () => new Promise<void>((resolve) => {
@@ -203,18 +201,12 @@ it('shows one sticky bottom-right loading toast before a bootstrap restart shutd
   const first = harness.restart()
   const second = harness.restart()
   await vi.advanceTimersByTimeAsync(0)
-  expect(toast).toHaveBeenCalledExactlyOnceWith('Restarting Harness…', expect.objectContaining({
-    placement: 'bottom end',
-    timeout: 0,
-    sticky: true,
-    isLoading: true,
-  }))
   expect(invoke).toHaveBeenCalledWith('resume_harness_restart', { id: 'restart-42' })
   expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
   release()
   await Promise.all([first, second])
   expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'resume_harness_restart')).toHaveLength(1)
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
+  expect(toast).not.toHaveBeenCalled()
 })
 
 it('restores loading in the new document and succeeds once only after native confirmation of real ready', async () => {
@@ -224,22 +216,14 @@ it('restores loading in the new document and succeeds once only after native con
   vi.resetModules()
   vi.clearAllMocks()
   ;({ harness } = await import('./store'))
-  await Promise.all([harness.restoreRestartToast(), harness.restoreRestartToast()])
-  expect(toast).toHaveBeenCalledExactlyOnceWith('Restarting Harness…', expect.objectContaining({
-    placement: 'bottom end',
-    timeout: 0,
-    sticky: true,
-    isLoading: true,
-  }))
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
+  expect(await Promise.all([harness.restoreRestartOperation(), harness.restoreRestartOperation()])).toEqual([true, true])
+  expect(toast).not.toHaveBeenCalled()
   acceptSuccess = true
   await Promise.all([harness.completeRestartDocument(), harness.completeRestartDocument()])
   expect(invoke).toHaveBeenCalledWith('finish_harness_restart', { id: 'restart-42', outcome: 'success' })
-  expect(toast.close).toHaveBeenCalledExactlyOnceWith('restart-toast')
-  expect(toast).toHaveBeenCalledWith('Harness restarted', expect.objectContaining({ placement: 'bottom end', variant: 'success' }))
-  await harness.completeRestartDocument()
-  expect(vi.mocked(toast).mock.calls.filter(([title]) => title === 'Harness restarted')).toHaveLength(1)
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'finish_harness_restart')).toHaveLength(1)
   expect(marker).toBeNull()
+  expect(toast).not.toHaveBeenCalled()
 })
 
 it('rejects stale-document ready without losing the loading notification', async () => {
@@ -247,8 +231,7 @@ it('rejects stale-document ready without losing the loading notification', async
   await harness.completeRestartDocument()
   expect(invoke).toHaveBeenCalledWith('finish_harness_restart', { id: 'restart-42', outcome: 'success' })
   expect(marker).toEqual({ id: 'restart-42' })
-  expect(toast.close).not.toHaveBeenCalled()
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
+  expect(toast).not.toHaveBeenCalled()
 })
 
 it('does not report success when the document fails while native confirmation is pending', async () => {
@@ -262,12 +245,11 @@ it('does not report success when the document fails while native confirmation is
   harness.fail('CLIENT_EXITED_DURING_READY')
   confirm(true)
   await ready
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
-  expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({ description: 'CLIENT_EXITED_DURING_READY' }))
+  expect(toast).toHaveBeenCalledExactlyOnceWith('Harness restart failed', expect.objectContaining({ description: 'CLIENT_EXITED_DURING_READY' }))
 })
 
 it('normal reload without a native operation does not report restart success', async () => {
-  await harness.restoreRestartToast()
+  await harness.restoreRestartOperation()
   await harness.completeRestartDocument()
   expect(invoke).not.toHaveBeenCalledWith('finish_harness_restart', expect.anything())
   expect(toast).not.toHaveBeenCalled()
@@ -278,13 +260,13 @@ it('waits for restoring the operation before handling a real ready signal', asyn
   vi.mocked(invoke).mockImplementationOnce(() => new Promise((resolve) => {
     resolveMarker = resolve
   }))
-  const restoring = harness.restoreRestartToast()
+  const restoring = harness.restoreRestartOperation()
   acceptSuccess = true
   const ready = harness.completeRestartDocument()
   expect(toast).not.toHaveBeenCalled()
   resolveMarker({ id: 'restart-42' })
   await Promise.all([restoring, ready])
-  expect(vi.mocked(toast).mock.calls.map(([title]) => title)).toEqual(['Restarting Harness…', 'Harness restarted'])
+  expect(toast).not.toHaveBeenCalled()
 })
 
 it('does not stop the service when the native restart identity cannot be registered', async () => {
@@ -292,8 +274,7 @@ it('does not stop the service when the native restart identity cannot be registe
   await harness.restart()
   expect(invoke).not.toHaveBeenCalledWith('shutdown_harness')
   expect(harness.busyAction).toBeNull()
-  expect(toast.close).toHaveBeenCalledExactlyOnceWith('restart-toast')
-  expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({ description: 'Error: RESTART_MARKER_FAILED' }))
+  expect(toast).toHaveBeenCalledExactlyOnceWith('Harness restart failed', expect.objectContaining({ description: 'Error: RESTART_MARKER_FAILED' }))
 })
 
 it('does not create a restart notification when another lifecycle action owns the store', async () => {
@@ -311,21 +292,18 @@ it('does not treat health readiness or the old document mount as restart success
   harness.markWebviewLoaded()
   harness.markWebviewAlive(harness.webviewKey)
   harness.markWebviewBootReady()
-  expect(toast.close).not.toHaveBeenCalled()
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
+  expect(toast).not.toHaveBeenCalled()
 })
 
 it('turns a navigation failure into one failure toast instead of keeping loading forever', async () => {
   await harness.restart()
   harness.fail('HARNESS_DOCUMENT_NAVIGATION_FAILED: rejected', undefined, undefined, undefined, true)
   await vi.advanceTimersByTimeAsync(0)
-  expect(toast.close).toHaveBeenCalledExactlyOnceWith('restart-toast')
-  expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({
+  expect(toast).toHaveBeenCalledExactlyOnceWith('Harness restart failed', expect.objectContaining({
     placement: 'bottom end',
     variant: 'danger',
     description: 'HARNESS_DOCUMENT_NAVIGATION_FAILED: rejected',
   }))
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
 })
 
 it('settles one failure toast when the real restart boot catches a launch failure', async () => {
@@ -337,16 +315,14 @@ it('settles one failure toast when the real restart boot catches a launch failur
   await harness.initialize()
   await vi.advanceTimersByTimeAsync(0)
   expect(harness.status).toBe('error')
-  expect(toast.close).toHaveBeenCalledExactlyOnceWith('restart-toast')
-  expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({
+  expect(toast).toHaveBeenCalledExactlyOnceWith('Harness restart failed', expect.objectContaining({
     placement: 'bottom end',
     variant: 'danger',
     description: expect.stringContaining('HARNESS_START_FAILED'),
   }))
   harness.fail('duplicate failure')
   await vi.advanceTimersByTimeAsync(0)
-  expect(vi.mocked(toast).mock.calls.filter(([title]) => title === 'Harness restart failed')).toHaveLength(1)
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
+  expect(toast).toHaveBeenCalledTimes(1)
 })
 
 it('the restart hook checks an already rendered DSH frame after restoring loading', async () => {
@@ -356,11 +332,13 @@ it('the restart hook checks an already rendered DSH frame after restoring loadin
   frame.className = 'layout_frame'
   frame.append(document.createElement('section'))
   document.body.append(frame)
-  const { useRestartToast } = await import('@/hooks/use-restart-toast')
+  const { useRestartSettlement } = await import('@/hooks/use-restart-settlement')
   await act(async () => {
-    renderHook(() => useRestartToast())
+    renderHook(() => useRestartSettlement())
   })
-  expect(vi.mocked(toast).mock.calls.map(([title]) => title)).toEqual(['Restarting Harness…', 'Harness restarted'])
+  expect(invoke).toHaveBeenCalledWith('finish_harness_restart', { id: 'restart-42', outcome: 'success' })
+  expect(marker).toBeNull()
+  expect(toast).not.toHaveBeenCalled()
 })
 
 it('the restart hook does not infer an operation from a normal document frame', async () => {
@@ -368,9 +346,9 @@ it('the restart hook does not infer an operation from a normal document frame', 
   frame.className = 'layout_frame'
   frame.append(document.createElement('section'))
   document.body.append(frame)
-  const { useRestartToast } = await import('@/hooks/use-restart-toast')
+  const { useRestartSettlement } = await import('@/hooks/use-restart-settlement')
   await act(async () => {
-    renderHook(() => useRestartToast())
+    renderHook(() => useRestartSettlement())
   })
   expect(toast).not.toHaveBeenCalled()
   expect(invoke).toHaveBeenCalledExactlyOnceWith('get_harness_restart')
@@ -379,8 +357,8 @@ it('the restart hook does not infer an operation from a normal document frame', 
 it('the restart hook stops observing the DSH document after unmount', async () => {
   marker = { id: 'restart-42' }
   acceptSuccess = true
-  const { useRestartToast } = await import('@/hooks/use-restart-toast')
-  const hook = renderHook(() => useRestartToast())
+  const { useRestartSettlement } = await import('@/hooks/use-restart-settlement')
+  const hook = renderHook(() => useRestartSettlement())
   await act(async () => {})
   hook.unmount()
   const frame = document.createElement('div')
@@ -389,32 +367,31 @@ it('the restart hook stops observing the DSH document after unmount', async () =
   await act(async () => {
     document.body.append(frame)
   })
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
+  expect(toast).not.toHaveBeenCalled()
   expect(marker).toEqual({ id: 'restart-42' })
 })
 
 it('the new document boot failure settles the restored notification instead of reporting success', async () => {
   marker = { id: 'restart-42' }
-  const { useRestartToast } = await import('@/hooks/use-restart-toast')
+  const { useRestartSettlement } = await import('@/hooks/use-restart-settlement')
   await act(async () => {
-    renderHook(() => useRestartToast())
+    renderHook(() => useRestartSettlement())
   })
   await act(async () => {
     harness.fail('CLIENT_BOOT_FAILED')
   })
-  expect(toast).toHaveBeenCalledWith('Harness restart failed', expect.objectContaining({ description: 'CLIENT_BOOT_FAILED' }))
-  expect(toast).not.toHaveBeenCalledWith('Harness restarted', expect.anything())
+  expect(toast).toHaveBeenCalledExactlyOnceWith('Harness restart failed', expect.objectContaining({ description: 'CLIENT_BOOT_FAILED' }))
   expect(marker).toBeNull()
 })
 
 it('the real restart hook waits for the DSH frame rather than accepting bootstrap metadata', async () => {
   marker = { id: 'restart-42' }
   acceptSuccess = true
-  const { useRestartToast } = await import('@/hooks/use-restart-toast')
+  const { useRestartSettlement } = await import('@/hooks/use-restart-settlement')
   await act(async () => {
-    renderHook(() => useRestartToast())
+    renderHook(() => useRestartSettlement())
   })
-  expect(toast).toHaveBeenCalledExactlyOnceWith('Restarting Harness…', expect.objectContaining({ isLoading: true }))
+  expect(toast).not.toHaveBeenCalled()
   expect(invoke).not.toHaveBeenCalledWith('finish_harness_restart', expect.anything())
   await act(async () => {
     const frame = document.createElement('div')
@@ -422,6 +399,7 @@ it('the real restart hook waits for the DSH frame rather than accepting bootstra
     frame.append(document.createElement('section'))
     document.body.append(frame)
   })
-  expect(toast).toHaveBeenCalledWith('Harness restarted', expect.objectContaining({ variant: 'success' }))
+  expect(invoke).toHaveBeenCalledWith('finish_harness_restart', { id: 'restart-42', outcome: 'success' })
   expect(marker).toBeNull()
+  expect(toast).not.toHaveBeenCalled()
 })

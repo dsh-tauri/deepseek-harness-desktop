@@ -242,6 +242,9 @@ async fn fetch_dsh_digest_from_expanded_assets(
 ///
 /// 修复前：api.github.com 一限流 `fetch_latest_dsh_pkg_info` 直接返回 Err，
 /// `check_dsh_update` 静默跳过，导致上游 rc.8 发布后桌面端迟迟不出现更新提示。
+/// 现在每一层兜底失败都带来源前缀（DSH_ATOM / DSH_EXPANDED / DSH_RELEASE_ASSET_MISSING），
+/// `check_dsh_update` 统一以 DSH_UPDATE_CHECK_FAILED 记录，日志能看出是限流、
+/// 网络还是解析失败。
 ///
 /// 预览版（Pre-release label 或 tag 命名，见 [`is_preview_tag`]）不参与更新判定：
 /// 最新 release 恰好是预览版时**不直接推给用户**，而是由 [`fetch_latest_non_preview`]

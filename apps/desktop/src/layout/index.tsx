@@ -8,7 +8,7 @@ import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { queryKeys } from '@/config/query-keys'
 import { useListen } from '@/hooks/use-listen'
-import { useRestartToast } from '@/hooks/use-restart-toast'
+import { useRestartSettlement } from '@/hooks/use-restart-settlement'
 import { useThemeAdaptive } from '@/hooks/use-theme-adaptive'
 import { useWakelockRelease } from '@/hooks/use-wakelock-release'
 import { useFrameChrome } from '@/hooks/use-window-chrome'
@@ -19,6 +19,9 @@ import { Shell } from './shell'
 import '../i18n'
 
 const DESKTOP_UPDATE_POLL_INTERVAL = 10 * 60_000
+
+/** 核心更新复查间隔：只在启动时查一次，长期运行的窗口会一直错过上游新发布 */
+const CORE_UPDATE_POLL_INTERVAL = 30 * 60_000
 
 interface DownloadFinishedPayload {
   url: string
@@ -38,7 +41,7 @@ export function App() {
   const { updateInfo, updating } = useStore(store.harnessUpdater)
 
   useWakelockRelease()
-  useRestartToast()
+  useRestartSettlement()
   useThemeAdaptive()
   useFrameChrome()
 
@@ -115,6 +118,13 @@ export function App() {
       },
     })
   })
+
+  function checkCoreUpdate() {
+    if (!store.setting.hydrated || !store.setting.installed)
+      return
+    void store.harnessUpdater.checkForUpdate()
+  }
+  useIntervalFn(checkCoreUpdate, CORE_UPDATE_POLL_INTERVAL)
 
   useWatch([updateInfo, updating], () => {
     if (!updateInfo || updating)

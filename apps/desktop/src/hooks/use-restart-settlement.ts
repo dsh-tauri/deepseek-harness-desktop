@@ -4,7 +4,8 @@ import { useStore } from 'valtio-define'
 import { harness } from '@/store/modules/harness'
 import { useHostedDocumentReady } from './use-hosted-document-ready'
 
-export function useRestartToast() {
+/** 承接跨文档重启的原生操作：新文档就绪后向原生确认，失败则交给错误页收尾 */
+export function useRestartSettlement() {
   const { status, errorMsg } = useStore(harness)
   const [pending, setPending] = useState(false)
   const documentReady = useHostedDocumentReady()
@@ -13,7 +14,7 @@ export function useRestartToast() {
     if (!pending)
       return
     if (status === 'error') {
-      void harness.finishRestartNotification('error', errorMsg).then(settled => setPending(!settled))
+      void harness.finishRestartOperation('error', errorMsg).then(settled => setPending(!settled))
       return
     }
     if (!documentReady)
@@ -23,6 +24,6 @@ export function useRestartToast() {
 
   useWatch([pending, status, documentReady], checkDocument)
   useMount(() => {
-    void harness.restoreRestartToast().then(setPending)
+    void harness.restoreRestartOperation().then(setPending)
   })
 }

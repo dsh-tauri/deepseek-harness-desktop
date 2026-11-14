@@ -22,6 +22,7 @@ import { defineStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
+import { installPercent } from '@/utils/install-percent'
 import { toast } from '@/utils/toast'
 import { isHostedDocument, isHostedServiceDocument } from '@/utils/window-presentation'
 import { harnessUpdater } from '../harness-updater'
@@ -86,7 +87,6 @@ const restartFlight = new SingleFlight<void>()
 const webviewReloadGate = new BoundedReloadGate(WEBVIEW_RELOAD_MAX_ATTEMPTS)
 let webviewRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let policyApprovalKey: string | undefined
-let restartToastKey: string | undefined
 let restartOperationId: string | undefined
 let restartPhase: 'leaving' | 'stopping' | 'loading' | undefined
 const restoreRestartFlight = new SingleFlight<boolean>()
@@ -162,18 +162,7 @@ export const harness = defineStore({
     },
   },
   actions: {
-    showRestartLoading() {
-      if (restartToastKey !== undefined && toast.isActive(restartToastKey))
-        return
-      restartToastKey = toast(i18next.t('messages.harness_restarting'), {
-        placement: 'bottom end',
-        timeout: 0,
-        sticky: true,
-        isLoading: true,
-      })
-    },
-
-    restoreRestartToast(): Promise<boolean> {
+    restoreRestartOperation(): Promise<boolean> {
       return restoreRestartFlight.run(async () => {
         if (restartOperationId !== undefined)
           return true
@@ -186,23 +175,22 @@ export const harness = defineStore({
           restartOperationId = operation.id
           restartPhase = operation.phase
           this.restartPending = true
-          this.showRestartLoading()
           return true
         }
         catch (error) {
-          console.error('[Harness] restore restart notification failed:', error)
+          console.error('[Harness] restore restart operation failed:', error)
           return false
         }
       })
     },
 
     completeRestartDocument(): Promise<boolean> {
-      return this.finishRestartNotification('success')
+      return this.finishRestartOperation('success')
     },
 
-    finishRestartNotification(outcome: 'success' | 'error', description?: string): Promise<boolean> {
+    finishRestartOperation(outcome: 'success' | 'error', description?: string): Promise<boolean> {
       return finishRestartFlight.run(async () => {
-        await this.restoreRestartToast()
+        await this.restoreRestartOperation()
         const id = restartOperationId
         if (id === undefined)
           return false
@@ -212,19 +200,11 @@ export const harness = defineStore({
             return false
           restartOperationId = undefined
           this.restartPending = false
-          if (restartToastKey !== undefined) {
-            toast.close(restartToastKey)
-            restartToastKey = undefined
-          }
-          if (outcome === 'success' && this.status !== 'error') {
-            toast(i18next.t('messages.harness_restarted'), { placement: 'bottom end', variant: 'success' })
-          }
-          else {
+          if (outcome === 'error' || this.status === 'error')
             toast(i18next.t('messages.harness_restart_failed'), { placement: 'bottom end', variant: 'danger', description: description ?? this.errorMsg })
-          }
         }
         catch (error) {
-          console.error('[Harness] settle restart notification failed:', error)
+          console.error('[Harness] settle restart operation failed:', error)
           return false
         }
         return true
@@ -251,9 +231,15 @@ export const harness = defineStore({
         this.listenProcessExit(),
         this.listenPluginBootFailure(),
       ])
-      if (isHostedServiceDocument())
+      if (isHostedServiceDocument()) {
+        // 文档即 DSH 时不走 boot，boot 收尾的更新检查也一并消失，核心新版因此
+        // 一直推不出来（导航栏与设置页全靠 updateInfo 渲染入口）。这里补上同一步。
+        await setting.refresh()
+        if (setting.$state.installed)
+          void harnessUpdater.checkForUpdate()
         return
-      await this.restoreRestartToast()
+      }
+      await this.restoreRestartOperation()
       if (restartOperationId !== undefined && (restartPhase === 'leaving' || restartPhase === 'stopping')) {
         this.busyAction = 'restart'
         try {
@@ -537,16 +523,16 @@ export const harness = defineStore({
     async listenInstallProgress(): Promise<UnlistenFn> {
       return listen<InstallProgress>('install-progress', (e) => {
         const payload = e.payload
-        if (payload.percentage < this.installer.percentage) {
+        const percentage = installPercent(payload.percentage, this.installer.percentage)
+        if (percentage < this.installer.percentage)
           return
-        }
         const logs = payload.log
           ? [...this.installer.logs, payload.log].slice(-5)
           : this.installer.logs
         this.installer = {
           title: payload.title || this.installer.title,
           detail: payload.detail || this.installer.detail,
-          percentage: payload.percentage,
+          percentage,
           logs,
         }
       })
@@ -925,7 +911,7 @@ export const harness = defineStore({
       this.status = 'error'
       this.serviceRunning = keepServiceRunning
       if (restartOperationId !== undefined)
-        void this.finishRestartNotification('error', message)
+        void this.finishRestartOperation('error', message)
     },
 
     async switchProfile(id: string) {
@@ -960,7 +946,6 @@ export const harness = defineStore({
         if (this.busyAction)
           return
         this.busyAction = 'restart'
-        this.showRestartLoading()
         const previouslyHealthy = this.serviceHealthy
         this.serviceHealthy = false
         try {
@@ -969,10 +954,6 @@ export const harness = defineStore({
           this.restartPending = true
         }
         catch (error) {
-          if (restartToastKey !== undefined) {
-            toast.close(restartToastKey)
-            restartToastKey = undefined
-          }
           this.busyAction = null
           this.serviceHealthy = previouslyHealthy
           toast(i18next.t('messages.harness_restart_failed'), {

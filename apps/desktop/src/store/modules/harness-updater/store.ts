@@ -18,15 +18,18 @@ export const harnessUpdater = defineStore({
     updating: false,
   }),
   actions: {
-    /** 后台静默检查是否有新版 Harness（网络失败/API 限流时静默跳过） */
+    /** 后台静默检查是否有新版 Harness（后端失败原因见 DSH_UPDATE_CHECK_FAILED 日志） */
     async checkForUpdate() {
       try {
         const info = await invoke<DshUpdateInfo | null>('check_dsh_update')
-        // 后端返回 null 表示没有可推送的更新（包括高于推荐版本的最新版本），
-        // 必须清空旧提示，避免调试页继续显示已经被策略拦截的更新。
-        this.updateInfo = info
+        // 同一版本不重复写回：引用变化会让界面层重复弹提示，而定时复查每轮都会
+        // 拿到内容相同的新对象。null 必须写回，否则会留下已经过期的更新入口。
+        if (info === null || info.tag !== this.updateInfo?.tag)
+          this.updateInfo = info
       }
       catch (err) {
+        // 后端已用 DSH_UPDATE_CHECK_FAILED 记录失败原因（限流/网络/解析），
+        // 这里只透传，避免前端静默成一个看不见的 Promise 拒绝。
         console.warn('[Harness] update check skipped:', err)
       }
     },
@@ -76,11 +79,6 @@ export const harnessUpdater = defineStore({
         unlistenInstall?.()
         this.updating = false
       }
-    },
-
-    /** 忽略本次更新提示 */
-    dismissUpdate() {
-      this.updateInfo = null
     },
 
     showToast(onUpdate: () => void) {
