@@ -132,13 +132,23 @@ pub const NODE_SYSTEM_CA_FLAG: &str = "--use-system-ca";
 /// 该 Node 版本是否认识 [`NODE_SYSTEM_CA_FLAG`]。
 ///
 /// 未知开关会让 Node 直接以 "bad option" 退出，必须先确认版本再下发。
+///
+/// 版本沿革（Node 官方发布说明）：
+/// - 22.15 起三个平台都支持（Windows #56833、macOS #56599、其余平台 #57009 同期回合）；
+/// - 23.8 才引入这个开关，但只接了 Windows 与 macOS；
+/// - 23.9 才有其余平台（含 Linux）的实现（#57009）。
+///
+/// 23.8 在 Linux 上开关会被接受却不生效，因此按平台区分。
 pub fn node_supports_system_ca(version: &str) -> bool {
     let Some((major, minor)) = parse_node_version(version) else {
         return false;
     };
     match major {
         22 => minor >= 15,
-        23 => minor >= 5,
+        23 => match minor {
+            8 => cfg!(windows) || cfg!(target_os = "macos"),
+            _ => minor >= 9,
+        },
         other => other >= 24,
     }
 }
@@ -484,8 +494,8 @@ mod tests {
             ("22.15.0", true),
             ("22.19.0", true),
             ("22.14.9", false),
-            ("23.5.0", true),
-            ("23.4.0", false),
+            ("23.9.0", true),
+            ("23.9.1", true),
             ("24.21.0", true),
             ("v24.21.0", true),
             ("20.11.0", false),
@@ -494,6 +504,13 @@ mod tests {
         ] {
             assert_eq!(node_supports_system_ca(version), supported, "{version}");
         }
+        // 23.5–23.7 根本没有这个开关：不认识就会让 Node 以 "bad option" 退出。
+        for version in ["23.5.0", "23.6.2", "23.7.0"] {
+            assert!(!node_supports_system_ca(version), "{version}");
+        }
+        // 23.8 只接了 Windows 与 macOS，其余平台要到 23.9。
+        let expected = cfg!(windows) || cfg!(target_os = "macos");
+        assert_eq!(node_supports_system_ca("23.8.0"), expected);
     }
 
     #[test]
