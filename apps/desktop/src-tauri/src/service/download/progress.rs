@@ -163,4 +163,22 @@ mod tests {
     fn degenerate_zero_total_is_safe() {
         assert_eq!(global_percentage(0, 0, 100.0), 100.0);
     }
+
+    #[test]
+    fn core_download_two_phases_split_download_and_extract() {
+        // 核心下载是 2 阶段（download → extract）：下载占 0-50，解压占 50-100
+        assert_eq!(global_percentage(0, 2, 0.0), 0.0);
+        assert_eq!(global_percentage(0, 2, 50.0), 25.0);
+        assert_eq!(global_percentage(0, 2, 100.0), 50.0);
+        assert_eq!(global_percentage(1, 2, 0.0), 50.0);
+        assert_eq!(global_percentage(1, 2, 50.0), 75.0);
+        assert_eq!(global_percentage(1, 2, 100.0), 100.0);
+    }
+
+    #[test]
+    fn unknown_stage_progress_never_regresses_below_phase_floor() {
+        // TGZ 解压用 -1.0 表示「进度未知」；它不该把全局值推到阶段起点以下
+        let pct = global_percentage(1, 2, -1.0);
+        assert!(pct >= 0.0 && pct < 50.0, "pct={pct}");
+    }
 }
