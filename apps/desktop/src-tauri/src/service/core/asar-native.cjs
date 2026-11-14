@@ -206,17 +206,21 @@ module.exports = function registerNativePackages(archive, cache) {
   /// 去重，两个兄弟包（如 fontkit 下的 brotli 与 unicode-properties）共同依赖的传递
   /// 依赖（如 base64-js）只会落到第一个所有者下，第二个所有者在裸子进程里就断了链。
   ///
+  /// 去重又不能只有「来源 + 目标」：依赖环（a → b → a）里每层目标都更深，组合键永远
+  /// 不同，物化会沿环无限展开直到路径过长。因此入队时携带当前依赖链的来源集合，链上
+  /// 出现重复来源即停——外层副本已存在，node 的逐级向上解析恰好会找到它，环语义不变。
+  ///
   /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
   function hoist(root, staging) {
     const handled = new Set()
     const copies = []
-    const pending = [{ directory: root, target: staging }]
+    const pending = [{ directory: root, target: staging, chain: [] }]
     while (pending.length > 0) {
-      const { directory, target } = pending.shift()
+      const { directory, target, chain } = pending.shift()
       for (const [, segments] of declarations(directory)) {
         const source = locate(directory, segments)
         const destination = path.join(target, 'node_modules', ...segments)
-        if (!source)
+        if (!source || chain.includes(source))
           continue
         const key = `${source}\0${destination}`
         if (handled.has(key))
@@ -230,7 +234,7 @@ module.exports = function registerNativePackages(archive, cache) {
           copy(source, destination, false)
           copies.push({ relative: path.relative(staging, destination), source })
         }
-        pending.push({ directory: source, target: destination })
+        pending.push({ directory: source, target: destination, chain: [...chain, source] })
       }
     }
     return copies

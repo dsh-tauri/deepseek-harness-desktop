@@ -337,6 +337,29 @@ test('a shared transitive dependency is hoisted beside each sibling owner so a b
   assert.deepEqual(JSON.parse(bare.stdout), ['x-shared', 'x-shared'])
 })
 
+test('a dependency cycle in the chain terminates materialization instead of unfolding forever', (t) => {
+  // #1547 评审：按「来源 + 目标」去重后，环里每层目标都更深，组合键永远不同，
+  // 物化会沿 a → b → a 无限展开直到 ENAMETOOLONG。链上来源去重负责终止：
+  // 外层副本已存在，node 逐级向上解析恰好找到它，环语义不变。
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = require("a")')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { b: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("b")')
+  f.write('node_modules/b/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/b/index.js', 'module.exports = require("a")')
+  // 物化必须完成且不抛错（旧缺陷表现为同步物化在 ENAMETOOLONG 上崩溃）。
+  // CJS 环语义下 b 拿到 a 加载中的部分导出，require("pkg") 返回 {} 属正常。
+  assert.deepEqual(f.load('pkg'), {})
+  // 环被链上去重斩断：物化树里 a 只落地一次，b 位于其私有目录，不再向更深处展开。
+  const pkgNodeModules = path.join(f.cache, 'node_modules/pkg/node_modules')
+  assert.deepEqual(fs.readdirSync(pkgNodeModules), ['a'])
+  assert.deepEqual(fs.readdirSync(path.join(pkgNodeModules, 'a/node_modules')), ['b'])
+  assert.equal(fs.existsSync(path.join(pkgNodeModules, 'a/node_modules/b/node_modules')), false)
+})
+
+
 test('a hoisted copy outside the archive resolves its own dependencies through the real archive source', (t) => {
   const f = fixture(t)
   f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
