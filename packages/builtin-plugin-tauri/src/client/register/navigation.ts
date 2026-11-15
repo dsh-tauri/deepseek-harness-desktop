@@ -37,7 +37,7 @@ function markInjectedSessionConsumed(sessionId: string): void {
   }
 }
 
-function takeInjectedNavigation(): { sessionId?: string, presentation?: string, consumed: boolean } {
+function takeInjectedNavigation(): { sessionId?: string | undefined, presentation?: string | undefined, consumed: boolean } {
   const host = window as unknown as Record<string, unknown>
   const payload = host[NAVIGATION_GLOBAL] as InjectedNavigation | undefined
   if (payload === undefined)

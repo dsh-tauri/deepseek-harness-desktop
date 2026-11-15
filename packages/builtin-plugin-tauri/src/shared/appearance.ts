@@ -100,8 +100,8 @@ export function appearanceTokens(appearance: Appearance): Record<string, { dark:
   }
   const dark = modes('dark')
   const light = modes('light')
-  return Object.fromEntries(Object.keys(dark).map(key => [key, {
-    dark: dark[key],
-    light: light[key],
-  }]))
+  return Object.fromEntries(Object.entries(dark).flatMap(([key, darkValue]) => {
+    const lightValue = light[key]
+    return darkValue === undefined || lightValue === undefined ? [] : [[key, { dark: darkValue, light: lightValue }]]
+  }))
 }

@@ -70,19 +70,24 @@ export function TimePicker({ value, onChange, label, hourLabel, minuteLabel, sec
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()
       const next = column + (event.key === 'ArrowRight' ? 1 : -1)
-      if (next >= 0 && next < count)
-        setCursor({ column: next, index: Math.min(index, OPTIONS[next].length - 1) })
+      const options = OPTIONS[next]
+      if (next >= 0 && next < count && options !== undefined)
+        setCursor({ column: next, index: Math.min(index, options.length - 1) })
       return
     }
     if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault()
-      setCursor({ column, index: event.key === 'Home' ? 0 : OPTIONS[column].length - 1 })
+      const options = OPTIONS[column]
+      if (options !== undefined)
+        setCursor({ column, index: event.key === 'Home' ? 0 : options.length - 1 })
       return
     }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')
       return
     event.preventDefault()
-    setCursor({ column, index: Math.min(Math.max(index + (event.key === 'ArrowDown' ? 1 : -1), 0), OPTIONS[column].length - 1) })
+    const options = OPTIONS[column]
+    if (options !== undefined)
+      setCursor({ column, index: Math.min(Math.max(index + (event.key === 'ArrowDown' ? 1 : -1), 0), options.length - 1) })
   }
 
   return (

@@ -59,8 +59,8 @@ export interface AdapterProbe {
 export interface AdapterSurface {
   sessions?: AdapterSessions
   workspaces?: AdapterWorkspaces
-  uiWorkspace?: AdapterRuntimeObject
-  uiSession?: AdapterRuntimeObject
+  uiWorkspace?: AdapterRuntimeObject | undefined
+  uiSession?: AdapterRuntimeObject | undefined
   startSession?: AdapterStartSession
   openSession?: AdapterOpenSession
   addWorkspace?: AdapterAddWorkspaceRuntime
