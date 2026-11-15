@@ -138,15 +138,23 @@ fn os_locale() -> Option<String> {
     Some(String::from_utf16_lossy(&buffer[..written as usize - 1]))
 }
 
+/// 从 `AppleLanguages` 的 plist 文本里取第一个语言标签。
+///
+/// 输出形如 `(\n    \"zh-Hans-CN\",\n    \"en-US\"\n)`；引号、逗号与括号都是分隔符，
+/// 第一个非空片段就是首选语言。
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn apple_languages_first_tag(text: &str) -> Option<String> {
+    text.split(['"', ',', '(', ')'])
+        .map(str::trim)
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
 /// macOS 把界面语言按优先级存在 `AppleLanguages`，`AppleLocale` 是没有语言列表时的区域。
 #[cfg(target_os = "macos")]
 fn os_locale() -> Option<String> {
     let preferred = defaults_read(&["read", "-g", "AppleLanguages"])?;
-    let tag = preferred.split(['"', ',']).find_map(|part| {
-        let tag = part.trim();
-        (!tag.is_empty() && *tag != '(' && *tag != ')').then(|| tag.to_string())
-    });
-    tag.or_else(|| defaults_read(&["read", "-g", "AppleLocale"]))
+    apple_languages_first_tag(&preferred).or_else(|| defaults_read(&["read", "-g", "AppleLocale"]))
 }
 
 #[cfg(target_os = "macos")]
@@ -414,6 +422,15 @@ mod tests {
         let locale = page_locale_with(None, Vec::new());
         assert_eq!(locale.language, None);
         assert!(locale.languages.is_empty());
+    }
+
+    #[test]
+    fn apple_languages_prefers_the_first_plist_entry() {
+        let plist = "(\n    \"zh-Hans-CN\",\n    \"en-US\"\n)";
+        assert_eq!(apple_languages_first_tag(plist).as_deref(), Some("zh-Hans-CN"));
+        assert_eq!(apple_languages_first_tag("(\"en-US\")").as_deref(), Some("en-US"));
+        assert_eq!(apple_languages_first_tag("()"), None);
+        assert_eq!(apple_languages_first_tag(""), None);
     }
 
     #[test]
