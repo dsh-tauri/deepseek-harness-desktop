@@ -202,19 +202,26 @@ module.exports = function registerNativePackages(archive, cache) {
   /// staging/P，于是依赖落 staging/P/node_modules/<name>，与 node 在归档里的查找顺序
   /// 完全一致。按来源目录而不是包名去重，两个版本因此各留一份，不会互相顶掉。
   ///
+  /// 去重键是「来源 + 落地位置」而非来源本身：共享的传递依赖必须每个 owner 各有一份，
+  /// 否则第二个 owner 横向查找不到（issue #1547）。同一条链上重复出现的来源不再落地，
+  /// Node 向上查找即命中祖先那份，成环的依赖才不会无限套娃。
+  ///
   /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
   function hoist(root, staging) {
     const handled = new Set()
     const copies = []
-    const pending = [{ directory: root, target: staging }]
+    const pending = [{ directory: root, target: staging, chain: new Set() }]
     while (pending.length > 0) {
-      const { directory, target } = pending.shift()
+      const { directory, target, chain } = pending.shift()
       for (const [, segments] of declarations(directory)) {
         const source = locate(directory, segments)
-        if (!source || handled.has(source))
+        if (!source || chain.has(source))
           continue
-        handled.add(source)
         const destination = path.join(target, 'node_modules', ...segments)
+        const key = `${source}\0${destination}`
+        if (handled.has(key))
+          continue
+        handled.add(key)
         // 包自身的 node_modules 已由 copy(root, staging, false) 原样带入，这里只补
         // 被提升到归档根、因此不在私有目录里的那些；重复写同一目标会让 publish 的
         // rename 撞上仍被打开的文件（Windows 上表现为 EPERM）。
@@ -223,7 +230,7 @@ module.exports = function registerNativePackages(archive, cache) {
           copy(source, destination, false)
           copies.push({ relative: path.relative(staging, destination), source })
         }
-        pending.push({ directory: source, target: destination })
+        pending.push({ directory: source, target: destination, chain: new Set([...chain, source]) })
       }
     }
     return copies
