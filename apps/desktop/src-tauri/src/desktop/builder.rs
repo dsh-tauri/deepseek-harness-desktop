@@ -774,7 +774,7 @@ pub(super) fn page_locale_script(setting: &crate::config::Setting) -> String {
   const locale = {payload};
   globalThis.__DSH_DESKTOP_LOCALE__ = {{ language: locale.language, languages: locale.languages }};
   globalThis.__DSH_LOCALE__ = {{
-    read: async () => ({{ languages: locale.languages, preference: locale.preference }}),
+    read: async () => ({{ languages: locale.languages.length > 0 ? locale.languages : navigator.languages, preference: locale.preference }}),
     onChange: () => {{}},
   }};
 }})();"

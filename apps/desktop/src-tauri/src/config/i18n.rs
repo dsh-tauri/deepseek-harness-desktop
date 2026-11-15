@@ -110,16 +110,57 @@ pub fn system_languages() -> Vec<String> {
     CACHE.get_or_init(detect_system_languages).clone()
 }
 
-/// 环境变量最贴近登录会话，其次是桌面环境与系统默认值。
+/// 环境变量最贴近登录会话，其次是操作系统自己的语言设置。
+///
+/// POSIX 变量只在 Linux / macOS 上有意义；Windows 从桌面快捷方式启动时它们全是空的，
+/// 必须问操作系统本身，否则页面探测不到系统语言会落回英文。
 fn detect_system_languages() -> Vec<String> {
     let mut sources: Vec<String> = ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
         .filter_map(|name| std::env::var_os(name))
         .map(|value| value.to_string_lossy().into_owned())
         .collect();
+    sources.extend(os_locale());
     sources.extend(desktop_region());
     sources.extend(file_locale_defaults());
     clean_languages(sources)
+}
+
+/// 操作系统自己的界面语言（优先于 `LANG` 之外的平台来源）。
+#[cfg(windows)]
+fn os_locale() -> Option<String> {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut buffer = [0u16; 85];
+    let written = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+    if written <= 1 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buffer[..written as usize - 1]))
+}
+
+/// macOS 把界面语言按优先级存在 `AppleLanguages`，`AppleLocale` 是没有语言列表时的区域。
+#[cfg(target_os = "macos")]
+fn os_locale() -> Option<String> {
+    let preferred = defaults_read(&["read", "-g", "AppleLanguages"])?;
+    let tag = preferred.split(['"', ',']).find_map(|part| {
+        let tag = part.trim();
+        (!tag.is_empty() && *tag != '(' && *tag != ')').then(|| tag.to_string())
+    });
+    tag.or_else(|| defaults_read(&["read", "-g", "AppleLocale"]))
+}
+
+#[cfg(target_os = "macos")]
+fn defaults_read(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("defaults").args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn os_locale() -> Option<String> {
+    None
 }
 
 /// GNOME「区域与语言」把选择写在 `org.gnome.system.locale region`。
@@ -364,6 +405,25 @@ mod tests {
         assert_eq!(locale.language, None);
         assert_eq!(locale.core_preference, None);
         assert_eq!(locale.languages, ["zh-CN", "en-US"].map(str::to_string));
+    }
+
+    /// 平台探测不到语言时（Windows 从快捷方式启动曾如此）注入列表会是空的，页面只能
+    /// 自己去问 `navigator`；这里锁住「探测不到就是空」，不臆造一个默认值。
+    #[test]
+    fn page_locale_reports_no_languages_when_the_platform_gives_none() {
+        let locale = page_locale_with(None, Vec::new());
+        assert_eq!(locale.language, None);
+        assert!(locale.languages.is_empty());
+    }
+
+    #[test]
+    fn os_locale_yields_a_tag_the_bundled_set_can_match() {
+        let Some(tag) = os_locale() else {
+            return;
+        };
+        assert!(!tag.is_empty());
+        let cleaned = language_tag(&tag).expect("an OS locale is never C or POSIX");
+        assert!(normalize_language(&cleaned).is_some(), "{tag}");
     }
 
     #[test]
