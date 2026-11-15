@@ -200,20 +200,23 @@ module.exports = function registerNativePackages(archive, cache) {
 
   /// 依赖按「解析到它的那个包」的私有目录落地：owner 的目录相对归档的路径 P 对应
   /// staging/P，于是依赖落 staging/P/node_modules/<name>，与 node 在归档里的查找顺序
-  /// 完全一致。按来源目录而不是包名去重，两个版本因此各留一份，不会互相顶掉。
+  /// 完全一致。按来源目录而不是包名区分，两个版本因此各留一份，不会互相顶掉。
+  ///
+  /// node 只向上查找，兄弟目录里的副本互相看不见：共享依赖要落到每个所有者下，
+  /// 除非祖先层已经放了同名同源的一份，或它本身就是祖先（循环依赖）。
   ///
   /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
   function hoist(root, staging) {
-    const handled = new Set()
     const copies = []
-    const pending = [{ directory: root, target: staging }]
+    const pending = [{ directory: root, target: staging, visible: new Map(), chain: new Set([root]) }]
     while (pending.length > 0) {
-      const { directory, target } = pending.shift()
-      for (const [, segments] of declarations(directory)) {
+      const { directory, target, visible, chain } = pending.shift()
+      const placed = []
+      const scope = new Map(visible)
+      for (const [name, segments] of declarations(directory)) {
         const source = locate(directory, segments)
-        if (!source || handled.has(source))
+        if (!source || chain.has(source) || visible.get(name) === source)
           continue
-        handled.add(source)
         const destination = path.join(target, 'node_modules', ...segments)
         // 包自身的 node_modules 已由 copy(root, staging, false) 原样带入，这里只补
         // 被提升到归档根、因此不在私有目录里的那些；重复写同一目标会让 publish 的
@@ -223,8 +226,11 @@ module.exports = function registerNativePackages(archive, cache) {
           copy(source, destination, false)
           copies.push({ relative: path.relative(staging, destination), source })
         }
-        pending.push({ directory: source, target: destination })
+        scope.set(name, source)
+        placed.push({ source, destination })
       }
+      for (const { source, destination } of placed)
+        pending.push({ directory: source, target: destination, visible: scope, chain: new Set(chain).add(source) })
     }
     return copies
   }
