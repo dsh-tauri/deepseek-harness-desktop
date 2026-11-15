@@ -433,14 +433,14 @@ mod tests {
         assert_eq!(apple_languages_first_tag(""), None);
     }
 
+    /// 系统区域可以是任意语言（法语机器就是 `fr-FR`），这里只要求它是一个可用的标签；
+    /// 「哪些标签能落到打包语言」由 `normalize_language` 自己的用例负责。
     #[test]
-    fn os_locale_yields_a_tag_the_bundled_set_can_match() {
+    fn os_locale_yields_a_usable_tag() {
         let Some(tag) = os_locale() else {
             return;
         };
-        assert!(!tag.is_empty());
-        let cleaned = language_tag(&tag).expect("an OS locale is never C or POSIX");
-        assert!(normalize_language(&cleaned).is_some(), "{tag}");
+        assert!(language_tag(&tag).is_some(), "{tag}");
     }
 
     #[test]
