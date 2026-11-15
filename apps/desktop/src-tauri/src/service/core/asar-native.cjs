@@ -202,22 +202,33 @@ module.exports = function registerNativePackages(archive, cache) {
   /// staging/P，于是依赖落 staging/P/node_modules/<name>，与 node 在归档里的查找顺序
   /// 完全一致。按来源目录而不是包名区分，两个版本因此各留一份，不会互相顶掉。
   ///
-  /// node 只向上查找，兄弟目录里的副本互相看不见：共享依赖要落到每个所有者下，
-  /// 除非祖先层已经放了同名同源的一份，或它本身就是祖先（循环依赖）。
+  /// node 只向上查找：沿所有者的祖先链找最近的同名副本，同源就直接复用；整条链上都
+  /// 没有这个名字时放到 staging 顶层，所有后代都看得见，共享依赖因此只落一份，菱形
+  /// 依赖图不会按路径数展开；被不同来源遮住时才落到所有者自己目录下，保留最近遮蔽。
   ///
   /// 返回「相对 staging 的副本路径 → 归档内真实来源」，物化完成后由调用方登记到 sources。
   function hoist(root, staging) {
     const copies = []
-    const pending = [{ directory: root, target: staging, visible: new Map(), chain: new Set([root]) }]
+    const top = { names: new Map(), parent: null, target: staging }
+    const pending = [{ directory: root, scope: top, chain: new Set() }]
     while (pending.length > 0) {
-      const { directory, target, visible, chain } = pending.shift()
-      const placed = []
-      const scope = new Map(visible)
+      const { directory, scope, chain } = pending.shift()
       for (const [name, segments] of declarations(directory)) {
         const source = locate(directory, segments)
-        if (!source || chain.has(source) || visible.get(name) === source)
+        if (!source)
           continue
-        const destination = path.join(target, 'node_modules', ...segments)
+        let nearest = scope
+        while (nearest && !nearest.names.has(name))
+          nearest = nearest.parent
+        const visible = nearest?.names.get(name)
+        if (visible === source)
+          continue
+        // 同一来源在同一遮蔽下重新出现只会无限展开（版本交替的循环依赖），到此为止。
+        const state = `${source}\0${visible ?? ''}`
+        if (chain.has(state))
+          continue
+        const owner = nearest || source === path.join(directory, 'node_modules', ...segments) ? scope : top
+        const destination = path.join(owner.target, 'node_modules', ...segments)
         // 包自身的 node_modules 已由 copy(root, staging, false) 原样带入，这里只补
         // 被提升到归档根、因此不在私有目录里的那些；重复写同一目标会让 publish 的
         // rename 撞上仍被打开的文件（Windows 上表现为 EPERM）。
@@ -226,11 +237,9 @@ module.exports = function registerNativePackages(archive, cache) {
           copy(source, destination, false)
           copies.push({ relative: path.relative(staging, destination), source })
         }
-        scope.set(name, source)
-        placed.push({ source, destination })
+        owner.names.set(name, source)
+        pending.push({ directory: source, scope: { names: new Map(), parent: owner, target: destination }, chain: new Set(chain).add(state) })
       }
-      for (const { source, destination } of placed)
-        pending.push({ directory: source, target: destination, visible: scope, chain: new Set(chain).add(source) })
     }
     return copies
   }
