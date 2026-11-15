@@ -2,13 +2,14 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ReactElement } from 'react'
 import type { PostApiTauriUiSessionWorkspaceStatusResponse } from '../apis/index.type'
 import { useEffect, useState } from 'react'
-import { postSessionWorkspaceStatus } from '../apis'
 import { Button } from '../components/button'
 import { Notice } from '../components/notice'
 import { locale } from '../locales'
 
 interface WorkspaceStatusNoticeProps {
   sessionId: PropsRuntime<'conversation.composer.dock'>['sessionId']
+  checkWorkspace: (sessionId: string, signal: AbortSignal) => Promise<PostApiTauriUiSessionWorkspaceStatusResponse>
+  onWindowFocus: (refresh: () => void) => () => void
   chooseFolder: () => Promise<{ status: string }>
 }
 
@@ -16,7 +17,7 @@ export function WorkspaceStatusNotice(props: WorkspaceStatusNoticeProps): ReactE
   return <SessionNotice key={props.sessionId} {...props} />
 }
 
-function SessionNotice({ sessionId, chooseFolder }: WorkspaceStatusNoticeProps): ReactElement | null {
+function SessionNotice({ sessionId, checkWorkspace, onWindowFocus, chooseFolder }: WorkspaceStatusNoticeProps): ReactElement | null {
   const [problem, setProblem] = useState<Extract<PostApiTauriUiSessionWorkspaceStatusResponse, { cwd: string }>>()
   const [choosing, setChoosing] = useState(false)
   const [chooseFailed, setChooseFailed] = useState(false)
@@ -28,7 +29,7 @@ function SessionNotice({ sessionId, chooseFolder }: WorkspaceStatusNoticeProps):
       request?.abort()
       request = new AbortController()
       const { signal } = request
-      void postSessionWorkspaceStatus({ sessionId }, { signal }).then((result) => {
+      void checkWorkspace(sessionId, signal).then((result) => {
         if (signal.aborted)
           return
         setProblem('cwd' in result ? result : undefined)
@@ -38,12 +39,12 @@ function SessionNotice({ sessionId, chooseFolder }: WorkspaceStatusNoticeProps):
       })
     }
     refresh()
-    window.addEventListener('focus', refresh)
+    const stopWatching = onWindowFocus(refresh)
     return () => {
       request?.abort()
-      window.removeEventListener('focus', refresh)
+      stopWatching()
     }
-  }, [sessionId])
+  }, [sessionId, checkWorkspace, onWindowFocus])
 
   if (problem === undefined)
     return null
