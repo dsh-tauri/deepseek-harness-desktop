@@ -1,7 +1,8 @@
+import type { RemoteExecResult, RemoteSession } from '../types/index'
 import type { DshZipPlan, RemoteInstallPlan } from './bootstrap.types'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { GithubHttpError } from '../utils/version'
-import { buildInstallScript, planRemoteInstall, startCommandFor } from './bootstrap.utils'
+import { assertRemoteDshVersion, buildInstallScript, planRemoteInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
 
 async function failing(): Promise<never> {
   throw new Error('network unreachable')
@@ -12,6 +13,38 @@ function zipPlanOf(plan: RemoteInstallPlan): DshZipPlan {
     throw new Error('expected a pkg-zip install plan')
   return plan.dsh
 }
+
+function sessionOfResult(result: RemoteExecResult): RemoteSession {
+  return {
+    exec: vi.fn(async () => result),
+    stream: vi.fn(),
+    onClosed: vi.fn(),
+    close: vi.fn(async () => {}),
+  }
+}
+
+describe('远端 DSH 包版本读取', () => {
+  it('reads the installed package version', async () => {
+    const session = sessionOfResult({ code: 0, stdout: JSON.stringify({ version: '0.2.2-rc.1' }), stderr: '' })
+    await expect(readRemoteDshVersion(session)).resolves.toBe('0.2.2-rc.1')
+  })
+
+  it('does not treat malformed package metadata as an allowed missing install', async () => {
+    const session = sessionOfResult({ code: 0, stdout: 'not json', stderr: '' })
+    await expect(assertRemoteDshVersion(session, true)).rejects.toThrow('REMOTE_DSH_PACKAGE_INVALID')
+  })
+
+  it('preserves a failed package read as unreadable', async () => {
+    const session = sessionOfResult({ code: 1, stdout: '', stderr: 'permission denied' })
+    await expect(readRemoteDshVersion(session)).rejects.toThrow('REMOTE_DSH_PACKAGE_UNREADABLE')
+  })
+
+  it('allows an explicitly missing package only when requested', async () => {
+    const session = sessionOfResult({ code: 0, stdout: 'REMOTE_DSH_MISSING', stderr: '' })
+    await expect(assertRemoteDshVersion(session, true)).resolves.toBeUndefined()
+    await expect(readRemoteDshVersion(session)).resolves.toBeUndefined()
+  })
+})
 
 describe('planRemoteInstall 的 release 候选选择', () => {
   it('资产元数据缺失时按候选顺序取第一个存在的发行包', async () => {

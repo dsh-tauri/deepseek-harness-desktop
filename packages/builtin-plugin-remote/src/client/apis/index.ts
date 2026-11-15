@@ -60,7 +60,17 @@ export function postMachinesInstall(body: Types.PostApiTauriRemoteMachinesInstal
 
 /** @method get */
 export function getMachinesEvents(params?: Types.GetApiTauriRemoteMachinesEventsQuery, options?: FetchOptions) {
-  return ofetch<Types.GetApiTauriRemoteMachinesEventsResponse>('/api/tauri/remote/machines/events', { method: 'get', params, ...options })
+  return ofetch<Types.GetApiTauriRemoteMachinesEventsResponse>('/api/tauri/remote/machines/events', { method: 'get', ...params === undefined ? {} : { params }, ...options })
+}
+
+/** @method get */
+export function getCoreCurrent(params: Types.GetApiTauriRemoteCoreCurrentQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriRemoteCoreCurrentResponse>('/api/tauri/remote/core/current', { method: 'get', ...params === undefined ? {} : { params }, ...options })
+}
+
+/** @method get */
+export function getCoreVersions(options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriRemoteCoreVersionsResponse>('/api/tauri/remote/core/versions', { method: 'get', ...options })
 }
 
 /** @method get */
@@ -75,7 +85,7 @@ export function postSyncApply(body: Types.PostApiTauriRemoteSyncApplyBody, optio
 
 /** @method get */
 export function getAccess(params?: Types.GetApiTauriRemoteAccessQuery, options?: FetchOptions) {
-  return ofetch<Types.GetApiTauriRemoteAccessResponse>('/api/tauri/remote/access', { method: 'get', params, ...options })
+  return ofetch<Types.GetApiTauriRemoteAccessResponse>('/api/tauri/remote/access', { method: 'get', ...params === undefined ? {} : { params }, ...options })
 }
 
 /** @method post */
