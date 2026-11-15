@@ -133,6 +133,13 @@ export const harness = defineStore({
      */
     webviewAliveKey: null as number | null,
     webviewKey: 0,
+    /**
+     * 内核进程代：每次确认 owned 进程退出即自增。
+     *
+     * 内核重启后端口与文档地址常常不变，宿主导航若只比对 URL 就会认为「已经在这个
+     * 地址上」而跳过重挂，页面于是停在旧内核的残缺连接上白屏（issue #1510）。
+     */
+    processGeneration: 0,
     restartPending: false,
     serviceHealthy: false,
     serviceRunning: false,
@@ -323,6 +330,7 @@ export const harness = defineStore({
       }
 
       const exitToken = ++bootToken
+      this.processGeneration++
       this.resetFrontendPreload()
       const message = i18next.t(runtimeExitMessageKey(payload.exitCode), {
         code: payload.exitCode,

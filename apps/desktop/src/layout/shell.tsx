@@ -36,7 +36,7 @@ const FULL_SIDEBAR_REVEAL_MS = 15_000
 /** 壳层窗口组合：导航栏 + 启动/预装/恢复/Harness 内容分支。 */
 export function Shell() {
   // 1. 数据查询 (Queries)
-  const { status, serviceHealthy, webviewSrc, restartPending } = useStore(store.harness)
+  const { status, serviceHealthy, webviewSrc, restartPending, processGeneration } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
   const [dshStyle, setDshStyle] = useDshStyle()
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
@@ -79,24 +79,26 @@ export function Shell() {
   // keep:effect 主窗口文档即 DSH：本机服务就绪后把当前 webview 导航到 DSH 页面。
   // `serviceHealthy` 在启动收尾阶段会反复翻转，重复导航会互相打断（ERR_ABORTED），
   // 用 ref 记住已发起的地址，只在目标真正变化时再导航。
-  const hostedNavigationRef = useRef<string | null>(null)
+  const hostedNavigationRef = useRef<{ generation: number, url: string } | null>(null)
   useEffect(() => {
     if (!isHostedDocument() || remoteMode)
       return
     if (status !== 'ready' || !serviceHealthy || !webviewSrc)
       return
-    if (isHostedServiceDocument() && new URL(webviewSrc).origin === location.origin && !restartPending)
+    // 内核重启后地址可能一字未变，但旧文档已经连着死掉的内核：这一代必须重挂一次。
+    const navigated = hostedNavigationRef.current
+    if (navigated !== null && navigated.generation === processGeneration && navigated.url === webviewSrc)
       return
-    if (hostedNavigationRef.current === webviewSrc)
+    if (navigated === null && processGeneration === 0 && isHostedServiceDocument() && new URL(webviewSrc).origin === location.origin && !restartPending)
       return
-    hostedNavigationRef.current = webviewSrc
+    hostedNavigationRef.current = { generation: processGeneration, url: webviewSrc }
     void invoke('host_harness_document', { url: webviewSrc })
       .catch((error) => {
         hostedNavigationRef.current = null
         console.error('[Shell] host document failed:', error)
         store.harness.fail(String(error), undefined, undefined, undefined, store.harness.serviceRunning)
       })
-  }, [status, serviceHealthy, webviewSrc, remoteMode, restartPending])
+  }, [status, serviceHealthy, webviewSrc, remoteMode, restartPending, processGeneration])
 
   function syncViewMenu() {
     if (type() !== 'macos')
