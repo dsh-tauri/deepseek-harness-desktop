@@ -110,16 +110,65 @@ pub fn system_languages() -> Vec<String> {
     CACHE.get_or_init(detect_system_languages).clone()
 }
 
-/// 环境变量最贴近登录会话，其次是桌面环境与系统默认值。
+/// 环境变量最贴近登录会话，其次是操作系统自己的语言设置。
+///
+/// POSIX 变量只在 Linux / macOS 上有意义；Windows 从桌面快捷方式启动时它们全是空的，
+/// 必须问操作系统本身，否则页面探测不到系统语言会落回英文。
 fn detect_system_languages() -> Vec<String> {
     let mut sources: Vec<String> = ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
         .filter_map(|name| std::env::var_os(name))
         .map(|value| value.to_string_lossy().into_owned())
         .collect();
+    sources.extend(os_locale());
     sources.extend(desktop_region());
     sources.extend(file_locale_defaults());
     clean_languages(sources)
+}
+
+/// 操作系统自己的界面语言（优先于 `LANG` 之外的平台来源）。
+#[cfg(windows)]
+fn os_locale() -> Option<String> {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut buffer = [0u16; 85];
+    let written = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+    if written <= 1 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buffer[..written as usize - 1]))
+}
+
+/// 从 `AppleLanguages` 的 plist 文本里取第一个语言标签。
+///
+/// 输出形如 `(\n    \"zh-Hans-CN\",\n    \"en-US\"\n)`；引号、逗号与括号都是分隔符，
+/// 第一个非空片段就是首选语言。
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn apple_languages_first_tag(text: &str) -> Option<String> {
+    text.split(['"', ',', '(', ')'])
+        .map(str::trim)
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+/// macOS 把界面语言按优先级存在 `AppleLanguages`，`AppleLocale` 是没有语言列表时的区域。
+#[cfg(target_os = "macos")]
+fn os_locale() -> Option<String> {
+    let preferred = defaults_read(&["read", "-g", "AppleLanguages"])?;
+    apple_languages_first_tag(&preferred).or_else(|| defaults_read(&["read", "-g", "AppleLocale"]))
+}
+
+#[cfg(target_os = "macos")]
+fn defaults_read(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("defaults").args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn os_locale() -> Option<String> {
+    None
 }
 
 /// GNOME「区域与语言」把选择写在 `org.gnome.system.locale region`。
@@ -364,6 +413,34 @@ mod tests {
         assert_eq!(locale.language, None);
         assert_eq!(locale.core_preference, None);
         assert_eq!(locale.languages, ["zh-CN", "en-US"].map(str::to_string));
+    }
+
+    /// 平台探测不到语言时（Windows 从快捷方式启动曾如此）注入列表会是空的，页面只能
+    /// 自己去问 `navigator`；这里锁住「探测不到就是空」，不臆造一个默认值。
+    #[test]
+    fn page_locale_reports_no_languages_when_the_platform_gives_none() {
+        let locale = page_locale_with(None, Vec::new());
+        assert_eq!(locale.language, None);
+        assert!(locale.languages.is_empty());
+    }
+
+    #[test]
+    fn apple_languages_prefers_the_first_plist_entry() {
+        let plist = "(\n    \"zh-Hans-CN\",\n    \"en-US\"\n)";
+        assert_eq!(apple_languages_first_tag(plist).as_deref(), Some("zh-Hans-CN"));
+        assert_eq!(apple_languages_first_tag("(\"en-US\")").as_deref(), Some("en-US"));
+        assert_eq!(apple_languages_first_tag("()"), None);
+        assert_eq!(apple_languages_first_tag(""), None);
+    }
+
+    /// 系统区域可以是任意语言（法语机器就是 `fr-FR`），这里只要求它是一个可用的标签；
+    /// 「哪些标签能落到打包语言」由 `normalize_language` 自己的用例负责。
+    #[test]
+    fn os_locale_yields_a_usable_tag() {
+        let Some(tag) = os_locale() else {
+            return;
+        };
+        assert!(language_tag(&tag).is_some(), "{tag}");
     }
 
     #[test]

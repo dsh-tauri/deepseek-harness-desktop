@@ -309,6 +309,72 @@ test('two different versions of the same dependency keep their own copies instea
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@1"')
 })
 
+test('a shared hoisted dependency is copied under every owner instead of only the first', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0', b: '^1.0.0' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = [require("a"), require("b")]')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("x")')
+  f.write('node_modules/b/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^1.0.0' } }))
+  f.write('node_modules/b/index.js', 'module.exports = require("x")')
+  f.write('node_modules/x/package.json', JSON.stringify({ main: 'index.js' }))
+  f.write('node_modules/x/index.js', 'module.exports = "shared x"')
+  assert.deepEqual(f.load('@scope/pkg'), ['shared x', 'shared x'])
+  const owner = path.join(f.cache, 'node_modules/@scope/pkg/node_modules')
+  assert.equal(fs.readFileSync(path.join(owner, 'a/node_modules/x/index.js'), 'utf8'), 'module.exports = "shared x"')
+  assert.equal(fs.readFileSync(path.join(owner, 'b/node_modules/x/index.js'), 'utf8'), 'module.exports = "shared x"')
+  assert.equal(f.load(path.join(owner, 'a/node_modules/x')), 'shared x')
+  assert.equal(f.load(path.join(owner, 'b/node_modules/x')), 'shared x')
+  const script = 'process.stdout.write(JSON.stringify([require(process.env.DSH_PROBE_OWNER + "/a"), require(process.env.DSH_PROBE_OWNER + "/b")]))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_OWNER: owner } })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.deepEqual(JSON.parse(bare.stdout), ['shared x', 'shared x'])
+})
+
+test('a diamond dependency graph does not multiply copies by path count', { timeout: 20000 }, (t) => {
+  const f = fixture(t)
+  const layers = 5
+  const deps = (name) => {
+    const next = Number(name.slice(1)) + 1
+    return next < layers ? { [`a${next}`]: '^1.0.0', [`b${next}`]: '^1.0.0' } : {}
+  }
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a0: '^1.0.0', b0: '^1.0.0' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = "ok"')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  for (let level = 0; level < layers; level++) {
+    for (const name of [`a${level}`, `b${level}`]) {
+      f.write(`node_modules/${name}/package.json`, JSON.stringify({ main: 'index.js', dependencies: deps(name) }))
+      f.write(`node_modules/${name}/index.js`, 'module.exports = "ok"')
+    }
+  }
+  assert.equal(f.load('@scope/pkg'), 'ok')
+  const owner = path.join(f.cache, 'node_modules/@scope/pkg/node_modules')
+  const script = 'process.stdout.write(JSON.stringify(require(process.env.DSH_PROBE_ENTRY + "/a0")))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 15000, env: { ...process.env, DSH_PROBE_ENTRY: owner } })
+  assert.equal(bare.status, 0, bare.stderr)
+  const copies = fs.readdirSync(owner).filter(name => name !== 'a0' && name !== 'b0').length
+  assert.ok(copies <= layers * 2, `expected at most ${layers * 2} extra copies, found ${copies}`)
+})
+
+test('a dependency cycle stops nesting and keeps every owner resolvable', { timeout: 20000 }, (t) => {
+  const f = fixture(t)
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = require("a")')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { b: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = "a->" + require("b")')
+  f.write('node_modules/b/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/b/index.js', 'module.exports = "b"')
+  assert.equal(f.load('@scope/pkg'), 'a->b')
+  const owner = path.join(f.cache, 'node_modules/@scope/pkg/node_modules')
+  assert.equal(fs.readFileSync(path.join(owner, 'a/node_modules/b/index.js'), 'utf8'), 'module.exports = "b"')
+  const script = 'process.stdout.write(require(process.env.DSH_PROBE_OWNER + "/a"))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_OWNER: owner } })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.equal(bare.stdout, 'a->b')
+})
+
 test('a hoisted copy outside the archive resolves its own dependencies through the real archive source', (t) => {
   const f = fixture(t)
   f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { fflate: '^0.8.2' } }))
