@@ -332,6 +332,31 @@ test('a shared hoisted dependency is copied under every owner instead of only th
   assert.deepEqual(JSON.parse(bare.stdout), ['shared x', 'shared x'])
 })
 
+test('a diamond dependency graph does not multiply copies by path count', { timeout: 20000 }, (t) => {
+  const f = fixture(t)
+  const layers = 5
+  const deps = (name) => {
+    const next = Number(name.slice(1)) + 1
+    return next < layers ? { [`a${next}`]: '^1.0.0', [`b${next}`]: '^1.0.0' } : {}
+  }
+  f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a0: '^1.0.0', b0: '^1.0.0' } }))
+  f.write('node_modules/@scope/pkg/index.js', 'module.exports = "ok"')
+  f.write('node_modules/@scope/pkg/binding.node', 'not loaded')
+  for (let level = 0; level < layers; level++) {
+    for (const name of [`a${level}`, `b${level}`]) {
+      f.write(`node_modules/${name}/package.json`, JSON.stringify({ main: 'index.js', dependencies: deps(name) }))
+      f.write(`node_modules/${name}/index.js`, 'module.exports = "ok"')
+    }
+  }
+  assert.equal(f.load('@scope/pkg'), 'ok')
+  const owner = path.join(f.cache, 'node_modules/@scope/pkg/node_modules')
+  const script = 'process.stdout.write(JSON.stringify(require(process.env.DSH_PROBE_ENTRY + "/a0")))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 15000, env: { ...process.env, DSH_PROBE_ENTRY: owner } })
+  assert.equal(bare.status, 0, bare.stderr)
+  const copies = fs.readdirSync(owner).filter(name => name !== 'a0' && name !== 'b0').length
+  assert.ok(copies <= layers * 2, `expected at most ${layers * 2} extra copies, found ${copies}`)
+})
+
 test('a dependency cycle stops nesting and keeps every owner resolvable', { timeout: 20000 }, (t) => {
   const f = fixture(t)
   f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))

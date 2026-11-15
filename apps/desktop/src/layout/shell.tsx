@@ -78,22 +78,29 @@ export function Shell() {
 
   // keep:effect 主窗口文档即 DSH：本机服务就绪后把当前 webview 导航到 DSH 页面。
   // `serviceHealthy` 在启动收尾阶段会反复翻转，重复导航会互相打断（ERR_ABORTED），
-  // 用 ref 记住已发起的地址，只在目标真正变化时再导航。
+  // 因此只在「已轮到另一代内核」或目标真正变化时才导航。
   const hostedNavigationRef = useRef<{ generation: number, url: string } | null>(null)
   useEffect(() => {
     if (!isHostedDocument() || remoteMode)
       return
     if (status !== 'ready' || !serviceHealthy || !webviewSrc)
       return
-    // 内核重启后地址可能一字未变，但旧文档已经连着死掉的内核：这一代必须重挂一次。
-    const navigated = hostedNavigationRef.current
-    if (navigated !== null && navigated.generation === processGeneration && navigated.url === webviewSrc)
+    if (hostedNavigationRef.current !== null && hostedNavigationRef.current.generation === processGeneration)
       return
-    if (navigated === null && processGeneration === 0 && isHostedServiceDocument() && new URL(webviewSrc).origin === location.origin && !restartPending)
+    // 文档即 DSH 且自本文档挂载以来未换代：当前页面就是要导航的那个文档，
+    // 再导航只会自我打断（页面重载会重建 store，因此基线恒为 0）。
+    if (hostedNavigationRef.current === null && processGeneration === 0 && isHostedServiceDocument()
+      && new URL(webviewSrc).origin === location.origin && !restartPending) {
       return
-    hostedNavigationRef.current = { generation: processGeneration, url: webviewSrc }
+    }
+    // 认证可能等上几十秒；等待期间内核可能已经换代，这时旧导航的拒绝与新一次的成败无关，
+    // 拿它去 fail 会把已经就绪的新页面推进错误态。
+    const navigation = { generation: processGeneration, url: webviewSrc }
+    hostedNavigationRef.current = navigation
     void invoke('host_harness_document', { url: webviewSrc })
       .catch((error) => {
+        if (hostedNavigationRef.current !== navigation || navigation.generation !== store.harness.processGeneration)
+          return
         hostedNavigationRef.current = null
         console.error('[Shell] host document failed:', error)
         store.harness.fail(String(error), undefined, undefined, undefined, store.harness.serviceRunning)
