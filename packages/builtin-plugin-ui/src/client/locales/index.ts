@@ -23,6 +23,11 @@ export const locale = defineLocale(PLUGIN_ID, {
     menuArchivedCount: '已归档 {count} 个会话',
     menuOpenFailed: '打开失败',
     menuCopyFailed: '复制失败',
+    workspaceMissing: '找不到此会话原始的工作目录：{path}',
+    workspaceNotDirectory: '此会话原始的工作路径不是文件夹：{path}',
+    workspaceRecovery: '恢复原路径后继续此会话，或在正确的文件夹中开始新会话。',
+    workspaceChooseFolder: '选择新会话的文件夹',
+    workspaceChooseFailed: '无法在所选文件夹中开始会话，请重试。',
   },
   en: {
     back: 'Back to app',
@@ -45,5 +50,10 @@ export const locale = defineLocale(PLUGIN_ID, {
     menuArchivedCount: 'Archived {count} sessions',
     menuOpenFailed: 'Could not open the folder',
     menuCopyFailed: 'Could not copy',
+    workspaceMissing: 'This chat’s original working folder is missing: {path}',
+    workspaceNotDirectory: 'This chat’s original working path is no longer a folder: {path}',
+    workspaceRecovery: 'Restore the original path to continue this chat, or start a new chat in the correct folder.',
+    workspaceChooseFolder: 'Choose a folder for a new chat',
+    workspaceChooseFailed: 'Could not start a chat in the selected folder. Try again.',
   },
 })

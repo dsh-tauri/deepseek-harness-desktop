@@ -1,4 +1,4 @@
-export interface SessionResumeBody {
+export interface SessionIdBody {
   sessionId?: string
 }
 

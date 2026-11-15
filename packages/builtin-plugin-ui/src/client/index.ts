@@ -13,6 +13,7 @@ import { registerSettingsSections } from './register/sections'
 import { registerSettings } from './register/settings'
 import { registerSettingsOpen } from './register/settings-open'
 import { registerStyles } from './register/styles'
+import { registerWorkspaceStatus } from './register/workspace-status'
 
 export * from './components'
 export * from './components/panel'
@@ -33,6 +34,7 @@ export const inject = ['slots', 'layout', 'locale', 'sessions', 'uiSession', 'ui
 
 const COMPOSER_RESUME_EFFECT = `${PLUGIN_ID}: composer resume`
 const CONTINUE_NOTICE_EFFECT = `${PLUGIN_ID}: continue notice`
+const WORKSPACE_STATUS_EFFECT = `${PLUGIN_ID}: workspace status`
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(locale.registerLocale, LOCALE_EFFECT)
@@ -43,6 +45,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(registerSettingsOpen, SETTINGS_OPEN_EFFECT)
   ctx.effect(composerResumeFeature, COMPOSER_RESUME_EFFECT)
   ctx.effect(registerContinueNotice, CONTINUE_NOTICE_EFFECT)
+  ctx.effect(registerWorkspaceStatus, WORKSPACE_STATUS_EFFECT)
   ctx.effect(() => registerMenuIcons(ctx), `${CONTEXT_MENU_EFFECT} icons`)
   ctx.effect(() => registerContextMenu(ctx), CONTEXT_MENU_EFFECT)
   ctx.effect(registerDesktopSettings, `${PLUGIN_ID}: desktop settings`)

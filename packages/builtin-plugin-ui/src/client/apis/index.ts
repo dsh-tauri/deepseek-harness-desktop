@@ -17,3 +17,8 @@ export function postPathOpen(body: Types.PostApiTauriUiPathOpenBody, options?: F
 export function postSessionResume(body: Types.PostApiTauriUiSessionResumeBody, options?: FetchOptions) {
   return ofetch<Types.PostApiTauriUiSessionResumeResponse>('/api/tauri/ui/session/resume', { method: 'post', body, ...options })
 }
+
+/** @method post */
+export function postSessionWorkspaceStatus(body: Types.PostApiTauriUiSessionWorkspaceStatusBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriUiSessionWorkspaceStatusResponse>('/api/tauri/ui/session/workspace-status', { method: 'post', body, ...options })
+}
