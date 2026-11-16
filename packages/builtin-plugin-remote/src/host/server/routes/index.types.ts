@@ -1,3 +1,4 @@
+import type { CoreTarget, CoreVersionItem } from '../../../shared/core'
 import type { RemoteAuthMethod, RemoteConnectionState, RemoteProgress, RemoteTunnelMode } from '../../types/index'
 
 export interface RemoteMachineListItem {
@@ -90,6 +91,20 @@ export interface GetAccessQuery {
 export interface GetMachinesEventsQuery {
   machineId?: string
   sinceSeq?: number
+}
+
+export interface GetCoreCurrentQuery {
+  machineId: string
+}
+
+export interface RemoteCoreCurrentResponse {
+  item?: CoreTarget
+  error?: string
+}
+
+export interface RemoteCoreVersionsResponse {
+  items?: CoreVersionItem[]
+  error?: string
 }
 
 export interface RemoteMachineEventItem {

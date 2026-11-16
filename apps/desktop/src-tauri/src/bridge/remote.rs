@@ -4,27 +4,32 @@ use std::time::Duration;
 use serde_json::Value;
 use tauri::{ Manager};
 
+const REMOTE_CORE_READ_TIMEOUT_SECS: u64 = 60;
+
+const REMOTE_ENDPOINTS: &[&str] = &[
+    "GET /api/tauri/remote/machines",
+    "POST /api/tauri/remote/machines",
+    "DELETE /api/tauri/remote/machines",
+    "POST /api/tauri/remote/machines/connect",
+    "POST /api/tauri/remote/machines/disconnect",
+    "GET /api/tauri/remote/machines/events",
+    "POST /api/tauri/remote/machines/install",
+    "POST /api/tauri/remote/machines/test",
+    "GET /api/tauri/remote/core/current",
+    "GET /api/tauri/remote/core/versions",
+    "GET /api/tauri/remote/session/role",
+    "GET /api/tauri/remote/settings",
+    "POST /api/tauri/remote/settings",
+    "POST /api/tauri/remote/sync/apply",
+    "GET /api/tauri/remote/sync/preview",
+    "GET /api/tauri/remote/access",
+    "POST /api/tauri/remote/access",
+    "POST /api/tauri/remote/access/tunnel",
+    "DELETE /api/tauri/remote/access/tunnel",
+];
+
 fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
-    if !matches!(
-        method,
-        "GET /api/tauri/remote/machines"
-            | "POST /api/tauri/remote/machines"
-            | "DELETE /api/tauri/remote/machines"
-            | "POST /api/tauri/remote/machines/connect"
-            | "POST /api/tauri/remote/machines/disconnect"
-            | "GET /api/tauri/remote/machines/events"
-            | "POST /api/tauri/remote/machines/install"
-            | "POST /api/tauri/remote/machines/test"
-            | "GET /api/tauri/remote/session/role"
-            | "GET /api/tauri/remote/settings"
-            | "POST /api/tauri/remote/settings"
-            | "POST /api/tauri/remote/sync/apply"
-            | "GET /api/tauri/remote/sync/preview"
-            | "GET /api/tauri/remote/access"
-            | "POST /api/tauri/remote/access"
-            | "POST /api/tauri/remote/access/tunnel"
-            | "DELETE /api/tauri/remote/access/tunnel"
-    ) {
+    if !REMOTE_ENDPOINTS.contains(&method) {
         return Err(format!("REMOTE_METHOD_INVALID: {method}"));
     }
     let (verb, path) = method
@@ -34,6 +39,21 @@ fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
         .parse()
         .map_err(|_| format!("REMOTE_METHOD_INVALID: {method}"))?;
     Ok((verb, path))
+}
+
+fn remote_timeout(method: &reqwest::Method, path: &str) -> Duration {
+    if method == reqwest::Method::GET
+        && matches!(
+            path,
+            "/api/tauri/remote/core/current" | "/api/tauri/remote/core/versions"
+        )
+    {
+        Duration::from_secs(REMOTE_CORE_READ_TIMEOUT_SECS)
+    } else if method == reqwest::Method::GET {
+        Duration::from_secs(10)
+    } else {
+        Duration::from_secs(600)
+    }
 }
 
 fn machine_tunnel_url(machines: &Value, machine_id: &str) -> Result<tauri::Url, String> {
@@ -66,10 +86,11 @@ async fn remote_request_authenticated(
     port: u16, method: reqwest::Method, path: &str, payload: Option<Value>, cookie: Option<&str>,
 ) -> Result<Value, String> {
     let is_get = method == reqwest::Method::GET;
+    let timeout = remote_timeout(&method, path);
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(if is_get { 10 } else { 600 }))
+        .timeout(timeout)
         .build()
         .map_err(|error| format!("REMOTE_REQUEST_FAILED: {error}"))?;
     let mut request = client.request(
@@ -288,10 +309,12 @@ pub async fn remote_open_window(
 
 #[cfg(test)]
 mod tests {
-    use super::{machine_tunnel_url, remote_method, remote_request, sanitize_label_part, validate_loopback_http_url};
+    use super::{machine_tunnel_url, remote_method, remote_request, remote_timeout, sanitize_label_part, validate_loopback_http_url, REMOTE_ENDPOINTS};
     use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    const GENERATED_REMOTE_ENDPOINTS: &str = include_str!("../../../../../packages/builtin-plugin-remote/src/shared/remote-endpoints.json");
 
     #[test]
     fn remote_navigation_uses_only_the_connected_machine_row() {
@@ -398,29 +421,36 @@ mod tests {
     }
 
     #[test]
-    fn remote_whitelist_accepts_all_seventeen_generated_endpoints() {
-        for method in [
-            "GET /api/tauri/remote/machines",
-            "POST /api/tauri/remote/machines",
-            "DELETE /api/tauri/remote/machines",
-            "POST /api/tauri/remote/machines/connect",
-            "POST /api/tauri/remote/machines/disconnect",
-            "GET /api/tauri/remote/machines/events",
-            "POST /api/tauri/remote/machines/install",
-            "POST /api/tauri/remote/machines/test",
-            "GET /api/tauri/remote/session/role",
-            "GET /api/tauri/remote/settings",
-            "POST /api/tauri/remote/settings",
-            "POST /api/tauri/remote/sync/apply",
-            "GET /api/tauri/remote/sync/preview",
-            "GET /api/tauri/remote/access",
-            "POST /api/tauri/remote/access",
-            "POST /api/tauri/remote/access/tunnel",
-            "DELETE /api/tauri/remote/access/tunnel",
-        ] {
+    fn remote_whitelist_matches_generated_endpoints() {
+        let generated: Vec<String> = serde_json::from_str(GENERATED_REMOTE_ENDPOINTS)
+            .expect("generated endpoint manifest must be valid JSON");
+        for method in &generated {
             let (verb, path) = remote_method(method).expect("generated endpoint must be allowed");
-            assert_eq!(format!("{verb} {path}"), method);
+            assert_eq!(format!("{verb} {path}"), method.as_str());
         }
+        let mut generated = generated;
+        let mut expected = REMOTE_ENDPOINTS.iter().map(|method| (*method).to_string()).collect::<Vec<_>>();
+        generated.sort();
+        expected.sort();
+        assert_eq!(generated, expected);
+    }
+
+    #[test]
+    fn remote_core_reads_allow_for_ssh_and_release_lookup_latency() {
+        for path in ["/api/tauri/remote/core/current", "/api/tauri/remote/core/versions"] {
+            assert_eq!(
+                remote_timeout(&reqwest::Method::GET, path),
+                Duration::from_secs(60)
+            );
+        }
+        assert_eq!(
+            remote_timeout(&reqwest::Method::GET, "/api/tauri/remote/machines"),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            remote_timeout(&reqwest::Method::POST, "/api/tauri/remote/machines/install"),
+            Duration::from_secs(600)
+        );
     }
 
     #[test]
