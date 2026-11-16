@@ -5,13 +5,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConfigProfile } from './profile'
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), toast: vi.fn() }))
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), loadRemoteMachines: vi.fn(), toast: vi.fn() }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 vi.mock('@/store', () => ({ store: { harness: { switchProfile: vi.fn(), restart: vi.fn() } } }))
 vi.mock('@/store/modules/harness', () => ({ waitForHarnessStopped: vi.fn() }))
 vi.mock('@/hooks/use-invalidate-on-setting-updated', () => ({ useInvalidateOnSettingUpdated: () => {} }))
+vi.mock('@/hooks/use-remote', () => ({
+  dotClassOf: () => 'bg-success',
+  loadRemoteMachines: mocks.loadRemoteMachines,
+}))
 vi.mock('@/ui/config/backup', () => ({ ConfigBackup: () => null }))
 vi.mock('@/ui/dialog/profile-migrate', () => ({ ProfileMigrateDialog: () => null }))
 vi.mock('@/components/modal', () => ({ Modal: () => null }))
@@ -68,6 +72,7 @@ vi.mock('@heroui/react', () => ({
     <input placeholder={placeholder} value={value} onChange={event => onChange?.({ target: { value: event.target.value } })} />
   ),
   Label: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  Spinner: () => <span />,
   Switch: Object.assign(
     ({ children, isSelected, onChange, 'aria-label': ariaLabel }: { 'children'?: ReactNode, 'isSelected'?: boolean, 'onChange'?: () => void, 'aria-label'?: string }) => (
       <button type="button" role="switch" aria-label={ariaLabel} aria-checked={isSelected} onClick={() => onChange?.()}>{children}</button>
@@ -90,6 +95,7 @@ beforeEach(() => {
     return null
   })
   mocks.toast.mockReset()
+  mocks.loadRemoteMachines.mockReset().mockResolvedValue({ enabled: false, machines: [] })
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })
 })
 

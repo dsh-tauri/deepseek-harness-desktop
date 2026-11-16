@@ -22,6 +22,7 @@ import { ProfileMigrateDialog } from '@/ui/dialog/profile-migrate'
 import { normalizeProfileId } from '@/utils/profile-id'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
+import { RemoteProfileSection } from './components/remote-profile'
 
 type ProfileView = 'list' | { profile: string }
 
@@ -540,6 +541,8 @@ export function ConfigProfile() {
           </If>
         </div>
       </Panel.Loadable>
+
+      <RemoteProfileSection />
 
       {/* 克隆档案：命名对话框（创建型，accent；可编辑建议名称） */}
       <AlertDialog
