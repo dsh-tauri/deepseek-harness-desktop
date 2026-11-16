@@ -24,6 +24,8 @@ export interface GetApiTauriRemoteCoreCurrentResponse {
   error?: string
 }
 export type GetApiTauriRemoteCoreCurrentQueryMachineId = string
+export interface GetApiTauriRemoteCoreProfilesResponse { items?: { name: string, configured: false | true }[], error?: string }
+export type GetApiTauriRemoteCoreProfilesQueryMachineId = string
 export interface GetApiTauriRemoteCoreVersionsResponse { items?: { version: string, tag: string, preview: false | true }[], error?: string }
 export interface GetApiTauriRemoteSyncPreviewResponse { plugins?: { name?: string, spec?: string, syncable?: false | true, reason?: string }[], skills?: { name?: string, root?: string }[], error?: string }
 export interface PostApiTauriRemoteSyncApplyResponse { items?: { kind?: string, name?: string, root?: string, ok?: false | true, error?: string, log?: string }[], error?: string }
@@ -166,6 +168,9 @@ export interface GetApiTauriRemoteMachinesEventsQuery {
 }
 export interface GetApiTauriRemoteCoreCurrentQuery {
   machineId: GetApiTauriRemoteCoreCurrentQueryMachineId
+}
+export interface GetApiTauriRemoteCoreProfilesQuery {
+  machineId: GetApiTauriRemoteCoreProfilesQueryMachineId
 }
 export interface GetApiTauriRemoteAccessQuery {
   sincePairingUseSeq?: GetApiTauriRemoteAccessQuerySincePairingUseSeq

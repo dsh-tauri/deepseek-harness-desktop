@@ -16,6 +16,7 @@ const REMOTE_ENDPOINTS: &[&str] = &[
     "POST /api/tauri/remote/machines/install",
     "POST /api/tauri/remote/machines/test",
     "GET /api/tauri/remote/core/current",
+    "GET /api/tauri/remote/core/profiles",
     "GET /api/tauri/remote/core/versions",
     "GET /api/tauri/remote/session/role",
     "GET /api/tauri/remote/settings",

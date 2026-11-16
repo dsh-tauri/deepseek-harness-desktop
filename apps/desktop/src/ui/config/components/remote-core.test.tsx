@@ -10,11 +10,16 @@ import { RemoteCoreSection } from './remote-core'
 
 const mocks = vi.hoisted(() => ({
   getCoreCurrent: vi.fn(),
+  getCoreProfiles: vi.fn(),
   getCoreVersions: vi.fn(),
   loadRemoteMachines: vi.fn(),
 }))
 
-vi.mock('@/apis/remote', () => ({ getCoreCurrent: mocks.getCoreCurrent, getCoreVersions: mocks.getCoreVersions }))
+vi.mock('@/apis/remote', () => ({
+  getCoreCurrent: mocks.getCoreCurrent,
+  getCoreProfiles: mocks.getCoreProfiles,
+  getCoreVersions: mocks.getCoreVersions,
+}))
 vi.mock('@/hooks/use-remote', () => ({ loadRemoteMachines: mocks.loadRemoteMachines }))
 
 type CoreTarget = NonNullable<GetApiTauriRemoteCoreCurrentResponse['item']>
@@ -73,6 +78,12 @@ beforeEach(async () => {
       { version: '0.2.5-beta.1', tag: 'dsh-0.2.5-beta.1-2', preview: true },
     ],
   })
+  mocks.getCoreProfiles.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+    items: [
+      { name: 'remote', configured: true },
+      { name: `${machineId}-alt`, configured: false },
+    ],
+  }))
 })
 
 afterEach(() => {
@@ -120,6 +131,8 @@ describe('远端核心只读列表', () => {
     expect(screen.getByTestId('dsh-core-remote-machine-ops')).toBeTruthy()
     expect(screen.getByText('0.2.4')).toBeTruthy()
     expect(screen.getAllByText('Capabilities: listVersions').length).toBeGreaterThan(0)
+    expect(screen.getByText('build-alt')).toBeTruthy()
+    expect(screen.getByText('ops-alt')).toBeTruthy()
     expect(screen.getByText('Active')).toBeTruthy()
     expect(screen.getByText('Unsupported')).toBeTruthy()
     expect(screen.getByText('Unreadable')).toBeTruthy()

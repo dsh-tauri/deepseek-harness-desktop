@@ -22,6 +22,11 @@ export interface CoreVersionItem {
   preview: boolean
 }
 
+export interface CoreProfileItem {
+  name: string
+  configured: boolean
+}
+
 interface CoreTargetBase {
   id: string
   scope: CoreScope

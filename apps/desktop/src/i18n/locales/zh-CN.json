@@ -436,6 +436,7 @@
   "core.remote_missing": "远端未安装核心",
   "core.remote_no_machines": "尚未配置远端机器",
   "core.remote_profile": "档案：{{profile}}",
+  "core.remote_profiles": "档案",
   "core.remote_read_only": "只读",
   "core.remote_slot": "槽位：{{slot}}",
   "core.remote_unavailable": "无法读取远端核心信息",

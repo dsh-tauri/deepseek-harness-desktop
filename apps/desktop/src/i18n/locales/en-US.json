@@ -436,6 +436,7 @@
   "core.remote_missing": "Remote core is not installed",
   "core.remote_no_machines": "No remote machines configured",
   "core.remote_profile": "Profile: {{profile}}",
+  "core.remote_profiles": "Profiles",
   "core.remote_read_only": "Read only",
   "core.remote_slot": "Slot: {{slot}}",
   "core.remote_unavailable": "Remote core information is unavailable",

@@ -436,6 +436,7 @@
   "core.remote_missing": "원격 코어가 설치되지 않았습니다",
   "core.remote_no_machines": "구성된 원격 머신이 없습니다",
   "core.remote_profile": "프로필: {{profile}}",
+  "core.remote_profiles": "프로필",
   "core.remote_read_only": "읽기 전용",
   "core.remote_slot": "슬롯: {{slot}}",
   "core.remote_unavailable": "원격 코어 정보를 읽을 수 없습니다",

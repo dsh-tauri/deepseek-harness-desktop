@@ -1,5 +1,5 @@
 import type { UseQueryResult } from '@tanstack/react-query'
-import type { GetApiTauriRemoteCoreCurrentResponse } from '@/apis/remote.types'
+import type { GetApiTauriRemoteCoreCurrentResponse, GetApiTauriRemoteCoreProfilesResponse } from '@/apis/remote.types'
 import type { RemoteMachineRow } from '@/hooks/use-remote'
 import { ArrowRotateRight } from '@gravity-ui/icons'
 import { Button, Chip, Description, Label, ListBox, Select, Spinner } from '@heroui/react'
@@ -7,7 +7,7 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
-import { getCoreCurrent, getCoreVersions } from '@/apis/remote'
+import { getCoreCurrent, getCoreProfiles, getCoreVersions } from '@/apis/remote'
 import { Empty } from '@/components/empty'
 import { Item } from '@/components/item'
 import { Panel } from '@/components/panel'
@@ -16,6 +16,7 @@ import { loadRemoteMachines } from '@/hooks/use-remote'
 
 type CoreTarget = NonNullable<GetApiTauriRemoteCoreCurrentResponse['item']>
 type CoreSlot = Extract<CoreTarget, { availability: 'present' }>['slots'][number]
+type CoreProfile = NonNullable<GetApiTauriRemoteCoreProfilesResponse['items']>[number]
 
 export function RemoteCoreSection() {
   const { t } = useTranslation()
@@ -54,16 +55,31 @@ export function RemoteCoreSection() {
       },
     })),
   })
+  const profileQueries = useQueries({
+    queries: machines.map(machine => ({
+      queryKey: queryKeys.remoteCoreProfiles(machine.id),
+      queryFn: async (): Promise<CoreProfile[]> => {
+        const response = await getCoreProfiles({ machineId: machine.id })
+        if (response.error !== undefined)
+          throw new Error(response.error)
+        return response.items ?? []
+      },
+    })),
+  })
 
   // 4. 派生数据提取与 Map 索引构造
   const machineError = machinesQuery.error === null ? '' : String(machinesQuery.error)
   const visibleMachines = machines.flatMap((machine, index) => {
     const target = targetQueries[index]
-    if (target === undefined || (selectedId !== '' && machine.id !== selectedId))
+    const profiles = profileQueries[index]
+    if (target === undefined || profiles === undefined || (selectedId !== '' && machine.id !== selectedId))
       return []
-    return [{ machine, target }]
+    return [{ machine, profiles, target }]
   })
-  const refreshing = machinesQuery.isFetching || versionsQuery.isFetching || targetQueries.some(query => query.isFetching)
+  const refreshing = machinesQuery.isFetching
+    || versionsQuery.isFetching
+    || targetQueries.some(query => query.isFetching)
+    || profileQueries.some(query => query.isFetching)
   const versions = versionsQuery.data ?? []
   const versionsError = versionsQuery.error === null ? '' : String(versionsQuery.error)
   const visible = enabled || machinesQuery.isError
@@ -73,6 +89,7 @@ export function RemoteCoreSection() {
       machinesQuery.refetch(),
       versionsQuery.refetch(),
       ...targetQueries.map(query => query.refetch()),
+      ...profileQueries.map(query => query.refetch()),
     ])
   }
 
@@ -140,8 +157,8 @@ export function RemoteCoreSection() {
                 </div>
               </If>
             </Panel.Loadable>
-            {visibleMachines.map(({ machine, target }) => (
-              <RemoteMachineCore key={machine.id} machine={machine} target={target} />
+            {visibleMachines.map(({ machine, profiles, target }) => (
+              <RemoteMachineCore key={machine.id} machine={machine} profiles={profiles} target={target} />
             ))}
           </If>
         </Panel.Loadable>
@@ -150,9 +167,10 @@ export function RemoteCoreSection() {
   )
 }
 
-function RemoteMachineCore({ machine, target }: { machine: RemoteMachineRow, target: UseQueryResult<CoreTarget> }) {
+function RemoteMachineCore({ machine, profiles, target }: { machine: RemoteMachineRow, profiles: UseQueryResult<CoreProfile[]>, target: UseQueryResult<CoreTarget> }) {
   const { t } = useTranslation()
   const targetError = target.error === null ? '' : String(target.error)
+  const profilesError = profiles.error === null ? '' : String(profiles.error)
   const unreadableError = unreadableErrorOf(target.data)
   const targetSlots = target.data?.availability === 'present' ? target.data.slots : []
   const capabilities = target.data?.capabilities ?? []
@@ -163,6 +181,18 @@ function RemoteMachineCore({ machine, target }: { machine: RemoteMachineRow, tar
         <Label className="text-sm font-medium text-ink">{machine.name}</Label>
         <Chip size="sm" variant="soft" color="default">{t(`remote.state.${machine.state}`)}</Chip>
       </div>
+      <Panel.Loadable loading={profiles.isPending} error={profilesError}>
+        <If cond={(profiles.data?.length ?? 0) > 0}>
+          <div className="flex flex-wrap items-center gap-1.5 px-1">
+            <span className="text-xs text-muted">{t('core.remote_profiles')}</span>
+            {profiles.data?.map(profile => (
+              <Chip key={profile.name} size="sm" variant="soft" color={profile.configured ? 'accent' : 'default'}>
+                {profile.name}
+              </Chip>
+            ))}
+          </div>
+        </If>
+      </Panel.Loadable>
       <Panel.Loadable loading={target.isPending} error={targetError}>
         <If cond={target.data?.remoteProfile !== undefined}>
           <Description className="px-1 text-xs text-muted">

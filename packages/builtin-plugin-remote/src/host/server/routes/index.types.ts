@@ -1,4 +1,4 @@
-import type { CoreTarget, CoreVersionItem } from '../../../shared/core'
+import type { CoreProfileItem, CoreTarget, CoreVersionItem } from '../../../shared/core'
 import type { RemoteAuthMethod, RemoteConnectionState, RemoteProgress, RemoteTunnelMode } from '../../types/index'
 
 export interface RemoteMachineListItem {
@@ -97,8 +97,17 @@ export interface GetCoreCurrentQuery {
   machineId: string
 }
 
+export interface GetCoreProfilesQuery {
+  machineId: string
+}
+
 export interface RemoteCoreCurrentResponse {
   item?: CoreTarget
+  error?: string
+}
+
+export interface RemoteCoreProfilesResponse {
+  items?: CoreProfileItem[]
   error?: string
 }
 

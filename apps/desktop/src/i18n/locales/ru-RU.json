@@ -436,6 +436,7 @@
   "core.remote_missing": "Удалённое ядро не установлено",
   "core.remote_no_machines": "Удалённые машины не настроены",
   "core.remote_profile": "Профиль: {{profile}}",
+  "core.remote_profiles": "Профили",
   "core.remote_read_only": "Только чтение",
   "core.remote_slot": "Слот: {{slot}}",
   "core.remote_unavailable": "Не удалось получить сведения об удалённом ядре",
