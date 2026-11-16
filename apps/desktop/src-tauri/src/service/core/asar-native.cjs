@@ -227,7 +227,7 @@ module.exports = function registerNativePackages(archive, cache) {
         const state = `${source}\0${visible ?? ''}`
         if (chain.has(state))
           continue
-        const owner = nearest ? scope : top
+        const owner = nearest || source === path.join(directory, 'node_modules', ...segments) ? scope : top
         const destination = path.join(owner.target, 'node_modules', ...segments)
         // 包自身的 node_modules 已由 copy(root, staging, false) 原样带入，这里只补
         // 被提升到归档根、因此不在私有目录里的那些；重复写同一目标会让 publish 的
