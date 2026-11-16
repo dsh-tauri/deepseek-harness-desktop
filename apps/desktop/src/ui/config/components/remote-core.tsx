@@ -1,18 +1,20 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { GetApiTauriRemoteCoreCurrentResponse, GetApiTauriRemoteCoreProfilesResponse } from '@/apis/remote.types'
 import type { RemoteMachineRow } from '@/hooks/use-remote'
-import { ArrowRotateRight } from '@gravity-ui/icons'
-import { Button, Chip, Description, Label, ListBox, Select, Spinner } from '@heroui/react'
+import { ArrowRotateRight, Server } from '@gravity-ui/icons'
+import { Button, Chip, Description, Dropdown, Label, Spinner } from '@heroui/react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
+import { cn } from 'tailwind-variants'
 import { getCoreCurrent, getCoreProfiles, getCoreVersions } from '@/apis/remote'
 import { Empty } from '@/components/empty'
 import { Item } from '@/components/item'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
-import { loadRemoteMachines } from '@/hooks/use-remote'
+import { dotClassOf, loadRemoteMachines } from '@/hooks/use-remote'
+import { remoteMachineStateTextOf, remoteMachineSubtitleOf } from '@/layout/remote/machine.utils'
 
 type CoreTarget = NonNullable<GetApiTauriRemoteCoreCurrentResponse['item']>
 type CoreSlot = Extract<CoreTarget, { availability: 'present' }>['slots'][number]
@@ -101,16 +103,21 @@ export function RemoteCoreSection() {
             <span className="text-xs font-medium text-ink">{t('core.remote_cores')}</span>
             <Chip size="sm" variant="soft" color="accent">{t('core.remote_read_only')}</Chip>
           </div>
-          <Button
-            size="sm"
-            variant="tertiary"
-            isDisabled={refreshing}
-            aria-label={t('core.refresh')}
-            onPress={() => void onRefresh()}
-          >
-            <If cond={refreshing} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
-            {t('core.refresh')}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <If cond={machines.length > 0}>
+              <RemoteMachinePicker machines={machines} selectedId={selectedId} onChange={setSelectedId} />
+            </If>
+            <Button
+              size="sm"
+              variant="tertiary"
+              isDisabled={refreshing}
+              aria-label={t('core.refresh')}
+              onPress={() => void onRefresh()}
+            >
+              <If cond={refreshing} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
+              {t('core.refresh')}
+            </Button>
+          </div>
         </div>
 
         <Panel.Loadable loading={machinesQuery.isPending} error={machineError}>
@@ -118,33 +125,6 @@ export function RemoteCoreSection() {
             <Empty>{t('core.remote_no_machines')}</Empty>
           </If>
           <If cond={machines.length > 0}>
-            <div className="flex items-center justify-between gap-2 px-1">
-              <span className="text-xs text-muted">{t('core.remote_machine')}</span>
-              <Select
-                variant="secondary"
-                selectedKey={selectedId || 'all'}
-                onSelectionChange={key => setSelectedId(String(key))}
-                className="w-[220px]"
-                aria-label={t('core.remote_machine')}
-              >
-                <Select.Trigger data-testid="dsh-core-remote-target" className="min-h-8! h-8 py-0 items-center">
-                  <Select.Value />
-                  <Select.Indicator />
-                </Select.Trigger>
-                <Select.Popover>
-                  <ListBox>
-                    <ListBox.Item id="all" textValue={t('core.remote_all_machines')}>
-                      {t('core.remote_all_machines')}
-                    </ListBox.Item>
-                    {machines.map(machine => (
-                      <ListBox.Item id={machine.id} key={machine.id} textValue={machine.name}>
-                        {`${machine.name} · ${t(`remote.state.${machine.state}`)}`}
-                      </ListBox.Item>
-                    ))}
-                  </ListBox>
-                </Select.Popover>
-              </Select>
-            </div>
             <Panel.Loadable loading={versionsQuery.isPending && enabled} error={versionsError}>
               <If cond={versions.length > 0}>
                 <div className="flex flex-wrap items-center gap-1.5 px-1">
@@ -164,6 +144,74 @@ export function RemoteCoreSection() {
         </Panel.Loadable>
       </div>
     </If>
+  )
+}
+
+function RemoteMachinePicker({ machines, selectedId, onChange }: { machines: RemoteMachineRow[], selectedId: string, onChange: (machineId: string) => void }) {
+  const { t } = useTranslation()
+  const selected = machines.find(machine => machine.id === selectedId)
+  const label = selected?.name ?? t('core.remote_all_machines')
+
+  return (
+    <Dropdown>
+      <Button
+        className="h-7 gap-1.5 px-1.5 text-[12.5px]"
+        size="sm"
+        variant="ghost"
+        aria-label={t('core.remote_machine')}
+        data-testid="dsh-core-remote-target"
+      >
+        <Server />
+        <span className="max-w-28 truncate">{label}</span>
+      </Button>
+      <Dropdown.Popover className="w-72!">
+        <Dropdown.Menu>
+          <Dropdown.Section aria-label={t('core.remote_machine')}>
+            <Dropdown.Item
+              id="remote-core-all"
+              textValue={t('core.remote_all_machines')}
+              onAction={() => onChange('')}
+            >
+              <span className="flex w-full items-center gap-2">
+                <Server className="size-3.5 text-muted" />
+                <Label>{t('core.remote_all_machines')}</Label>
+                <If cond={selectedId === ''}>
+                  <Description className="ml-auto">{t('remote.current')}</Description>
+                </If>
+              </span>
+            </Dropdown.Item>
+            {machines.map((machine) => {
+              const subtitle = remoteMachineSubtitleOf(machine)
+              return (
+                <Dropdown.Item
+                  key={machine.id}
+                  id={`remote-core-${machine.id}`}
+                  textValue={machine.name}
+                  onAction={() => onChange(machine.id)}
+                >
+                  <span className="flex w-full items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={cn('size-1.5 shrink-0 rounded-full', dotClassOf(machine))}
+                      style={machine.color === undefined ? undefined : { backgroundColor: machine.color }}
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <Label className="truncate">{machine.name}</Label>
+                      <If cond={subtitle !== undefined}>
+                        <Description className="truncate text-[11px] leading-4">{subtitle}</Description>
+                      </If>
+                    </span>
+                    <Description className="ml-auto shrink-0">
+                      {remoteMachineStateTextOf(machine, false, t)}
+                    </Description>
+                  </span>
+                </Dropdown.Item>
+              )
+            })}
+          </Dropdown.Section>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
   )
 }
 

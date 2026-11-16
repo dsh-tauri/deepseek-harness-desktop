@@ -20,7 +20,10 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
 vi.mock('@/store', () => ({ store: { harness: { restart: mocks.restart } } }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
-vi.mock('@/hooks/use-remote', () => ({ loadRemoteMachines: mocks.loadRemoteMachines }))
+vi.mock('@/hooks/use-remote', () => ({
+  dotClassOf: () => 'bg-success',
+  loadRemoteMachines: mocks.loadRemoteMachines,
+}))
 
 const localFixture: HarnessCore = {
   id: 'local',

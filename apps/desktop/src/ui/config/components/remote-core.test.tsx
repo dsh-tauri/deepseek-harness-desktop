@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { GetApiTauriRemoteCoreCurrentResponse } from '@/apis/remote.types'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,7 +20,10 @@ vi.mock('@/apis/remote', () => ({
   getCoreProfiles: mocks.getCoreProfiles,
   getCoreVersions: mocks.getCoreVersions,
 }))
-vi.mock('@/hooks/use-remote', () => ({ loadRemoteMachines: mocks.loadRemoteMachines }))
+vi.mock('@/hooks/use-remote', () => ({
+  dotClassOf: () => 'bg-success',
+  loadRemoteMachines: mocks.loadRemoteMachines,
+}))
 
 type CoreTarget = NonNullable<GetApiTauriRemoteCoreCurrentResponse['item']>
 type CoreSlot = Extract<CoreTarget, { availability: 'present' }>['slots'][number]
@@ -141,6 +144,7 @@ describe('远端核心只读列表', () => {
     expect(screen.getByText('Slot: broken')).toBeTruthy()
     expect(screen.getAllByText('Profile: remote').length).toBeGreaterThan(0)
     expect(screen.getByText('Read only')).toBeTruthy()
+    expect(screen.getByTestId('dsh-core-remote-target').textContent).toContain('All remote machines')
     expect(screen.getByText('Remote core is not installed')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Install' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Uninstall' })).toBeNull()
@@ -159,15 +163,15 @@ describe('远端核心只读列表', () => {
     renderRemoteCore()
 
     expect(await screen.findByText('Remote core is not installed')).toBeTruthy()
-    const select = screen.getByTestId('dsh-core-remote-target')
-      .closest('[data-slot="select"]')
-      ?.querySelector('select')
-    expect(select).not.toBeNull()
-    fireEvent.change(select!, { target: { value: 'ops' } })
+    fireEvent.click(screen.getByTestId('dsh-core-remote-target'))
+    const menu = await screen.findByRole('menu')
+    fireEvent.click(within(menu).getByText('Ops box'))
 
     await waitFor(() => expect(mocks.getCoreCurrent).toHaveBeenCalledWith({ machineId: 'ops' }))
     expect(await screen.findByText('Remote core information is unavailable')).toBeTruthy()
     expect(screen.getByText('REMOTE_DSH_PACKAGE_UNREADABLE: permission denied')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-core-remote-machine-build')).toBeNull()
+    expect(screen.getByTestId('dsh-core-remote-machine-ops')).toBeTruthy()
   })
 
   it('stays hidden when the remote API is unavailable', async () => {

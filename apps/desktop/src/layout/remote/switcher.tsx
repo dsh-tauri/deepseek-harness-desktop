@@ -8,24 +8,7 @@ import { cn } from 'tailwind-variants'
 import { dotClassOf, useRemote } from '@/hooks/use-remote'
 import { toast } from '@/utils/toast'
 import { ConnectDialog } from './connect-dialog'
-
-/** 机器行的状态描述：pending 立即「连接中」；重连带倒计时；已知凭据类型缀后。 */
-function stateTextOf(
-  machine: { state: string, nextRetryAt?: number, authMethod?: 'agent' | 'key' | 'password' },
-  pending: boolean,
-  t: (key: string, params?: Record<string, unknown>) => string,
-): string {
-  if (pending)
-    return t('remote.state.connecting')
-  let text = t(`remote.state.${machine.state}`)
-  if (machine.state === 'reconnecting' && machine.nextRetryAt !== undefined) {
-    const seconds = Math.max(0, Math.ceil((machine.nextRetryAt - Date.now()) / 1000))
-    text += t('remote.retry_in', { seconds })
-  }
-  if (machine.authMethod !== undefined)
-    text += ` · ${t(`remote.auth.${machine.authMethod}`)}`
-  return text
-}
+import { remoteMachineStateTextOf, remoteMachineSubtitleOf } from './machine.utils'
 
 export function RemoteSwitcher({ onChange, visible = true, onManage, onSync }: {
   onChange: (url: string, tint: string | null) => void
@@ -105,7 +88,7 @@ export function RemoteSwitcher({ onChange, visible = true, onManage, onSync }: {
               {machines.map((machine) => {
                 const pending = pendingId === machine.id
                 const connected = machine.state === 'connected' && machine.tunnelBaseUrl !== undefined
-                const subtitle = machine.host === undefined ? undefined : `${machine.user !== undefined ? `${machine.user}@` : ''}${machine.host}${machine.port !== undefined ? `:${machine.port}` : ''}`
+                const subtitle = remoteMachineSubtitleOf(machine)
                 return (
                   <Dropdown.Item
                     key={machine.id}
@@ -133,7 +116,7 @@ export function RemoteSwitcher({ onChange, visible = true, onManage, onSync }: {
                         </If>
                       </span>
                       <Description className={cn('ml-auto shrink-0', pending && 'text-warning')}>
-                        {stateTextOf(machine, pending, t)}
+                        {remoteMachineStateTextOf(machine, pending, t)}
                       </Description>
                       {/* 行尾双动作：行本体=当前窗口切换；图标=新窗口打开（常驻——
                         未连接机器开窗后由新窗口内壳层发起连接）。RAC 菜单项的
