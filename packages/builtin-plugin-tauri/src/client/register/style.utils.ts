@@ -13,8 +13,9 @@ function isTransparent(color: string): boolean {
   const match = /^rgba?\(([^)]+)\)$/.exec(value)
   if (match === null)
     return false
-  const channels = match[1].split(/[\s,/]+/).filter(Boolean)
-  return channels.length >= 4 && Number.parseFloat(channels[3]) === 0
+  const channels = match[1]!.split(/[\s,/]+/).filter(Boolean)
+  const alpha = channels[3]
+  return channels.length >= 4 && alpha !== undefined && Number.parseFloat(alpha) === 0
 }
 
 function isInsideFixed(element: Element): boolean {
