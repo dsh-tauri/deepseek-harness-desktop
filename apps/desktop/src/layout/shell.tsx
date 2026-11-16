@@ -85,8 +85,11 @@ export function Shell() {
       return
     if (status !== 'ready' || !serviceHealthy || !webviewSrc)
       return
-    if (hostedNavigationRef.current !== null && hostedNavigationRef.current.generation === processGeneration)
+    if (hostedNavigationRef.current !== null
+      && hostedNavigationRef.current.generation === processGeneration
+      && hostedNavigationRef.current.url === webviewSrc) {
       return
+    }
     // 文档即 DSH 且自本文档挂载以来未换代：当前页面就是要导航的那个文档，
     // 再导航只会自我打断（页面重载会重建 store，因此基线恒为 0）。
     if (hostedNavigationRef.current === null && processGeneration === 0 && isHostedServiceDocument()
