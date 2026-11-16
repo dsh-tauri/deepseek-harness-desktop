@@ -458,6 +458,27 @@ export function checkMissingCommand(): string {
 }
 
 export async function assertRemoteDshVersion(session: RemoteSession, allowMissing = false): Promise<void> {
+  const remote = await readRemoteDshPackage(session)
+  if (allowMissing && remote.kind === 'missing')
+    return
+  if (remote.kind === 'unreadable')
+    throw new Error(remote.error)
+  assertSupportedDshVersion(remote.kind === 'installed' ? remote.version : '')
+}
+
+export async function readRemoteDshVersion(session: RemoteSession): Promise<string | undefined> {
+  const remote = await readRemoteDshPackage(session)
+  if (remote.kind === 'unreadable')
+    throw new Error(remote.error)
+  return remote.kind === 'installed' ? remote.version : undefined
+}
+
+export type RemoteDshPackageState
+  = | { kind: 'missing' }
+    | { kind: 'installed', version: string }
+    | { kind: 'unreadable', error: string }
+
+export async function readRemoteDshPackage(session: RemoteSession): Promise<RemoteDshPackageState> {
   const result = await session.exec([
     `ROOT="$HOME/${REMOTE_ROOT}"`,
     `if [ -f "$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}" ]; then REMOTE_DSH_PACKAGE="$ROOT/dependencies/dsh/node_modules/@deepseek-ai/dsh/package.json"`,
@@ -465,18 +486,19 @@ export async function assertRemoteDshVersion(session: RemoteSession, allowMissin
     'else echo REMOTE_DSH_MISSING; exit 0; fi',
     'cat "$REMOTE_DSH_PACKAGE"',
   ].join('\n'))
-  if (allowMissing && result.code === 0 && result.stdout.trim() === 'REMOTE_DSH_MISSING')
-    return
-  let version = ''
-  if (result.code === 0) {
-    try {
-      const pkg: unknown = JSON.parse(result.stdout)
-      if (typeof pkg === 'object' && pkg !== null && 'version' in pkg && typeof pkg.version === 'string')
-        version = pkg.version
-    }
-    catch {}
+  if (result.code === 0 && result.stdout.trim() === 'REMOTE_DSH_MISSING')
+    return { kind: 'missing' }
+  if (result.code !== 0)
+    return { kind: 'unreadable', error: `REMOTE_DSH_PACKAGE_UNREADABLE: ${describeExecFailure(result.code, result.stderr)}` }
+  try {
+    const pkg: unknown = JSON.parse(result.stdout)
+    if (typeof pkg === 'object' && pkg !== null && 'version' in pkg && typeof pkg.version === 'string' && pkg.version !== '')
+      return { kind: 'installed', version: pkg.version }
   }
-  assertSupportedDshVersion(version)
+  catch (error) {
+    return { kind: 'unreadable', error: `REMOTE_DSH_PACKAGE_INVALID: ${messageOf(error)}` }
+  }
+  return { kind: 'unreadable', error: 'REMOTE_DSH_PACKAGE_INVALID: 远端 dsh 包元数据缺少有效 version' }
 }
 
 export function missingComponentsOf(stdout: string): string[] {

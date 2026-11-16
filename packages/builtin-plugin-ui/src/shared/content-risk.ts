@@ -103,8 +103,8 @@ export function contentRiskRecoveryRange(input: {
   if (candidates.length === 0)
     return undefined
   return {
-    startSeq: candidates[0],
-    endSeq: candidates[candidates.length - 1],
+    startSeq: candidates[0]!,
+    endSeq: candidates[candidates.length - 1]!,
     shadowedSeqs: candidates,
     watermarkSeq: newestRefusedEnd,
   }

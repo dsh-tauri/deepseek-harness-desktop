@@ -153,10 +153,12 @@ export function AccessSection({ t }: AccessSectionProps): ReactElement {
     if (tunnelMissingOf(draft) !== undefined)
       return
     const body = tunnelBodyOf(draft)
+    const token = body.token ?? saved.token
+    const hostname = body.hostname ?? saved.hostname ?? undefined
     const result = await service.startTunnel({
       mode: body.mode,
-      token: body.token ?? saved.token,
-      hostname: body.hostname ?? saved.hostname ?? undefined,
+      ...token === undefined ? {} : { token },
+      ...hostname === undefined ? {} : { hostname },
     })
     if (result.ok)
       setTunnelDraft(null)
