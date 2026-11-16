@@ -5,7 +5,7 @@
 - 涉及仓库：`deepseek-harness-desktop`（本文件所在仓库）
 - 关键组件：`apps/desktop/src-tauri`（桌面壳 Rust）、`apps/desktop/src`（壳 UI）、
   `packages/builtin-plugin-remote`（`dsh-tauri-remote` 插件，SSH 侧实现）
-- 状态：**P0 已合入（#1555、#1557）；P1 #1561 已处理首轮评审意见（`b5508d6`），等待 CI 与重审**
+- 状态：**P0 已合入（#1555、#1557）；P1 #1561 已处理两轮评审意见（`1db4cdf5`），等待 CI 与重审**
 - 阶段划分见第 6 节；每个阶段单独成 PR，后一阶段以前一阶段的设计或实现为 base
 
 ## 0. PR 拆分与依赖
@@ -136,7 +136,7 @@ CoreTarget =
       availability: "unreadable"
       error
       path?
-      slots: []
+      slots: CoreUnreadableSlot[]
     }
 
 CoreTargetBase {
@@ -165,6 +165,8 @@ CoreSlotState =
   | { kind: "unsupported", slotKey, version, path?, error }
   | { kind: "unreadable", slotKey, path?, error }
 ```
+
+`availability: "unreadable"` 表示目标级状态不完整，不能据此推导未安装。`slots` 可以保留身份已确认但自身不可读的槽位，供后续行操作定位；身份无法识别的读取失败仍返回空数组。目标级 `error` 描述全局读取失败，槽位级 `error` 描述该槽位自身的元数据或访问失败。
 
 目标状态判定必须按以下优先级收敛：
 
@@ -325,15 +327,17 @@ UI 侧必须按 `host/service/session.ts` 的 `role.remote`（`DSH_REMOTE_SESSIO
 - 两个页面复用主界面右上角机器切换器的状态、地址和选择交互。
 - 新增只读 `GET core/profiles` 契约，并同步生成客户端、端点清单和 Rust 白名单。
 - 当前主机端只产出 `slotKey = current` 的单个活动槽位；多槽位持久化仍属于 P2。
-- 远端 Profile 目录在枚举前显式验证可读性；真实权限不足会返回 `REMOTE_CORE_PROFILES_UNREADABLE`。
+- 不可读目标可以保留身份已确认的不可读槽位；槽位身份无法识别时仍返回空数组。
+- 远端 Profile 目录在枚举前显式验证可读性与搜索权限；真实权限不足会返回 `REMOTE_CORE_PROFILES_UNREADABLE`。
 - 机器轮询移除当前筛选目标时，Core 与 Profile 页面会同步清空筛选并恢复“全部机器”。
 
 ### 6.2 当前验证（#1561）
 
-- 最新提交：`b5508d67`。
+- 最新提交：`1db4cdf5`。
 - TypeScript typecheck 与全量 ESLint 通过。
-- 全量单测 105 个文件、937 个用例通过。
-- Core/Profile 评审回归测试连续 5 次乱序通过。
+- 全量单测 105 个文件、938 个用例通过。
+- Core/Profile 评审回归测试 16 个用例连续 5 次乱序通过。
+- 新增 `0400` 无搜索权限、`0300` 无读取权限的真实目录回归。
 - Rust 远端桥接测试 18/18 通过。
 - 新增 Profile 端点重复运行 `genapi` 无工作区漂移。
 
