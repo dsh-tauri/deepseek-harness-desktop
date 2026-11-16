@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { queryKeys } from '@/config/query-keys'
 import enUS from '@/i18n/locales/en-US.json'
 import { RemoteProfileSection } from './remote-profile'
 
@@ -24,13 +25,14 @@ let translations = createInstance()
 function renderRemoteProfiles() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   clients.add(client)
-  return render(
+  const view = render(
     <I18nextProvider i18n={translations}>
       <QueryClientProvider client={client}>
         <RemoteProfileSection />
       </QueryClientProvider>
     </I18nextProvider>,
   )
+  return { client, ...view }
 }
 
 beforeEach(async () => {
@@ -90,6 +92,25 @@ describe('远端 Profile 只读列表', () => {
 
     await waitFor(() => expect(screen.queryByTestId('dsh-profile-remote-machine-build')).toBeNull())
     expect(screen.getByTestId('dsh-profile-remote-machine-ops')).toBeTruthy()
+  })
+
+  it('clears a stale machine filter after the selected machine disappears', async () => {
+    const { client } = renderRemoteProfiles()
+
+    expect(await screen.findByTestId('dsh-profile-remote-machine-build')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('dsh-profile-remote-target'))
+    fireEvent.click(within(await screen.findByRole('menu')).getByText('Ops box'))
+    await waitFor(() => expect(screen.queryByTestId('dsh-profile-remote-machine-build')).toBeNull())
+
+    mocks.loadRemoteMachines.mockResolvedValue({
+      enabled: true,
+      machines: [{ id: 'build', name: 'Build box', state: 'connected' }],
+    })
+    await client.invalidateQueries({ queryKey: queryKeys.remoteMachines })
+
+    expect(await screen.findByTestId('dsh-profile-remote-machine-build')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-profile-remote-machine-ops')).toBeNull()
+    expect(screen.getByTestId('dsh-profile-remote-target').textContent).toContain('All remote machines')
   })
 
   it('stays hidden when the remote API is unavailable', async () => {

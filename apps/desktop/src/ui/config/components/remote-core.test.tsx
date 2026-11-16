@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { queryKeys } from '@/config/query-keys'
 import enUS from '@/i18n/locales/en-US.json'
 import { RemoteCoreSection } from './remote-core'
 
@@ -38,13 +39,14 @@ let translations = createInstance()
 function renderRemoteCore() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   clients.add(client)
-  return render(
+  const view = render(
     <I18nextProvider i18n={translations}>
       <QueryClientProvider client={client}>
         <RemoteCoreSection />
       </QueryClientProvider>
     </I18nextProvider>,
   )
+  return { client, ...view }
 }
 
 function targetOf(machineId: string, target: TargetState): CoreTarget {
@@ -172,6 +174,28 @@ describe('远端核心只读列表', () => {
     expect(screen.getByText('REMOTE_DSH_PACKAGE_UNREADABLE: permission denied')).toBeTruthy()
     expect(screen.queryByTestId('dsh-core-remote-machine-build')).toBeNull()
     expect(screen.getByTestId('dsh-core-remote-machine-ops')).toBeTruthy()
+  })
+
+  it('clears a stale machine filter after the selected machine disappears', async () => {
+    mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+      item: targetOf(machineId, { availability: 'absent', slots: [] }),
+    }))
+    const { client } = renderRemoteCore()
+
+    expect(await screen.findByTestId('dsh-core-remote-machine-build')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('dsh-core-remote-target'))
+    fireEvent.click(within(await screen.findByRole('menu')).getByText('Ops box'))
+    await waitFor(() => expect(screen.queryByTestId('dsh-core-remote-machine-build')).toBeNull())
+
+    mocks.loadRemoteMachines.mockResolvedValue({
+      enabled: true,
+      machines: [{ id: 'build', name: 'Build box', state: 'connected' }],
+    })
+    await client.invalidateQueries({ queryKey: queryKeys.remoteMachines })
+
+    expect(await screen.findByTestId('dsh-core-remote-machine-build')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-core-remote-machine-ops')).toBeNull()
+    expect(screen.getByTestId('dsh-core-remote-target').textContent).toContain('All remote machines')
   })
 
   it('stays hidden when the remote API is unavailable', async () => {

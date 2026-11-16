@@ -4,7 +4,6 @@ import type { RemoteMachineRow } from '@/hooks/use-remote'
 import { ArrowRotateRight } from '@gravity-ui/icons'
 import { Button, Chip, Description, Label, Spinner } from '@heroui/react'
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { getCoreCurrent, getCoreProfiles, getCoreVersions } from '@/apis/remote'
@@ -13,6 +12,7 @@ import { Item } from '@/components/item'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { loadRemoteMachines } from '@/hooks/use-remote'
+import { useRemoteMachineFilter } from '@/hooks/use-remote-machine-filter'
 import { RemoteMachinePicker } from './remote-machine-picker'
 
 type CoreTarget = NonNullable<GetApiTauriRemoteCoreCurrentResponse['item']>
@@ -42,7 +42,7 @@ export function RemoteCoreSection() {
   })
 
   // 2. 本地用户选择状态
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useRemoteMachineFilter(machines)
 
   // 3. 远端 Core 数据 Query
   const targetQueries = useQueries({
