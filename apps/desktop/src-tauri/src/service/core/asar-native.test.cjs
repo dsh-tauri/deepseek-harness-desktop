@@ -262,7 +262,7 @@ test('materialized package carries its hoisted dependency beside the entry so a 
   assert.equal(f.load('@scope/pkg'), 'fflate')
   assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/@scope/pkg/lib/pkg.node')), true)
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/lib/index.cjs'), 'utf8'), 'module.exports = "fflate"')
-  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/fflate/node_modules/saxes/lib/saxes.js'), 'utf8'), 'module.exports = "saxes"')
+  assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/saxes/lib/saxes.js'), 'utf8'), 'module.exports = "saxes"')
   const entry = path.join(f.cache, 'node_modules/@scope/pkg/lib/index.js')
   const script = 'process.stdout.write(require.resolve("fflate", { paths: [require("node:path").dirname(process.env.DSH_PROBE_ENTRY)] }))'
   const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_ENTRY: entry } })
@@ -309,7 +309,7 @@ test('two different versions of the same dependency keep their own copies instea
   assert.equal(fs.readFileSync(path.join(f.cache, 'node_modules/@scope/pkg/node_modules/x/index.js'), 'utf8'), 'module.exports = "x@1"')
 })
 
-test('a shared hoisted dependency is copied under every owner instead of only the first', (t) => {
+test('sibling packages sharing a hoisted dependency see one shared copy a bare child process can resolve', (t) => {
   const f = fixture(t)
   f.write('node_modules/@scope/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0', b: '^1.0.0' } }))
   f.write('node_modules/@scope/pkg/index.js', 'module.exports = [require("a"), require("b")]')
@@ -322,10 +322,9 @@ test('a shared hoisted dependency is copied under every owner instead of only th
   f.write('node_modules/x/index.js', 'module.exports = "shared x"')
   assert.deepEqual(f.load('@scope/pkg'), ['shared x', 'shared x'])
   const owner = path.join(f.cache, 'node_modules/@scope/pkg/node_modules')
-  assert.equal(fs.readFileSync(path.join(owner, 'a/node_modules/x/index.js'), 'utf8'), 'module.exports = "shared x"')
-  assert.equal(fs.readFileSync(path.join(owner, 'b/node_modules/x/index.js'), 'utf8'), 'module.exports = "shared x"')
-  assert.equal(f.load(path.join(owner, 'a/node_modules/x')), 'shared x')
-  assert.equal(f.load(path.join(owner, 'b/node_modules/x')), 'shared x')
+  assert.equal(fs.readFileSync(path.join(owner, 'x/index.js'), 'utf8'), 'module.exports = "shared x"')
+  assert.equal(fs.existsSync(path.join(owner, 'a/node_modules')), false)
+  assert.equal(fs.existsSync(path.join(owner, 'b/node_modules')), false)
   const script = 'process.stdout.write(JSON.stringify([require(process.env.DSH_PROBE_OWNER + "/a"), require(process.env.DSH_PROBE_OWNER + "/b")]))'
   const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_OWNER: owner } })
   assert.equal(bare.status, 0, bare.stderr)
@@ -368,11 +367,47 @@ test('a dependency cycle stops nesting and keeps every owner resolvable', { time
   f.write('node_modules/b/index.js', 'module.exports = "b"')
   assert.equal(f.load('@scope/pkg'), 'a->b')
   const owner = path.join(f.cache, 'node_modules/@scope/pkg/node_modules')
-  assert.equal(fs.readFileSync(path.join(owner, 'a/node_modules/b/index.js'), 'utf8'), 'module.exports = "b"')
+  assert.equal(fs.readFileSync(path.join(owner, 'b/index.js'), 'utf8'), 'module.exports = "b"')
+  assert.equal(fs.existsSync(path.join(owner, 'a/node_modules')), false)
   const script = 'process.stdout.write(require(process.env.DSH_PROBE_OWNER + "/a"))'
   const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_OWNER: owner } })
   assert.equal(bare.status, 0, bare.stderr)
   assert.equal(bare.stdout, 'a->b')
+})
+
+test('a cycle back to a package keeps the nearest same-name version a bare child process resolves', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = require("a").b.c')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', version: '1.0.0', dependencies: { b: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'exports.version = "a@1"; exports.b = require("b")')
+  f.write('node_modules/b/package.json', JSON.stringify({ main: 'index.js', dependencies: { c: '^1.0.0' } }))
+  f.write('node_modules/b/index.js', 'exports.c = require("c")')
+  f.write('node_modules/b/node_modules/a/package.json', JSON.stringify({ main: 'index.js', version: '2.0.0' }))
+  f.write('node_modules/b/node_modules/a/index.js', 'exports.version = "a@2"')
+  f.write('node_modules/c/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0' } }))
+  f.write('node_modules/c/index.js', 'module.exports = require("a").version')
+  assert.equal(f.load('pkg'), 'a@1')
+  const entry = path.join(f.cache, 'node_modules/pkg/index.js')
+  const script = 'process.stdout.write(require(process.env.DSH_PROBE_ENTRY))'
+  const bare = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_PROBE_ENTRY: entry } })
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.equal(bare.stdout, 'a@1')
+})
+
+test('a dependency already placed beside an ancestor is not copied again', (t) => {
+  const f = fixture(t)
+  f.write('node_modules/pkg/package.json', JSON.stringify({ main: 'index.js', dependencies: { a: '^1.0.0', x: '^1.0.0' } }))
+  f.write('node_modules/pkg/index.js', 'module.exports = require("a")')
+  f.write('node_modules/pkg/binding.node', 'not loaded')
+  f.write('node_modules/a/package.json', JSON.stringify({ main: 'index.js', dependencies: { x: '^1.0.0' } }))
+  f.write('node_modules/a/index.js', 'module.exports = require("x")')
+  f.write('node_modules/x/package.json', JSON.stringify({ main: 'index.js' }))
+  f.write('node_modules/x/index.js', 'module.exports = "x"')
+  assert.equal(f.load('pkg'), 'x')
+  assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/pkg/node_modules/x/index.js')), true)
+  assert.equal(fs.existsSync(path.join(f.cache, 'node_modules/pkg/node_modules/a/node_modules/x')), false)
 })
 
 test('a hoisted copy outside the archive resolves its own dependencies through the real archive source', (t) => {

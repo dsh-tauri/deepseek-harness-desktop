@@ -124,6 +124,7 @@
   "errors.process_exited_without_code": "Harness가 예기치 않게 중지되었습니다. 계속하려면 다시 시작하세요.",
   "errors.no_readiness_reason": "준비 상태의 사유가 보고되지 않았습니다.",
   "errors.client_boot_stalled": "정해진 횟수만큼 다시 로드를 시도했지만 클라이언트가 플러그인 로딩 상태에 머물러 있습니다.",
+  "errors.unknown_startup_failure": "시작에 실패했지만 표시할 오류 메시지가 없습니다. 로그를 확인한 뒤 다시 시도하세요.",
   "errors.client_boot_failed": "플러그인을 불러오는 중 클라이언트에서 오류를 보고했습니다.",
   "errors.plugin_route_conflict": "플러그인 경로 충돌이 감지되었습니다. 두 플러그인이 동일한 경로를 중복 등록했습니다. 플러그인 패널에서 최근 추가한 플러그인(예: dsh-web-ui-all / dsh-better-sidebar)을 제거하거나, 활성 프로파일에 대해 dsh plugin --profile <profile> remove <package> 명령을 실행한 후 다시 시도하십시오.",
   "errors.inotify_limit": "시스템의 파일 감시 한도에 도달하여 Harness 서비스가 시작 중 비정상 종료되었습니다(inotify ENOSPC). 감시 한도를 늘린 후 다시 시작하십시오. 예를 들어 `sudo sysctl fs.inotify.max_user_watches=524288`을 실행하고, 영구 적용하려면 `/etc/sysctl.conf`에 `fs.inotify.max_user_watches=524288`을 추가한 뒤 앱을 다시 시작하십시오.",

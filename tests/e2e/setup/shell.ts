@@ -382,8 +382,13 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
       dismissed = true
       continue
     }
-    if (await page.locator(SETUP_ERROR).count() > 0)
-      throw new Error(`首次装配失败：${await pageText(page)}`)
+    // 错误页骨架可能先于文案渲染，此时读到的是空文本；只认真正有内容的失败，
+    // 否则内核尚在启动的瞬态会被当成装配失败（CI 上表现为随机红）。
+    if (await page.locator(SETUP_ERROR).count() > 0) {
+      const text = (await pageText(page)).trim()
+      if (text !== '')
+        throw new Error(`首次装配失败：${text}`)
+    }
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
   throw new Error(`首次装配未完成：既没有出现预装引导，也没有拉起内嵌页面；当前页面：${await pageText(page)}`)

@@ -85,8 +85,13 @@ export function Shell() {
       return
     if (status !== 'ready' || !serviceHealthy || !webviewSrc)
       return
-    if (hostedNavigationRef.current !== null && hostedNavigationRef.current.generation === processGeneration)
+    // 只按 origin 判等：同一核心每次启动都会重新生成时间戳，全等比较会把同一地址判成新地址，
+    // 反复导航互相打断（ERR_UNEXPECTED）。真换了核心时 origin 必然不同。
+    if (hostedNavigationRef.current !== null
+      && hostedNavigationRef.current.generation === processGeneration
+      && new URL(hostedNavigationRef.current.url).origin === new URL(webviewSrc).origin) {
       return
+    }
     // 文档即 DSH 且自本文档挂载以来未换代：当前页面就是要导航的那个文档，
     // 再导航只会自我打断（页面重载会重建 store，因此基线恒为 0）。
     if (hostedNavigationRef.current === null && processGeneration === 0 && isHostedServiceDocument()

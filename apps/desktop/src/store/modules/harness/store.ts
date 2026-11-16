@@ -910,7 +910,8 @@ export const harness = defineStore({
 
     /** 进入错误态（供本模块与 harness-updater 模块共用） */
     fail(message: string, logs?: string[], pluginConflictHint?: string, inotifyLimitHint?: string, keepServiceRunning = false, patchLayerHint?: string, heapOomHint?: string) {
-      this.errorMsg = message
+      // 空消息会让错误页只剩一个空白面板，用户与 E2E 都无从判断发生了什么。
+      this.errorMsg = (message ?? '').trim() === '' ? 'errors.unknown_startup_failure' : message
       this.errorLogs = logs ?? []
       this.pluginConflictHint = pluginConflictHint ?? ''
       this.inotifyLimitHint = inotifyLimitHint ?? ''
