@@ -79,7 +79,12 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
       return
     const card = document.querySelector(COMPOSER_CARD_SELECTOR)
     const entries = binding?.eventSource?.getSnapshot?.().entries
-    if (card !== null && isComposerEmpty(card) && shouldOfferResume({ session: snapshotNow(), entries })) {
+    const session = snapshotNow()
+    const input = {
+      ...session === undefined ? {} : { session },
+      ...entries === undefined ? {} : { entries },
+    }
+    if (card !== null && isComposerEmpty(card) && shouldOfferResume(input)) {
       const button = primaryButtonOf(card)
       if (button !== null) {
         paint(button)

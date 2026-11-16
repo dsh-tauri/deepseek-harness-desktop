@@ -1,4 +1,3 @@
-import type { PiAiBuiltinModel } from '@earendil-works/pi-ai/providers/all'
 import type { ModelCapabilityPreset, PresetRow, PresetSource, PresetTable } from '../../shared/model-presets'
 import type { PresetResolveResult, PresetTablePayload } from './model-presets.types'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -33,11 +32,11 @@ const RETRY_COOLDOWN_MS = 60_000
 
 const EXTENDED_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
-type PiAiModel = PiAiBuiltinModel
+type PiAiAllModule = typeof import('@earendil-works/pi-ai/providers/all')
 
-interface PiAiModule {
-  getBuiltinProviders: () => string[]
-  getBuiltinModels: (provider: string) => PiAiModel[]
+type PiAiModel = ReturnType<PiAiAllModule['getBuiltinModels']>[number]
+
+type PiAiModule = Pick<PiAiAllModule, 'getBuiltinProviders' | 'getBuiltinModels'> & {
   getSupportedThinkingLevels?: (model: PiAiModel) => string[]
 }
 
