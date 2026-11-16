@@ -5,7 +5,7 @@
 - 涉及仓库：`deepseek-harness-desktop`（本文件所在仓库）
 - 关键组件：`apps/desktop/src-tauri`（桌面壳 Rust）、`apps/desktop/src`（壳 UI）、
   `packages/builtin-plugin-remote`（`dsh-tauri-remote` 插件，SSH 侧实现）
-- 状态：**P0 已合入（#1555、#1557）；P1 只读基础实现见 #1561；本设计继续随实现回填**
+- 状态：**P0 已合入（#1555、#1557）；P1 #1561 已处理首轮评审意见（`b5508d6`），等待 CI 与重审**
 - 阶段划分见第 6 节；每个阶段单独成 PR，后一阶段以前一阶段的设计或实现为 base
 
 ## 0. PR 拆分与依赖
@@ -17,7 +17,7 @@
 | #1551 | 本设计、身份与状态语义 | 无 | OPEN |
 | #1557 | 生成链、生成产物与仓库级类型检查 | 无领域依赖 | MERGED |
 | #1555 | P0 只读契约、路由、生成客户端与 Rust 白名单 | #1557 | MERGED |
-| #1561 | P1 远端 Core 与远端 Profile 只读查看 | #1555、#1557 | OPEN |
+| #1561 | P1 远端 Core 与远端 Profile 只读查看 | #1555、#1557 | OPEN · REVIEW FIXES |
 | P2 | 安装、切换、回滚与长任务事件流 | #1561 | NOT STARTED |
 | P3 | 远端插件与档案反向管理 | P2 | NOT STARTED |
 
@@ -325,6 +325,17 @@ UI 侧必须按 `host/service/session.ts` 的 `role.remote`（`DSH_REMOTE_SESSIO
 - 两个页面复用主界面右上角机器切换器的状态、地址和选择交互。
 - 新增只读 `GET core/profiles` 契约，并同步生成客户端、端点清单和 Rust 白名单。
 - 当前主机端只产出 `slotKey = current` 的单个活动槽位；多槽位持久化仍属于 P2。
+- 远端 Profile 目录在枚举前显式验证可读性；真实权限不足会返回 `REMOTE_CORE_PROFILES_UNREADABLE`。
+- 机器轮询移除当前筛选目标时，Core 与 Profile 页面会同步清空筛选并恢复“全部机器”。
+
+### 6.2 当前验证（#1561）
+
+- 最新提交：`b5508d67`。
+- TypeScript typecheck 与全量 ESLint 通过。
+- 全量单测 105 个文件、937 个用例通过。
+- Core/Profile 评审回归测试连续 5 次乱序通过。
+- Rust 远端桥接测试 18/18 通过。
+- 新增 Profile 端点重复运行 `genapi` 无工作区漂移。
 
 ---
 
