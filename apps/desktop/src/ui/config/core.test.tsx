@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   restart: vi.fn(),
   toast: Object.assign(vi.fn(), { close: vi.fn() }),
+  loadRemoteMachines: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
 vi.mock('@/store', () => ({ store: { harness: { restart: mocks.restart } } }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
+vi.mock('@/hooks/use-remote', () => ({ loadRemoteMachines: mocks.loadRemoteMachines }))
 
 const localFixture: HarnessCore = {
   id: 'local',
@@ -129,6 +131,7 @@ beforeEach(async () => {
     interpolation: { escapeValue: false },
   })
   mocks.restart.mockResolvedValue(undefined)
+  mocks.loadRemoteMachines.mockResolvedValue({ enabled: false, machines: [] })
   mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'get_cores')
       return cores.map(core => ({ ...core }))

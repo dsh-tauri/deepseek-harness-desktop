@@ -20,6 +20,7 @@ import { compareVersions, isCoreUnsupported, MIN_SUPPORTED_CORE_VERSION } from '
 import { formatBytes } from '@/utils/format-bytes'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
+import { RemoteCoreSection } from './components/remote-core'
 
 /** 迁移进度面板保留的日志行数 */
 const PROGRESS_LOG_LIMIT = 8
@@ -679,6 +680,7 @@ export function ConfigCore() {
         </div>
       </Panel.Loadable>
 
+      <RemoteCoreSection />
     </div>
   )
 }

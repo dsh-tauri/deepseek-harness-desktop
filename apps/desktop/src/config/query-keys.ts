@@ -39,4 +39,6 @@ export const queryKeys = {
   dependenciesRoot: ['dependencies_root'] as const,
   remoteMachines: ['remote_machines'] as const,
   remoteEvents: ['remote_events'] as const,
+  remoteCoreVersions: ['remote_core_versions'] as const,
+  remoteCoreTarget: (machineId: string) => ['remote_core_target', machineId] as const,
 } as const

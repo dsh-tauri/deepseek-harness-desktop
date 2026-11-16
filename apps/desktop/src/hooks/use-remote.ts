@@ -15,6 +15,17 @@ type RemoteProgressPhase = RemoteProgress['phase']
 
 export type RemoteMachineRow = { id: string, name: string, state: RemoteConnectionState } & Pick<RemoteMachineListItem, 'color' | 'tintBorder' | 'host' | 'port' | 'user' | 'tunnelBaseUrl' | 'lastError' | 'nextRetryAt' | 'authMethod'> & { progress?: Pick<RemoteProgress, 'phase'> }
 
+export async function loadRemoteMachines(): Promise<{ enabled: boolean, machines: RemoteMachineRow[] }> {
+  try {
+    return machineRowsOf(await getMachines())
+  }
+  catch (error) {
+    if (String(error).startsWith('REMOTE_API_MISSING:'))
+      return { enabled: false, machines: [] }
+    throw error
+  }
+}
+
 interface SwitcherTargets {
   activeId: string | null
   pendingId: string | null
@@ -47,16 +58,7 @@ export function useRemote() {
   const outageLoggedRef = useRef(false)
   const machinesQuery = useQuery({
     queryKey: queryKeys.remoteMachines,
-    queryFn: async () => {
-      try {
-        return machineRowsOf(await getMachines())
-      }
-      catch (error) {
-        if (String(error).startsWith('REMOTE_API_MISSING:'))
-          return { enabled: false, machines: [] as RemoteMachineRow[] }
-        throw error
-      }
-    },
+    queryFn: loadRemoteMachines,
     refetchInterval: 2000,
   })
   const machines = machinesQuery.data?.enabled ? machinesQuery.data.machines : []
