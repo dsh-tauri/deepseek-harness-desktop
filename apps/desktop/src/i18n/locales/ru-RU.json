@@ -124,6 +124,7 @@
   "errors.process_exited_without_code": "Harness неожиданно остановился. Перезапустите для продолжения.",
   "errors.no_readiness_reason": "Причина готовности не была сообщена.",
   "errors.client_boot_stalled": "Клиент застрял на «Загрузка плагинов» после всех ограниченных попыток перезагрузки.",
+  "errors.unknown_startup_failure": "Запуск не удался без понятного сообщения об ошибке. Проверьте журнал и повторите попытку.",
   "errors.client_boot_failed": "Клиент сообщил об ошибке при загрузке плагинов.",
   "errors.plugin_route_conflict": "Обнаружен конфликт маршрутов плагинов: два плагина зарегистрировали один маршрут дважды. Удалите недавно добавленный плагин (например, dsh-web-ui-all / dsh-better-sidebar) на панели Плагины, или выполните `dsh plugin --profile <profile> remove <package>` для активного профиля и повторите попытку.",
   "errors.inotify_limit": "Сервис Harness упал при запуске: система достигла лимита файловых наблюдателей (inotify ENOSPC). Увеличьте лимит и перезапустите — например, `sudo sysctl fs.inotify.max_user_watches=524288` (и добавьте `fs.inotify.max_user_watches=524288` в `/etc/sysctl.conf` для сохранения), затем перезапустите приложение.",

@@ -124,6 +124,7 @@
   "errors.process_exited_without_code": "Harness stopped unexpectedly. Restart to continue.",
   "errors.no_readiness_reason": "No readiness reason was reported.",
   "errors.client_boot_stalled": "The client remained on Loading plugins after all bounded reload attempts.",
+  "errors.unknown_startup_failure": "Startup failed without a readable error. Check the logs and retry.",
   "errors.client_boot_failed": "The client reported a failure while loading plugins.",
   "errors.plugin_route_conflict": "Detected a plugin route conflict: two plugins registered the same route twice. Uninstall the recently added plugin (e.g. dsh-web-ui-all / dsh-better-sidebar) from the Plugins panel, or run dsh plugin --profile <profile> remove <package> for the active profile and retry.",
   "errors.inotify_limit": "The Harness service crashed on startup: your system reached the limit for file watchers (inotify ENOSPC). Increase the watcher limit and restart — e.g. run `sudo sysctl fs.inotify.max_user_watches=524288` (and add `fs.inotify.max_user_watches=524288` to `/etc/sysctl.conf` to persist), then restart the app.",

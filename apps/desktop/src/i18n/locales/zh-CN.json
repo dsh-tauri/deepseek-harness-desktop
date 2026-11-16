@@ -124,6 +124,7 @@
   "errors.process_exited_without_code": "Harness 意外停止。请重新启动以继续。",
   "errors.no_readiness_reason": "后端未报告就绪原因。",
   "errors.client_boot_stalled": "客户端在全部有界刷新尝试后仍停留在 Loading plugins。",
+  "errors.unknown_startup_failure": "启动失败，但没有任何可读的错误信息。请查看日志后重试。",
   "errors.client_boot_failed": "客户端加载插件时报告了失败。",
   "errors.plugin_route_conflict": "检测到插件路由冲突：两个插件重复注册了同一路由。请在「插件」面板卸载最近安装的插件（如 dsh-web-ui-all / dsh-better-sidebar），或在终端对当前档案执行 dsh plugin --profile <档案名> remove <包名> 后重试。",
   "errors.inotify_limit": "Harness 服务启动即崩溃：系统文件监视（inotify）数量达到上限。请调高监视上限后重试——例如执行 `sudo sysctl fs.inotify.max_user_watches=524288`（并将 `fs.inotify.max_user_watches=524288` 写入 `/etc/sysctl.conf` 以持久化），然后重启应用。",
