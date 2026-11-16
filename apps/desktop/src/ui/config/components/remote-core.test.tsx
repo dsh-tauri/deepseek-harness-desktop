@@ -28,10 +28,11 @@ vi.mock('@/hooks/use-remote', () => ({
 
 type CoreTarget = NonNullable<GetApiTauriRemoteCoreCurrentResponse['item']>
 type CoreSlot = Extract<CoreTarget, { availability: 'present' }>['slots'][number]
+type UnreadableCoreSlot = Extract<CoreTarget, { availability: 'unreadable' }>['slots'][number]
 type TargetState
   = | { availability: 'absent', slots: [] }
     | { availability: 'present', slots: CoreSlot[] }
-    | { availability: 'unreadable', error: string, path?: string, slots: [] }
+    | { availability: 'unreadable', error: string, path?: string, slots: UnreadableCoreSlot[] }
 
 const clients = new Set<QueryClient>()
 let translations = createInstance()

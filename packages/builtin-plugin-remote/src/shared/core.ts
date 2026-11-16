@@ -41,7 +41,7 @@ export type CoreTarget = CoreTargetBase & CoreTargetState
 export type CoreTargetState
   = | { availability: 'absent', slots: [] }
     | { availability: 'present', slots: CoreSlotState[] }
-    | { availability: 'unreadable', error: string, path?: string, slots: [] }
+    | { availability: 'unreadable', error: string, path?: string, slots: CoreUnreadableSlot[] }
 
 export type CoreSlotState
   = | CoreInstalledSlot

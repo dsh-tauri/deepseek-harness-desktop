@@ -24,6 +24,8 @@ vi.mock('./machine', () => ({
 }))
 
 const machineId = MachineId('remote-core-test')
+const canTestUnixDirectoryMode = process.platform !== 'win32'
+  && (process.getuid?.() ?? 1) !== 0
 let session: RemoteSession
 const entryPath = '/home/remote/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'
 
@@ -37,6 +39,34 @@ function sessionWithRemote(packageResult: RemoteExecResult, entryResult: RemoteE
     stream: vi.fn(),
     onClosed: vi.fn(),
     close: vi.fn(async () => {}),
+  }
+}
+
+async function expectProfileDirectoryUnreadable(mode: number): Promise<void> {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-core-profiles-'))
+  const profiles = join(home, '.dsh', 'profiles')
+  mkdirSync(profiles, { recursive: true })
+  const shellSession: RemoteSession = {
+    exec: async (command) => {
+      const result = spawnSync('sh', ['-c', command], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home },
+      })
+      return { code: result.status, stdout: result.stdout, stderr: result.stderr }
+    },
+    stream: vi.fn(),
+    onClosed: vi.fn(),
+    close: vi.fn(async () => {}),
+  }
+  vi.mocked(machine.openSession).mockResolvedValue(shellSession)
+
+  try {
+    chmodSync(profiles, mode)
+    await expect(core.listProfiles(machineId)).rejects.toThrow('REMOTE_CORE_PROFILES_UNREADABLE')
+  }
+  finally {
+    chmodSync(profiles, 0o700)
+    rmSync(home, { recursive: true, force: true })
   }
 }
 
@@ -78,32 +108,12 @@ describe('remote core contract', () => {
     expect(session.close).toHaveBeenCalledOnce()
   })
 
-  it('detects a real profile directory that cannot be enumerated', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'dsh-core-profiles-'))
-    const profiles = join(home, '.dsh', 'profiles')
-    mkdirSync(profiles, { recursive: true })
-    chmodSync(profiles, 0o300)
-    const shellSession: RemoteSession = {
-      exec: async (command) => {
-        const result = spawnSync('sh', ['-c', command], {
-          encoding: 'utf8',
-          env: { ...process.env, HOME: home },
-        })
-        return { code: result.status, stdout: result.stdout, stderr: result.stderr }
-      },
-      stream: vi.fn(),
-      onClosed: vi.fn(),
-      close: vi.fn(async () => {}),
-    }
-    vi.mocked(machine.openSession).mockResolvedValue(shellSession)
+  it.skipIf(!canTestUnixDirectoryMode)('reports a real profile directory without search access as unreadable', async () => {
+    await expectProfileDirectoryUnreadable(0o400)
+  })
 
-    try {
-      await expect(core.listProfiles(machineId)).rejects.toThrow('REMOTE_CORE_PROFILES_UNREADABLE')
-    }
-    finally {
-      chmodSync(profiles, 0o700)
-      rmSync(home, { recursive: true, force: true })
-    }
+  it.skipIf(!canTestUnixDirectoryMode)('reports a real profile directory without read access as unreadable', async () => {
+    await expectProfileDirectoryUnreadable(0o300)
   })
 
   it('lists only valid releases that meet the remote minimum version', async () => {

@@ -17,6 +17,10 @@ export const core = defineService({
       const result = await session.exec([
         'DIR="$HOME/.dsh/profiles"',
         '[ -d "$DIR" ] || exit 0',
+        'if [ ! -r "$DIR" ] || [ ! -x "$DIR" ]; then',
+        '  echo "REMOTE_PROFILES_UNREADABLE" >&2',
+        '  exit 1',
+        'fi',
         'if ! ls -A "$DIR" >/dev/null 2>&1; then',
         '  echo "REMOTE_PROFILES_UNREADABLE" >&2',
         '  exit 1',
