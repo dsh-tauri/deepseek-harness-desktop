@@ -49,8 +49,13 @@ export const PROFILE_MIGRATE_CANCEL = '[data-testid="dsh-profile-migrate-cancel"
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
-/** 冷装配（真实下载 Node + dsh）的等待上限。 */
-export const ASSEMBLY_TIMEOUT_MS = process.platform === 'darwin' ? 300_000 : 900_000
+/**
+ * 冷装配（真实下载 Node + dsh）的等待上限。
+ *
+ * 各平台用同一个上限：macOS runner 并不比别的平台快，按 5 分钟卡它在资源竞争时会把正常
+ * 装配判成超时，而这类超时与代码无关，只让 CI 红得没有信息量。
+ */
+export const ASSEMBLY_TIMEOUT_MS = 900_000
 export const WINDOW_TIMEOUT_MS = 30_000
 export const SETTLE_MS = 3_000
 
