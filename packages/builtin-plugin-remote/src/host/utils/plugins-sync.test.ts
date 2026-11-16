@@ -246,11 +246,13 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const sandbox = createSandbox()
     const argvLog = join(sandbox.logs, 'argv.log')
     startInstance(sandbox, { STUB_ARGV_LOG: posix(argvLog), STUB_NODE_EXIT: '1' })
+    // 文件可能已被创建但内容还没落盘（stub 先 open 后 write），只等「存在」会读到空串。
     const argv = await vi.waitFor(() => {
-      if (!existsSync(argvLog))
+      const text = existsSync(argvLog) ? readFileSync(argvLog, 'utf8').trim() : ''
+      if (text === '')
         throw new Error('远端实例还没有把 argv 写进日志')
-      return readFileSync(argvLog, 'utf8').trim()
-    }, { timeout: 5000 })
+      return text
+    }, { timeout: 15_000 })
     expect(argv).toContain(`--profile ${PROFILE}`)
 
     const result = runSyncScript(sandbox, { shims: [pkillShim(sandbox)], env: { STUB_NODE_EXIT: '1' } })
