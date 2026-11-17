@@ -1,6 +1,6 @@
 import type { Config } from '../config/schema'
 import type { MachineProfile, RemoteMachineStage, RemoteSession } from '../types/index'
-import type { BootstrapHooks, BootstrapLogLine, EnvCredentials, ReleaseAvailability, RemoteInstallPlan } from './bootstrap.types'
+import type { BootstrapHooks, BootstrapLogLine, DshVersionInstallPlan, EnvCredentials, ReleaseAvailability, RemoteInstallPlan } from './bootstrap.types'
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
 import { messageOf } from '../../shared/error'
@@ -268,6 +268,110 @@ function quoteUrls(urls: string[]): string {
   return urls.map(shQuote).join(' ')
 }
 
+const INSTALL_SHELL_HELPERS: string[] = [
+  'fetch_one() {',
+  '  _dst="$1"; _url="$2"',
+  '  if command -v curl >/dev/null 2>&1; then',
+  '    log download "$_url"',
+  '    if curl -fsSL --retry 3 --connect-timeout 15 -o "$_dst" "$_url" 2>"$TMP/fetch.err"; then return 0; fi',
+  '    _errs="$_errs | $_url: $(head -n 1 "$TMP/fetch.err" 2>/dev/null || echo download failed)"',
+  '    return 1',
+  '  fi',
+  '  if command -v wget >/dev/null 2>&1; then',
+  '    log download "$_url"',
+  '    if wget -q --tries=3 -O "$_dst" "$_url" 2>/dev/null; then return 0; fi',
+  '    _errs="$_errs | $_url: wget download failed"',
+  '    return 1',
+  '  fi',
+  '  log failed "REMOTE_INSTALL_NO_DOWNLOADER: 远端缺少 curl 或 wget，请先安装其一"',
+  '  exit 9',
+  '}',
+  'fetch() {',
+  '  _dst="$1"; shift',
+  '  _errs=""',
+  '  for _url in "$@"; do',
+  '    if fetch_one "$_dst" "$_url"; then return 0; fi',
+  '  done',
+  '  log failed "所有下载源均失败:$_errs"',
+  '  exit 10',
+  '}',
+  'fetch_verified() {',
+  '  _dst="$1"; _want="$2"; _name="$3"; shift 3',
+  '  _errs=""',
+  '  _mismatch=0',
+  '  for _url in "$@"; do',
+  '    if fetch_one "$_dst" "$_url"; then',
+  '      if verify "$_dst" "$_want" "$_name"; then return 0; fi',
+  '      _mismatch=1',
+  '      log verify "改用下一个下载源: $_url"',
+  '    fi',
+  '  done',
+  '  if [ "$_mismatch" = 0 ]; then',
+  '    log failed "所有下载源均失败:$_errs"',
+  '    exit 10',
+  '  fi',
+  '  log failed "checksum mismatch: $_name (want sha$_algo:$_hex, got $_got)"',
+  '  exit 11',
+  '}',
+  'verify() {',
+  '  _file="$1"; _want="$2"; _name="$3"',
+  '  case "$_want" in',
+  '    sha256:*) _algo=256; _hex="$(printf \'%s\' "$_want" | sed \'s/^sha256://\')" ;;',
+  '    sha512:*) _algo=512; _hex="$(printf \'%s\' "$_want" | sed \'s/^sha512://\')" ;;',
+  '    "") log verify "警告: 未取得可信摘要，跳过校验 $_name"; return 0 ;;',
+  '    *) _algo=256; _hex="$_want" ;;',
+  '  esac',
+  '  _got=""',
+  `  if [ "\$_algo" = 256 ]; then`,
+  '    if command -v sha256sum >/dev/null 2>&1; then _got="$(sha256sum "$_file" | cut -d\' \' -f1)"',
+  '    elif command -v shasum >/dev/null 2>&1; then _got="$(shasum -a 256 "$_file" | cut -d\' \' -f1)"',
+  '    fi',
+  '  else',
+  '    if command -v sha512sum >/dev/null 2>&1; then _got="$(sha512sum "$_file" | cut -d\' \' -f1)"',
+  '    elif command -v shasum >/dev/null 2>&1; then _got="$(shasum -a 512 "$_file" | cut -d\' \' -f1)"',
+  '    fi',
+  '  fi',
+  '  if [ -z "$_got" ]; then',
+  // 跳过校验等于让镜像同时决定运行时和它的校验依据，这里必须失败而不是放行。
+  '    log failed "REMOTE_INSTALL_NO_DIGEST_TOOL: 远端缺少可用的摘要工具（sha256sum/shasum），无法校验 $_name"',
+  '    exit 14',
+  '  fi',
+  '  if [ "$_got" != "$_hex" ]; then',
+  '    log verify "校验不通过: $_name (want sha$_algo:$_hex, got $_got)"',
+  '    return 1',
+  '  fi',
+  `  log verify "$_name 校验通过 (sha$_algo)"`,
+  '}',
+  'extract_zip() {',
+  '  _zip="$1"; _dir="$2"',
+  '  mkdir -p "$_dir"',
+  '  if command -v unzip >/dev/null 2>&1; then unzip -q -o "$_zip" -d "$_dir"',
+  '  elif command -v python3 >/dev/null 2>&1; then python3 -m zipfile -e "$_zip" "$_dir"',
+  '  else',
+  '    log failed "REMOTE_INSTALL_NO_UNZIP: 远端缺少 unzip 或 python3，无法解压发行包"',
+  '    exit 12',
+  '  fi',
+  '}',
+  'flatten_move() {',
+  '  _src="$1"; _dst="$2"',
+  '  _count=0; _top=""',
+  '  for _e in "$_src"/*; do',
+  '    if [ -e "$_e" ]; then _count=$((_count + 1)); _top="$_e"; fi',
+  '  done',
+  '  rm -rf "$_dst"',
+  '  if [ "$_count" -eq 1 ] && [ -d "$_top" ]; then',
+  '    mkdir -p "$_dst"',
+  '    for _e in "$_top"/* "$_top"/.[!.]* "$_top"/..?*; do',
+  '      if [ -e "$_e" ]; then mv -f "$_e" "$_dst/"; fi',
+  '    done',
+  '    rmdir "$_top" 2>/dev/null || true',
+  '    rmdir "$_src" 2>/dev/null || true',
+  '  else',
+  '    mv -f "$_src" "$_dst"',
+  '  fi',
+  '}',
+]
+
 export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: boolean } = {}): string {
   assertSupportedDshVersion(plan.dshVersion)
   assertSupportedDshVersion(plan.dsh.kind === 'pkg-zip' ? parseVersionFromTag(plan.dsh.tag) ?? '' : plan.dsh.version)
@@ -317,107 +421,7 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
     'cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; }',
     'trap cleanup EXIT',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
-    'fetch_one() {',
-    '  _dst="$1"; _url="$2"',
-    '  if command -v curl >/dev/null 2>&1; then',
-    '    log download "$_url"',
-    '    if curl -fsSL --retry 3 --connect-timeout 15 -o "$_dst" "$_url" 2>"$TMP/fetch.err"; then return 0; fi',
-    '    _errs="$_errs | $_url: $(head -n 1 "$TMP/fetch.err" 2>/dev/null || echo download failed)"',
-    '    return 1',
-    '  fi',
-    '  if command -v wget >/dev/null 2>&1; then',
-    '    log download "$_url"',
-    '    if wget -q --tries=3 -O "$_dst" "$_url" 2>/dev/null; then return 0; fi',
-    '    _errs="$_errs | $_url: wget download failed"',
-    '    return 1',
-    '  fi',
-    '  log failed "REMOTE_INSTALL_NO_DOWNLOADER: 远端缺少 curl 或 wget，请先安装其一"',
-    '  exit 9',
-    '}',
-    'fetch() {',
-    '  _dst="$1"; shift',
-    '  _errs=""',
-    '  for _url in "$@"; do',
-    '    if fetch_one "$_dst" "$_url"; then return 0; fi',
-    '  done',
-    '  log failed "所有下载源均失败:$_errs"',
-    '  exit 10',
-    '}',
-    'fetch_verified() {',
-    '  _dst="$1"; _want="$2"; _name="$3"; shift 3',
-    '  _errs=""',
-    '  _mismatch=0',
-    '  for _url in "$@"; do',
-    '    if fetch_one "$_dst" "$_url"; then',
-    '      if verify "$_dst" "$_want" "$_name"; then return 0; fi',
-    '      _mismatch=1',
-    '      log verify "改用下一个下载源: $_url"',
-    '    fi',
-    '  done',
-    '  if [ "$_mismatch" = 0 ]; then',
-    '    log failed "所有下载源均失败:$_errs"',
-    '    exit 10',
-    '  fi',
-    '  log failed "checksum mismatch: $_name (want sha$_algo:$_hex, got $_got)"',
-    '  exit 11',
-    '}',
-    'verify() {',
-    '  _file="$1"; _want="$2"; _name="$3"',
-    '  case "$_want" in',
-    '    sha256:*) _algo=256; _hex="$(printf \'%s\' "$_want" | sed \'s/^sha256://\')" ;;',
-    '    sha512:*) _algo=512; _hex="$(printf \'%s\' "$_want" | sed \'s/^sha512://\')" ;;',
-    '    "") log verify "警告: 未取得可信摘要，跳过校验 $_name"; return 0 ;;',
-    '    *) _algo=256; _hex="$_want" ;;',
-    '  esac',
-    '  _got=""',
-    `  if [ "\$_algo" = 256 ]; then`,
-    '    if command -v sha256sum >/dev/null 2>&1; then _got="$(sha256sum "$_file" | cut -d\' \' -f1)"',
-    '    elif command -v shasum >/dev/null 2>&1; then _got="$(shasum -a 256 "$_file" | cut -d\' \' -f1)"',
-    '    fi',
-    '  else',
-    '    if command -v sha512sum >/dev/null 2>&1; then _got="$(sha512sum "$_file" | cut -d\' \' -f1)"',
-    '    elif command -v shasum >/dev/null 2>&1; then _got="$(shasum -a 512 "$_file" | cut -d\' \' -f1)"',
-    '    fi',
-    '  fi',
-    '  if [ -z "$_got" ]; then',
-    // 跳过校验等于让镜像同时决定运行时和它的校验依据，这里必须失败而不是放行。
-    '    log failed "REMOTE_INSTALL_NO_DIGEST_TOOL: 远端缺少可用的摘要工具（sha256sum/shasum），无法校验 $_name"',
-    '    exit 14',
-    '  fi',
-    '  if [ "$_got" != "$_hex" ]; then',
-    '    log verify "校验不通过: $_name (want sha$_algo:$_hex, got $_got)"',
-    '    return 1',
-    '  fi',
-    `  log verify "$_name 校验通过 (sha$_algo)"`,
-    '}',
-    'extract_zip() {',
-    '  _zip="$1"; _dir="$2"',
-    '  mkdir -p "$_dir"',
-    '  if command -v unzip >/dev/null 2>&1; then unzip -q -o "$_zip" -d "$_dir"',
-    '  elif command -v python3 >/dev/null 2>&1; then python3 -m zipfile -e "$_zip" "$_dir"',
-    '  else',
-    '    log failed "REMOTE_INSTALL_NO_UNZIP: 远端缺少 unzip 或 python3，无法解压发行包"',
-    '    exit 12',
-    '  fi',
-    '}',
-    'flatten_move() {',
-    '  _src="$1"; _dst="$2"',
-    '  _count=0; _top=""',
-    '  for _e in "$_src"/*; do',
-    '    if [ -e "$_e" ]; then _count=$((_count + 1)); _top="$_e"; fi',
-    '  done',
-    '  rm -rf "$_dst"',
-    '  if [ "$_count" -eq 1 ] && [ -d "$_top" ]; then',
-    '    mkdir -p "$_dst"',
-    '    for _e in "$_top"/* "$_top"/.[!.]* "$_top"/..?*; do',
-    '      if [ -e "$_e" ]; then mv -f "$_e" "$_dst/"; fi',
-    '    done',
-    '    rmdir "$_top" 2>/dev/null || true',
-    '    rmdir "$_src" 2>/dev/null || true',
-    '  else',
-    '    mv -f "$_src" "$_dst"',
-    '  fi',
-    '}',
+    ...INSTALL_SHELL_HELPERS,
     'if [ -x "$ROOT/runtime/bin/node" ]; then',
     '  log install "node 已就绪: $("$ROOT/runtime/bin/node" --version 2>/dev/null || echo installed)"',
     'else',
@@ -444,6 +448,162 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
     'fi',
     dshSection,
     'log install "远端初始化完成"',
+  ].join('\n')
+}
+
+export async function planRemoteVersionInstall(
+  unameOut: string,
+  config: Pick<Config, 'installRepo'>,
+  tag: string,
+  fetchers: {
+    listAssets?: (repo: string, tag: string) => Promise<Array<{ name: string, url: string, digest?: string }>>
+    npmDist?: (packageName: string, version: string) => Promise<{ url: string, mirrorUrl: string, integrity?: string }>
+    probe?: (url: string) => Promise<ReleaseAvailability>
+  } = {},
+): Promise<DshVersionInstallPlan> {
+  const { os, arch } = parsePlatform(unameOut)
+  const matrix = assetMatrixFor(os, arch)
+  const repo = pkgRepoOf(config.installRepo)
+  const listAssets = fetchers.listAssets ?? listGithubAssets
+  const npmDist = fetchers.npmDist ?? npmDistMetadata
+  const probe = fetchers.probe ?? probeReleaseDownload
+  const notes: string[] = []
+  const version = parseVersionFromTag(tag) ?? ''
+  if (version === '')
+    throw new Error(`REMOTE_CORE_TAG_INVALID: 无法从版本标识 ${tag} 解析版本号`)
+  assertSupportedDshVersion(version)
+  if (matrix.dshKind === 'pkg-zip') {
+    const zipName = matrix.dshZipName ?? ''
+    let urls: string[] | undefined
+    let digest: string | undefined
+    try {
+      const assets = await listAssets(repo, tag)
+      const asset = assets.find(item => item.name === zipName)
+      if (asset !== undefined) {
+        urls = [asset.url, ...dshZipDownloadUrls(repo, tag, zipName).slice(1)]
+        digest = asset.digest
+      }
+      else {
+        notes.push(`release ${tag} 没有 ${zipName}`)
+      }
+    }
+    catch (error) {
+      notes.push(`release 资产元数据获取失败（${tag}: ${messageOf(error)}）`)
+    }
+    if (urls === undefined) {
+      const candidateUrls = dshZipDownloadUrls(repo, tag, zipName)
+      const state = await probe(candidateUrls[0] ?? '')
+      if (state === 'missing')
+        throw new Error(`REMOTE_DSH_RELEASE_UNAVAILABLE: release ${tag} 没有 ${zipName}，无法安装该版本`)
+      urls = candidateUrls
+      notes.push(`release ${tag} 可用性未知（${state}），继续尝试下载`)
+    }
+    if (digest === undefined)
+      notes.push(`未取得 ${zipName} 的可信摘要，将跳过 SHA-256 校验`)
+    return {
+      os,
+      arch,
+      repo,
+      tag,
+      version,
+      dshEntry: DSH_ZIP_ENTRY,
+      dsh: { kind: 'pkg-zip', urls, ...digest === undefined ? {} : { digest }, zipName, tag },
+      notes,
+    }
+  }
+  const packageName = matrix.dshNpmPackage ?? '@deepseek-ai/dsh'
+  let urls: string[] | undefined
+  let integrity: string | undefined
+  try {
+    const dist = await npmDist(packageName, version)
+    urls = [dist.url, dist.mirrorUrl]
+    integrity = normalizeNpmIntegrity(dist.integrity)
+  }
+  catch (error) {
+    notes.push(`npm 元数据获取失败（${packageName}@${version}: ${messageOf(error)}）`)
+  }
+  if (urls === undefined)
+    urls = dshNpmTarballUrls(packageName, version)
+  return {
+    os,
+    arch,
+    repo,
+    tag,
+    version,
+    dshEntry: DSH_NPM_ENTRY,
+    dsh: { kind: 'npm-tgz', urls, ...integrity === undefined ? {} : { integrity }, packageName, version },
+    notes,
+  }
+}
+
+export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, options: { slot: string, force?: boolean }): string {
+  assertSupportedDshVersion(plan.version)
+  if (!/^[\w.-]+$/u.test(options.slot))
+    throw new Error(`REMOTE_CORE_SLOT_INVALID: 非法版本目录名 ${options.slot}`)
+  const reinstallMarker = options.force === true ? ['REINSTALL=1'] : ['REINSTALL=']
+  const slot = `$ROOT/dependencies/${options.slot}`
+  const dshSection = plan.dsh.kind === 'pkg-zip'
+    ? [
+        `  log download "dsh ${plan.dsh.tag}"`,
+        `  fetch_verified "$TMP/dsh-pkg.zip" "${plan.dsh.digest ?? ''}" "${plan.dsh.zipName}" ${quoteUrls(plan.dsh.urls)}`,
+        `  rm -rf "${slot}.new"`,
+        `  mkdir -p "${slot}.new"`,
+        `  extract_zip "$TMP/dsh-pkg.zip" "${slot}.new"`,
+        `  flatten_move "${slot}.new" "${slot}"`,
+      ].join('\n')
+    : [
+        `  log download "dsh ${plan.dsh.packageName}@${plan.dsh.version} (npm)"`,
+        `  fetch_verified "$TMP/dsh.tgz" "${plan.dsh.integrity ?? ''}" "${plan.dsh.packageName}-${plan.dsh.version}.tgz" ${quoteUrls(plan.dsh.urls)}`,
+        `  rm -rf "${slot}.new"`,
+        `  mkdir -p "${slot}.new"`,
+        `  tar -xzf "$TMP/dsh.tgz" -C "${slot}.new" --strip-components=1`,
+        `  flatten_move "${slot}.new" "${slot}"`,
+      ].join('\n')
+  return [
+    'set -eu',
+    ...reinstallMarker,
+    'ROOT="$HOME/.dsh-desktop"',
+    'TMP="$ROOT/tmp"',
+    `SLOT="${slot}"`,
+    'mkdir -p "$ROOT/dependencies" "$TMP"',
+    'cleanup() { rm -rf "$TMP" "$SLOT.new"; }',
+    'trap cleanup EXIT',
+    `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
+    ...INSTALL_SHELL_HELPERS,
+    'if [ ! -x "$ROOT/runtime/bin/node" ]; then',
+    '  log failed "REMOTE_CORE_TARGET_NOT_READY: 远端缺少 node 运行时，请先完成远端初始化"',
+    '  exit 15',
+    'fi',
+    ...(plan.dsh.kind === 'pkg-zip'
+      ? []
+      : [
+          `if [ ! -f "$ROOT/dependencies/pnpm/${PNPM_ENTRY}" ]; then`,
+          '  log failed "REMOTE_CORE_TARGET_NOT_READY: 远端缺少 pnpm，请先完成远端初始化"',
+          '  exit 15',
+          'fi',
+        ]),
+    // 发行包自带依赖，装完即可用；只有 npm 包才需要再装依赖。
+    ...(plan.dsh.kind === 'pkg-zip'
+      ? []
+      : [
+          'install_dsh_deps() {',
+          `  for _reg in ${quoteUrls(['https://registry.npmjs.org', 'https://registry.npmmirror.com'])}; do`,
+          `    if ( cd "$SLOT" && "$ROOT/runtime/bin/node" "$ROOT/dependencies/pnpm/${PNPM_ENTRY}" install --prod --silent --registry="$_reg" >"$TMP/pnpm.log" 2>&1 ); then`,
+          '      log install "dsh 依赖安装完成 (registry $_reg)"',
+          '      return 0',
+          '    fi',
+          '  done',
+          `  log failed "pnpm install 失败: $(tail -n 5 "$TMP/pnpm.log" 2>/dev/null | tr '\n' ' ')"`,
+          '  return 1',
+          '}',
+        ]),
+    `if [ -d "$SLOT" ] && [ -z "$REINSTALL" ]; then`,
+    `  log install "dsh 已就绪 (${plan.tag})"`,
+    'else',
+    dshSection,
+    ...(plan.dsh.kind === 'pkg-zip' ? [] : ['  install_dsh_deps || exit 13']),
+    `  log install "dsh 安装完成 (${plan.tag})"`,
+    'fi',
   ].join('\n')
 }
 

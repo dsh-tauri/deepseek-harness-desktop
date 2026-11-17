@@ -17,7 +17,9 @@ const REMOTE_ENDPOINTS: &[&str] = &[
     "POST /api/tauri/remote/machines/test",
     "GET /api/tauri/remote/core/current",
     "GET /api/tauri/remote/core/profiles",
+    "GET /api/tauri/remote/core/tasks/events",
     "GET /api/tauri/remote/core/versions",
+    "POST /api/tauri/remote/core/install",
     "GET /api/tauri/remote/session/role",
     "GET /api/tauri/remote/settings",
     "POST /api/tauri/remote/settings",
@@ -52,6 +54,9 @@ fn remote_timeout(method: &reqwest::Method, path: &str) -> Duration {
         Duration::from_secs(REMOTE_CORE_READ_TIMEOUT_SECS)
     } else if method == reqwest::Method::GET {
         Duration::from_secs(10)
+    } else if path == "/api/tauri/remote/core/install" {
+        // 下载在插件侧异步执行，这里只等受理，超时不该把已经开始的下载判成失败。
+        Duration::from_secs(30)
     } else {
         Duration::from_secs(600)
     }
@@ -451,6 +456,14 @@ mod tests {
         assert_eq!(
             remote_timeout(&reqwest::Method::POST, "/api/tauri/remote/machines/install"),
             Duration::from_secs(600)
+        );
+    }
+
+    #[test]
+    fn remote_core_download_waits_only_for_the_task_to_be_accepted() {
+        assert_eq!(
+            remote_timeout(&reqwest::Method::POST, "/api/tauri/remote/core/install"),
+            Duration::from_secs(30)
         );
     }
 

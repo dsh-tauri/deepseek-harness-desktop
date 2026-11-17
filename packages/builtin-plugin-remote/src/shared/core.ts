@@ -66,14 +66,18 @@ export interface CoreUnsupportedSlot {
   kind: 'unsupported'
   slotKey: string
   version: string
+  tag?: string
   path?: string
+  dir?: string
   error: string
 }
 
 export interface CoreUnreadableSlot {
   kind: 'unreadable'
   slotKey: string
+  tag?: string
   path?: string
+  dir?: string
   error: string
 }
 
@@ -139,7 +143,7 @@ export const LOCAL_CORE_CAPABILITIES: CoreCapability[] = [
   'bundledCore',
 ]
 
-export const REMOTE_CORE_CAPABILITIES: CoreCapability[] = ['listVersions']
+export const REMOTE_CORE_CAPABILITIES: CoreCapability[] = ['listVersions', 'installVersion']
 
 export const LOCAL_CORE_PLATFORMS: CorePlatform[] = [
   'windows-x64',

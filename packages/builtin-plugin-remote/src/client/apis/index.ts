@@ -78,6 +78,16 @@ export function getCoreVersions(options?: FetchOptions) {
   return ofetch<Types.GetApiTauriRemoteCoreVersionsResponse>('/api/tauri/remote/core/versions', { method: 'get', ...options })
 }
 
+/** @method post */
+export function postCoreInstall(body: Types.PostApiTauriRemoteCoreInstallBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteCoreInstallResponse>('/api/tauri/remote/core/install', { method: 'post', body, ...options })
+}
+
+/** @method get */
+export function getCoreTasksEvents(params?: Types.GetApiTauriRemoteCoreTasksEventsQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriRemoteCoreTasksEventsResponse>('/api/tauri/remote/core/tasks/events', { method: 'get', ...params === undefined ? {} : { params }, ...options })
+}
+
 /** @method get */
 export function getSyncPreview(options?: FetchOptions) {
   return ofetch<Types.GetApiTauriRemoteSyncPreviewResponse>('/api/tauri/remote/sync/preview', { method: 'get', ...options })
