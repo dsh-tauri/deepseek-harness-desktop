@@ -1,4 +1,8 @@
 import type { RemoteExecOptions, RemoteExecResult, RemoteSession } from '../types/index'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MachineId } from '../types/index'
 import { core } from './core'
@@ -20,17 +24,49 @@ vi.mock('./machine', () => ({
 }))
 
 const machineId = MachineId('remote-core-test')
+const canTestUnixDirectoryMode = process.platform !== 'win32'
+  && (process.getuid?.() ?? 1) !== 0
 let session: RemoteSession
 const entryPath = '/home/remote/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'
 
-function sessionWithRemote(packageResult: RemoteExecResult, entryResult: RemoteExecResult): RemoteSession {
+function sessionWithRemote(packageResult: RemoteExecResult, entryResult: RemoteExecResult, profilesResult: RemoteExecResult = { code: 0, stdout: '', stderr: '' }): RemoteSession {
   return {
     exec: vi.fn(async (command: string, _options?: RemoteExecOptions): Promise<RemoteExecResult> => {
+      if (command.includes('.dsh/profiles'))
+        return profilesResult
       return command.includes('REMOTE_DSH_PACKAGE') ? packageResult : entryResult
     }),
     stream: vi.fn(),
     onClosed: vi.fn(),
     close: vi.fn(async () => {}),
+  }
+}
+
+async function expectProfileDirectoryUnreadable(mode: number): Promise<void> {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-core-profiles-'))
+  const profiles = join(home, '.dsh', 'profiles')
+  mkdirSync(profiles, { recursive: true })
+  const shellSession: RemoteSession = {
+    exec: async (command) => {
+      const result = spawnSync('sh', ['-c', command], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home },
+      })
+      return { code: result.status, stdout: result.stdout, stderr: result.stderr }
+    },
+    stream: vi.fn(),
+    onClosed: vi.fn(),
+    close: vi.fn(async () => {}),
+  }
+  vi.mocked(machine.openSession).mockResolvedValue(shellSession)
+
+  try {
+    chmodSync(profiles, mode)
+    await expect(core.listProfiles(machineId)).rejects.toThrow('REMOTE_CORE_PROFILES_UNREADABLE')
+  }
+  finally {
+    chmodSync(profiles, 0o700)
+    rmSync(home, { recursive: true, force: true })
   }
 }
 
@@ -45,6 +81,41 @@ afterEach(() => {
 })
 
 describe('remote core contract', () => {
+  it('lists remote profiles and marks the configured profile', async () => {
+    session = sessionWithRemote(
+      { code: 0, stdout: 'REMOTE_DSH_MISSING', stderr: '' },
+      { code: 0, stdout: '', stderr: '' },
+      { code: 0, stdout: 'web\nremote\ninvalid.name\nweb\n', stderr: '' },
+    )
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    await expect(core.listProfiles(machineId)).resolves.toEqual([
+      { name: 'remote', configured: true },
+      { name: 'web', configured: false },
+    ])
+    expect(session.close).toHaveBeenCalledOnce()
+  })
+
+  it('reports an unreadable profile directory instead of claiming no profiles', async () => {
+    session = sessionWithRemote(
+      { code: 0, stdout: 'REMOTE_DSH_MISSING', stderr: '' },
+      { code: 0, stdout: '', stderr: '' },
+      { code: 1, stdout: '', stderr: 'permission denied' },
+    )
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    await expect(core.listProfiles(machineId)).rejects.toThrow('REMOTE_CORE_PROFILES_UNREADABLE')
+    expect(session.close).toHaveBeenCalledOnce()
+  })
+
+  it.skipIf(!canTestUnixDirectoryMode)('reports a real profile directory without search access as unreadable', async () => {
+    await expectProfileDirectoryUnreadable(0o400)
+  })
+
+  it.skipIf(!canTestUnixDirectoryMode)('reports a real profile directory without read access as unreadable', async () => {
+    await expectProfileDirectoryUnreadable(0o300)
+  })
+
   it('lists only valid releases that meet the remote minimum version', async () => {
     listGithubReleases.mockResolvedValue([
       { tag: 'dsh-0.2.1-1', prerelease: false },

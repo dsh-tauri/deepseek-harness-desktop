@@ -20,10 +20,12 @@ export interface GetApiTauriRemoteCoreCurrentResponse {
   item?:
     | ({ id: string, scope: 'remote' | 'local', machineId?: string, remoteProfile?: string, capabilities: ('listVersions' | 'installVersion' | 'activate' | 'removeSlot' | 'asar' | 'bundledCore')[], platforms: ('windows-x64' | 'windows-arm64' | 'macos-x64' | 'macos-arm64' | 'linux-x64' | 'linux-arm64')[] } & { availability: 'absent', slots: [] })
     | ({ id: string, scope: 'remote' | 'local', machineId?: string, remoteProfile?: string, capabilities: ('listVersions' | 'installVersion' | 'activate' | 'removeSlot' | 'asar' | 'bundledCore')[], platforms: ('windows-x64' | 'windows-arm64' | 'macos-x64' | 'macos-arm64' | 'linux-x64' | 'linux-arm64')[] } & { availability: 'present', slots: ({ kind: 'installed', slotKey: string, version: string, tag?: string, path?: string, dir?: string, active: false | true, removable?: false | true, preview: false | true, bundled?: false | true, orphaned?: false | true } | { kind: 'unsupported', slotKey: string, version: string, path?: string, error: string } | { kind: 'unreadable', slotKey: string, path?: string, error: string })[] })
-    | ({ id: string, scope: 'remote' | 'local', machineId?: string, remoteProfile?: string, capabilities: ('listVersions' | 'installVersion' | 'activate' | 'removeSlot' | 'asar' | 'bundledCore')[], platforms: ('windows-x64' | 'windows-arm64' | 'macos-x64' | 'macos-arm64' | 'linux-x64' | 'linux-arm64')[] } & { availability: 'unreadable', error: string, path?: string, slots: [] })
+    | ({ id: string, scope: 'remote' | 'local', machineId?: string, remoteProfile?: string, capabilities: ('listVersions' | 'installVersion' | 'activate' | 'removeSlot' | 'asar' | 'bundledCore')[], platforms: ('windows-x64' | 'windows-arm64' | 'macos-x64' | 'macos-arm64' | 'linux-x64' | 'linux-arm64')[] } & { availability: 'unreadable', error: string, path?: string, slots: { kind: 'unreadable', slotKey: string, path?: string, error: string }[] })
   error?: string
 }
 export type GetApiTauriRemoteCoreCurrentQueryMachineId = string
+export interface GetApiTauriRemoteCoreProfilesResponse { items?: { name: string, configured: false | true }[], error?: string }
+export type GetApiTauriRemoteCoreProfilesQueryMachineId = string
 export interface GetApiTauriRemoteCoreVersionsResponse { items?: { version: string, tag: string, preview: false | true }[], error?: string }
 export interface GetApiTauriRemoteSyncPreviewResponse { plugins?: { name?: string, spec?: string, syncable?: false | true, reason?: string }[], skills?: { name?: string, root?: string }[], error?: string }
 export interface PostApiTauriRemoteSyncApplyResponse { items?: { kind?: string, name?: string, root?: string, ok?: false | true, error?: string, log?: string }[], error?: string }
@@ -166,6 +168,9 @@ export interface GetApiTauriRemoteMachinesEventsQuery {
 }
 export interface GetApiTauriRemoteCoreCurrentQuery {
   machineId: GetApiTauriRemoteCoreCurrentQueryMachineId
+}
+export interface GetApiTauriRemoteCoreProfilesQuery {
+  machineId: GetApiTauriRemoteCoreProfilesQueryMachineId
 }
 export interface GetApiTauriRemoteAccessQuery {
   sincePairingUseSeq?: GetApiTauriRemoteAccessQuerySincePairingUseSeq

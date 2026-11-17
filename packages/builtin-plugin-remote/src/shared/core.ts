@@ -22,6 +22,11 @@ export interface CoreVersionItem {
   preview: boolean
 }
 
+export interface CoreProfileItem {
+  name: string
+  configured: boolean
+}
+
 interface CoreTargetBase {
   id: string
   scope: CoreScope
@@ -36,7 +41,7 @@ export type CoreTarget = CoreTargetBase & CoreTargetState
 export type CoreTargetState
   = | { availability: 'absent', slots: [] }
     | { availability: 'present', slots: CoreSlotState[] }
-    | { availability: 'unreadable', error: string, path?: string, slots: [] }
+    | { availability: 'unreadable', error: string, path?: string, slots: CoreUnreadableSlot[] }
 
 export type CoreSlotState
   = | CoreInstalledSlot
