@@ -222,7 +222,7 @@ describe('档案作用域', () => {
     await screen.findByTestId('dsh-config-profile-target')
     await screen.findByRole('option', { name: 'Build box' })
 
-    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'build' } })
+    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'remote:build' } })
 
     expect(await screen.findByTestId('dsh-profile-remote-build-remote')).toBeTruthy()
     expect(mocks.getCoreProfiles).toHaveBeenCalledWith({ machineId: 'build' })
@@ -231,12 +231,27 @@ describe('档案作用域', () => {
     expect(screen.queryByTestId('dsh-profile-migrate-open')).toBeNull()
   })
 
+  it('keeps a remote machine named local apart from the local scope', async () => {
+    const localNamedMachine = { id: 'local', name: 'Local box', state: 'connected' }
+    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [localNamedMachine] })
+    mocks.getCoreProfiles.mockResolvedValue({ items: [{ name: 'remote', configured: true }] })
+    await mount()
+    await screen.findByTestId('dsh-config-profile-target')
+    await screen.findByRole('option', { name: 'Local box' })
+
+    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'remote:local' } })
+
+    expect(await screen.findByTestId('dsh-profile-remote-local-remote')).toBeTruthy()
+    expect(mocks.getCoreProfiles).toHaveBeenCalledWith({ machineId: 'local' })
+    expect(screen.queryByText('Web 1')).toBeNull()
+  })
+
   it('falls back to the local scope when the selected remote machine disappears', async () => {
     mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [REMOTE_MACHINE] })
     await mount()
     await screen.findByTestId('dsh-config-profile-target')
     await screen.findByRole('option', { name: 'Build box' })
-    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'build' } })
+    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'remote:build' } })
     await screen.findByTestId('dsh-profile-remote-build-remote')
 
     mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [] })

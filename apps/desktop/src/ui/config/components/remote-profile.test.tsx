@@ -79,7 +79,13 @@ describe('远端 Profile 只读列表', () => {
     mocks.getCoreProfiles.mockResolvedValue({ items: [] })
     renderRemoteProfiles()
 
-    expect(await screen.findByText('No profiles on this machine')).toBeTruthy()
+    const empty = await screen.findByText('No profiles on this machine')
+    // 空状态确实可见，而不是留在页面里的隐藏节点
+    expect(empty.closest('[hidden]')).toBeNull()
+    expect(getComputedStyle(empty).display).not.toBe('none')
+    expect(getComputedStyle(empty).visibility).not.toBe('hidden')
+    // 档案列表没有残留
+    expect(screen.queryByTestId('dsh-profile-remote-build-remote')).toBeNull()
   })
 
   it('re-reads the remote profiles when the refresh button is pressed', async () => {

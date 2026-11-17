@@ -29,6 +29,14 @@ type ProfileView = 'list' | { profile: string }
 
 /** 档案作用域：本机，或某台远端机器 */
 const LOCAL_TARGET_ID = 'local'
+/**
+ * 远端机器在选择器里的前缀。
+ *
+ * 远端机器的 id 来自 SSH 配置里的 Host 名，用户完全可以把一台机器叫 `local`。
+ * 选择值里带上前缀，本机与远端就落在两个命名空间里；查询时再把前缀去掉，
+ * 还原成机器自身的 id。
+ */
+const REMOTE_TARGET_PREFIX = 'remote:'
 
 /** 宿主档案错误的 `CODE` → 提示 key（错误串是 `CODE: 详情`，详见 `service::profile`） */
 const PROFILE_ERROR_KEYS: Record<string, string> = {
@@ -125,12 +133,14 @@ export function ConfigProfile() {
   const [targetId, setTargetId] = useState(LOCAL_TARGET_ID)
   const remoteMachinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines })
   const remoteMachines = remoteMachinesQuery.data?.machines
-  const isLocalTarget = targetId === LOCAL_TARGET_ID
-  const selectedMachine = remoteMachines?.find(machine => machine.id === targetId)
+  /** 选择值里的远端前缀只用于界面区分，查询时还原成机器自身的 id */
+  const selectedMachineId = targetId.startsWith(REMOTE_TARGET_PREFIX) ? targetId.slice(REMOTE_TARGET_PREFIX.length) : undefined
+  const isLocalTarget = selectedMachineId === undefined
+  const selectedMachine = remoteMachines?.find(machine => machine.id === selectedMachineId)
 
   // 选中的远端机器消失（被移除或远端功能关闭）时回到本机作用域，避免停在空视图上。
   useWatch([remoteMachines, targetId], () => {
-    if (targetId !== LOCAL_TARGET_ID && !remoteMachines?.some(machine => machine.id === targetId))
+    if (selectedMachineId !== undefined && !remoteMachines?.some(machine => machine.id === selectedMachineId))
       setTargetId(LOCAL_TARGET_ID)
   })
 
@@ -406,7 +416,7 @@ export function ConfigProfile() {
                     {t('core.local')}
                   </ListBox.Item>
                   {remoteMachines?.map(machine => (
-                    <ListBox.Item id={machine.id} key={machine.id} textValue={machine.name}>
+                    <ListBox.Item id={`${REMOTE_TARGET_PREFIX}${machine.id}`} key={machine.id} textValue={machine.name}>
                       {machine.name}
                     </ListBox.Item>
                   ))}
