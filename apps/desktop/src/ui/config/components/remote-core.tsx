@@ -211,6 +211,7 @@ function RemoteCoreRows({ rows, download, progress, downloading, canDownload, on
             row={row}
             hidden={!showIncompatible && row.unsupported}
             downloading={downloading && download?.tag === row.tag}
+            busy={downloading}
             progress={download?.tag === row.tag ? progress : undefined}
             canDownload={canDownload}
             onDownload={() => onDownload(row)}
@@ -221,10 +222,11 @@ function RemoteCoreRows({ rows, download, progress, downloading, canDownload, on
   )
 }
 
-function RemoteCoreRowView({ row, hidden, downloading, progress, canDownload, onDownload }: {
+function RemoteCoreRowView({ row, hidden, downloading, busy, progress, canDownload, onDownload }: {
   row: RemoteCoreRow
   hidden: boolean
   downloading: boolean
+  busy: boolean
   progress?: string
   canDownload: boolean
   onDownload: () => void
@@ -290,7 +292,7 @@ function RemoteCoreRowView({ row, hidden, downloading, progress, canDownload, on
                 size="sm"
                 variant="tertiary"
                 className="h-7 text-xs"
-                isDisabled={downloading}
+                isDisabled={busy}
                 onClick={(event) => {
                   event.stopPropagation()
                   onDownload()

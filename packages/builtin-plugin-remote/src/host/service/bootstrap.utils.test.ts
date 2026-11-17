@@ -92,9 +92,11 @@ describe('指定版本下载脚本', () => {
     const script = buildCoreVersionInstallScript(plan, { slot: plan.tag })
     expect(script).toContain('TMP="$ROOT/tmp/ver.$$"')
     expect(script).toContain('if [ -f "$SLOT/node_modules/@deepseek-ai/dsh/lib/bin.js" ] && [ -z "$REINSTALL" ]; then')
+    expect(script).toContain('flatten_move "$STAGE" "$READY"')
+    expect(script).toContain('mv "$READY" "$SLOT"')
   })
 
-  it('npm 依赖安装失败时删除残缺槽位', () => {
+  it('npm 依赖在暂存目录安装成功后才发布槽位', () => {
     const script = buildCoreVersionInstallScript({
       ...plan,
       arch: 'arm64',
@@ -108,7 +110,8 @@ describe('指定版本下载脚本', () => {
       },
     }, { slot: plan.tag })
 
-    expect(script).toContain('install_dsh_deps || { rm -rf "$SLOT"; exit 13; }')
+    expect(script).toContain('install_dsh_deps "$STAGE" || { rm -rf "$STAGE"; exit 13; }')
+    expect(script.indexOf('install_dsh_deps "$STAGE"')).toBeLessThan(script.indexOf('mv "$READY" "$SLOT"'))
   })
 })
 

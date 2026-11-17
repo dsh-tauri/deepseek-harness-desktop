@@ -349,6 +349,10 @@ describe('远端核心清单', () => {
     await waitFor(() => expect(mocks.getCoreCurrent).toHaveBeenCalledWith({ machineId: 'ops' }))
     const secondList = await screen.findByTestId('dsh-core-remote-list')
     const downloads = await within(secondList).findAllByRole('button', { name: 'Download' })
+    expect(downloads.every(button =>
+      (button as HTMLButtonElement).disabled
+      || button.getAttribute('aria-disabled') === 'true'
+      || button.getAttribute('data-disabled') === 'true')).toBe(true)
     fireEvent.click(downloads[0])
     expect(mocks.postCoreInstall).toHaveBeenCalledTimes(1)
   })

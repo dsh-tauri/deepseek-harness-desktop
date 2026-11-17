@@ -42,6 +42,8 @@ export const eventBuffers = new Map<MachineId, { seq: number, events: RemoteMach
 
 const coreInstallTasks = new Map<string, string>()
 
+const coreInstallAborts = new Map<string, AbortController>()
+
 let config: Config | undefined
 let homeDir = homedir()
 let sshDir = ''
@@ -54,6 +56,7 @@ let tunnelDeps: TunnelDeps | undefined
 let migrated = false
 let migrationWarning: string | undefined
 let sourceSession = ''
+let runtimeGeneration = 0
 
 export function setSourceSession(session: string): void {
   sourceSession = session
@@ -90,6 +93,7 @@ export function hostConfig(): Config {
 }
 
 export function setHostConfig(next: Config): void {
+  runtimeGeneration += 1
   config = next
   homeDir = homedir()
   sshDir = next.sshDir ?? join(homeDir, '.ssh')
@@ -222,14 +226,22 @@ export function coreInstallTask(machineId: MachineId, tag: string): string | und
   return coreInstallTasks.get(`${machineId}\0${tag}`)
 }
 
-export function registerCoreInstallTask(machineId: MachineId, tag: string, taskId: string): void {
-  coreInstallTasks.set(`${machineId}\0${tag}`, taskId)
+export function hostRuntimeGeneration(): number {
+  return runtimeGeneration
+}
+
+export function registerCoreInstallTask(machineId: MachineId, tag: string, taskId: string, abort: AbortController): void {
+  const key = `${machineId}\0${tag}`
+  coreInstallTasks.set(key, taskId)
+  coreInstallAborts.set(key, abort)
 }
 
 export function clearCoreInstallTask(machineId: MachineId, tag: string, taskId: string): void {
   const key = `${machineId}\0${tag}`
-  if (coreInstallTasks.get(key) === taskId)
+  if (coreInstallTasks.get(key) === taskId) {
     coreInstallTasks.delete(key)
+    coreInstallAborts.delete(key)
+  }
 }
 
 export function setSyncDeps(next: SyncDeps): void {
@@ -253,6 +265,9 @@ export function tunnelRuntimeDeps(): TunnelDeps {
 }
 
 export function clearHostRuntime(): void {
+  runtimeGeneration += 1
+  for (const abort of coreInstallAborts.values())
+    abort.abort()
   // 使在途 attempt 失效：未完成的 performConnect/performInstall 恢复执行时会比对 generation，
   // 若不等则不再对外拨号（否则它们的续跑会读到下一个 runtime 的 deps，把连接打到别人的 transport 上）。
   for (const target of machineStates.values())
@@ -273,6 +288,7 @@ export function clearHostRuntime(): void {
   machineStates.clear()
   machineTable.enabled = false
   machineTable.machines.clear()
+  coreInstallAborts.clear()
   coreInstallTasks.clear()
   eventBuffers.clear()
   setCurrentHostInstance(undefined)

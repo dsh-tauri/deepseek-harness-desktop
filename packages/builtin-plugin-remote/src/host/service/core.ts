@@ -5,7 +5,7 @@ import { defineService } from 'dsh-tauri'
 import semver from 'semver'
 import { REMOTE_CORE_CAPABILITIES, REMOTE_CORE_PLATFORMS, remoteCoreTargetId } from '../../shared/core'
 import { messageOf } from '../../shared/error'
-import { clearCoreInstallTask, coreInstallTask, hostConfig, registerCoreInstallTask } from '../config/runtime'
+import { clearCoreInstallTask, coreInstallTask, hostConfig, hostRuntimeGeneration, registerCoreInstallTask } from '../config/runtime'
 import { assertSupportedDshVersion, isPreviewTag, listGithubReleases, MINIMUM_DSH_VERSION, parseVersionFromTag, pkgRepoOf } from '../utils/version'
 import { buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall } from './bootstrap.utils'
 import { parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
@@ -115,8 +115,10 @@ export const core = defineService({
       return { taskId: existing }
     const remoteProfile = machine.profileName(machineId)
     const accepted = tasks.create('installVersion', remoteCoreTargetId(machineId, remoteProfile))
-    registerCoreInstallTask(machineId, tag, accepted.taskId)
-    void installVersionTask(machineId, tag, options.force === true, accepted.taskId)
+    const generation = hostRuntimeGeneration()
+    const abort = new AbortController()
+    registerCoreInstallTask(machineId, tag, accepted.taskId, abort)
+    void installVersionTask(machineId, tag, options.force === true, accepted.taskId, generation, abort)
     return accepted
   },
 })
@@ -176,14 +178,25 @@ function compareVersionsDesc(left: string, right: string): number {
   return right.localeCompare(left)
 }
 
-async function installVersionTask(machineId: MachineId, tag: string, force: boolean, taskId: string): Promise<void> {
+async function installVersionTask(machineId: MachineId, tag: string, force: boolean, taskId: string, generation: number, abort: AbortController): Promise<void> {
+  let session: RemoteSession | undefined
+  const closeOnAbort = (): void => {
+    void session?.close().catch(() => undefined)
+  }
+  abort.signal.addEventListener('abort', closeOnAbort, { once: true })
   try {
-    const session = await machine.openSession(machineId)
+    if (generation !== hostRuntimeGeneration())
+      throw new Error('REMOTE_CORE_INSTALL_CANCELLED: 运行时已重置')
+    session = await machine.openSession(machineId, abort.signal)
+    if (generation !== hostRuntimeGeneration())
+      throw new Error('REMOTE_CORE_INSTALL_CANCELLED: 运行时已重置')
     try {
       const uname = await session.exec('uname -srm')
       if (uname.code !== 0)
         throw new Error(`REMOTE_CORE_TARGET_UNREACHABLE: 无法探测远端平台（exit ${uname.code}）`)
       const plan = await planRemoteVersionInstall(uname.stdout, hostConfig(), tag)
+      if (generation !== hostRuntimeGeneration())
+        throw new Error('REMOTE_CORE_INSTALL_CANCELLED: 运行时已重置')
       tasks.append(taskId, 'probe', `准备下载核心版本 ${plan.tag}`)
       for (const note of plan.notes)
         tasks.append(taskId, 'probe', note)
@@ -212,6 +225,8 @@ async function installVersionTask(machineId: MachineId, tag: string, force: bool
     tasks.append(taskId, 'failed', message, { terminal: 'failed', reason: message })
   }
   finally {
+    abort.signal.removeEventListener('abort', closeOnAbort)
+    await session?.close().catch(() => undefined)
     clearCoreInstallTask(machineId, tag, taskId)
   }
 }

@@ -12,20 +12,35 @@ import { tasks } from './tasks'
 const listGithubReleases = vi.hoisted(() => vi.fn())
 const listGithubAssets = vi.hoisted(() => vi.fn())
 const installTasks = vi.hoisted(() => new Map<string, string>())
+const installAborts = vi.hoisted(() => new Map<string, AbortController>())
+const runtimeGeneration = vi.hoisted(() => ({ value: 1 }))
+const hostRuntimeGeneration = vi.hoisted(() => vi.fn(() => runtimeGeneration.value))
 const coreInstallTask = vi.hoisted(() => vi.fn((machineId: string, tag: string) => installTasks.get(`${machineId}\0${tag}`)))
-const registerCoreInstallTask = vi.hoisted(() => vi.fn((machineId: string, tag: string, taskId: string) => {
-  installTasks.set(`${machineId}\0${tag}`, taskId)
+const registerCoreInstallTask = vi.hoisted(() => vi.fn((machineId: string, tag: string, taskId: string, abort: AbortController) => {
+  const key = `${machineId}\0${tag}`
+  installTasks.set(key, taskId)
+  installAborts.set(key, abort)
 }))
 const clearCoreInstallTask = vi.hoisted(() => vi.fn((machineId: string, tag: string, taskId: string) => {
   const key = `${machineId}\0${tag}`
-  if (installTasks.get(key) === taskId)
+  if (installTasks.get(key) === taskId) {
     installTasks.delete(key)
+    installAborts.delete(key)
+  }
+}))
+const resetCoreInstallRuntime = vi.hoisted(() => vi.fn(() => {
+  runtimeGeneration.value += 1
+  for (const abort of installAborts.values())
+    abort.abort()
+  installTasks.clear()
+  installAborts.clear()
 }))
 
 vi.mock('dsh-tauri', () => ({ defineService: <T>(service: T): T => service }))
 vi.mock('../config/runtime', () => ({
   clearCoreInstallTask,
   coreInstallTask,
+  hostRuntimeGeneration,
   hostConfig: () => ({ installRepo: undefined }),
   registerCoreInstallTask,
 }))
@@ -112,6 +127,8 @@ async function expectProfileDirectoryUnreadable(mode: number): Promise<void> {
 
 beforeEach(() => {
   vi.mocked(machine.profileName).mockReturnValue('remote')
+  runtimeGeneration.value = 1
+  installAborts.clear()
   installTasks.clear()
   listGithubReleases.mockResolvedValue([])
   listGithubAssets.mockResolvedValue([])
@@ -371,6 +388,39 @@ describe('remote core contract', () => {
 
     expect(second.taskId).toBe(first.taskId)
     expect(scripts).toBe(1)
+  })
+
+  it('aborts an in-flight install before the runtime reset leaves it running', async () => {
+    listGithubAssets.mockResolvedValue([{
+      name: 'deepseek-harness-pkg-linux.zip',
+      url: 'https://example.test/dsh.zip',
+      digest: 'sha256:aaaa',
+    }])
+    let rejectInstall: ((error: Error) => void) | undefined
+    const session: RemoteSession = {
+      exec: vi.fn(async (command: string): Promise<RemoteExecResult> => {
+        if (command === 'uname -srm')
+          return { code: 0, stdout: 'Linux 6.1.0 x86_64', stderr: '' }
+        return await new Promise((_, reject) => {
+          rejectInstall = reject
+        })
+      }),
+      stream: vi.fn(),
+      onClosed: vi.fn(),
+      close: vi.fn(async () => {
+        rejectInstall?.(new Error('session closed by runtime reset'))
+      }),
+    }
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => expect(rejectInstall).toBeTypeOf('function'))
+    resetCoreInstallRuntime()
+
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+    expect(session.close).toHaveBeenCalled()
   })
 
   it('reports a failed download through the task events', async () => {

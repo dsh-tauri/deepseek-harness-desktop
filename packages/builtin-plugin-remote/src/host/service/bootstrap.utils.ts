@@ -547,18 +547,16 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     ? [
         `  log download "dsh ${plan.dsh.tag}"`,
         `  fetch_verified "$TMP/dsh-pkg.zip" "${plan.dsh.digest ?? ''}" "${plan.dsh.zipName}" ${quoteUrls(plan.dsh.urls)}`,
-        `  rm -rf "${slot}.new"`,
-        `  mkdir -p "${slot}.new"`,
-        `  extract_zip "$TMP/dsh-pkg.zip" "${slot}.new"`,
-        `  flatten_move "${slot}.new" "${slot}"`,
+        '  rm -rf "$STAGE"',
+        '  mkdir -p "$STAGE"',
+        '  extract_zip "$TMP/dsh-pkg.zip" "$STAGE"',
       ].join('\n')
     : [
         `  log download "dsh ${plan.dsh.packageName}@${plan.dsh.version} (npm)"`,
         `  fetch_verified "$TMP/dsh.tgz" "${plan.dsh.integrity ?? ''}" "${plan.dsh.packageName}-${plan.dsh.version}.tgz" ${quoteUrls(plan.dsh.urls)}`,
-        `  rm -rf "${slot}.new"`,
-        `  mkdir -p "${slot}.new"`,
-        `  tar -xzf "$TMP/dsh.tgz" -C "${slot}.new" --strip-components=1`,
-        `  flatten_move "${slot}.new" "${slot}"`,
+        '  rm -rf "$STAGE"',
+        '  mkdir -p "$STAGE"',
+        '  tar -xzf "$TMP/dsh.tgz" -C "$STAGE" --strip-components=1',
       ].join('\n')
   return [
     'set -eu',
@@ -566,8 +564,10 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     'ROOT="$HOME/.dsh-desktop"',
     'TMP="$ROOT/tmp/ver.$$"',
     `SLOT="${slot}"`,
+    'STAGE="$SLOT.new"',
+    'READY="$SLOT.ready"',
     'mkdir -p "$ROOT/dependencies" "$TMP"',
-    'cleanup() { rm -rf "$TMP" "$SLOT.new"; }',
+    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; }',
     'trap cleanup EXIT',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
     ...INSTALL_SHELL_HELPERS,
@@ -588,8 +588,9 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
       ? []
       : [
           'install_dsh_deps() {',
+          '  _dir="$1"',
           `  for _reg in ${quoteUrls(['https://registry.npmjs.org', 'https://registry.npmmirror.com'])}; do`,
-          `    if ( cd "$SLOT" && "$ROOT/runtime/bin/node" "$ROOT/dependencies/pnpm/${PNPM_ENTRY}" install --prod --silent --registry="$_reg" >"$TMP/pnpm.log" 2>&1 ); then`,
+          `    if ( cd "$_dir" && "$ROOT/runtime/bin/node" "$ROOT/dependencies/pnpm/${PNPM_ENTRY}" install --prod --silent --registry="$_reg" >"$TMP/pnpm.log" 2>&1 ); then`,
           '      log install "dsh 依赖安装完成 (registry $_reg)"',
           '      return 0',
           '    fi',
@@ -602,7 +603,11 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     `  log install "dsh 已就绪 (${plan.tag})"`,
     'else',
     dshSection,
-    ...(plan.dsh.kind === 'pkg-zip' ? [] : ['  install_dsh_deps || { rm -rf "$SLOT"; exit 13; }']),
+    ...(plan.dsh.kind === 'pkg-zip' ? [] : ['  install_dsh_deps "$STAGE" || { rm -rf "$STAGE"; exit 13; }']),
+    '  rm -rf "$READY"',
+    '  flatten_move "$STAGE" "$READY"',
+    '  rm -rf "$SLOT"',
+    '  mv "$READY" "$SLOT"',
     `  log install "dsh 安装完成 (${plan.tag})"`,
     'fi',
   ].join('\n')
