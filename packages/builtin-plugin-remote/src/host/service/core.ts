@@ -1,4 +1,4 @@
-import type { CoreTarget, CoreTargetState, CoreVersionItem } from '../../shared/core'
+import type { CoreProfileItem, CoreTarget, CoreTargetState, CoreVersionItem } from '../../shared/core'
 import type { MachineId, RemoteSession } from '../types/index'
 import { defineService } from 'dsh-tauri'
 import semver from 'semver'
@@ -10,6 +10,40 @@ import { describeExecFailure, dshEntryProbeCommand, firstLineOf, readRemoteDshPa
 import { machine } from './machine'
 
 export const core = defineService({
+  async listProfiles(machineId: MachineId): Promise<CoreProfileItem[]> {
+    const configured = machine.profileName(machineId)
+    const session = await machine.openSession(machineId)
+    try {
+      const result = await session.exec([
+        'DIR="$HOME/.dsh/profiles"',
+        '[ -d "$DIR" ] || exit 0',
+        'if [ ! -r "$DIR" ] || [ ! -x "$DIR" ]; then',
+        '  echo "REMOTE_PROFILES_UNREADABLE" >&2',
+        '  exit 1',
+        'fi',
+        'if ! ls -A "$DIR" >/dev/null 2>&1; then',
+        '  echo "REMOTE_PROFILES_UNREADABLE" >&2',
+        '  exit 1',
+        'fi',
+        'for profile in "$DIR"/*; do',
+        '  [ -d "$profile" ] || continue',
+        '  basename "$profile"',
+        'done',
+      ].join('\n'))
+      if (result.code !== 0)
+        throw new Error(`REMOTE_CORE_PROFILES_UNREADABLE: ${describeExecFailure(result.code, result.stderr)}`)
+      const names = result.stdout.split('\n')
+        .map(name => name.trim())
+        .filter(name => /^[\w-]+$/u.test(name))
+      return [...new Set([configured, ...names])]
+        .sort((left, right) => left.localeCompare(right))
+        .map(name => ({ name, configured: name === configured }))
+    }
+    finally {
+      await session.close().catch(() => undefined)
+    }
+  },
+
   async listVersions(): Promise<CoreVersionItem[]> {
     const releases = await listGithubReleases(pkgRepoOf(hostConfig().installRepo))
     const versions: CoreVersionItem[] = []
