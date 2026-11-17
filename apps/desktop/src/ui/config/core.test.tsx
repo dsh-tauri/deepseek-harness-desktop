@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   restart: vi.fn(),
   toast: Object.assign(vi.fn(), { close: vi.fn() }),
   loadRemoteMachines: vi.fn(),
+  getCoreCurrent: vi.fn(),
+  getCoreProfiles: vi.fn(),
+  getCoreVersions: vi.fn(),
+  getCoreTasksEvents: vi.fn(),
+  postCoreInstall: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
@@ -23,6 +28,13 @@ vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 vi.mock('@/hooks/use-remote', () => ({
   dotClassOf: () => 'bg-success',
   loadRemoteMachines: mocks.loadRemoteMachines,
+}))
+vi.mock('@/apis/remote', () => ({
+  getCoreCurrent: mocks.getCoreCurrent,
+  getCoreProfiles: mocks.getCoreProfiles,
+  getCoreVersions: mocks.getCoreVersions,
+  getCoreTasksEvents: mocks.getCoreTasksEvents,
+  postCoreInstall: mocks.postCoreInstall,
 }))
 
 const localFixture: HarnessCore = {
@@ -135,6 +147,10 @@ beforeEach(async () => {
   })
   mocks.restart.mockResolvedValue(undefined)
   mocks.loadRemoteMachines.mockResolvedValue({ enabled: false, machines: [] })
+  mocks.getCoreCurrent.mockResolvedValue({ item: undefined, error: 'REMOTE_CORE_UNAVAILABLE' })
+  mocks.getCoreProfiles.mockResolvedValue({ items: [] })
+  mocks.getCoreVersions.mockResolvedValue({ items: [] })
+  mocks.getCoreTasksEvents.mockResolvedValue({ items: [] })
   mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'get_cores')
       return cores.map(core => ({ ...core }))
@@ -239,6 +255,44 @@ describe('核心激活兼容性', () => {
 })
 
 describe('本地核心更新档案安全', () => {
+  it('manages one target at a time: the local machine or a remote machine', async () => {
+    mocks.loadRemoteMachines.mockResolvedValue({
+      enabled: true,
+      machines: [{ id: 'build', name: 'Build box', state: 'connected' }],
+    })
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: {
+        id: 'remote:build:remote',
+        scope: 'remote',
+        machineId: 'build',
+        remoteProfile: 'remote',
+        capabilities: ['listVersions', 'installVersion'],
+        platforms: ['linux-x64'],
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      },
+    })
+    renderCore()
+
+    expect(await screen.findByText('0.2.2-rc.1')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-core-remote-list')).toBeNull()
+
+    const select = screen.getByTestId('dsh-config-core-target').closest('[data-slot="select"]')!.querySelector('select')!
+    fireEvent.change(select, { target: { value: 'build' } })
+
+    expect(await screen.findByTestId('dsh-core-remote-list')).toBeTruthy()
+    expect(await screen.findByText('0.2.4')).toBeTruthy()
+    expect(screen.queryByText('0.2.2-rc.1')).toBeNull()
+  })
+
   it('在用本地核心不可原地更新，提示先切受管核心且不发送更新命令', async () => {
     cores[0].active = true
     cores[1].active = false

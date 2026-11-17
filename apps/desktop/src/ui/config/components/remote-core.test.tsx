@@ -5,25 +5,36 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { queryKeys } from '@/config/query-keys'
 import enUS from '@/i18n/locales/en-US.json'
-import { RemoteCoreSection } from './remote-core'
+import { RemoteCoreList } from './remote-core'
 
 const mocks = vi.hoisted(() => ({
   getCoreCurrent: vi.fn(),
   getCoreProfiles: vi.fn(),
+  getCoreTasksEvents: vi.fn(),
   getCoreVersions: vi.fn(),
   loadRemoteMachines: vi.fn(),
+  postCoreInstall: vi.fn(),
+  writeClipboardText: vi.fn(),
+  toast: vi.fn(),
 }))
 
 vi.mock('@/apis/remote', () => ({
   getCoreCurrent: mocks.getCoreCurrent,
   getCoreProfiles: mocks.getCoreProfiles,
+  getCoreTasksEvents: mocks.getCoreTasksEvents,
   getCoreVersions: mocks.getCoreVersions,
+  postCoreInstall: mocks.postCoreInstall,
 }))
 vi.mock('@/hooks/use-remote', () => ({
   dotClassOf: () => 'bg-success',
   loadRemoteMachines: mocks.loadRemoteMachines,
+}))
+vi.mock('@/utils/clipboard', () => ({
+  writeClipboardText: mocks.writeClipboardText,
+}))
+vi.mock('@/utils/toast', () => ({
+  toast: mocks.toast,
 }))
 
 type CoreTarget = NonNullable<GetApiTauriRemoteCoreCurrentResponse['item']>
@@ -37,13 +48,13 @@ type TargetState
 const clients = new Set<QueryClient>()
 let translations = createInstance()
 
-function renderRemoteCore() {
+function renderRemoteCore(machineId = 'build') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   clients.add(client)
   const view = render(
     <I18nextProvider i18n={translations}>
       <QueryClientProvider client={client}>
-        <RemoteCoreSection />
+        <RemoteCoreList machineId={machineId} />
       </QueryClientProvider>
     </I18nextProvider>,
   )
@@ -56,7 +67,7 @@ function targetOf(machineId: string, target: TargetState): CoreTarget {
     scope: 'remote',
     machineId,
     remoteProfile: 'remote',
-    capabilities: ['listVersions'],
+    capabilities: ['listVersions', 'installVersion'],
     platforms: ['linux-x64'],
     ...target,
   } as CoreTarget
@@ -80,8 +91,9 @@ beforeEach(async () => {
   })
   mocks.getCoreVersions.mockResolvedValue({
     items: [
-      { version: '0.2.4', tag: 'dsh-0.2.4-1', preview: false },
+      { version: '0.2.6', tag: 'dsh-0.2.6-1', preview: false },
       { version: '0.2.5-beta.1', tag: 'dsh-0.2.5-beta.1-2', preview: true },
+      { version: '0.2.4', tag: 'dsh-0.2.4-1', preview: false },
     ],
   })
   mocks.getCoreProfiles.mockImplementation(async ({ machineId }: { machineId: string }) => ({
@@ -90,6 +102,7 @@ beforeEach(async () => {
       { name: `${machineId}-alt`, configured: false },
     ],
   }))
+  mocks.getCoreTasksEvents.mockResolvedValue({ items: [] })
 })
 
 afterEach(() => {
@@ -100,118 +113,210 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('远端核心只读列表', () => {
-  it('renders every slot state and exposes no core mutation controls', async () => {
-    mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
-      item: machineId === 'build'
-        ? targetOf('build', {
-            availability: 'present',
-            slots: [
-              {
-                kind: 'installed',
-                slotKey: 'current',
-                version: '0.2.3',
-                tag: 'dsh-0.2.3-1',
-                active: true,
-                preview: false,
-              },
-              {
-                kind: 'unsupported',
-                slotKey: 'old',
-                version: '0.2.1',
-                error: 'REMOTE_DSH_VERSION_UNSUPPORTED',
-              },
-              {
-                kind: 'unreadable',
-                slotKey: 'broken',
-                error: 'REMOTE_DSH_PACKAGE_INVALID',
-              },
-            ],
-          })
-        : targetOf('ops', { availability: 'absent', slots: [] }),
-    }))
+describe('远端核心清单', () => {
+  it('lists the copy in use, the downloaded copies and the versions still to download', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.5-beta.1-2',
+            tag: 'dsh-0.2.5-beta.1-2',
+            version: '0.2.5-beta.1',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.5-beta.1-2',
+            active: false,
+            removable: true,
+            preview: true,
+          },
+        ],
+      }),
+    })
     renderRemoteCore()
 
-    expect(await screen.findByText('0.2.3')).toBeTruthy()
-    expect(screen.getByTestId('dsh-core-remote-machine-build')).toBeTruthy()
-    expect(screen.getByTestId('dsh-core-remote-machine-ops')).toBeTruthy()
-    expect(screen.getByText('0.2.4')).toBeTruthy()
-    expect(screen.getAllByText('Capabilities: listVersions').length).toBeGreaterThan(0)
-    expect(screen.getByText('build-alt')).toBeTruthy()
-    expect(screen.getByText('ops-alt')).toBeTruthy()
-    expect(screen.getByText('Active')).toBeTruthy()
-    expect(screen.getByText('Unsupported')).toBeTruthy()
-    expect(screen.getByText('Unreadable')).toBeTruthy()
-    expect(screen.getByText('Slot: current')).toBeTruthy()
-    expect(screen.getByText('Slot: old')).toBeTruthy()
-    expect(screen.getByText('Slot: broken')).toBeTruthy()
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    expect(await within(list).findByText('0.2.4')).toBeTruthy()
+    expect(within(list).getByText('0.2.5-beta.1')).toBeTruthy()
+    expect(within(list).getByText('0.2.6')).toBeTruthy()
+    expect(within(list).getByText('Active')).toBeTruthy()
+    expect(within(list).getByText('not downloaded')).toBeTruthy()
+    expect(within(list).getByText('Preview')).toBeTruthy()
     expect(screen.getAllByText('Profile: remote').length).toBeGreaterThan(0)
-    expect(screen.getByText('Read only')).toBeTruthy()
-    expect(screen.getByTestId('dsh-core-remote-target').textContent).toContain('All remote machines')
-    expect(screen.getByText('Remote core is not installed')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Install' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Uninstall' })).toBeNull()
+    expect(within(list).queryByRole('button', { name: 'Uninstall' })).toBeNull()
   })
 
-  it('switches machines and distinguishes absent from unreadable targets', async () => {
-    mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
-      item: machineId === 'build'
-        ? targetOf('build', { availability: 'absent', slots: [] })
-        : targetOf('ops', {
-            availability: 'unreadable',
-            error: 'REMOTE_DSH_PACKAGE_UNREADABLE: permission denied',
-            slots: [],
-          }),
-    }))
+  it('offers a download button only for versions that are not on the machine yet', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          tag: 'dsh-0.2.4-1',
+          dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      }),
+    })
     renderRemoteCore()
 
-    expect(await screen.findByText('Remote core is not installed')).toBeTruthy()
-    fireEvent.click(screen.getByTestId('dsh-core-remote-target'))
-    const menu = await screen.findByRole('menu')
-    fireEvent.click(within(menu).getByText('Ops box'))
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    const downloads = await within(list).findAllByRole('button', { name: 'Download' })
+    expect(downloads.length).toBe(2)
+  })
 
-    await waitFor(() => expect(mocks.getCoreCurrent).toHaveBeenCalledWith({ machineId: 'ops' }))
+  it('groups unsupported copies apart and keeps retired copies in their own group', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'unsupported',
+            slotKey: 'dsh-0.2.1-1',
+            version: '0.2.1',
+            tag: 'dsh-0.2.1-1',
+            error: 'REMOTE_DSH_VERSION_UNSUPPORTED',
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.0-1',
+            tag: 'dsh-0.2.0-1',
+            version: '0.2.0',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.0-1',
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    expect(await within(list).findByText('Incompatible versions (1)')).toBeTruthy()
+    expect(within(list).getByText('Retired remote versions')).toBeTruthy()
+    expect(within(list).getByText('Orphaned')).toBeTruthy()
+    expect(within(list).getByText('Unsupported')).toBeTruthy()
+  })
+
+  it('copies the path of a remote copy instead of opening a folder', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      }),
+    })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    const copy = await within(list).findByRole('button', { name: 'Copy path' })
+    fireEvent.click(copy)
+    expect(mocks.writeClipboardText).toHaveBeenCalledWith('/home/remote/.dsh-desktop/dependencies/dsh')
+  })
+
+  it('downloads a version and follows the task until it finishes', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      }),
+    })
+    mocks.postCoreInstall.mockResolvedValue({ taskId: 'task-1' })
+    mocks.getCoreTasksEvents.mockResolvedValue({
+      items: [
+        { taskId: 'task-1', seq: 1, ts: '', state: 'running', stage: 'probe', line: '准备下载核心版本 dsh-0.2.6-1' },
+        { taskId: 'task-1', seq: 2, ts: '', state: 'succeeded', stage: 'install', line: '已下载核心版本 dsh-0.2.6-1', terminal: 'success' },
+      ],
+    })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    const downloads = await within(list).findAllByRole('button', { name: 'Download' })
+    fireEvent.click(downloads[0])
+
+    await waitFor(() => expect(mocks.postCoreInstall).toHaveBeenCalledWith({ machineId: 'build', tag: 'dsh-0.2.6-1' }))
+    await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenCalledWith({ taskId: 'task-1' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Downloaded version 0.2.6'))
+  })
+
+  it('reports a failed download with the reason from the task', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      }),
+    })
+    mocks.postCoreInstall.mockResolvedValue({ taskId: 'task-2' })
+    mocks.getCoreTasksEvents.mockResolvedValue({
+      items: [
+        { taskId: 'task-2', seq: 1, ts: '', state: 'failed', stage: 'failed', line: '安装失败', terminal: 'failed', reason: 'REMOTE_CORE_INSTALL_FAILED' },
+      ],
+    })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    const downloads = await within(list).findAllByRole('button', { name: 'Download' })
+    fireEvent.click(downloads[0])
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to download the core version', expect.objectContaining({ variant: 'danger' })))
+  })
+
+  it('reports an unreadable target instead of an empty list', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'unreadable',
+        error: 'REMOTE_DSH_PACKAGE_UNREADABLE: permission denied',
+        slots: [],
+      }),
+    })
+    renderRemoteCore()
+
     expect(await screen.findByText('Remote core information is unavailable')).toBeTruthy()
     expect(screen.getByText('REMOTE_DSH_PACKAGE_UNREADABLE: permission denied')).toBeTruthy()
-    expect(screen.queryByTestId('dsh-core-remote-machine-build')).toBeNull()
-    expect(screen.getByTestId('dsh-core-remote-machine-ops')).toBeTruthy()
-  })
-
-  it('clears a stale machine filter after the selected machine disappears', async () => {
-    mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
-      item: targetOf(machineId, { availability: 'absent', slots: [] }),
-    }))
-    const { client } = renderRemoteCore()
-
-    expect(await screen.findByTestId('dsh-core-remote-machine-build')).toBeTruthy()
-    fireEvent.click(screen.getByTestId('dsh-core-remote-target'))
-    fireEvent.click(within(await screen.findByRole('menu')).getByText('Ops box'))
-    await waitFor(() => expect(screen.queryByTestId('dsh-core-remote-machine-build')).toBeNull())
-
-    mocks.loadRemoteMachines.mockResolvedValue({
-      enabled: true,
-      machines: [{ id: 'build', name: 'Build box', state: 'connected' }],
-    })
-    await client.invalidateQueries({ queryKey: queryKeys.remoteMachines })
-
-    expect(await screen.findByTestId('dsh-core-remote-machine-build')).toBeTruthy()
-    expect(screen.queryByTestId('dsh-core-remote-machine-ops')).toBeNull()
-    expect(screen.getByTestId('dsh-core-remote-target').textContent).toContain('All remote machines')
-  })
-
-  it('stays hidden when the remote API is unavailable', async () => {
-    mocks.loadRemoteMachines.mockResolvedValue({ enabled: false, machines: [] })
-    renderRemoteCore()
-
-    await waitFor(() => expect(mocks.loadRemoteMachines).toHaveBeenCalledOnce())
-    expect(screen.queryByTestId('dsh-core-remote-section')).toBeNull()
-  })
-
-  it('shows an empty state when no remote machines are configured', async () => {
-    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [] })
-    renderRemoteCore()
-
-    expect(await screen.findByText('No remote machines configured')).toBeTruthy()
-    expect(screen.queryByTestId('dsh-core-remote-target')).toBeNull()
   })
 })
