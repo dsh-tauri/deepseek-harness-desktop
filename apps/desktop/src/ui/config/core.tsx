@@ -2,7 +2,7 @@ import type { DependenciesRootPreview, DependenciesRootProgress, DependenciesRoo
 import { ArrowRotateRight, ChevronRight, CircleArrowDown as DownloadIcon, FolderOpen } from '@gravity-ui/icons'
 import { Button, Checkbox, Chip, Description, Label, ListBox, Select, Spinner, Switch } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
-import { useToggle } from '@reause/core'
+import { useToggle, useWatch } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { Fragment, useState } from 'react'
@@ -27,6 +27,7 @@ import { RemoteCoreList } from './components/remote-core'
 const PROGRESS_LOG_LIMIT = 8
 
 const LOCAL_TARGET_ID = 'local'
+const REMOTE_TARGET_PREFIX = 'remote:'
 
 export function ConfigCore() {
   const openDialog = useOverlay(Modal)
@@ -99,8 +100,14 @@ export function ConfigCore() {
   const [targetId, setTargetId] = useState(LOCAL_TARGET_ID)
   const remoteMachinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines })
   const remoteMachines = remoteMachinesQuery.data?.machines ?? []
-  const isLocalTarget = targetId === LOCAL_TARGET_ID
+  const selectedMachineId = targetId.startsWith(REMOTE_TARGET_PREFIX) ? targetId.slice(REMOTE_TARGET_PREFIX.length) : undefined
+  const isLocalTarget = selectedMachineId === undefined
   const [depsLogs, setDepsLogs] = useState<string[]>([])
+
+  useWatch([remoteMachines, targetId], () => {
+    if (selectedMachineId !== undefined && !remoteMachines.some(machine => machine.id === selectedMachineId))
+      setTargetId(LOCAL_TARGET_ID)
+  })
 
   // 本地核心未检测到时不渲染 local 行（保留 local_missing_hint 提示）
   // 后端列表在部分缓存/旧版本返回路径中可能仍保持远程顺序，前端统一按版本从高到低排序。
@@ -350,13 +357,13 @@ export function ConfigCore() {
       return
     toggleRefreshing(true)
     try {
-      if (isLocalTarget) {
+      if (selectedMachineId === undefined) {
         await refetch()
       }
       else {
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(targetId) }),
-          queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreProfiles(targetId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(selectedMachineId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreProfiles(selectedMachineId) }),
           queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreVersions }),
         ])
       }
@@ -477,7 +484,7 @@ export function ConfigCore() {
                     {t('core.local')}
                   </ListBox.Item>
                   {remoteMachines.map(machine => (
-                    <ListBox.Item id={machine.id} key={machine.id} textValue={machine.name}>
+                    <ListBox.Item id={`${REMOTE_TARGET_PREFIX}${machine.id}`} key={machine.id} textValue={machine.name}>
                       {machine.name}
                     </ListBox.Item>
                   ))}
@@ -725,8 +732,8 @@ export function ConfigCore() {
           </Panel.Loadable>
         </>
       </If>
-      <If cond={!isLocalTarget}>
-        <RemoteCoreList machineId={targetId} />
+      <If cond={selectedMachineId !== undefined}>
+        <RemoteCoreList machineId={selectedMachineId!} />
       </If>
     </div>
   )

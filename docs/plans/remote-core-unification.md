@@ -334,6 +334,7 @@ UI 侧必须按 `host/service/session.ts` 的 `role.remote`（`DSH_REMOTE_SESSIO
 - 不可读目标可以保留身份已确认的不可读槽位；槽位身份无法识别时仍返回空数组。
 - 远端 Profile 目录在枚举前显式验证可读性与搜索权限；真实权限不足会返回 `REMOTE_CORE_PROFILES_UNREADABLE`。
 - 机器轮询移除当前筛选目标时，Core 与 Profile 页面会同步清空筛选并恢复“全部机器”。
+- 核心页作用域选择值把远端机器放进 `remote:` 命名空间，查询与刷新时还原真实机器 id；SSH Host 名为 `local` 时也不会和本机作用域冲突。
 
 ### 6.2 当前验证（#1561）
 
