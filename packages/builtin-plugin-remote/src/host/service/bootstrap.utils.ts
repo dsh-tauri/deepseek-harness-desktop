@@ -545,14 +545,58 @@ export async function planRemoteVersionInstall(
   }
 }
 
+/**
+ * 槽位锁的 shell 片段：同一槽位只允许一个安装脚本在跑。
+ *
+ * 锁用硬链接原子发布：先把持有者 pid 写进自己的临时文件，再用 link 一次性挂到锁路径上。
+ * link 成功的那一刻，锁的内容就是持有者 pid，不存在「锁已经存在但还不知道是谁持有」的窗口——
+ * 后到的脚本一定能读到持有者，不会把活着的锁当成陈旧锁接管。
+ *
+ * 陈旧锁（持有者进程已经不在）的接管同样是原子的：先把旧锁原子换走再抢，
+ * 只有换走成功的一方能接管，两个脚本不会同时接管同一把陈旧锁。
+ *
+ * 锁放在 tmp 下，不进依赖目录，不会被副本枚举看到。
+ */
+export function coreSlotLockShell(slot: string): string[] {
+  return [
+    `LOCK="$ROOT/tmp/slot-${slot}.lock"`,
+    'LOCKOWNER="$TMP/lock-owner.$$"',
+    'printf \'%s\\n\' "$$" > "$LOCKOWNER"',
+    // ln 是原子的：锁成立的那一刻，持有者 pid 就已经在锁里。
+    // 目标是目录时 ln 会把链接放进目录里并返回成功，所以以锁的内容判定是否真的拿到锁。
+    'ln "$LOCKOWNER" "$LOCK" 2>/dev/null || true',
+    'if [ "$(cat "$LOCK" 2>/dev/null || true)" != "$$" ]; then',
+    '  _owner="$(cat "$LOCK" 2>/dev/null || true)"',
+    // 兼容旧版本留下的目录形态锁：持有者写在锁目录里的 pid 文件上。
+    '  if [ -z "$_owner" ] && [ -d "$LOCK" ]; then',
+    '    _owner="$(cat "$LOCK/pid" 2>/dev/null || true)"',
+    '  fi',
+    '  if [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; then',
+    '    rm -rf "$TMP"',
+    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行（pid $_owner），请等它结束后重试"',
+    '    exit 17',
+    '  fi',
+    // 陈旧锁：原子换走旧锁后重抢。换走失败说明别的脚本已经接管或刚释放，
+    // 无论哪种情况都由 link 和锁内容来裁决，抢不到就明确失败。
+    '  mv "$LOCK" "$TMP/stale-lock.$$" 2>/dev/null || true',
+    '  ln "$LOCKOWNER" "$LOCK" 2>/dev/null || true',
+    '  if [ "$(cat "$LOCK" 2>/dev/null || true)" != "$$" ]; then',
+    '    rm -rf "$TMP"',
+    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行，请等它结束后重试"',
+    '    exit 17',
+    '  fi',
+    'fi',
+    // 退出清理只删自己仍然持有的锁：锁被接管后不能把新持有者的锁删掉。
+    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; if [ "$(cat "$LOCK" 2>/dev/null || true)" = "$$" ]; then rm -f "$LOCK"; fi; }',
+  ]
+}
+
 export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, options: { slot: string, force?: boolean }): string {
   assertSupportedDshVersion(plan.version)
   if (!/^[\w.-]+$/u.test(options.slot))
     throw new Error(`REMOTE_CORE_SLOT_INVALID: 非法版本目录名 ${options.slot}`)
   const reinstallMarker = options.force === true ? ['REINSTALL=1'] : ['REINSTALL=']
   const slot = `$ROOT/dependencies/${options.slot}`
-  // 槽位锁：同一槽位只允许一个安装脚本在跑。锁放在 tmp 下，不进依赖目录，不会被副本枚举看到。
-  const lock = `$ROOT/tmp/slot-${options.slot}.lock`
   const dshSection = plan.dsh.kind === 'pkg-zip'
     ? [
         `  log download "dsh ${plan.dsh.tag}"`,
@@ -578,26 +622,11 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     // 它的退出清理不能删掉新一次安装写入的文件。
     'STAGE="$SLOT.new.$$"',
     'READY="$SLOT.ready.$$"',
-    `LOCK="${lock}"`,
     'mkdir -p "$ROOT/dependencies" "$TMP"',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
-    // 拿锁：mkdir 是原子的，后到的安装直接失败而不是和旧脚本互相覆盖。
-    // 持有者进程已经不在（被强杀）时接管这把陈旧的锁，否则该槽位会永久装不上。
-    'if ! mkdir "$LOCK" 2>/dev/null; then',
-    '  _owner="$(cat "$LOCK/pid" 2>/dev/null || true)"',
-    '  if [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; then',
-    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行（pid $_owner），请等它结束后重试"',
-    '    exit 17',
-    '  fi',
-    '  rm -rf "$LOCK"',
-    '  if ! mkdir "$LOCK" 2>/dev/null; then',
-    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行，请等它结束后重试"',
-    '    exit 17',
-    '  fi',
-    'fi',
-    'printf \'%s\\n\' "$$" > "$LOCK/pid"',
+    // 拿锁：原子发布持有者，后到的安装直接失败而不是和旧脚本互相覆盖。
+    ...coreSlotLockShell(options.slot),
     // 锁到手后才挂退出清理：拿锁失败时不能把别人的锁删掉。
-    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -rf "$LOCK"; }',
     'trap cleanup EXIT',
     ...INSTALL_SHELL_HELPERS,
     'if [ ! -x "$ROOT/runtime/bin/node" ]; then',

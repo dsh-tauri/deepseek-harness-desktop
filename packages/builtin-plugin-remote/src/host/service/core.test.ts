@@ -1,6 +1,8 @@
+import type { AddressInfo } from 'node:net'
 import type { RemoteExecOptions, RemoteExecResult, RemoteSession } from '../types/index'
-import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -59,6 +61,8 @@ vi.mock('./machine', () => ({
 const machineId = MachineId('remote-core-test')
 const canTestUnixDirectoryMode = process.platform !== 'win32'
   && (process.getuid?.() ?? 1) !== 0
+const canRunRemoteShell = process.platform !== 'win32'
+  && spawnSync('sh', ['-c', 'command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1']).status === 0
 const entryPath = '/home/remote/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'
 
 interface RemoteCopyFixture {
@@ -498,6 +502,108 @@ describe('remote core contract', () => {
     })
     const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
     expect(failed?.reason).toContain('REMOTE_CORE_INSTALL_FAILED')
+  })
+
+  it('reports a remote slot that is still busy as an explicit failure', async () => {
+    listGithubAssets.mockResolvedValue([{
+      name: 'deepseek-harness-pkg-linux.zip',
+      url: 'https://example.test/dsh.zip',
+      digest: 'sha256:aaaa',
+    }])
+    const session = sessionWithRemote([], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command === 'uname -srm')
+        return { code: 0, stdout: 'Linux 6.1.0 x86_64', stderr: '' }
+      return { code: 17, stdout: '', stderr: 'REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行（pid 4242），请等它结束后重试' }
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+    const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
+    // 槽位被占用时要能看到具体原因，不能只报一个笼统的安装失败。
+    expect(failed?.reason).toContain('REMOTE_CORE_INSTALL_FAILED')
+    expect(failed?.reason).toContain('REMOTE_CORE_SLOT_BUSY')
+  })
+
+  it.skipIf(!canRunRemoteShell)('keeps a slot busy while an earlier remote script is still running', async () => {
+    // 远端脚本挂在一个只收连接不回应的服务上：它会一直占着槽位，
+    // 这正是槽位锁要防的场景——重置后的重试不能和旧脚本并发发布同一个槽位。
+    const stalled = createServer(() => {})
+    await new Promise<void>(resolve => stalled.listen(0, '127.0.0.1', resolve))
+    const port = (stalled.address() as AddressInfo).port
+    const home = mkdtempSync(join(tmpdir(), 'dsh-core-slot-'))
+    const runtime = join(home, '.dsh-desktop', 'runtime', 'bin')
+    mkdirSync(runtime, { recursive: true })
+    writeFileSync(join(runtime, 'node'), '#!/bin/sh\nexit 0\n')
+    chmodSync(join(runtime, 'node'), 0o755)
+    listGithubAssets.mockResolvedValue([{
+      name: 'deepseek-harness-pkg-linux.zip',
+      url: `http://127.0.0.1:${port}/dsh.zip`,
+      digest: 'sha256:aaaa',
+    }])
+
+    const children: ReturnType<typeof spawn>[] = []
+    const pending: Array<(error: Error) => void> = []
+    let scriptRuns = 0
+    const session: RemoteSession = {
+      exec: vi.fn(async (command: string): Promise<RemoteExecResult> => {
+        if (command === 'uname -srm')
+          return { code: 0, stdout: 'Linux 6.1.0 x86_64', stderr: '' }
+        scriptRuns += 1
+        const child = spawn('sh', ['-c', command], { env: { ...process.env, HOME: home } })
+        children.push(child)
+        let stdout = ''
+        let stderr = ''
+        child.stdout.on('data', (chunk) => {
+          stdout += String(chunk)
+        })
+        child.stderr.on('data', (chunk) => {
+          stderr += String(chunk)
+        })
+        return await new Promise<RemoteExecResult>((resolve, reject) => {
+          child.on('close', code => resolve({ code, stdout, stderr }))
+          pending.push(reject)
+        })
+      }),
+      stream: vi.fn(),
+      onClosed: vi.fn(),
+      close: vi.fn(async () => {
+        // 本地会话关闭：本地任务放弃等待，但远端脚本不会因此结束，它还占着槽位。
+        pending[0]?.(new Error('session closed by runtime reset'))
+      }),
+    }
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    try {
+      const first = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+      const lock = join(home, '.dsh-desktop', 'tmp', 'slot-dsh-0.2.3-43000000000.lock')
+      await vi.waitFor(() => {
+        expect(existsSync(lock)).toBe(true)
+      }, { timeout: 5000 })
+
+      // 运行时重置后重试：去重登记清空，重试会另起一个远端脚本。
+      resetCoreInstallRuntime()
+      await vi.waitFor(() => {
+        expect(tasks.since(first.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+      })
+
+      const second = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+      await vi.waitFor(() => {
+        expect(tasks.since(second.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+      }, { timeout: 10000 })
+      const failed = tasks.since(second.taskId!).events.find(event => event.terminal === 'failed')
+      // 旧脚本还在跑，重试必须明确失败，不能和旧脚本一起发布这个槽位。
+      expect(failed?.reason).toContain('REMOTE_CORE_SLOT_BUSY')
+      expect(scriptRuns).toBe(2)
+    }
+    finally {
+      for (const child of children)
+        child.kill()
+      stalled.close()
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('reports a release that is no longer downloadable before the download starts', async () => {
