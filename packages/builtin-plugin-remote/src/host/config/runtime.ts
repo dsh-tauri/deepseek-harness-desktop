@@ -40,6 +40,8 @@ export const machineTable: { enabled: boolean, machines: Map<MachineId, MachineP
 
 export const eventBuffers = new Map<MachineId, { seq: number, events: RemoteMachineEvent[] }>()
 
+const coreInstallTasks = new Map<string, string>()
+
 let config: Config | undefined
 let homeDir = homedir()
 let sshDir = ''
@@ -216,6 +218,20 @@ export function machineRuntimeDeps(): MachineDeps {
   return deps
 }
 
+export function coreInstallTask(machineId: MachineId, tag: string): string | undefined {
+  return coreInstallTasks.get(`${machineId}\0${tag}`)
+}
+
+export function registerCoreInstallTask(machineId: MachineId, tag: string, taskId: string): void {
+  coreInstallTasks.set(`${machineId}\0${tag}`, taskId)
+}
+
+export function clearCoreInstallTask(machineId: MachineId, tag: string, taskId: string): void {
+  const key = `${machineId}\0${tag}`
+  if (coreInstallTasks.get(key) === taskId)
+    coreInstallTasks.delete(key)
+}
+
 export function setSyncDeps(next: SyncDeps): void {
   syncDeps = next
 }
@@ -257,6 +273,7 @@ export function clearHostRuntime(): void {
   machineStates.clear()
   machineTable.enabled = false
   machineTable.machines.clear()
+  coreInstallTasks.clear()
   eventBuffers.clear()
   setCurrentHostInstance(undefined)
 }

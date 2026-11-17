@@ -499,7 +499,8 @@ export async function planRemoteVersionInstall(
       notes.push(`release ${tag} 可用性未知（${state}），继续尝试下载`)
     }
     if (digest === undefined)
-      notes.push(`未取得 ${zipName} 的可信摘要，将跳过 SHA-256 校验`)
+      notes.push(`未取得 ${zipName} 的可信摘要，仅使用官方下载源并跳过 SHA-256 校验`)
+    const downloadUrls = digest === undefined ? urls.slice(0, 1) : urls
     return {
       os,
       arch,
@@ -507,7 +508,7 @@ export async function planRemoteVersionInstall(
       tag,
       version,
       dshEntry: DSH_ZIP_ENTRY,
-      dsh: { kind: 'pkg-zip', urls, ...digest === undefined ? {} : { digest }, zipName, tag },
+      dsh: { kind: 'pkg-zip', urls: downloadUrls, ...digest === undefined ? {} : { digest }, zipName, tag },
       notes,
     }
   }
@@ -563,7 +564,7 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     'set -eu',
     ...reinstallMarker,
     'ROOT="$HOME/.dsh-desktop"',
-    'TMP="$ROOT/tmp"',
+    'TMP="$ROOT/tmp/ver.$$"',
     `SLOT="${slot}"`,
     'mkdir -p "$ROOT/dependencies" "$TMP"',
     'cleanup() { rm -rf "$TMP" "$SLOT.new"; }',
@@ -597,11 +598,11 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
           '  return 1',
           '}',
         ]),
-    `if [ -d "$SLOT" ] && [ -z "$REINSTALL" ]; then`,
+    `if [ -f "$SLOT/${plan.dshEntry}" ] && [ -z "$REINSTALL" ]; then`,
     `  log install "dsh 已就绪 (${plan.tag})"`,
     'else',
     dshSection,
-    ...(plan.dsh.kind === 'pkg-zip' ? [] : ['  install_dsh_deps || exit 13']),
+    ...(plan.dsh.kind === 'pkg-zip' ? [] : ['  install_dsh_deps || { rm -rf "$SLOT"; exit 13; }']),
     `  log install "dsh 安装完成 (${plan.tag})"`,
     'fi',
   ].join('\n')

@@ -48,16 +48,20 @@ type TargetState
 const clients = new Set<QueryClient>()
 let translations = createInstance()
 
-function renderRemoteCore(machineId = 'build') {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  clients.add(client)
-  const view = render(
+function remoteCoreUi(machineId: string, client: QueryClient) {
+  return (
     <I18nextProvider i18n={translations}>
       <QueryClientProvider client={client}>
         <RemoteCoreList machineId={machineId} />
       </QueryClientProvider>
-    </I18nextProvider>,
+    </I18nextProvider>
   )
+}
+
+function renderRemoteCore(machineId = 'build') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.add(client)
+  const view = render(remoteCoreUi(machineId, client))
   return { client, ...view }
 }
 
@@ -114,6 +118,17 @@ afterEach(() => {
 })
 
 describe('远端核心清单', () => {
+  it('keeps downloadable versions visible when the remote has no core yet', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', { availability: 'absent', slots: [] }),
+    })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    expect(await within(list).findByText('Remote core is not installed')).toBeTruthy()
+    expect(within(list).getAllByRole('button', { name: 'Download' })).toHaveLength(3)
+  })
+
   it('lists the copy in use, the downloaded copies and the versions still to download', async () => {
     mocks.getCoreCurrent.mockResolvedValue({
       item: targetOf('build', {
@@ -304,6 +319,38 @@ describe('远端核心清单', () => {
     fireEvent.click(downloads[0])
 
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to download the core version', expect.objectContaining({ variant: 'danger' })))
+  })
+
+  it('does not allow another download while one machine is already downloading', async () => {
+    mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+      item: targetOf(machineId, {
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: `/home/remote/${machineId}/.dsh-desktop/dependencies/dsh`,
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      }),
+    }))
+    mocks.postCoreInstall.mockResolvedValue({ taskId: 'task-pending' })
+    mocks.getCoreTasksEvents.mockImplementation(() => new Promise(() => {}))
+    const view = renderRemoteCore('build')
+
+    const firstList = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click((await within(firstList).findAllByRole('button', { name: 'Download' }))[0])
+    await waitFor(() => expect(mocks.postCoreInstall).toHaveBeenCalledWith({ machineId: 'build', tag: 'dsh-0.2.6-1' }))
+    await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenCalledWith({ taskId: 'task-pending' }))
+
+    view.rerender(remoteCoreUi('ops', view.client))
+    await waitFor(() => expect(mocks.getCoreCurrent).toHaveBeenCalledWith({ machineId: 'ops' }))
+    const secondList = await screen.findByTestId('dsh-core-remote-list')
+    const downloads = await within(secondList).findAllByRole('button', { name: 'Download' })
+    fireEvent.click(downloads[0])
+    expect(mocks.postCoreInstall).toHaveBeenCalledTimes(1)
   })
 
   it('reports an unreadable target instead of an empty list', async () => {

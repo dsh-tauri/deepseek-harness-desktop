@@ -440,7 +440,7 @@
   "core.remote_no_machines": "尚未配置远端机器",
   "core.remote_orphaned_title": "已下架的远端版本",
   "core.remote_profile": "档案：{{profile}}",
-  "core.remote_tooltip": "这里管理所选远端机器上的核心副本：下载指定版本，或在已下载的版本之间切换。",
+  "core.remote_tooltip": "这里管理所选远端机器上的核心副本：查看已安装版本，并下载指定版本。",
   "core.remote_profiles": "档案",
   "core.remote_read_only": "只读",
   "core.remote_slot": "槽位：{{slot}}",

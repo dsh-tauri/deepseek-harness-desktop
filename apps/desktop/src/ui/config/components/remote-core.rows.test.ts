@@ -45,6 +45,16 @@ describe('远端核心清单合成', () => {
     expect(orphan?.present).toBe(true)
   })
 
+  it('does not orphan a downloaded copy when another copy already claimed the published version', () => {
+    const rows = buildRemoteCoreRows([
+      installed({ slotKey: 'dsh', version: '0.2.4', active: true, removable: false }),
+      installed({ slotKey: 'dsh-0.2.4-1', tag: 'dsh-0.2.4-1', version: '0.2.4' }),
+    ], versions)
+
+    expect(rows.filter(row => row.version === '0.2.4')).toHaveLength(2)
+    expect(rows.filter(row => row.version === '0.2.4').every(row => row.orphaned === false)).toBe(true)
+  })
+
   it('keeps the copy in use visible even without a published version', () => {
     const rows = buildRemoteCoreRows([
       installed({ slotKey: 'dsh', version: '0.2.3', active: true, removable: false }),

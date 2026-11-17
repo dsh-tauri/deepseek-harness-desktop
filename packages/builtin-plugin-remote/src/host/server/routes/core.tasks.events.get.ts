@@ -6,5 +6,8 @@ import { guarded, sinceSeqOf, taskIdOf } from './index.utils'
 
 export default defineEventHandler<EventHandlerRequest, Promise<RemoteCoreTaskEventsResponse>>(async (event) => {
   const query = getQuery<GetCoreTasksEventsQuery>(event)
-  return guarded(event, async () => tasks.since(taskIdOf(query), sinceSeqOf(query)))
+  return guarded(event, async () => {
+    const page = tasks.since(taskIdOf(query), sinceSeqOf(query))
+    return { items: page.events, nextSeq: page.nextSeq }
+  })
 })

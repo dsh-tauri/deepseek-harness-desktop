@@ -11,9 +11,24 @@ import { tasks } from './tasks'
 
 const listGithubReleases = vi.hoisted(() => vi.fn())
 const listGithubAssets = vi.hoisted(() => vi.fn())
+const installTasks = vi.hoisted(() => new Map<string, string>())
+const coreInstallTask = vi.hoisted(() => vi.fn((machineId: string, tag: string) => installTasks.get(`${machineId}\0${tag}`)))
+const registerCoreInstallTask = vi.hoisted(() => vi.fn((machineId: string, tag: string, taskId: string) => {
+  installTasks.set(`${machineId}\0${tag}`, taskId)
+}))
+const clearCoreInstallTask = vi.hoisted(() => vi.fn((machineId: string, tag: string, taskId: string) => {
+  const key = `${machineId}\0${tag}`
+  if (installTasks.get(key) === taskId)
+    installTasks.delete(key)
+}))
 
 vi.mock('dsh-tauri', () => ({ defineService: <T>(service: T): T => service }))
-vi.mock('../config/runtime', () => ({ hostConfig: () => ({ installRepo: undefined }) }))
+vi.mock('../config/runtime', () => ({
+  clearCoreInstallTask,
+  coreInstallTask,
+  hostConfig: () => ({ installRepo: undefined }),
+  registerCoreInstallTask,
+}))
 vi.mock('../utils/version', async importOriginal => ({
   ...await importOriginal<typeof import('../utils/version')>(),
   listGithubReleases,
@@ -97,6 +112,7 @@ async function expectProfileDirectoryUnreadable(mode: number): Promise<void> {
 
 beforeEach(() => {
   vi.mocked(machine.profileName).mockReturnValue('remote')
+  installTasks.clear()
   listGithubReleases.mockResolvedValue([])
   listGithubAssets.mockResolvedValue([])
 })
@@ -318,6 +334,43 @@ describe('remote core contract', () => {
 
   it('refuses a version directory name that could escape the dependencies root', async () => {
     await expect(core.installVersion(machineId, '../escape')).rejects.toThrow('REMOTE_CORE_SLOT_INVALID')
+  })
+
+  it('reuses one in-flight install task for the same machine and tag', async () => {
+    listGithubAssets.mockResolvedValue([{
+      name: 'deepseek-harness-pkg-linux.zip',
+      url: 'https://example.test/dsh.zip',
+      digest: 'sha256:aaaa',
+    }])
+    let finishInstall!: () => void
+    const installGate = new Promise<void>((resolve) => {
+      finishInstall = resolve
+    })
+    let scripts = 0
+    const session: RemoteSession = {
+      exec: vi.fn(async (command: string): Promise<RemoteExecResult> => {
+        if (command === 'uname -srm')
+          return { code: 0, stdout: 'Linux 6.1.0 x86_64', stderr: '' }
+        scripts += 1
+        await installGate
+        return { code: 0, stdout: '', stderr: '' }
+      }),
+      stream: vi.fn(),
+      onClosed: vi.fn(),
+      close: vi.fn(async () => {}),
+    }
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const first = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+    const second = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => expect(scripts).toBe(1))
+    finishInstall()
+    await vi.waitFor(() => {
+      expect(tasks.since(first.taskId!).events.some(event => event.terminal === 'success')).toBe(true)
+    })
+
+    expect(second.taskId).toBe(first.taskId)
+    expect(scripts).toBe(1)
   })
 
   it('reports a failed download through the task events', async () => {

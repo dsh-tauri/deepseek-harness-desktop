@@ -22,6 +22,7 @@ export interface RemoteCoreRow {
 export function buildRemoteCoreRows(slots: RemoteCoreSlot[], versions: RemoteCoreVersion[]): RemoteCoreRow[] {
   const rows: RemoteCoreRow[] = []
   const claimed = new Set<RemoteCoreSlot>()
+  const published = new Set(versions.map(version => version.version))
   for (const version of versions) {
     const slot = slots.find(item => !claimed.has(item) && item.kind !== 'unreadable' && item.version === version.version)
     if (slot === undefined) {
@@ -80,7 +81,7 @@ export function buildRemoteCoreRows(slots: RemoteCoreSlot[], versions: RemoteCor
       active,
       removable: !active && slot.kind === 'installed',
       preview: slot.kind === 'installed' ? slot.preview : false,
-      orphaned: !active && slot.kind === 'installed',
+      orphaned: !active && slot.kind === 'installed' && !published.has(slot.version),
       unsupported: slot.kind === 'unsupported',
       ...slot.kind === 'unsupported' ? { error: slot.error } : {},
     })

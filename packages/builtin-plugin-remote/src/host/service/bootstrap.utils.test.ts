@@ -1,8 +1,8 @@
 import type { RemoteExecResult, RemoteSession } from '../types/index'
-import type { DshZipPlan, RemoteInstallPlan } from './bootstrap.types'
+import type { DshVersionInstallPlan, DshZipPlan, RemoteInstallPlan } from './bootstrap.types'
 import { describe, expect, it, vi } from 'vitest'
 import { GithubHttpError } from '../utils/version'
-import { assertRemoteDshVersion, buildInstallScript, planRemoteInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
+import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
 
 async function failing(): Promise<never> {
   throw new Error('network unreachable')
@@ -43,6 +43,72 @@ describe('远端 DSH 包版本读取', () => {
     const session = sessionOfResult({ code: 0, stdout: 'REMOTE_DSH_MISSING', stderr: '' })
     await expect(assertRemoteDshVersion(session, true)).resolves.toBeUndefined()
     await expect(readRemoteDshVersion(session)).resolves.toBeUndefined()
+  })
+})
+
+describe('指定版本下载计划', () => {
+  it('缺少可信摘要时只保留官方下载源', async () => {
+    const plan = await planRemoteVersionInstall('Linux x86_64', {}, 'dsh-0.2.3-43000000000', {
+      listAssets: async () => [{ name: 'deepseek-harness-pkg-linux.zip', url: 'https://example.invalid/official.zip' }],
+      probe: async () => 'available',
+    })
+
+    expect(plan.dsh.kind).toBe('pkg-zip')
+    if (plan.dsh.kind !== 'pkg-zip')
+      throw new Error('expected a pkg-zip plan')
+    expect(plan.dsh.urls).toEqual(['https://example.invalid/official.zip'])
+    expect(plan.dsh.digest).toBeUndefined()
+  })
+
+  it('资产元数据失败时同样不把镜像加入无摘要计划', async () => {
+    const plan = await planRemoteVersionInstall('Linux x86_64', {}, 'dsh-0.2.3-43000000000', {
+      listAssets: async () => { throw new Error('rate limited') },
+      probe: async () => 'unknown',
+    })
+
+    expect(plan.dsh.urls).toHaveLength(1)
+  })
+})
+
+describe('指定版本下载脚本', () => {
+  const plan: DshVersionInstallPlan = {
+    os: 'linux',
+    arch: 'x64',
+    repo: 'dsh-tauri/deepseek-harness-pkg',
+    tag: 'dsh-0.2.3-43000000000',
+    version: '0.2.3',
+    dshEntry: 'node_modules/@deepseek-ai/dsh/lib/bin.js',
+    dsh: {
+      kind: 'pkg-zip',
+      urls: ['https://example.invalid/dsh.zip'],
+      digest: 'sha256:bb',
+      zipName: 'deepseek-harness-pkg-linux.zip',
+      tag: 'dsh-0.2.3-43000000000',
+    },
+    notes: [],
+  }
+
+  it('使用独立临时目录，并以入口文件判定副本是否就绪', () => {
+    const script = buildCoreVersionInstallScript(plan, { slot: plan.tag })
+    expect(script).toContain('TMP="$ROOT/tmp/ver.$$"')
+    expect(script).toContain('if [ -f "$SLOT/node_modules/@deepseek-ai/dsh/lib/bin.js" ] && [ -z "$REINSTALL" ]; then')
+  })
+
+  it('npm 依赖安装失败时删除残缺槽位', () => {
+    const script = buildCoreVersionInstallScript({
+      ...plan,
+      arch: 'arm64',
+      dshEntry: 'lib/bin.js',
+      dsh: {
+        kind: 'npm-tgz',
+        urls: ['https://example.invalid/dsh.tgz'],
+        integrity: 'sha256:cc',
+        packageName: '@deepseek-ai/dsh',
+        version: plan.version,
+      },
+    }, { slot: plan.tag })
+
+    expect(script).toContain('install_dsh_deps || { rm -rf "$SLOT"; exit 13; }')
   })
 })
 

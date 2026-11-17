@@ -5,7 +5,7 @@ import { defineService } from 'dsh-tauri'
 import semver from 'semver'
 import { REMOTE_CORE_CAPABILITIES, REMOTE_CORE_PLATFORMS, remoteCoreTargetId } from '../../shared/core'
 import { messageOf } from '../../shared/error'
-import { hostConfig } from '../config/runtime'
+import { clearCoreInstallTask, coreInstallTask, hostConfig, registerCoreInstallTask } from '../config/runtime'
 import { assertSupportedDshVersion, isPreviewTag, listGithubReleases, MINIMUM_DSH_VERSION, parseVersionFromTag, pkgRepoOf } from '../utils/version'
 import { buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall } from './bootstrap.utils'
 import { parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
@@ -110,8 +110,12 @@ export const core = defineService({
   async installVersion(machineId: MachineId, tag: string, options: { force?: boolean } = {}): Promise<CoreTaskAccepted> {
     if (!/^[\w.-]+$/u.test(tag))
       throw new Error(`REMOTE_CORE_SLOT_INVALID: 非法版本目录名 ${tag}`)
+    const existing = coreInstallTask(machineId, tag)
+    if (existing !== undefined)
+      return { taskId: existing }
     const remoteProfile = machine.profileName(machineId)
     const accepted = tasks.create('installVersion', remoteCoreTargetId(machineId, remoteProfile))
+    registerCoreInstallTask(machineId, tag, accepted.taskId)
     void installVersionTask(machineId, tag, options.force === true, accepted.taskId)
     return accepted
   },
@@ -206,5 +210,8 @@ async function installVersionTask(machineId: MachineId, tag: string, force: bool
   catch (error) {
     const message = messageOf(error)
     tasks.append(taskId, 'failed', message, { terminal: 'failed', reason: message })
+  }
+  finally {
+    clearCoreInstallTask(machineId, tag, taskId)
   }
 }

@@ -27,6 +27,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 interface RemoteDownload {
+  machineId: string
   tag: string
   version: string
 }
@@ -69,8 +70,8 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const [progress, setProgress] = useState<string>()
 
   const installMutation = useMutation({
-    mutationFn: async (input: { tag: string, version: string }) => {
-      const response = await postCoreInstall({ machineId, tag: input.tag })
+    mutationFn: async (input: { machineId: string, tag: string, version: string }) => {
+      const response = await postCoreInstall({ machineId: input.machineId, tag: input.tag })
       if (response.taskId === undefined)
         throw new Error(response.error ?? t('core.download_failed'))
       const taskId = response.taskId
@@ -90,15 +91,15 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       }
       throw new Error(t('core.download_failed'))
     },
-    onSuccess: (version) => {
+    onSuccess: (version, input) => {
       toast(t('core.downloaded_toast', { version }))
-      setDownload(undefined)
+      setDownload(current => current?.machineId === input.machineId ? undefined : current)
       setProgress(undefined)
-      void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(machineId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
     },
-    onError: (error) => {
+    onError: (error, input) => {
       toast(t('core.download_failed'), { variant: 'danger', description: error instanceof Error ? error.message : String(error) })
-      setDownload(undefined)
+      setDownload(current => current?.machineId === input.machineId ? undefined : current)
       setProgress(undefined)
     },
   })
@@ -111,6 +112,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const capabilities = target?.capabilities ?? []
   const versions = versionsQuery.data ?? []
   const rows = buildRemoteCoreRows(targetSlots, versions)
+  const activeDownload = download?.machineId === machineId ? download : undefined
 
   return (
     <div className="space-y-2" data-testid="dsh-core-remote-list">
@@ -147,18 +149,18 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
               footer={<Description className="break-all text-xs text-danger">{unreadableErrorOf(target)}</Description>}
             />
           </If>
-          <If cond={target?.availability === 'present'}>
+          <If cond={target?.availability === 'present' || target?.availability === 'absent'}>
             <RemoteCoreRows
               rows={rows}
-              download={download}
-              progress={progress}
+              download={activeDownload}
+              progress={activeDownload === undefined ? undefined : progress}
               downloading={installMutation.isPending}
               canDownload={capabilities.includes('installVersion')}
               onDownload={(row) => {
-                if (row.tag === undefined)
+                if (row.tag === undefined || installMutation.isPending)
                   return
-                setDownload({ tag: row.tag, version: row.version })
-                installMutation.mutate({ tag: row.tag, version: row.version })
+                setDownload({ machineId, tag: row.tag, version: row.version })
+                installMutation.mutate({ machineId, tag: row.tag, version: row.version })
               }}
             />
           </If>
