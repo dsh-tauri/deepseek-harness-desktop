@@ -137,6 +137,25 @@ describe('指定版本下载脚本', () => {
     expect(script).toContain('READY="$SLOT.ready.$$"')
   })
 
+  it('同一槽位只允许一个安装脚本在跑，后到的明确失败', () => {
+    const script = buildCoreVersionInstallScript(plan, { slot: plan.tag })
+    expect(script).toContain('LOCK="$ROOT/tmp/slot-dsh-0.2.3-43000000000.lock"')
+    expect(script).toContain('if ! mkdir "$LOCK" 2>/dev/null; then')
+    expect(script).toContain('REMOTE_CORE_SLOT_BUSY')
+    // 锁到手之后才挂退出清理：拿锁失败时不能把别人的锁删掉。
+    expect(script.indexOf('mkdir "$LOCK"')).toBeLessThan(script.indexOf('trap cleanup EXIT'))
+    expect(script).toContain('rm -rf "$LOCK"')
+  })
+
+  it('发布时先换走旧槽位再 rename 就绪目录', () => {
+    const script = buildCoreVersionInstallScript(plan, { slot: plan.tag })
+    expect(script).toContain('if [ -e "$SLOT" ]; then')
+    expect(script).toContain('mv "$SLOT" "$TMP/replaced"')
+    expect(script).toContain('mv "$READY" "$SLOT"')
+    // 不能是「先删槽位再移动」：新旧脚本交错时会把就绪目录移进已有槽位。
+    expect(script).not.toContain('rm -rf "$SLOT"')
+  })
+
   it('npm 依赖在暂存目录安装成功后才发布槽位', () => {
     const script = buildCoreVersionInstallScript({
       ...plan,

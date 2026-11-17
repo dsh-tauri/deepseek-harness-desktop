@@ -423,6 +423,62 @@ describe('remote core contract', () => {
     expect(session.close).toHaveBeenCalled()
   })
 
+  it('cancels a reset install before it reads the host config', async () => {
+    listGithubAssets.mockResolvedValue([])
+    const session = sessionWithRemote([], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command === 'uname -srm') {
+        // 重置发生在探测平台之后、读取配置之前：旧任务不能拿着新配置继续查发行资产。
+        resetCoreInstallRuntime()
+        return { code: 0, stdout: 'Linux 6.1.0 x86_64', stderr: '' }
+      }
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+    const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
+    expect(failed?.reason).toContain('REMOTE_CORE_INSTALL_CANCELLED')
+    expect(listGithubAssets).not.toHaveBeenCalled()
+  })
+
+  it('accepts a retry for the same tag right after a runtime reset', async () => {
+    listGithubAssets.mockResolvedValue([{
+      name: 'deepseek-harness-pkg-linux.zip',
+      url: 'https://example.test/dsh.zip',
+      digest: 'sha256:aaaa',
+    }])
+    let rejectInstall: ((error: Error) => void) | undefined
+    const session: RemoteSession = {
+      exec: vi.fn(async (command: string): Promise<RemoteExecResult> => {
+        if (command === 'uname -srm')
+          return { code: 0, stdout: 'Linux 6.1.0 x86_64', stderr: '' }
+        return await new Promise((_, reject) => {
+          rejectInstall = reject
+        })
+      }),
+      stream: vi.fn(),
+      onClosed: vi.fn(),
+      close: vi.fn(async () => {
+        rejectInstall?.(new Error('session closed by runtime reset'))
+      }),
+    }
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const first = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => expect(rejectInstall).toBeTypeOf('function'))
+    resetCoreInstallRuntime()
+    await vi.waitFor(() => {
+      expect(tasks.since(first.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    // 重置后立即重试：去重登记已清空，同一 tag 的重试应当被接受成独立任务。
+    const second = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
+    expect(second.taskId).not.toBe(first.taskId)
+  })
+
   it('reports a failed download through the task events', async () => {
     listGithubAssets.mockResolvedValue([{
       name: 'deepseek-harness-pkg-linux.zip',

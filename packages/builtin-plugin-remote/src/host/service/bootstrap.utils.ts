@@ -551,6 +551,8 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     throw new Error(`REMOTE_CORE_SLOT_INVALID: 非法版本目录名 ${options.slot}`)
   const reinstallMarker = options.force === true ? ['REINSTALL=1'] : ['REINSTALL=']
   const slot = `$ROOT/dependencies/${options.slot}`
+  // 槽位锁：同一槽位只允许一个安装脚本在跑。锁放在 tmp 下，不进依赖目录，不会被副本枚举看到。
+  const lock = `$ROOT/tmp/slot-${options.slot}.lock`
   const dshSection = plan.dsh.kind === 'pkg-zip'
     ? [
         `  log download "dsh ${plan.dsh.tag}"`,
@@ -576,10 +578,27 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     // 它的退出清理不能删掉新一次安装写入的文件。
     'STAGE="$SLOT.new.$$"',
     'READY="$SLOT.ready.$$"',
+    `LOCK="${lock}"`,
     'mkdir -p "$ROOT/dependencies" "$TMP"',
-    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; }',
-    'trap cleanup EXIT',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
+    // 拿锁：mkdir 是原子的，后到的安装直接失败而不是和旧脚本互相覆盖。
+    // 持有者进程已经不在（被强杀）时接管这把陈旧的锁，否则该槽位会永久装不上。
+    'if ! mkdir "$LOCK" 2>/dev/null; then',
+    '  _owner="$(cat "$LOCK/pid" 2>/dev/null || true)"',
+    '  if [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; then',
+    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行（pid $_owner），请等它结束后重试"',
+    '    exit 17',
+    '  fi',
+    '  rm -rf "$LOCK"',
+    '  if ! mkdir "$LOCK" 2>/dev/null; then',
+    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行，请等它结束后重试"',
+    '    exit 17',
+    '  fi',
+    'fi',
+    'printf \'%s\\n\' "$$" > "$LOCK/pid"',
+    // 锁到手后才挂退出清理：拿锁失败时不能把别人的锁删掉。
+    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -rf "$LOCK"; }',
+    'trap cleanup EXIT',
     ...INSTALL_SHELL_HELPERS,
     'if [ ! -x "$ROOT/runtime/bin/node" ]; then',
     '  log failed "REMOTE_CORE_TARGET_NOT_READY: 远端缺少 node 运行时，请先完成远端初始化"',
@@ -616,7 +635,11 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     ...(plan.dsh.kind === 'pkg-zip' ? [] : ['  install_dsh_deps "$STAGE" || { rm -rf "$STAGE"; exit 13; }']),
     '  rm -rf "$READY"',
     '  flatten_move "$STAGE" "$READY"',
-    '  rm -rf "$SLOT"',
+    // 发布：把旧槽位换走，再把就绪目录 rename 上去。
+    // 直接 rm 再 mv 时，新旧脚本交错会把就绪目录移进已有槽位，而不是替换它。
+    '  if [ -e "$SLOT" ]; then',
+    '    mv "$SLOT" "$TMP/replaced"',
+    '  fi',
     '  mv "$READY" "$SLOT"',
     `  log install "dsh 安装完成 (${plan.tag})"`,
     'fi',

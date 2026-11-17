@@ -194,6 +194,10 @@ async function installVersionTask(machineId: MachineId, tag: string, force: bool
       const uname = await session.exec('uname -srm')
       if (uname.code !== 0)
         throw new Error(`REMOTE_CORE_TARGET_UNREACHABLE: 无法探测远端平台（exit ${uname.code}）`)
+      // 先核对代次再读配置：重置与重新装配若发生在等待 uname 期间，
+      // 旧任务不能拿着新配置去查询发布资产。
+      if (generation !== hostRuntimeGeneration())
+        throw new Error('REMOTE_CORE_INSTALL_CANCELLED: 运行时已重置')
       const plan = await planRemoteVersionInstall(uname.stdout, hostConfig(), tag)
       if (generation !== hostRuntimeGeneration())
         throw new Error('REMOTE_CORE_INSTALL_CANCELLED: 运行时已重置')
