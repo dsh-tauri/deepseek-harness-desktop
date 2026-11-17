@@ -27,7 +27,7 @@ export function remoteCopiesProbeCommand(): string {
     '  [ -d "$dir" ] || continue',
     '  name="$(basename "$dir")"',
     '  case "$name" in',
-    '    *.new) continue ;;',
+    '    *.new|*.new.*|*.ready|*.ready.*) continue ;;',
     '    dsh|dsh-*|src-*) ;;',
     '    *) continue ;;',
     '  esac',

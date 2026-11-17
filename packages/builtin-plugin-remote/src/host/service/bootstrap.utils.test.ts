@@ -68,6 +68,41 @@ describe('指定版本下载计划', () => {
 
     expect(plan.dsh.urls).toHaveLength(1)
   })
+
+  it('npm 包缺少可信摘要时只保留官方下载源', async () => {
+    const plan = await planRemoteVersionInstall('Linux aarch64', {}, 'dsh-0.2.3-43000000000', {
+      npmDist: async () => ({
+        url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+        mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+      }),
+    })
+
+    expect(plan.dsh.kind).toBe('npm-tgz')
+    if (plan.dsh.kind !== 'npm-tgz')
+      throw new Error('expected an npm-tgz plan')
+    // 没有摘要时跳过校验：镜像文件不能绕过校验直接被安装。
+    expect(plan.dsh.urls).toEqual(['https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz'])
+    expect(plan.dsh.integrity).toBeUndefined()
+  })
+
+  it('npm 取得可信摘要时官方源与镜像源都保留', async () => {
+    const plan = await planRemoteVersionInstall('Linux aarch64', {}, 'dsh-0.2.3-43000000000', {
+      npmDist: async () => ({
+        url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+        mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+        integrity: 'sha512-abc',
+      }),
+    })
+
+    expect(plan.dsh.kind).toBe('npm-tgz')
+    if (plan.dsh.kind !== 'npm-tgz')
+      throw new Error('expected an npm-tgz plan')
+    expect(plan.dsh.urls).toEqual([
+      'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+      'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+    ])
+    expect(plan.dsh.integrity).toBeDefined()
+  })
 })
 
 describe('指定版本下载脚本', () => {
@@ -94,6 +129,12 @@ describe('指定版本下载脚本', () => {
     expect(script).toContain('if [ -f "$SLOT/node_modules/@deepseek-ai/dsh/lib/bin.js" ] && [ -z "$REINSTALL" ]; then')
     expect(script).toContain('flatten_move "$STAGE" "$READY"')
     expect(script).toContain('mv "$READY" "$SLOT"')
+  })
+
+  it('暂存与就绪目录按运行隔离，旧脚本的清理不会删掉新安装的文件', () => {
+    const script = buildCoreVersionInstallScript(plan, { slot: plan.tag })
+    expect(script).toContain('STAGE="$SLOT.new.$$"')
+    expect(script).toContain('READY="$SLOT.ready.$$"')
   })
 
   it('npm 依赖在暂存目录安装成功后才发布槽位', () => {
@@ -168,6 +209,41 @@ describe('planRemoteInstall 的 release 候选选择', () => {
       listAssets: async () => [],
       probe: async () => 'missing',
     })).rejects.toThrow(/REMOTE_DSH_RELEASE_UNAVAILABLE/)
+  })
+
+  it('bootstrap 计划的 npm 包缺少可信摘要时只保留官方下载源', async () => {
+    const plan = await planRemoteInstall('Linux aarch64', {}, {
+      listReleases: async () => [{ tag: 'dsh-0.2.3-43000000000', prerelease: false }],
+      npmDist: async () => ({
+        url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+        mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+      }),
+    })
+
+    expect(plan.dsh.kind).toBe('npm-tgz')
+    if (plan.dsh.kind !== 'npm-tgz')
+      throw new Error('expected an npm-tgz plan')
+    // 没有摘要时跳过校验：镜像文件不能绕过校验直接被安装。
+    expect(plan.dsh.urls).toEqual(['https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz'])
+  })
+
+  it('bootstrap 计划的 npm 包取得可信摘要时保留官方源与镜像源', async () => {
+    const plan = await planRemoteInstall('Linux aarch64', {}, {
+      listReleases: async () => [{ tag: 'dsh-0.2.3-43000000000', prerelease: false }],
+      npmDist: async () => ({
+        url: 'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+        mirrorUrl: 'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+        integrity: 'sha512-abc',
+      }),
+    })
+
+    expect(plan.dsh.kind).toBe('npm-tgz')
+    if (plan.dsh.kind !== 'npm-tgz')
+      throw new Error('expected an npm-tgz plan')
+    expect(plan.dsh.urls).toEqual([
+      'https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+      'https://registry.npmmirror.com/@deepseek-ai/dsh/-/dsh-0.2.3.tgz',
+    ])
   })
 
   it('可用性未知时保留候选，不误报为版本不可用', async () => {

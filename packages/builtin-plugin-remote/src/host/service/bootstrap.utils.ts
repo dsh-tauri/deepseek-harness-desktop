@@ -238,18 +238,21 @@ export async function planRemoteInstall(
   const packageName = matrix.dshNpmPackage ?? '@deepseek-ai/dsh'
   if (resolved.version === '')
     throw new Error(`cannot resolve a DSH npm version from tag "${resolved.tag}"`)
+  // 摘要缺失时脚本会跳过校验：此时只留官方 registry 的 tarball，
+  // 绝不额外放大可写入口（与 pkg-zip 分支同规则）。
+  const officialUrls = dshNpmTarballUrls(packageName, resolved.version).slice(0, 1)
   let urls: string[] | undefined
   let integrity: string | undefined
   try {
     const dist = await npmDist(packageName, resolved.version)
-    urls = [...new Set([dist.url, dist.mirrorUrl])]
     integrity = normalizeNpmIntegrity(dist.integrity)
+    urls = integrity === undefined ? officialUrls : [...new Set([dist.url, dist.mirrorUrl])]
   }
   catch (error) {
     notes.push(`npm 元数据获取失败（${messageOf(error)}），回退确定性 URL`)
   }
   if (integrity === undefined)
-    notes.push(`未取得 ${packageName}@${resolved.version} 的可校验完整性摘要，将跳过校验`)
+    notes.push(`未取得 ${packageName}@${resolved.version} 的可校验完整性摘要，仅使用官方下载源并跳过校验`)
   return {
     os,
     arch,
@@ -258,7 +261,7 @@ export async function planRemoteInstall(
     dshEntry: DSH_NPM_ENTRY,
     dshVersion: resolved.version,
     node,
-    dsh: { kind: 'npm-tgz', urls: urls ?? dshNpmTarballUrls(packageName, resolved.version), ...integrity === undefined ? {} : { integrity }, packageName, version: resolved.version },
+    dsh: { kind: 'npm-tgz', urls: urls ?? officialUrls, ...integrity === undefined ? {} : { integrity }, packageName, version: resolved.version },
     pnpm,
     notes,
   }
@@ -513,18 +516,23 @@ export async function planRemoteVersionInstall(
     }
   }
   const packageName = matrix.dshNpmPackage ?? '@deepseek-ai/dsh'
+  // 摘要缺失时脚本会跳过校验：此时只留官方 registry 的 tarball，
+  // 否则镜像文件会绕过校验直接被解包安装（与 pkg-zip 分支同规则）。
+  const officialUrls = dshNpmTarballUrls(packageName, version).slice(0, 1)
   let urls: string[] | undefined
   let integrity: string | undefined
   try {
     const dist = await npmDist(packageName, version)
-    urls = [dist.url, dist.mirrorUrl]
     integrity = normalizeNpmIntegrity(dist.integrity)
+    urls = integrity === undefined ? officialUrls : [...new Set([dist.url, dist.mirrorUrl])]
   }
   catch (error) {
     notes.push(`npm 元数据获取失败（${packageName}@${version}: ${messageOf(error)}）`)
   }
   if (urls === undefined)
-    urls = dshNpmTarballUrls(packageName, version)
+    urls = officialUrls
+  if (integrity === undefined)
+    notes.push(`未取得 ${packageName}@${version} 的可校验完整性摘要，仅使用官方下载源并跳过校验`)
   return {
     os,
     arch,
@@ -564,8 +572,10 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     'ROOT="$HOME/.dsh-desktop"',
     'TMP="$ROOT/tmp/ver.$$"',
     `SLOT="${slot}"`,
-    'STAGE="$SLOT.new"',
-    'READY="$SLOT.ready"',
+    // 暂存与就绪目录按运行隔离：同一槽位的旧脚本仍在远端运行时，
+    // 它的退出清理不能删掉新一次安装写入的文件。
+    'STAGE="$SLOT.new.$$"',
+    'READY="$SLOT.ready.$$"',
     'mkdir -p "$ROOT/dependencies" "$TMP"',
     'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; }',
     'trap cleanup EXIT',

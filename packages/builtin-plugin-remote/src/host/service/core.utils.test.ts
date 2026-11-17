@@ -32,6 +32,9 @@ describe('remote core copy probe', () => {
     const { home, deps } = fixtureHome()
     completeCopy(deps, 'dsh', '0.2.2-rc.1')
     completeCopy(deps, 'dsh-0.2.3-1.new', '0.2.3')
+    // 安装脚本的暂存与就绪目录带运行级后缀，同样不能被当成一个副本。
+    completeCopy(deps, 'dsh-0.2.3-1.new.4242', '0.2.3')
+    completeCopy(deps, 'dsh-0.2.3-1.ready.4242', '0.2.3')
     mkdirSync(join(deps, 'dsh-broken'))
 
     const result = spawnSync('sh', ['-c', remoteCopiesProbeCommand()], {
