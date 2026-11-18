@@ -51,7 +51,12 @@ export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
 /** 冷装配（真实下载 Node + dsh）的等待上限。 */
 export const ASSEMBLY_TIMEOUT_MS = process.platform === 'darwin' ? 300_000 : 900_000
-export const WINDOW_TIMEOUT_MS = 30_000
+/**
+ * 单次「等界面/等服务就绪」的上限。这些等待是在共享 runner 上等首帧与核心启动，
+ * 30s 会让慢机器把正常启动判成失败（macOS 跑完整套能到二十多分钟）。
+ * 它只是等待上限，不作为性能断言；产品真的坏了会由断言而非超时暴露。
+ */
+export const WINDOW_TIMEOUT_MS = 120_000
 export const SETTLE_MS = 3_000
 
 export interface ShellWindow {
