@@ -9,8 +9,8 @@ import { messageOf } from '../../shared/error'
 import { REMOTE_ROOT } from '../config/constants'
 import { clearCoreInstallTask, coreInstallTask, hostConfig, hostRuntimeGeneration, registerCoreInstallTask } from '../config/runtime'
 import { assertSupportedDshVersion, isPreviewTag, listGithubReleases, MINIMUM_DSH_VERSION, parseVersionFromTag, pkgRepoOf } from '../utils/version'
-import { buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall, startCommandFor } from './bootstrap.utils'
-import { buildCoreSwitchScript, fallbackActiveTag, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
+import { BOOTSTRAP_LOG_PREFIX, buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall, startCommandFor } from './bootstrap.utils'
+import { buildCoreSwitchRestoreScript, buildCoreSwitchScript, fallbackActiveTag, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
 import { machine } from './machine'
 import { tasks } from './tasks'
 
@@ -251,9 +251,11 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
   let session: RemoteSession | undefined
   let lease: CoreSwitchLease | undefined
   let switched = false
+  let backupTag: string | undefined
+  // 固定这台机器的主机与档案：任务期间配置变了就不能继续在旧会话上操作。
+  let identity = ''
   try {
-    // 固定这台机器的主机与档案：任务期间配置变了就不能继续在旧会话上操作。
-    const identity = profileIdentityOf(machine.profile(machineId))
+    identity = profileIdentityOf(machine.profile(machineId))
     session = await machine.openSession(machineId)
     tasks.append(taskId, 'probe', `检查核心副本 ${slotKey}`)
     const copies = await readRemoteCopies(session)
@@ -263,8 +265,16 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
       throw new Error('REMOTE_CORE_SWITCH_FAILED: 当前使用的核心副本不存在')
     if (target === undefined || target.unreadable !== undefined || target.version === undefined || target.entry === undefined)
       throw new Error(`REMOTE_CORE_SWITCH_FAILED: 目标核心副本 ${slotKey} 不存在或不可读`)
+    // 旧核心的入口路径也要知道：连接没建起来时要靠它把旧核心换回去。
+    if (active.entry === undefined)
+      throw new Error('REMOTE_CORE_SWITCH_FAILED: 当前使用的核心副本不可读，无法切换')
     assertSupportedDshVersion(target.version)
     const candidates = backupCandidatesOf(copies, active, slotKey)
+
+    // 自定义启动命令可能拉起另一份核心：目录换���它也不跟着换，这种机器不能切。
+    const profile = machine.profile(machineId)
+    if (profile.startCommand !== undefined)
+      throw new Error('REMOTE_CORE_SWITCH_FAILED: 该机器配置了自定义启动命令，无法保证切换到目标副本')
 
     lease = await machine.beginSwitch(machineId)
     // 机器配置在切换期间变了：现在操作的不是刚才那台机器，不能继续动它的目录，
@@ -272,12 +282,14 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
     if (profileIdentityOf(machine.profile(machineId)) !== identity)
       throw new Error('REMOTE_CORE_SWITCH_ABORTED: 远端机器配置在切换期间发生变化')
 
-    const profile = machine.profile(machineId)
     const config = hostConfig()
     const entryRelativePath = switchEntryRelative(target.entry, slotKey)
     const startCommand = startCommandFor(profile, undefined, { dshBin: switchEntryPath(entryRelativePath) })
     let failure: string | undefined
     for (const candidate of candidates) {
+      // 派发前先确认租约还在：用户断开或改了配置就别再动远端目录了。
+      if (!machine.switchLeaseValid(lease))
+        throw new Error('REMOTE_CORE_SWITCH_ABORTED: 连接已被重置，切换已中止')
       const outcome = await runSwitchScript(session, {
         targetTag: slotKey,
         backupTag: candidate,
@@ -290,14 +302,17 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
         entryRelativePath,
         healthPollAttempts: config.healthPollAttempts,
         healthPollIntervalMs: config.healthPollIntervalMs,
+        activeVersion: active.version,
+        targetVersion: target.version,
       })
       if (outcome.ok) {
         switched = true
+        backupTag = candidate
         break
       }
       failure = outcome.message
       // 只有备份槽位被别人占了才换一个候选；其它失败重试没有意义。
-      if (!outcome.backupTaken)
+      if (!outcome.backupTaken || outcome.unknown)
         break
     }
     if (!switched)
@@ -305,7 +320,7 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
 
     tasks.append(taskId, 'launch', `重建远端连接 ${target.version}`)
     // 用户在这期间断开或改了配置时，租约失效：不再替他重建连接。
-    if (lease !== undefined && !machine.switchLeaseValid(lease)) {
+    if (!machine.switchLeaseValid(lease)) {
       tasks.append(taskId, 'switch', `核心已切换至 ${target.version}，但连接已被重置`, { terminal: 'success' })
       return
     }
@@ -314,7 +329,28 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
       tasks.append(taskId, 'switch', `核心已切换至 ${target.version}，但远端机器配置已变更，未重建连接`, { terminal: 'success' })
       return
     }
-    await machine.reconnect(machineId, { profileSync: false, lease })
+    try {
+      await machine.reconnect(machineId, { profileSync: false, lease, dshBin: switchEntryPath(entryRelativePath) })
+    }
+    catch (error) {
+      // 目录已经换成新核心了，连接却没建起来：把它换回旧核心。
+      // 只报失败却把远端留在新核心上，用户看到的和实际发生的对不上。
+      const restored = await restoreOldCore(session, {
+        machineId,
+        lease,
+        taskId,
+        targetTag: slotKey,
+        backupTag: backupTag!,
+        restoreTag: active.tag,
+        profile,
+        activeEntry: active.entry,
+      })
+      const reason = restored
+        ? `核心已切换至 ${target.version}，但连接没能恢复；已切回旧核心`
+        : `核心已切换至 ${target.version}，但连接没能恢复，旧核心也没切回来：${messageOf(error)}`
+      tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
+      return
+    }
     tasks.append(taskId, 'switch', `核心已切换至 ${target.version}`, { terminal: 'success' })
   }
   catch (error) {
@@ -333,7 +369,7 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
     }
     // 只有真的动过这台机器才需要恢复：切换在拿到所有权之前就失败的话，
     // 连接是用户自己的状态，不能替他重连（那会把用户刚做的断开撤销掉）。
-    const recovery = switched || lease === undefined ? '' : await recoverOldCore(machineId, lease, taskId)
+    const recovery = switched || lease === undefined ? '' : await recoverOldCore(machineId, lease, identity, taskId)
     const reason = `${normalizeSwitchFailure(original)}${recovery === '' ? '' : `；${recovery}`}`
     tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
   }
@@ -356,36 +392,81 @@ interface SwitchScriptOptions {
   entryRelativePath: string
   healthPollAttempts: number
   healthPollIntervalMs: number
+  activeVersion: string | undefined
+  targetVersion: string | undefined
 }
 
 interface SwitchScriptOutcome {
   ok: boolean
   message: string
   backupTaken: boolean
+  /** 脚本没给出结论（连接断了或超时）：远端目录状态未知，不能重试也不能重连。 */
+  unknown: boolean
 }
 
 async function runSwitchScript(session: RemoteSession, options: SwitchScriptOptions): Promise<SwitchScriptOutcome> {
   const script = buildCoreSwitchScript(options)
   const timeoutMs = Math.max(60_000, options.healthPollAttempts * options.healthPollIntervalMs + 60_000)
-  const result = await session.exec(script, { timeoutMs })
+  let result: Awaited<ReturnType<RemoteSession['exec']>>
+  try {
+    result = await session.exec(script, { timeoutMs })
+  }
+  catch (error) {
+    // 连接断了或超时：远端脚本可能还在跑，目录状态未知。
+    return {
+      ok: false,
+      message: `REMOTE_CORE_SWITCH_UNRECOVERED: 远端连接中断，核心目录状态未知：${messageOf(error)}`,
+      backupTaken: false,
+      unknown: true,
+    }
+  }
   if (result.code === 0)
-    return { ok: true, message: '', backupTaken: false }
-  const message = switchFailureOf(`${result.stderr}\n${result.stdout}`, result.code)
-  return { ok: false, message, backupTaken: message.includes('备份槽位已被占用') }
+    return { ok: true, message: '', backupTaken: false, unknown: false }
+  const failure = switchFailureOf(`${result.stderr}\n${result.stdout}`, result.code)
+  return {
+    ok: false,
+    message: failure.message,
+    backupTaken: failure.message.includes('备份槽位已被占用') || failure.message.includes('REMOTE_CORE_SLOT_BUSY:backup'),
+    unknown: !failure.fromScript,
+  }
 }
 
-function switchFailureOf(output: string, code: number | null): string {
-  const line = output.split('\n').map(item => item.trim()).filter(item => item.startsWith('REMOTE_CORE_SWITCH')).at(-1)
+/** 结论行有两种写法：失败结论直接写 stderr，进度日志行带 `::dsh <阶段> ` 前缀。 */
+function switchConclusionLines(output: string): string[] {
+  const lines: string[] = []
+  for (const raw of output.split('\n')) {
+    const line = raw.trim()
+    if (line === '')
+      continue
+    if (!line.startsWith(BOOTSTRAP_LOG_PREFIX)) {
+      lines.push(line)
+      continue
+    }
+    const rest = line.slice(BOOTSTRAP_LOG_PREFIX.length)
+    const cut = rest.indexOf(' ')
+    lines.push(cut < 0 ? rest : rest.slice(cut + 1))
+  }
+  return lines
+}
+
+function switchFailureOf(output: string, code: number | null): { message: string, fromScript: boolean } {
+  // 槽位被占用也是脚本给出的明确结论：目录没被动过，不能当成「状态未知」去惊动用户。
+  const line = switchConclusionLines(output)
+    .filter(item => item.startsWith('REMOTE_CORE_SWITCH') || item.startsWith('REMOTE_CORE_SLOT_BUSY'))
+    .at(-1)
   if (line !== undefined)
-    return line
+    return { message: line, fromScript: true }
   const tail = output.trim().split('\n').slice(-3).join(' | ')
-  return `REMOTE_CORE_SWITCH_FAILED: 切换脚本失败（exit ${code ?? '?'}）${tail === '' ? '' : `：${tail}`}`
+  return { message: `REMOTE_CORE_SWITCH_FAILED: 切换脚本失败（exit ${code ?? '?'}）${tail === '' ? '' : `：${tail}`}`, fromScript: false }
 }
 
 /** 切换没成功时把旧核心重新拉起来：目录已经换回去了，只需要重建连接。 */
-async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease, taskId: string): Promise<string> {
+async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease, identity: string, taskId: string): Promise<string> {
   if (!machine.switchLeaseValid(lease))
     return '连接已被重置，未重建连接'
+  // 档案身份变了就不要再连：现在连上去的是另一台机器。
+  if (profileIdentityOf(machine.profile(machineId)) !== identity)
+    return '远端机器配置已变更，未重建连接'
   try {
     await machine.reconnect(machineId, { profileSync: false, lease })
     tasks.append(taskId, 'rollback', '旧版本已重新连接')
@@ -393,6 +474,49 @@ async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease, task
   }
   catch (error) {
     return `旧版本重连失败：${messageOf(error)}`
+  }
+}
+
+interface RestoreOldCoreOptions {
+  machineId: MachineId
+  lease: CoreSwitchLease
+  taskId: string
+  targetTag: string
+  backupTag: string
+  restoreTag: string | undefined
+  profile: MachineProfile
+  activeEntry: string
+}
+
+/**
+ * 连接没建起来时把旧核心换回去：目录已经换成新核心了，
+ * 只报失败会让远端停在新核心上，用户看到的和实际发生的对不上。
+ */
+async function restoreOldCore(session: RemoteSession, options: RestoreOldCoreOptions): Promise<boolean> {
+  if (!machine.switchLeaseValid(options.lease))
+    return false
+  const config = hostConfig()
+  const startCommand = startCommandFor(options.profile, undefined, {
+    dshBin: switchEntryPath(switchEntryRelative(options.activeEntry, 'dsh')),
+  })
+  tasks.append(options.taskId, 'rollback', '连接未恢复，切回旧核心')
+  try {
+    const result = await session.exec(buildCoreSwitchRestoreScript({
+      targetTag: options.targetTag,
+      backupTag: options.backupTag,
+      runId: `${options.taskId}-restore`,
+      profileName: machine.profileName(options.machineId),
+      remotePort: options.profile.remotePort,
+      startCommand,
+      ...options.restoreTag === undefined ? {} : { restoreTag: options.restoreTag },
+      healthPollAttempts: config.healthPollAttempts,
+      healthPollIntervalMs: config.healthPollIntervalMs,
+    }), { timeoutMs: Math.max(60_000, config.healthPollAttempts * config.healthPollIntervalMs + 60_000) })
+    return result.code === 0
+  }
+  catch (error) {
+    console.error('[remote] restore old core failed:', error)
+    return false
   }
 }
 

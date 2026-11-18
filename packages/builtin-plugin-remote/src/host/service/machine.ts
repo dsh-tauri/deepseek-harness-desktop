@@ -211,12 +211,15 @@ export const machine = defineService({
     // 否则它们可能在目录互换前连回旧核心，或让两次切换互相踩。
     if (target.switchOwner !== undefined)
       throw new RemoteError('machine-busy', machineId, 'machine is already switching the core')
-    if (target.connecting !== undefined || target.installing !== undefined)
+    if (target.connecting !== undefined || target.installing !== undefined || target.installReserved === true)
       throw new RemoteError('machine-busy', machineId, 'machine is already connecting or installing')
     // 自动重连已经跑起来了就不能切：它可能在切换停机或互换目录期间把旧实例拉起来。
     if (target.reconnect?.attempting !== undefined)
       throw new RemoteError('machine-busy', machineId, 'machine is reconnecting; wait for the automatic retry or disconnect first')
     target.generation += 1
+    // 代次要在这里就抓住：等资源关闭这段时间里用户可能断开并让另一次切换接手，
+    // 那时读到的代次已经不是本次的了。
+    const generation = target.generation
     stopReconnect(target)
     const entry = target.gateway
     const tunnel = target.tunnel
@@ -238,7 +241,10 @@ export const machine = defineService({
       tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
       session === undefined ? undefined : session.close().catch(() => undefined),
     ])
-    const lease: CoreSwitchLease = { machineId, generation: target.generation }
+    // 等的过程中状态被改过（用户断开、配置变更、另一次切换接手）：本次租约作废。
+    if (target.generation !== generation)
+      throw new RemoteError('machine-busy', machineId, 'machine state changed while releasing the connection')
+    const lease: CoreSwitchLease = { machineId, generation }
     target.switchOwner = lease
     return lease
   },
@@ -255,16 +261,20 @@ export const machine = defineService({
     emit(lease.machineId)
   },
 
-  /** 切换租约是否仍然有效：用户断开、配置变更或插件停用都会让它失效。 */
+  /**
+   * 切换租约是否仍然有效：用户断开、配置变更或插件停用都会让它失效。
+   *
+   * 不看显示阶段：连通性测试会临时把阶段改成 `testing`，
+   * 拿阶段当依据会让切换在测试跑完的瞬间失效。
+   */
   switchLeaseValid(lease: CoreSwitchLease): boolean {
     const target = machineStates.get(lease.machineId)
     return target !== undefined
       && target.generation === lease.generation
-      && target.phase === 'switching'
       && target.switchOwner?.generation === lease.generation
   },
 
-  async reconnect(machineId: MachineId, options: { profileSync?: boolean, lease?: CoreSwitchLease } = {}): Promise<RemoteLink> {
+  async reconnect(machineId: MachineId, options: { profileSync?: boolean, lease?: CoreSwitchLease, dshBin?: string } = {}): Promise<RemoteLink> {
     const profile = requireProfile(machineId)
     requireCapabilities(machineId, profile, ['exec', 'stream'])
     const target = ensureState(machineId)
@@ -281,11 +291,33 @@ export const machine = defineService({
     delete target.gatewayExhausted
     target.progress = { phase: 'handshake' }
     emit(machineId)
-    const attempt = performConnect(machineId, profile, undefined, options.profileSync === false ? { profileSync: false } : undefined)
-    target.connecting = attempt.finally(() => {
-      delete machineStates.get(machineId)?.connecting
+    const generation = target.generation
+    // 切换后的重建连接只验证与启动现有的那份副本，不重新解析安装计划：
+    // 切换不能依赖发行源，也不能改写刚换过去的活动目录。
+    const attempt = performConnect(machineId, profile, undefined, {
+      ...options.profileSync === false ? { profileSync: false } : {},
+      skipInstall: true,
+      ...options.dshBin === undefined ? {} : { dshBin: options.dshBin },
     })
-    return await target.connecting
+    const pending: Promise<RemoteLink> = attempt.finally(() => {
+      const current = machineStates.get(machineId)
+      if (current?.connecting === pending)
+        delete current.connecting
+    })
+    target.connecting = pending
+    void attempt.catch((error) => {
+      const current = machineStates.get(machineId)
+      // 旧尝试的失败不能盖掉用户随后发起的连接。
+      if (current === undefined || current.generation !== generation || current.connecting !== pending)
+        return
+      // 任务已经失败了，机器不能停在「连接中」：没有在飞的尝试，状态要落到终态。
+      current.phase = 'disconnected'
+      delete current.progress
+      current.lastError = redacted(machineId, messageOf(error))
+      emit(machineId)
+      events.append(machineId, 'auth', current.lastError)
+    })
+    return await pending
   },
 
   async disconnect(machineId: MachineId): Promise<void> {
@@ -328,14 +360,26 @@ export const machine = defineService({
     refuseWhileSwitching(machineId, target)
     refuseWhileReconnecting(machineId, target)
     if (target.installing === undefined) {
-      if (options.force === true && target.link !== undefined)
-        await machine.disconnect(machineId)
-      target.progress = { phase: 'installing' }
-      emit(machineId)
-      const attempt = performInstall(machineId, profile, options, signal)
-      target.installing = attempt.finally(() => {
-        delete machineStates.get(machineId)?.installing
-      })
+      // 占位要先登记：强装要先等断开，这段等待里不能让核心切换插进来。
+      target.installReserved = true
+      try {
+        if (options.force === true && target.link !== undefined)
+          await machine.disconnect(machineId)
+        target.progress = { phase: 'installing' }
+        emit(machineId)
+        const attempt = performInstall(machineId, profile, options, signal)
+        const tracked: Promise<RemoteInstallResult> = attempt.finally(() => {
+          const current = machineStates.get(machineId)
+          if (current?.installing === tracked)
+            delete current.installing
+        })
+        target.installing = tracked
+      }
+      finally {
+        const current = machineStates.get(machineId)
+        if (current !== undefined)
+          delete current.installReserved
+      }
     }
     return target.installing
   },
@@ -500,7 +544,7 @@ async function checkHostKey(machineId: MachineId, hostKey: Buffer): Promise<bool
 
 class AttemptCancelled extends Error {}
 
-async function performConnect(machineId: MachineId, profile: MachineProfile, signal?: AbortSignal, options: { profileSync?: boolean } = {}): Promise<RemoteLink> {
+async function performConnect(machineId: MachineId, profile: MachineProfile, signal?: AbortSignal, options: { profileSync?: boolean, skipInstall?: boolean, dshBin?: string } = {}): Promise<RemoteLink> {
   const target = ensureState(machineId)
   const generation = target.generation
   const withProfile = options.profileSync !== false
@@ -553,6 +597,10 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
           }
         },
         onEvent,
+      },
+      {
+        ...options.skipInstall === true ? { install: false } : {},
+        ...options.dshBin === undefined ? {} : { dshBin: options.dshBin },
       },
     )
     const tunnel = await session.stream(profile.remotePort, target.preferredTunnelPort)

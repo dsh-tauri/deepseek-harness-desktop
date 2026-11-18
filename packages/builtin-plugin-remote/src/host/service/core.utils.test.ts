@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -20,10 +20,10 @@ function fixtureHome(): { home: string, deps: string } {
   return { home, deps }
 }
 
-function runScript(home: string, script: string, path?: string): ReturnType<typeof spawnSync> {
+function runScript(home: string, script: string, path?: string, extraEnv?: Record<string, string>): ReturnType<typeof spawnSync> {
   return spawnSync('sh', ['-c', script], {
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, ...path === undefined ? {} : { PATH: `${path}:${process.env.PATH ?? ''}` } },
+    env: { ...process.env, HOME: home, ...path === undefined ? {} : { PATH: `${path}:${process.env.PATH ?? ''}` }, ...extraEnv },
   })
 }
 
@@ -32,18 +32,36 @@ function listenerStartCommand(): string {
   return `( node -e 'require("http").createServer((_, res) => res.end("ok")).listen(${SWITCH_PORT})' </dev/null >/dev/null 2>&1 & )`
 }
 
-function switchScript(overrides: { backupTag?: string, startCommand?: string } = {}): string {
+function switchScript(overrides: { backupTag?: string, startCommand?: string, healthPollAttempts?: number, activeVersion?: string, targetVersion?: string, remotePort?: number } = {}): string {
   return buildCoreSwitchScript({
     targetTag: 'dsh-new',
     backupTag: overrides.backupTag ?? 'dsh-old',
     runId: 'test',
     profileName: 'remote',
-    remotePort: SWITCH_PORT,
+    remotePort: overrides.remotePort ?? SWITCH_PORT,
     startCommand: overrides.startCommand ?? listenerStartCommand(),
     entryRelativePath: 'lib/bin.js',
-    healthPollAttempts: 20,
+    healthPollAttempts: overrides.healthPollAttempts ?? 20,
     healthPollIntervalMs: 500,
+    ...overrides.activeVersion === undefined ? {} : { activeVersion: overrides.activeVersion },
+    ...overrides.targetVersion === undefined ? {} : { targetVersion: overrides.targetVersion },
   })
+}
+
+/** 杀掉上一个用例留下的监听进程：端口被占会让后一个用例的探测假成功。 */
+function killListener(home: string): void {
+  const pidFile = join(home, 'listener.pid')
+  if (!existsSync(pidFile))
+    return
+  const pid = Number(readFileSync(pidFile, 'utf8').trim())
+  if (Number.isFinite(pid) && pid > 0) {
+    try {
+      process.kill(pid)
+    }
+    catch {
+      // 已经退出
+    }
+  }
 }
 
 function completeCopy(deps: string, name: string, version: string): void {
@@ -54,8 +72,10 @@ function completeCopy(deps: string, name: string, version: string): void {
 }
 
 afterEach(() => {
-  for (const home of homes.splice(0))
+  for (const home of homes.splice(0)) {
+    killListener(home)
     rmSync(home, { recursive: true, force: true })
+  }
 })
 
 describe('remote core switch scripts', () => {
@@ -136,6 +156,57 @@ describe('remote core switch scripts', () => {
     expect(readFileSync(join(deps, 'dsh-new', 'version'), 'utf8')).toBe('new')
     // 版本记录也要跟着目录换回去，否则清单会把旧核心标成新版本。
     expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-old\n')
+  })
+
+  it.skipIf(process.platform === 'win32')('accepts a health check that only succeeds on the last attempt', () => {
+    const { home } = fixtureHome()
+    // 探测一次就成功：计数刚好用尽，但不是超时。
+    const startCommand = `( node -e 'require("http").createServer((_, res) => res.end("ok")).listen(${SWITCH_PORT})' </dev/null >/dev/null 2>&1 & echo $! > "$HOME/listener.pid" ); sleep 1`
+
+    try {
+      const result = runScript(home, switchScript({ startCommand, healthPollAttempts: 1 }))
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('REMOTE_CORE_SWITCH_READY')
+    }
+    finally {
+      killListener(home)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('stops the instance it started before restoring the old core', () => {
+    const { home, deps } = fixtureHome()
+    writeFileSync(join(home, 'bin.js'), 'setInterval(() => {}, 1000)\n')
+    // 实例参数要带上档案名与端口，停止命令才匹配得上；
+    // 脚本文本里只放变量引用，免得脚本把自己的命令行也匹配上、被 pkill 掉。
+    const startCommand = `( node "$HOME/bin.js" --profile "$DSH_TEST_PROFILE" --host 127.0.0.1 --port "$DSH_TEST_PORT" </dev/null >/dev/null 2>&1 & )`
+
+    const result = runScript(home, switchScript({ startCommand, healthPollAttempts: 1, remotePort: SWITCH_PORT + 1 }), undefined, {
+      DSH_TEST_PROFILE: 'remote',
+      DSH_TEST_PORT: String(SWITCH_PORT + 1),
+    })
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('REMOTE_CORE_SWITCH_FAILED')
+    // 目录与版本记录都换回旧核心。
+    expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
+    expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-old\n')
+    // 本次拉起的实例必须已经停掉：不然恢复出来的旧核心旁边还挂着一个新核心。
+    const alive = spawnSync('sh', ['-c', `ps -eo args= | grep -F "bin.js --profile remote --host 127.0.0.1 --port ${SWITCH_PORT + 1}" | grep -v grep || true`], { encoding: 'utf8' })
+    expect(alive.stdout.trim()).toBe('')
+  })
+
+  it.skipIf(process.platform === 'win32')('refuses to switch when the active copy changed after the probe', () => {
+    const { home, deps } = fixtureHome()
+    writeFileSync(join(deps, 'dsh', 'package.json'), JSON.stringify({ version: '0.2.9' }))
+    writeFileSync(join(deps, 'dsh-new', 'package.json'), JSON.stringify({ version: '0.2.3' }))
+
+    const result = runScript(home, switchScript({ activeVersion: '0.2.2-rc.1', targetVersion: '0.2.3' }))
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('当前使用的核心已变化')
+    // 没停实例、没动目录。
+    expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
+    expect(readFileSync(join(deps, 'dsh-new', 'version'), 'utf8')).toBe('new')
   })
 
   it.skipIf(process.platform === 'win32')('refuses to switch while the backup slot is taken', () => {

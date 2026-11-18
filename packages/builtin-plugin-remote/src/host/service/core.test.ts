@@ -671,7 +671,11 @@ describe('remote core contract', () => {
 
     expect(machine.beginSwitch).toHaveBeenCalledWith(machineId)
     // 切换只重建连接，不写远端档案。
-    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false, lease: { machineId, generation: 1 } })
+    expect(machine.reconnect).toHaveBeenCalledWith(machineId, {
+      profileSync: false,
+      lease: { machineId, generation: 1 },
+      dshBin: '$HOME/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js',
+    })
     expect(commands).toHaveLength(1)
     expect(commands[0]).toContain('TARGET="$DEPS/dsh-0.2.3-43000000000"')
     expect(commands[0]).toContain('BACKUP="$DEPS/dsh-0.2.2-rc.1"')
@@ -684,6 +688,41 @@ describe('remote core contract', () => {
     expect(commands[0]).toContain('mv "$DEPS/dsh" "$BACKUP"')
     expect(commands[0]).toContain('mv "$TARGET" "$DEPS/dsh"')
     expect(tasks.since(accepted.taskId!).events.at(-1)?.line).toBe('核心已切换至 0.2.3')
+  })
+
+  it('reports a busy slot as a clean failure instead of an unknown remote state', async () => {
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('LOCKDIR_ACTIVE='))
+        return { code: 17, stdout: '::dsh failed REMOTE_CORE_SLOT_BUSY:active: 当前使用的核心槽位正在被其它操作占用（pid 42），请等它结束后重试', stderr: '' }
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    const last = tasks.since(accepted.taskId!).events.at(-1)?.line ?? ''
+    expect(last).toContain('REMOTE_CORE_SLOT_BUSY:active')
+    // 槽位被占用时目录没被动过：不能说成「状态未知」，那会让用户去远端机器上查。
+    expect(last).not.toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
+    expect(last).not.toContain('状态未知')
+    // 旧核心还在用，连接要重新建起来。
+    expect(machine.reconnect).toHaveBeenCalled()
   })
 
   it('reconnects the old remote core when the switch script reports a recovered failure', async () => {
@@ -813,7 +852,8 @@ describe('remote core contract', () => {
   })
 
   it('does not rebuild the connection when the lease was invalidated', async () => {
-    vi.mocked(machine.switchLeaseValid).mockReturnValue(false)
+    // 派发脚本时租约还有效；脚本跑完之后租约失效了（用户在这期间断开了连接）。
+    vi.mocked(machine.switchLeaseValid).mockReturnValueOnce(true).mockReturnValue(false)
     const session = sessionWithRemote([
       {
         name: 'dsh',
@@ -842,6 +882,41 @@ describe('remote core contract', () => {
     // 用户在这期间断开了连接：切换本身成功，但不再替他重建连接。
     expect(machine.reconnect).not.toHaveBeenCalled()
     expect(tasks.since(accepted.taskId!).events.at(-1)?.line).toContain('连接已被重置')
+  })
+
+  it('does not dispatch the switch script when the lease was invalidated', async () => {
+    const commands: string[] = []
+    vi.mocked(machine.switchLeaseValid).mockReturnValue(false)
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('LOCKDIR_ACTIVE='))
+        commands.push(command)
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    // 租约失效就别再动远端目录了。
+    expect(commands).toHaveLength(0)
+    expect(machine.reconnect).not.toHaveBeenCalled()
+    const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
+    expect(failed?.reason).toContain('REMOTE_CORE_SWITCH_ABORTED')
   })
 
   it('refuses to switch to the active slot or an unsafe slot name', async () => {

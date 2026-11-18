@@ -387,6 +387,8 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  log download "dsh ${plan.dsh.tag}"`,
         `  fetch_verified "$TMP/dsh-pkg.zip" "${plan.dsh.digest ?? ''}" "${plan.dsh.zipName}" ${quoteUrls(plan.dsh.urls)}`,
         `  extract_zip "$TMP/dsh-pkg.zip" "$ROOT/dependencies/dsh.new"`,
+        // 换活动目录前先占住活动槽位：和核心切换互斥。
+        ...activeSlotClaimShell('  '),
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
         // 活动目录被换成了新的副本，它不再对应任何版本槽位：旧的版本标识要清掉，
         // 否则清单会把新副本标成旧版本。
@@ -413,6 +415,8 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  rm -rf "$ROOT/dependencies/dsh.new"`,
         `  mkdir -p "$ROOT/dependencies/dsh.new"`,
         `  tar -xzf "$TMP/dsh.tgz" -C "$ROOT/dependencies/dsh.new" --strip-components=1`,
+        // 换活动目录前先占住活动槽位：和核心切换互斥。
+        ...activeSlotClaimShell('  '),
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
         `  rm -f "$ROOT/dependencies/.active-tag"`,
         `  install_dsh_deps || exit 13`,
@@ -434,7 +438,9 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
     '  kill -0 "$_pid" 2>/dev/null || rm -rf "$_d"',
     'done',
     'mkdir -p "$TMP"',
-    'cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; }',
+    // 活动槽位的占用声明在拿到之前是空的：退出清理要能安全地引用它。
+    'CLAIM_ACTIVE=""',
+    'cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; rm -f "$CLAIM_ACTIVE"; }',
     'trap cleanup EXIT',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
     ...INSTALL_SHELL_HELPERS,
@@ -564,6 +570,25 @@ export interface CoreSlotClaimOptions {
   claimName?: string
   tmpClaim?: string
   busyText?: string
+  /** 槽位被占的稳定标记：调用方据此判断是哪个槽位被占，不用去匹配提示文案。 */
+  busyCode?: string
+}
+
+/**
+ * 活动槽位（`dependencies/dsh`）的占用声明。
+ *
+ * 切换脚本占的是同一个槽位：两边互斥，才不会出现「切换还在跑，
+ * 别处的重装把活动目录换掉了」这种两边都以为自己对的情况。
+ */
+export function activeSlotClaimShell(indent = ''): string[] {
+  return coreSlotClaimShell('dsh', {
+    lockVar: 'LOCKDIR_ACTIVE',
+    claimVar: 'CLAIM_ACTIVE',
+    claimName: 'claim-active-$$',
+    tmpClaim: 'claim-active.$$',
+    busyText: '当前使用的核心槽位正在被其它操作占用',
+    busyCode: 'active',
+  }).map(line => `${indent}${line}`)
 }
 
 /**
@@ -588,6 +613,7 @@ export function coreSlotClaimShell(slot: string, options: CoreSlotClaimOptions =
   const claimName = options.claimName ?? 'claim-$$'
   const tmpClaim = options.tmpClaim ?? 'claim.$$'
   const busyText = options.busyText ?? '该版本槽位已有安装正在进行'
+  const busyCode = options.busyCode === undefined ? 'REMOTE_CORE_SLOT_BUSY' : `REMOTE_CORE_SLOT_BUSY:${options.busyCode}`
   return [
     `${lockVar}="$ROOT/tmp/slot-${slot}.lock"`,
     `${claimVar}="$${lockVar}/${claimName}"`,
@@ -596,7 +622,7 @@ export function coreSlotClaimShell(slot: string, options: CoreSlotClaimOptions =
     `if [ -f "$${lockVar}" ]; then`,
     `  _old="$(cat "$${lockVar}" 2>/dev/null || true)"`,
     '  if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then',
-    `    log failed "REMOTE_CORE_SLOT_BUSY: ${busyText}（pid $_old），请等它结束后重试"`,
+    `    log failed "${busyCode}: ${busyText}（pid $_old），请等它结束后重试"`,
     '    exit 17',
     '  fi',
     `  rm -f "$${lockVar}"`,
@@ -621,7 +647,7 @@ export function coreSlotClaimShell(slot: string, options: CoreSlotClaimOptions =
     // 删掉自己的声明与本次临时目录，别在远端留下垃圾。
     `    rm -f "$${claimVar}"`,
     '    rm -rf "$TMP"',
-    `    log failed "REMOTE_CORE_SLOT_BUSY: ${busyText}（pid $_pid），请等它结束后重试"`,
+    `    log failed "${busyCode}: ${busyText}（pid $_pid），请等它结束后重试"`,
     '    exit 17',
     '  fi',
     // 持有者已经不在：清掉这条陈旧声明。这里只动已经死掉的进程留下的声明，
@@ -1017,11 +1043,19 @@ async function assertListenerDshVersion(session: RemoteSession, port: number): P
     unverifiable('listener changed during version check')
 }
 
+export interface EnsureRemoteInstanceOptions {
+  /** 是否允许安装：切换与恢复只验证与启动，不重新解析安装计划、不依赖发行源。 */
+  install?: boolean
+  /** 明确指定核心入口路径：切换后活动目录里的那份。 */
+  dshBin?: string
+}
+
 export async function ensureRemoteInstance(
   session: RemoteSession,
   profile: MachineProfile,
   config: Config,
   hooks: BootstrapHooks = {},
+  options: EnsureRemoteInstanceOptions = {},
 ): Promise<string> {
   const { onEvent, onProgress } = hooks
   const target = `${profile.host}:${profile.remotePort}`
@@ -1037,7 +1071,7 @@ export async function ensureRemoteInstance(
   }
   let plan: RemoteInstallPlan | undefined
   let skipSummary = ''
-  if (profile.startCommand === undefined) {
+  if (options.install !== false && profile.startCommand === undefined) {
     try {
       await assertRemoteDshVersion(session, true)
     }
@@ -1076,7 +1110,7 @@ export async function ensureRemoteInstance(
   }
   onProgress?.({ phase: 'starting' })
   onEvent?.('launch', `拉起远端实例 (端口 ${profile.remotePort})`)
-  const started = await session.exec(startCommandFor(profile, plan))
+  const started = await session.exec(startCommandFor(profile, plan, options.dshBin === undefined ? {} : { dshBin: options.dshBin }))
   if (started.code !== 0) {
     const message = started.stdout.includes('REMOTE_NOT_INSTALLED')
       ? `remote runtime incomplete on "${profile.host}" (REMOTE_NOT_INSTALLED)`
