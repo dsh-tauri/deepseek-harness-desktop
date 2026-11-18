@@ -457,6 +457,7 @@
   "core.not_downloaded": "not downloaded",
   "core.switch_confirm_title": "Switch version",
   "core.switch_confirm_desc": "Switch to the {{version}} version? The running engine will change to this copy.",
+  "core.remote_switch_confirm_desc": "Switch to the {{version}} version? The engine on this machine restarts, so any conversation in progress is interrupted. Session history is kept, and other clients connected to this machine are disconnected and reconnect.",
   "core.activate_toast": "Switched to {{version}}",
   "core.uninstalled_toast": "Uninstalled {{version}}",
   "core.remove_confirm_title": "Uninstall version",

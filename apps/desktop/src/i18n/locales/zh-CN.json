@@ -457,6 +457,7 @@
   "core.not_downloaded": "未下载",
   "core.switch_confirm_title": "切换版本",
   "core.switch_confirm_desc": "切换至 {{version}} 版本吗？运行中的引擎将切换为该副本。",
+  "core.remote_switch_confirm_desc": "切换至 {{version}} 版本吗？这台机器上的引擎会重启，正在进行的对话会中断；会话记录会保留，其他连着这台机器的客户端会断开并重新连接。",
   "core.activate_toast": "已切换到 {{version}}",
   "core.uninstalled_toast": "已卸载 {{version}}",
   "core.remove_confirm_title": "卸载版本",

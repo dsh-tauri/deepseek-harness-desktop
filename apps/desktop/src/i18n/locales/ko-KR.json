@@ -457,6 +457,7 @@
   "core.not_downloaded": "다운로드되지 않음",
   "core.switch_confirm_title": "버전 전환",
   "core.switch_confirm_desc": "{{version}} 버전으로 전환하시겠습니까? 실행 중인 엔진이 이 사본으로 변경됩니다.",
+  "core.remote_switch_confirm_desc": "{{version}} 버전으로 전환하시겠습니까? 이 머신의 엔진이 재시작되어 진행 중인 대화가 중단됩니다. 세션 기록은 유지되며, 이 머신에 연결된 다른 클라이언트는 끊어졌다가 다시 연결됩니다.",
   "core.activate_toast": "{{version}} 버전으로 전환했습니다",
   "core.uninstalled_toast": "{{version}}을 제거했습니다",
   "core.remove_confirm_title": "버전 제거",

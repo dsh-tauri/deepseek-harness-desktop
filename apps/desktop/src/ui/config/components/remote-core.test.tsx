@@ -424,6 +424,47 @@ describe('远端核心清单', () => {
     }))
   })
 
+  it('warns that switching restarts the remote instance and interrupts the running conversation', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.6-1',
+            tag: 'dsh-0.2.6-1',
+            version: '0.2.6',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.6-1',
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    })
+    mocks.postCoreSwitch.mockImplementation(() => new Promise(() => {}))
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+
+    await waitFor(() => expect(mocks.openDialog).toHaveBeenCalled())
+    const dialog = mocks.openDialog.mock.calls.at(-1)?.[0] as { description?: React.ReactNode }
+    const { container } = render(dialog.description)
+    expect(container.textContent).toContain('restarts')
+    expect(container.textContent).toContain('interrupted')
+    expect(container.textContent).toContain('Session history is kept')
+  })
+
   it('does not switch when the remote core confirmation is dismissed', async () => {
     mocks.getCoreCurrent.mockResolvedValue({
       item: targetOf('build', {

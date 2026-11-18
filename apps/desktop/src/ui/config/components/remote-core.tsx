@@ -291,7 +291,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       await openDialog({
         status: 'warning',
         title: t('core.switch_confirm_title'),
-        description: <p>{t('core.switch_confirm_desc', { version: row.version })}</p>,
+        description: <p>{t('core.remote_switch_confirm_desc', { version: row.version })}</p>,
       })
     }
     catch (error) {

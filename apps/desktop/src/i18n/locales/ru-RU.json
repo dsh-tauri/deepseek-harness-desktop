@@ -457,6 +457,7 @@
   "core.not_downloaded": "не загружено",
   "core.switch_confirm_title": "Переключить версию",
   "core.switch_confirm_desc": "Переключиться на версию {{version}}? Запущенный движок изменится на эту копию.",
+  "core.remote_switch_confirm_desc": "Переключиться на версию {{version}}? Движок на этой машине перезапустится, поэтому текущий разговор будет прерван. История сессий сохранится, а другие клиенты, подключённые к этой машине, отключатся и подключатся заново.",
   "core.activate_toast": "Переключено на {{version}}",
   "core.uninstalled_toast": "Удалено {{version}}",
   "core.remove_confirm_title": "Удалить версию",
