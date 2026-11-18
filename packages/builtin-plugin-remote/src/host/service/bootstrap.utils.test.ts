@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { GithubHttpError } from '../utils/version'
 import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, coreSlotLockShell, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
 
+const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
+
 async function failing(): Promise<never> {
   throw new Error('network unreachable')
 }
@@ -187,7 +189,6 @@ describe('指定版本下载脚本', () => {
 })
 
 describe('远端槽位锁的并发行为', () => {
-  const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
   const slot = 'dsh-test'
 
   function lockDir(home: string): string {
@@ -608,6 +609,42 @@ describe('install 脚本的重新安装短路', () => {
     const script = buildInstallScript(zipPlan(), { force: true })
     expect(script).toContain('if [ -x "$ROOT/runtime/bin/node" ]; then')
     expect(script).toContain('if [ -f "$ROOT/dependencies/pnpm/bin/pnpm.cjs" ]; then')
+  })
+
+  it('bootstrap 的临时目录与版本安装的临时目录、槽位锁分开', () => {
+    const script = buildInstallScript(zipPlan())
+    // 退出清理只删自己的临时目录：不能扫掉版本安装的临时目录和槽位锁。
+    expect(script).toContain('TMP="$ROOT/tmp/bootstrap.$$"')
+    expect(script).not.toContain('TMP="$ROOT/tmp"')
+    expect(script).toContain('cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; }')
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('bootstrap 退出清理不会删掉版本安装的临时目录和槽位锁', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-bootstrap-tmp-'))
+    try {
+      // 造出版本安装正在用的临时目录与活着的锁声明。
+      const tmp = join(home, '.dsh-desktop', 'tmp')
+      mkdirSync(join(tmp, 'ver.999'), { recursive: true })
+      mkdirSync(join(tmp, 'slot-dsh-x.lock'), { recursive: true })
+      writeFileSync(join(tmp, 'slot-dsh-x.lock', 'claim-1'), '1\n')
+      // 上一次崩溃留下的 bootstrap 临时目录：持有者进程已经不在，应当被清掉。
+      mkdirSync(join(tmp, 'bootstrap.999999'), { recursive: true })
+
+      // bootstrap 会因为拉不到 node 而失败，但退出清理照常执行。
+      const result = spawnSync('sh', ['-c', buildInstallScript(zipPlan())], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home },
+        timeout: 60_000,
+      })
+      expect(result.status).not.toBe(0)
+
+      expect(existsSync(join(tmp, 'ver.999'))).toBe(true)
+      expect(existsSync(join(tmp, 'slot-dsh-x.lock', 'claim-1'))).toBe(true)
+      expect(existsSync(join(tmp, 'bootstrap.999999'))).toBe(false)
+    }
+    finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })
 

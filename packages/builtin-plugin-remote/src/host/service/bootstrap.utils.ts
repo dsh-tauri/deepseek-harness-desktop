@@ -419,8 +419,17 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
     'set -eu',
     ...reinstallMarker,
     'ROOT="$HOME/.dsh-desktop"',
-    'TMP="$ROOT/tmp"',
-    'mkdir -p "$ROOT/dependencies" "$TMP"',
+    // bootstrap 用按运行隔离的临时目录：退出清理不能扫到版本安装的临时目录和槽位锁，
+    // 那两者可能正跑在同一台机器上。
+    'TMP="$ROOT/tmp/bootstrap.$$"',
+    'mkdir -p "$ROOT/dependencies"',
+    // 清掉上次崩溃留下的 bootstrap 临时目录（持有者进程已经不在的）。
+    'for _d in "$ROOT/tmp"/bootstrap.*; do',
+    '  [ -d "$_d" ] || continue',
+    '  _pid="$(basename "$_d" | sed \'s/^bootstrap\\.//\')"',
+    '  kill -0 "$_pid" 2>/dev/null || rm -rf "$_d"',
+    'done',
+    'mkdir -p "$TMP"',
     'cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; }',
     'trap cleanup EXIT',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
