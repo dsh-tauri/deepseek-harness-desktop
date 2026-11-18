@@ -226,6 +226,16 @@ export function coreInstallTask(machineId: MachineId, tag: string): string | und
   return coreInstallTasks.get(`${machineId}\0${tag}`)
 }
 
+/** 这台机器上有没有正在下载的核心版本：切换要与它们互斥。 */
+export function hasCoreInstallTask(machineId: MachineId): boolean {
+  const prefix = `${machineId}\0`
+  for (const key of coreInstallTasks.keys()) {
+    if (key.startsWith(prefix))
+      return true
+  }
+  return false
+}
+
 export function hostRuntimeGeneration(): number {
   return runtimeGeneration
 }

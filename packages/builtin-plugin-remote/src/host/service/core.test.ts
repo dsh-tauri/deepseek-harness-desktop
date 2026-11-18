@@ -56,6 +56,8 @@ vi.mock('./machine', () => ({
     openSession: vi.fn(),
     beginSwitch: vi.fn(),
     endSwitch: vi.fn(),
+    generation: vi.fn(),
+    isSwitching: vi.fn(),
     profile: vi.fn(),
     profileName: vi.fn(),
     reconnect: vi.fn(),
@@ -148,6 +150,8 @@ beforeEach(() => {
   vi.mocked(machine.beginSwitch).mockResolvedValue({ machineId, generation: 1 })
   vi.mocked(machine.switchLeaseValid).mockReturnValue(true)
   vi.mocked(machine.reconnect).mockResolvedValue({ machineId, tunnelBaseUrl: 'http://127.0.0.1:4000' })
+  vi.mocked(machine.generation).mockReturnValue(0)
+  vi.mocked(machine.isSwitching).mockReturnValue(false)
   runtimeGeneration.value = 1
   installAborts.clear()
   installTasks.clear()
@@ -922,5 +926,48 @@ describe('remote core contract', () => {
   it('refuses to switch to the active slot or an unsafe slot name', async () => {
     await expect(core.switchVersion(machineId, 'dsh')).rejects.toThrow('REMOTE_CORE_SLOT_INVALID')
     await expect(core.switchVersion(machineId, '../escape')).rejects.toThrow('REMOTE_CORE_SLOT_INVALID')
+  })
+
+  it('refuses to download a core version while the machine is switching', async () => {
+    vi.mocked(machine.isSwitching).mockReturnValue(true)
+
+    await expect(core.installVersion(machineId, 'dsh-0.2.3-43000000000')).rejects.toThrow('REMOTE_CORE_INSTALL_BUSY')
+    expect(machine.openSession).not.toHaveBeenCalled()
+  })
+
+  it('abandons the switch when the machine was disconnected while the copies were read', async () => {
+    const commands: string[] = []
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('LOCKDIR_ACTIVE='))
+        commands.push(command)
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+    // 探测期间用户断开了这台机器：代次变了。
+    vi.mocked(machine.generation).mockReturnValueOnce(0).mockReturnValue(1)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    // 目录不能动，连接也不能替他建回来。
+    expect(commands).toHaveLength(0)
+    expect(machine.beginSwitch).not.toHaveBeenCalled()
+    expect(machine.reconnect).not.toHaveBeenCalled()
+    expect(tasks.since(accepted.taskId!).events.at(-1)?.reason).toContain('REMOTE_CORE_SWITCH_ABORTED')
   })
 })

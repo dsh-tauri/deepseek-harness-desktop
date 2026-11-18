@@ -1,5 +1,5 @@
 import type { RemoteCoreRow, RemoteCoreTarget } from './remote-core.rows'
-import type { GetApiTauriRemoteCoreProfilesResponse } from '@/apis/remote.types'
+import type { GetApiTauriRemoteCoreProfilesResponse, GetApiTauriRemoteCoreTasksEventsResponse } from '@/apis/remote.types'
 import { ChevronRight, Copy, CircleArrowDown as DownloadIcon } from '@gravity-ui/icons'
 import { Button, Checkbox, Chip, Description, Label, Spinner } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
@@ -45,7 +45,15 @@ class UnknownTaskResultError extends Error {
 async function waitForCoreTask(taskId: string, onProgress: (line: string | undefined) => void, failure: string): Promise<void> {
   let readFailures = 0
   for (let attempt = 0; attempt < DOWNLOAD_POLL_LIMIT; attempt++) {
-    const events = await getCoreTasksEvents({ taskId })
+    let events: GetApiTauriRemoteCoreTasksEventsResponse
+    try {
+      events = await getCoreTasksEvents({ taskId })
+    }
+    catch (error) {
+      // 读取调用本身失败（超时、连接断了）也不等于任务失败：
+      // 服务端的任务可能还在跑，用同一个 taskId 接着看就行。
+      events = { error: error instanceof Error ? error.message : String(error) }
+    }
     if (events.error !== undefined) {
       // 读不到事件只说明这一次没读到：服务端的任务可能还在跑，用同一个 taskId
       // 接着看就行，重发请求会把操作做两遍。

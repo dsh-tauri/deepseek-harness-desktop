@@ -542,6 +542,53 @@ describe('远端核心清单', () => {
     expect(mocks.toast).not.toHaveBeenCalledWith('Switch result unknown', expect.anything())
   })
 
+  it('keeps watching the same task when the call that reads the task events is rejected', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.6-1',
+            tag: 'dsh-0.2.6-1',
+            version: '0.2.6',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.6-1',
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    })
+    mocks.postCoreSwitch.mockResolvedValue({ taskId: 'task-rejected' })
+    // 读取调用本身被拒（超时、连接断了）：这不等于任务失败。
+    mocks.getCoreTasksEvents
+      .mockRejectedValueOnce(new Error('bridge timeout'))
+      .mockResolvedValue({
+        items: [
+          { taskId: 'task-rejected', seq: 1, ts: '', state: 'succeeded', stage: 'switch', line: '核心已切换至 0.2.6', terminal: 'success' },
+        ],
+      })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switched to 0.2.6', expect.objectContaining({ variant: 'accent' })), { timeout: 15_000 })
+    expect(mocks.getCoreTasksEvents).toHaveBeenCalledTimes(2)
+    expect(mocks.getCoreTasksEvents).toHaveBeenLastCalledWith({ taskId: 'task-rejected' })
+    expect(mocks.postCoreSwitch).toHaveBeenCalledTimes(1)
+  })
+
   it('reports an unknown switch result and checks the same task again instead of switching twice', async () => {
     mocks.getCoreCurrent.mockResolvedValue({
       item: targetOf('build', {

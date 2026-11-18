@@ -12,7 +12,7 @@ import { join } from 'pathe'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { messageOf } from '../../shared/error'
 import { DEFAULT_MACHINE_TRANSPORT, REMOTE_ROOT } from '../config/constants'
-import { harnessHome, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
+import { harnessHome, hasCoreInstallTask, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
 import { MachineId, RemoteError } from '../types/index'
 import { carryWorkspaceAllowlist } from '../utils/allowlist'
 import { remoteInstanceStopCommand } from '../utils/instance'
@@ -214,8 +214,11 @@ export const machine = defineService({
     if (target.connecting !== undefined || target.installing !== undefined || target.installReserved === true)
       throw new RemoteError('machine-busy', machineId, 'machine is already connecting or installing')
     // 自动重连已经跑起来了就不能切：它可能在切换停机或互换目录期间把旧实例拉起来。
-    if (target.reconnect?.attempting !== undefined)
+    if (target.connectAttempting !== undefined)
       throw new RemoteError('machine-busy', machineId, 'machine is reconnecting; wait for the automatic retry or disconnect first')
+    // 这台机器正在下载核心版本：下载任务占着版本槽位，不能与切换同时动目录。
+    if (hasCoreInstallTask(machineId))
+      throw new RemoteError('machine-busy', machineId, 'machine is downloading a core version; wait for it to finish')
     target.generation += 1
     // 代次要在这里就抓住：等资源关闭这段时间里用户可能断开并让另一次切换接手，
     // 那时读到的代次已经不是本次的了。
@@ -236,16 +239,26 @@ export const machine = defineService({
     if (entry !== undefined)
       entry.unsubscribe()
     emit(machineId)
-    await Promise.all([
-      entry === undefined ? undefined : gateway.stop(entry.id).catch(() => undefined),
-      tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
-      session === undefined ? undefined : session.close().catch(() => undefined),
-    ])
-    // 等的过程中状态被改过（用户断开、配置变更、另一次切换接手）：本次租约作废。
-    if (target.generation !== generation)
-      throw new RemoteError('machine-busy', machineId, 'machine state changed while releasing the connection')
+    // 所有权先登记再等：等待资源关闭期间，连接、安装和另一次切换都要让开，
+    // 否则它们可能在目录互换前连回旧核心，或让两次切换互相踩。
     const lease: CoreSwitchLease = { machineId, generation }
     target.switchOwner = lease
+    try {
+      await Promise.all([
+        entry === undefined ? undefined : gateway.stop(entry.id).catch(() => undefined),
+        tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
+        session === undefined ? undefined : session.close().catch(() => undefined),
+      ])
+    }
+    catch (error) {
+      releaseSwitchOwnership(target, lease)
+      throw error
+    }
+    // 等的过程中状态被改过（用户断开、配置变更、另一次切换接手）：本次租约作废。
+    if (target.generation !== generation) {
+      releaseSwitchOwnership(target, lease)
+      throw new RemoteError('machine-busy', machineId, 'machine state changed while releasing the connection')
+    }
     return lease
   },
 
@@ -254,11 +267,18 @@ export const machine = defineService({
     const target = machineStates.get(lease.machineId)
     if (target === undefined || target.switchOwner?.generation !== lease.generation)
       return
-    delete target.switchOwner
-    // 切换结束却没有重建连接时，机器不能停在「切换中」：界面会一直挡着。
-    if (target.phase === 'switching')
-      target.phase = 'disconnected'
+    releaseSwitchOwnership(target, lease)
     emit(lease.machineId)
+  },
+
+  /** 这台机器是否正在切换核心：切换期间不接别的写操作。 */
+  isSwitching(machineId: MachineId): boolean {
+    return machineStates.get(machineId)?.switchOwner !== undefined
+  },
+
+  /** 状态代次：断开、配置变更都会推进它，任务据此发现自己脚下的机器变了。 */
+  generation(machineId: MachineId): number {
+    return machineStates.get(machineId)?.generation ?? 0
   },
 
   /**
@@ -885,9 +905,11 @@ async function attemptReconnect(machineId: MachineId, expected: ReconnectState):
   emit(machineId)
   // 登记这次尝试：切换必须等它结束，不能与一次正在跑的自动重连并行。
   const attempting = performConnect(machineId, profile)
-  rec.attempting = attempting.then(() => undefined, () => undefined).finally(() => {
-    if (machineStates.get(machineId)?.reconnect === rec)
-      delete rec.attempting
+  // 记录挂在机器状态上，不挂在重连状态上：用户断开时重连状态会被清掉，
+  // 但这次尝试还在跑，切换不能因为看不见它就与它并行。
+  target.connectAttempting = attempting.then(() => undefined, () => undefined).finally(() => {
+    if (machineStates.get(machineId) === target)
+      delete target.connectAttempting
   })
   try {
     await attempting
@@ -925,6 +947,16 @@ function stopReconnect(target: MachineState): void {
   if (target.reconnect?.timer !== undefined)
     clearTimeout(target.reconnect.timer)
   delete target.reconnect
+}
+
+/** 放弃切换所有权：只在本次租约仍然持有时才释放。 */
+function releaseSwitchOwnership(target: MachineState, lease: CoreSwitchLease): void {
+  if (target.switchOwner?.generation !== lease.generation)
+    return
+  delete target.switchOwner
+  // 切换结束却没有重建连接时，机器不能停在「切换中」：界面会一直挡着。
+  if (target.phase === 'switching')
+    target.phase = 'disconnected'
 }
 
 /** 切换独占期间拒绝普通连接与安装：它们会跟切换任务抢这台机器。 */

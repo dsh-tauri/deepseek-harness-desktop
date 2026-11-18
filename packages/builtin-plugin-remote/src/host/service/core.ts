@@ -112,6 +112,9 @@ export const core = defineService({
   async installVersion(machineId: MachineId, tag: string, options: { force?: boolean } = {}): Promise<CoreTaskAccepted> {
     if (!/^[\w.-]+$/u.test(tag))
       throw new Error(`REMOTE_CORE_SLOT_INVALID: 非法版本目录名 ${tag}`)
+    // 切换期间这台机器归切换任务独占：下载也要让开，别去动它正在换的目录。
+    if (machine.isSwitching(machineId))
+      throw new Error('REMOTE_CORE_INSTALL_BUSY: 该机器正在切换核心，请等切换结束后再下载')
     const existing = coreInstallTask(machineId, tag)
     if (existing !== undefined)
       return { taskId: existing }
@@ -254,6 +257,8 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
   let backupTag: string | undefined
   // 固定这台机器的主机与档案：任务期间配置变了就不能继续在旧会话上操作。
   let identity = ''
+  // 固定这台机器的代次：探测期间用户断开或改了配置，就不能再动它的目录。
+  const generation = machine.generation(machineId)
   try {
     identity = profileIdentityOf(machine.profile(machineId))
     session = await machine.openSession(machineId)
@@ -271,11 +276,14 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
     assertSupportedDshVersion(target.version)
     const candidates = backupCandidatesOf(copies, active, slotKey)
 
-    // 自定义启动命令可能拉起另一份核心：目录换���它也不跟着换，这种机器不能切。
+    // 自定义启动命令可能拉起另一份核心：目录换了它也不跟着换，这种机器不能切。
     const profile = machine.profile(machineId)
     if (profile.startCommand !== undefined)
       throw new Error('REMOTE_CORE_SWITCH_FAILED: 该机器配置了自定义启动命令，无法保证切换到目标副本')
 
+    // 探测期间用户断开了这台机器：这时替他动目录、再把连接建回来都不是他要的。
+    if (machine.generation(machineId) !== generation)
+      throw new Error('REMOTE_CORE_SWITCH_ABORTED: 远端机器连接在切换准备期间发生变化')
     lease = await machine.beginSwitch(machineId)
     // 机器配置在切换期间变了：现在操作的不是刚才那台机器，不能继续动它的目录，
     // 也不能替用户把这台新机器连起来。
@@ -285,18 +293,23 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
     const config = hostConfig()
     const entryRelativePath = switchEntryRelative(target.entry, slotKey)
     const startCommand = startCommandFor(profile, undefined, { dshBin: switchEntryPath(entryRelativePath) })
+    // 档案名在切换开始时固定：重试也要用同一个名字去停远端实例。
+    const profileName = machine.profileName(machineId)
     let failure: string | undefined
     for (const candidate of candidates) {
       // 派发前先确认租约还在：用户断开或改了配置就别再动远端目录了。
       if (!machine.switchLeaseValid(lease))
         throw new Error('REMOTE_CORE_SWITCH_ABORTED: 连接已被重置，切换已中止')
+      // 重试也按最初那台机器来：配置变了就不能再在旧会话上换目录。
+      if (profileIdentityOf(machine.profile(machineId)) !== identity)
+        throw new Error('REMOTE_CORE_SWITCH_ABORTED: 远端机器配置在切换期间发生变化')
       const outcome = await runSwitchScript(session, {
         targetTag: slotKey,
         backupTag: candidate,
         runId: taskId,
         // 停实例用的档案名要与拉起时用的完全一致：拉起走的是 safeProfileName，
         // 这里也必须用它规范化过的名字，否则进程匹配不上，等于没停。
-        profileName: machine.profileName(machineId),
+        profileName,
         remotePort: profile.remotePort,
         startCommand,
         entryRelativePath,

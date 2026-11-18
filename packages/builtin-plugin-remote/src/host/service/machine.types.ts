@@ -33,6 +33,8 @@ export interface MachineState {
   gatewayExhausted?: boolean
   progress?: RemoteProgress
   reconnect?: ReconnectState
+  /** 已经在跑的自动重连尝试：切换必须等它结束，不能与它并行。 */
+  connectAttempting?: Promise<void>
   /** 正在进行的核心切换：切换期间这台机器的连接操作归切换任务独占。 */
   switchOwner?: CoreSwitchLease
   preferredTunnelPort?: number
@@ -47,8 +49,6 @@ export interface ReconnectState {
   timer?: NodeJS.Timeout
   /** 上一次连接（会话 / 隧道 / 网关入口）的回收：下一次拨号必须等它落地，端口才可能被原样复用。 */
   pending?: Promise<void>
-  /** 已经在跑的自动重连尝试：切换必须等它结束，不能与它并行。 */
-  attempting?: Promise<void>
   reasons: string[]
 }
 
