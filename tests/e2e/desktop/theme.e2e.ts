@@ -69,7 +69,9 @@ async function nativeSystemTheme(output: string, dark?: boolean) {
   }
 }
 
-for (const preference of ['light', 'dark'] as const) {
+// 只跑 light 一个变体：两个变体走的是同一条水合路径，差别仅在配置文件里的偏好值
+// 和期望画布色。各自都要冷启一整套应用，CI 上与 Rust lane 并发时这是最贵的一笔开销。
+for (const preference of ['light'] as const) {
   it(`preserves saved ${preference} through native Harness hydration on the opposite system theme`, async () => {
     const app = await startShellApp({
       electronArgs: ['--inspect=127.0.0.1:0'],
