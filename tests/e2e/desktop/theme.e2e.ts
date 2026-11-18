@@ -162,7 +162,17 @@ for (const preference of ['light'] as const) {
       await oppositeButton.click()
       await expect.poll(() => oppositeButton.getAttribute('aria-pressed'), { message: '反色主题按钮必须完成选中状态更新' }).toBe('true')
       await captureTheme('after-opposite')
-      await expect.poll(() => readFile(path.join(info.data_dir, 'profiles', 'desktop', 'cordis.patch.yml'), 'utf8'), { message: '真实用户主题修改必须持久化' }).toContain(`preference: ${preference === 'light' ? 'dark' : 'light'}`)
+      // 从「跟随系统」切回具体主题同样要落盘，否则用户重启后选择就丢了。
+      // 这里分开断言「有没有发出写入请求」和「请求有没有写进 patch」：前者说明前端
+      // 根本没提交（UI 变了但没落盘），后者说明后端收了却没写，定位方向完全不同。
+      await expect.poll(
+        () => settingsWrites.filter(write => JSON.stringify(write).includes(`"value":"${preference === 'light' ? 'dark' : 'light'}"`)).length,
+        { message: '切回具体主题必须提交一次 settings/mutate 写入' },
+      ).toBeGreaterThan(0)
+      await expect.poll(
+        () => readFile(path.join(info.data_dir, 'profiles', 'desktop', 'cordis.patch.yml'), 'utf8'),
+        { message: '真实用户主题修改必须持久化' },
+      ).toContain(`preference: ${preference === 'light' ? 'dark' : 'light'}`)
     }
     catch (error) {
       await captureTheme('failure').catch(captureError => runtimeErrors.push(String(captureError)))
