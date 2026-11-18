@@ -10,6 +10,34 @@ import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScri
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 
+const LOCK_TEST_SLOT = 'dsh-test'
+
+/** 用生产代码生成的锁片段搭一段可执行脚本，锁之外的变量与正式脚本保持一致。 */
+function lockScript(before: string[] = [], after: string[] = []): string {
+  return [
+    'set -eu',
+    'ROOT="$HOME/.dsh-desktop"',
+    'TMP="$ROOT/tmp/ver.$$"',
+    'SLOT="$ROOT/dependencies/dsh-test"',
+    'STAGE="$SLOT.new.$$"',
+    'READY="$SLOT.ready.$$"',
+    'mkdir -p "$ROOT/dependencies" "$TMP"',
+    'log() { printf \'log %s %s\\n\' "$1" "$2"; }',
+    ...before,
+    ...coreSlotLockShell(LOCK_TEST_SLOT),
+    'trap cleanup EXIT',
+    ...after,
+  ].join('\n')
+}
+
+function runLock(home: string, before: string[] = [], after: string[] = []): { code: number | null, output: string } {
+  const result = spawnSync('sh', ['-c', lockScript(before, after)], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  })
+  return { code: result.status, output: `${result.stdout}${result.stderr}` }
+}
+
 async function failing(): Promise<never> {
   throw new Error('network unreachable')
 }
@@ -189,7 +217,7 @@ describe('指定版本下载脚本', () => {
 })
 
 describe('远端槽位锁的并发行为', () => {
-  const slot = 'dsh-test'
+  const slot = LOCK_TEST_SLOT
 
   function lockDir(home: string): string {
     return join(home, '.dsh-desktop', 'tmp', `slot-${slot}.lock`)
@@ -202,32 +230,6 @@ describe('远端槽位锁的并发行为', () => {
     catch {
       return []
     }
-  }
-
-  /** 用生产代码生成的锁片段搭一段可执行脚本，锁之外的变量与正式脚本保持一致。 */
-  function lockScript(before: string[] = [], after: string[] = []): string {
-    return [
-      'set -eu',
-      'ROOT="$HOME/.dsh-desktop"',
-      'TMP="$ROOT/tmp/ver.$$"',
-      'SLOT="$ROOT/dependencies/dsh-test"',
-      'STAGE="$SLOT.new.$$"',
-      'READY="$SLOT.ready.$$"',
-      'mkdir -p "$ROOT/dependencies" "$TMP"',
-      'log() { printf \'log %s %s\\n\' "$1" "$2"; }',
-      ...before,
-      ...coreSlotLockShell(slot),
-      'trap cleanup EXIT',
-      ...after,
-    ].join('\n')
-  }
-
-  function runLock(home: string, before: string[] = [], after: string[] = []): { code: number | null, output: string } {
-    const result = spawnSync('sh', ['-c', lockScript(before, after)], {
-      encoding: 'utf8',
-      env: { ...process.env, HOME: home },
-    })
-    return { code: result.status, output: `${result.stdout}${result.stderr}` }
   }
 
   function spawnLock(home: string, before: string[] = [], after: string[] = [], env: NodeJS.ProcessEnv = {}): Promise<{ code: number | null, output: string }> {
@@ -621,12 +623,14 @@ describe('install 脚本的重新安装短路', () => {
 
   it.skipIf(!SHELL_AVAILABLE)('bootstrap 退出清理不会删掉版本安装的临时目录和槽位锁', () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-bootstrap-tmp-'))
+    const holder = spawn('sh', ['-c', 'sleep 30'], { stdio: 'ignore' })
     try {
       // 造出版本安装正在用的临时目录与活着的锁声明。
       const tmp = join(home, '.dsh-desktop', 'tmp')
       mkdirSync(join(tmp, 'ver.999'), { recursive: true })
-      mkdirSync(join(tmp, 'slot-dsh-x.lock'), { recursive: true })
-      writeFileSync(join(tmp, 'slot-dsh-x.lock', 'claim-1'), '1\n')
+      const claim = join(tmp, `slot-${LOCK_TEST_SLOT}.lock`, `claim-${holder.pid}`)
+      mkdirSync(join(tmp, `slot-${LOCK_TEST_SLOT}.lock`), { recursive: true })
+      writeFileSync(claim, `${holder.pid}\n`)
       // 上一次崩溃留下的 bootstrap 临时目录：持有者进程已经不在，应当被清掉。
       mkdirSync(join(tmp, 'bootstrap.999999'), { recursive: true })
 
@@ -639,10 +643,39 @@ describe('install 脚本的重新安装短路', () => {
       expect(result.status).not.toBe(0)
 
       expect(existsSync(join(tmp, 'ver.999'))).toBe(true)
-      expect(existsSync(join(tmp, 'slot-dsh-x.lock', 'claim-1'))).toBe(true)
+      expect(existsSync(claim)).toBe(true)
       expect(existsSync(join(tmp, 'bootstrap.999999'))).toBe(false)
+
+      // 持有者的声明没被清理掉：同槽位的竞争者仍然要看到占用。
+      const contender = runLock(home)
+      expect(contender.code).toBe(17)
+      expect(contender.output).toContain('REMOTE_CORE_SLOT_BUSY')
     }
     finally {
+      holder.kill()
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('拿不到锁时不留下临时目录', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-slot-tmp-'))
+    const holder = spawn('sh', ['-c', 'sleep 30'], { stdio: 'ignore' })
+    try {
+      // 槽位被一个活着的持有者占住。
+      const tmp = join(home, '.dsh-desktop', 'tmp')
+      mkdirSync(join(tmp, `slot-${LOCK_TEST_SLOT}.lock`), { recursive: true })
+      writeFileSync(join(tmp, `slot-${LOCK_TEST_SLOT}.lock`, `claim-${holder.pid}`), `${holder.pid}\n`)
+
+      // 后到的脚本拿不到锁：它在注册退出清理之前就退出了，得自己收尾。
+      const contender = runLock(home)
+      expect(contender.code).toBe(17)
+      expect(contender.output).toContain('REMOTE_CORE_SLOT_BUSY')
+      expect(readdirSync(tmp).filter(name => name.startsWith('ver.'))).toHaveLength(0)
+      // 别人的声明不能被删掉。
+      expect(existsSync(join(tmp, `slot-${LOCK_TEST_SLOT}.lock`, `claim-${holder.pid}`))).toBe(true)
+    }
+    finally {
+      holder.kill()
       rmSync(home, { recursive: true, force: true })
     }
   })

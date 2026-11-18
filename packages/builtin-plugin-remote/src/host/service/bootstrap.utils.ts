@@ -586,6 +586,7 @@ export function coreSlotLockShell(slot: string): string[] {
     // ln 是原子的：声明与持有者 pid 同时出现，不存在「声明已在但不知道是谁」的窗口。
     'ln "$TMP/claim.$$" "$CLAIM" 2>/dev/null || true',
     'if [ ! -f "$CLAIM" ]; then',
+    '  rm -rf "$TMP"',
     '  log failed "REMOTE_CORE_LOCK_FAILED: 无法在 $LOCKDIR 下发布占用声明"',
     '  exit 18',
     'fi',
@@ -596,7 +597,10 @@ export function coreSlotLockShell(slot: string): string[] {
     '  _pid="$(cat "$_f" 2>/dev/null || true)"',
     '  [ -n "$_pid" ] || continue',
     '  if kill -0 "$_pid" 2>/dev/null; then',
+    // 退出清理还没挂上（trap 在拿锁之后才注册），这里要自己收尾：
+    // 删掉自己的声明与本次临时目录，别在远端留下垃圾。
     '    rm -f "$CLAIM"',
+    '    rm -rf "$TMP"',
     '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装正在进行（pid $_pid），请等它结束后重试"',
     '    exit 17',
     '  fi',
