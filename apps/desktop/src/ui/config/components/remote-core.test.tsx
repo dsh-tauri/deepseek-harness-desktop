@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { queryKeys } from '@/config/query-keys'
 import enUS from '@/i18n/locales/en-US.json'
 import { RemoteCoreList } from './remote-core'
 
@@ -79,6 +80,50 @@ function targetOf(machineId: string, target: TargetState): CoreTarget {
     platforms: ['linux-x64'],
     ...target,
   } as CoreTarget
+}
+
+function isDisabled(element: HTMLElement): boolean {
+  return (element as HTMLButtonElement).disabled
+    || element.getAttribute('aria-disabled') === 'true'
+    || element.getAttribute('data-disabled') === 'true'
+}
+
+/** 两份已下载的副本 + 当前使用的那份：够用来试「换一个版本切换」。 */
+function twoCopiesTarget(): CoreTarget {
+  return targetOf('build', {
+    availability: 'present',
+    slots: [
+      {
+        kind: 'installed',
+        slotKey: 'dsh',
+        version: '0.2.4',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        active: true,
+        removable: false,
+        preview: false,
+      },
+      {
+        kind: 'installed',
+        slotKey: 'dsh-0.2.6-1',
+        tag: 'dsh-0.2.6-1',
+        version: '0.2.6',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.6-1',
+        active: false,
+        removable: true,
+        preview: false,
+      },
+      {
+        kind: 'installed',
+        slotKey: 'dsh-0.2.5-beta.1-2',
+        tag: 'dsh-0.2.5-beta.1-2',
+        version: '0.2.5-beta.1',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.5-beta.1-2',
+        active: false,
+        removable: true,
+        preview: true,
+      },
+    ],
+  })
 }
 
 beforeEach(async () => {
@@ -559,5 +604,66 @@ describe('远端核心清单', () => {
 
     expect(await screen.findByText('Remote core information is unavailable')).toBeTruthy()
     expect(screen.getByText('REMOTE_DSH_PACKAGE_UNREADABLE: permission denied')).toBeTruthy()
+  })
+
+  it('keeps the pending switch task instead of overwriting it with another switch', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({ item: twoCopiesTarget() })
+    mocks.postCoreSwitch.mockResolvedValue({ taskId: 'task-unknown' })
+    mocks.getCoreTasksEvents.mockResolvedValue({ error: 'REMOTE_TASK_READ_FAILED' })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switch result unknown', expect.objectContaining({ variant: 'warning' })), { timeout: 20_000 })
+
+    // 结果未知时这台机器不能再来一次切换：原任务还要留着让用户查结果。
+    const other = await within(list).findByRole('checkbox', { name: '0.2.5-beta.1' })
+    expect(isDisabled(other)).toBe(true)
+    fireEvent.click(other)
+    expect(mocks.postCoreSwitch).toHaveBeenCalledTimes(1)
+
+    // 原任务没被覆盖，还能按同一个任务号查结果。
+    const recheck = await within(list).findByRole('button', { name: 'Check again' })
+    mocks.getCoreTasksEvents.mockResolvedValue({
+      items: [
+        { taskId: 'task-unknown', seq: 1, ts: '', state: 'succeeded', stage: 'switch', line: '核心已切换至 0.2.6', terminal: 'success' },
+      ],
+    })
+    fireEvent.click(recheck)
+    await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenLastCalledWith({ taskId: 'task-unknown' }))
+    expect(mocks.postCoreSwitch).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the re-check entry available when the version list cannot be read', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({ item: twoCopiesTarget() })
+    mocks.postCoreSwitch.mockResolvedValue({ taskId: 'task-unknown' })
+    mocks.getCoreTasksEvents.mockResolvedValue({ error: 'REMOTE_TASK_READ_FAILED' })
+    const view = renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switch result unknown', expect.objectContaining({ variant: 'warning' })), { timeout: 20_000 })
+
+    // 远端又读不出来了：清单没了，重查入口还得能用。
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'unreadable',
+        error: 'REMOTE_DSH_PACKAGE_UNREADABLE: permission denied',
+        slots: [],
+      }),
+    })
+    await view.client.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget('build') })
+    expect(await screen.findByText('Remote core information is unavailable')).toBeTruthy()
+
+    const recheck = await screen.findByRole('button', { name: 'Check again' })
+    mocks.getCoreTasksEvents.mockResolvedValue({
+      items: [
+        { taskId: 'task-unknown', seq: 1, ts: '', state: 'succeeded', stage: 'switch', line: '核心已切换至 0.2.6', terminal: 'success' },
+      ],
+    })
+    fireEvent.click(recheck)
+    await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenLastCalledWith({ taskId: 'task-unknown' }))
+    // 重查只读原任务，不会再发一次切换。
+    expect(mocks.postCoreSwitch).toHaveBeenCalledTimes(1)
   })
 })

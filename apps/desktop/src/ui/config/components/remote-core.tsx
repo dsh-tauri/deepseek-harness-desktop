@@ -70,13 +70,27 @@ async function waitForCoreTask(taskId: string, onProgress: (line: string | undef
 }
 
 interface RemoteTask {
-  machineId: string
   tag: string
   version: string
   /** 服务端任务号：结果未知时用它重新查询，不重发操作。 */
   taskId?: string
   /** 结果未知：任务可能还在远端执行。 */
   unknown?: boolean
+}
+
+type RemoteTaskMap = Record<string, RemoteTask>
+
+function patchTask(tasks: RemoteTaskMap, machineId: string, patch: Partial<RemoteTask>): RemoteTaskMap {
+  const existing = tasks[machineId]
+  return existing === undefined ? tasks : { ...tasks, [machineId]: { ...existing, ...patch } }
+}
+
+function dropTask(tasks: RemoteTaskMap, machineId: string): RemoteTaskMap {
+  if (tasks[machineId] === undefined)
+    return tasks
+  const next = { ...tasks }
+  delete next[machineId]
+  return next
 }
 
 export function RemoteCoreList({ machineId }: { machineId: string }) {
@@ -114,15 +128,16 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const machinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines, refetchInterval: 2000 })
   const machine = machinesQuery.data?.machines.find(item => item.id === machineId)
 
-  const [download, setDownload] = useState<RemoteTask>()
-  const [switching, setSwitching] = useState<RemoteTask>()
+  // 任务按机器分别记着：换到另一台机器上操作，不会把这边未决任务的记录盖掉。
+  const [downloads, setDownloads] = useState<RemoteTaskMap>({})
+  const [switchings, setSwitchings] = useState<RemoteTaskMap>({})
   const [progress, setProgress] = useState<string>()
 
   async function startInstallTask(machineId: string, tag: string): Promise<string> {
     const response = await postCoreInstall({ machineId, tag })
     if (response.taskId === undefined)
       throw new Error(response.error ?? t('core.download_failed'))
-    setDownload(current => current?.machineId === machineId ? { ...current, taskId: response.taskId } : current)
+    setDownloads(current => patchTask(current, machineId, { taskId: response.taskId }))
     return response.taskId
   }
 
@@ -130,7 +145,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
     const response = await postCoreSwitch({ machineId, slotKey })
     if (response.taskId === undefined)
       throw new Error(response.error ?? t('core.switch_failed'))
-    setSwitching(current => current?.machineId === machineId ? { ...current, taskId: response.taskId } : current)
+    setSwitchings(current => patchTask(current, machineId, { taskId: response.taskId }))
     return response.taskId
   }
 
@@ -142,7 +157,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
     },
     onSuccess: (version, input) => {
       toast(t('core.downloaded_toast', { version }))
-      setDownload(current => current?.machineId === input.machineId ? undefined : current)
+      setDownloads(current => dropTask(current, input.machineId))
       setProgress(undefined)
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
     },
@@ -151,12 +166,12 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       setProgress(undefined)
       if (error instanceof UnknownTaskResultError) {
         // 结果未知：任务可能还在远端跑，记住任务号让用户能重新查询。
-        setDownload(current => current?.machineId === input.machineId ? { ...current, taskId: error.taskId, unknown: true } : current)
+        setDownloads(current => patchTask(current, input.machineId, { taskId: error.taskId, unknown: true }))
         toast(t('core.download_unknown'), { variant: 'warning', description: message })
         return
       }
       toast(t('core.download_failed'), { variant: 'danger', description: message })
-      setDownload(current => current?.machineId === input.machineId ? undefined : current)
+      setDownloads(current => dropTask(current, input.machineId))
     },
   })
 
@@ -172,7 +187,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
         description: t('core.switch_restart_hint'),
         timeout: 10_000,
       })
-      setSwitching(current => current?.machineId === input.machineId ? undefined : current)
+      setSwitchings(current => dropTask(current, input.machineId))
       setProgress(undefined)
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteMachines })
@@ -184,38 +199,45 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteMachines })
       if (error instanceof UnknownTaskResultError) {
         // 结果未知：切换可能已经在服务端完成或仍在进行，别让用户以为切换失败了。
-        setSwitching(current => current?.machineId === input.machineId ? { ...current, taskId: error.taskId, unknown: true } : current)
+        setSwitchings(current => patchTask(current, input.machineId, { taskId: error.taskId, unknown: true }))
         toast(t('core.switch_unknown'), { variant: 'warning', description: message })
         return
       }
       toast(t('core.switch_failed'), { variant: 'danger', description: message })
-      setSwitching(current => current?.machineId === input.machineId ? undefined : current)
+      setSwitchings(current => dropTask(current, input.machineId))
     },
   })
 
   /** 结果未知时按同一个任务号重新查询，不重发操作。 */
   function recheckDownload() {
-    const current = download
-    if (current?.taskId === undefined || current.machineId !== machineId)
+    const current = downloads[machineId]
+    if (current?.taskId === undefined)
       return
-    setDownload(state => state?.machineId === current.machineId ? { ...state, unknown: false } : state)
+    setDownloads(state => patchTask(state, machineId, { unknown: false }))
     setProgress(undefined)
-    installMutation.mutate({ machineId: current.machineId, tag: current.tag, version: current.version, taskId: current.taskId })
+    installMutation.mutate({ machineId, tag: current.tag, version: current.version, taskId: current.taskId })
   }
 
   /** 结果未知时按同一个任务号重新查询，不重发操作。 */
   function recheckSwitch() {
-    const current = switching
-    if (current?.taskId === undefined || current.machineId !== machineId)
+    const current = switchings[machineId]
+    if (current?.taskId === undefined)
       return
-    setSwitching(state => state?.machineId === current.machineId ? { ...state, unknown: false } : state)
+    setSwitchings(state => patchTask(state, machineId, { unknown: false }))
     setProgress(undefined)
-    switchMutation.mutate({ machineId: current.machineId, slotKey: current.tag, version: current.version, taskId: current.taskId })
+    switchMutation.mutate({ machineId, slotKey: current.tag, version: current.version, taskId: current.taskId })
   }
 
   async function onActivate(row: RemoteCoreRow) {
-    if (row.tag === undefined || row.active || !row.present || row.unsupported || switchMutation.isPending)
+    const slotKey = row.tag
+    if (slotKey === undefined || row.active || !row.present || row.unsupported || switchMutation.isPending)
       return
+    // 这台机器还有结果未知的切换任务：不能再发起新的切换。
+    // 新任务会覆盖原记录，用户就再也查不到第一次切换的结果了。
+    if (switchings[machineId]?.unknown === true) {
+      toast(t('core.switch_blocked'), { variant: 'warning' })
+      return
+    }
     try {
       await openDialog({
         status: 'warning',
@@ -227,8 +249,8 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       silence(error, 'remote core switch: dialog cancelled')
       return
     }
-    setSwitching({ machineId, tag: row.tag, version: row.version })
-    switchMutation.mutate({ machineId, slotKey: row.tag, version: row.version })
+    setSwitchings(current => ({ ...current, [machineId]: { tag: slotKey, version: row.version } }))
+    switchMutation.mutate({ machineId, slotKey, version: row.version })
   }
 
   const targetError = targetQuery.error === null ? '' : String(targetQuery.error)
@@ -239,11 +261,43 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const capabilities = target?.capabilities ?? []
   const versions = versionsQuery.data ?? []
   const rows = buildRemoteCoreRows(targetSlots, versions)
-  const activeDownload = download?.machineId === machineId ? download : undefined
-  const activeSwitching = switching?.machineId === machineId ? switching : undefined
+  const activeDownload = downloads[machineId]
+  const activeSwitching = switchings[machineId]
+  // 未决任务：结果未知时任务可能还在远端跑，重查入口要放在版本清单之外，
+  // 清单读不出来时用户也得能查到这次任务的结果。
+  const pendingTasks: { kind: 'download' | 'switch', task: RemoteTask }[] = [
+    ...(activeDownload?.unknown === true ? [{ kind: 'download' as const, task: activeDownload }] : []),
+    ...(activeSwitching?.unknown === true ? [{ kind: 'switch' as const, task: activeSwitching }] : []),
+  ]
 
   return (
     <div className="space-y-2" data-testid="dsh-core-remote-list">
+      <If cond={pendingTasks.length > 0}>
+        <div className="space-y-2">
+          {pendingTasks.map(item => (
+            <Item
+              key={item.kind}
+              left={(
+                <>
+                  <Label className="text-sm font-medium text-warning">{t('core.task_unknown')}</Label>
+                  <Description className="text-xs text-muted">{item.task.version}</Description>
+                </>
+              )}
+              right={(
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  className="h-7 text-xs"
+                  onClick={() => item.kind === 'download' ? recheckDownload() : recheckSwitch()}
+                >
+                  {t('core.task_recheck')}
+                </Button>
+              )}
+              footer={<Description className="text-xs text-warning">{t('core.task_unknown_hint')}</Description>}
+            />
+          ))}
+        </div>
+      </If>
       <Panel.Loadable loading={targetQuery.isPending || profilesQuery.isPending} error={targetError || profilesError}>
         <If cond={machine !== undefined}>
           <div className="flex items-center gap-1.5 px-1">
@@ -288,14 +342,13 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
               canDownload={capabilities.includes('installVersion')}
               canActivate={capabilities.includes('activate')}
               onDownload={(row) => {
-                if (row.tag === undefined || installMutation.isPending)
+                const tag = row.tag
+                if (tag === undefined || installMutation.isPending)
                   return
-                setDownload({ machineId, tag: row.tag, version: row.version })
-                installMutation.mutate({ machineId, tag: row.tag, version: row.version })
+                setDownloads(current => ({ ...current, [machineId]: { tag, version: row.version } }))
+                installMutation.mutate({ machineId, tag, version: row.version })
               }}
               onActivate={row => void onActivate(row)}
-              onRecheckDownload={recheckDownload}
-              onRecheckSwitch={recheckSwitch}
             />
           </If>
         </Panel.Loadable>
@@ -304,7 +357,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   )
 }
 
-function RemoteCoreRows({ rows, download, switching, progress, downloading, activating, canDownload, canActivate, onDownload, onActivate, onRecheckDownload, onRecheckSwitch }: {
+function RemoteCoreRows({ rows, download, switching, progress, downloading, activating, canDownload, canActivate, onDownload, onActivate }: {
   rows: RemoteCoreRow[]
   download?: RemoteTask
   switching?: RemoteTask
@@ -315,8 +368,6 @@ function RemoteCoreRows({ rows, download, switching, progress, downloading, acti
   canActivate: boolean
   onDownload: (row: RemoteCoreRow) => void
   onActivate: (row: RemoteCoreRow) => void
-  onRecheckDownload: () => void
-  onRecheckSwitch: () => void
 }) {
   const { t } = useTranslation()
   const [showIncompatible, toggleIncompatible] = useToggle(false)
@@ -326,6 +377,8 @@ function RemoteCoreRows({ rows, download, switching, progress, downloading, acti
   const incompatibleRows = orderedRows.filter(row => row.unsupported)
   const displayRows = [...orderedRows.filter(row => !row.unsupported), ...incompatibleRows]
   const firstOrphanRow = displayRows.find(row => row.orphaned)
+  // 还有结果未知的切换任务时，这台机器不能再发起新的切换。
+  const switchBlocked = switching !== undefined && switching.unknown === true
 
   return (
     <>
@@ -359,12 +412,12 @@ function RemoteCoreRows({ rows, download, switching, progress, downloading, acti
               switching={activating && switching?.tag === row.tag}
               unknown={rowUnknown}
               busy={downloading || activating || rowUnknown}
+              switchBlocked={switchBlocked}
               progress={download?.tag === row.tag || switching?.tag === row.tag ? progress : undefined}
               canDownload={canDownload}
               canActivate={canActivate}
               onDownload={() => onDownload(row)}
               onActivate={() => onActivate(row)}
-              onRecheck={rowUnknown ? (unknownBySwitch ? onRecheckSwitch : onRecheckDownload) : undefined}
             />
           </div>
         )
@@ -373,26 +426,27 @@ function RemoteCoreRows({ rows, download, switching, progress, downloading, acti
   )
 }
 
-function RemoteCoreRowView({ row, hidden, downloading, switching, unknown, busy, progress, canDownload, canActivate, onDownload, onActivate, onRecheck }: {
+function RemoteCoreRowView({ row, hidden, downloading, switching, unknown, busy, switchBlocked, progress, canDownload, canActivate, onDownload, onActivate }: {
   row: RemoteCoreRow
   hidden: boolean
   downloading: boolean
   switching: boolean
   unknown: boolean
   busy: boolean
+  /** 还有结果未知的切换任务：不能再发起新的切换。 */
+  switchBlocked: boolean
   progress?: string
   canDownload: boolean
   canActivate: boolean
   onDownload: () => void
   onActivate: () => void
-  onRecheck?: () => void
 }) {
   const { t } = useTranslation()
 
   return (
     <div className={hidden ? 'hidden' : undefined} data-testid={`dsh-core-remote-row-${row.id}`}>
       <Item
-        onClick={!busy && canActivate && row.present && !row.active && !row.unsupported && row.tag !== undefined
+        onClick={!busy && !switchBlocked && canActivate && row.present && !row.active && !row.unsupported && row.tag !== undefined
           ? onActivate
           : undefined}
         left={(
@@ -441,7 +495,7 @@ function RemoteCoreRowView({ row, hidden, downloading, switching, unknown, busy,
             <If cond={row.present}>
               <Checkbox
                 isSelected={row.active}
-                isDisabled={busy || !canActivate || row.active || row.unsupported || row.tag === undefined}
+                isDisabled={busy || switchBlocked || !canActivate || row.active || row.unsupported || row.tag === undefined}
                 onChange={onActivate}
                 aria-label={row.version}
                 className="shrink-0"
@@ -468,19 +522,6 @@ function RemoteCoreRowView({ row, hidden, downloading, switching, unknown, busy,
                 {t('core.download')}
               </Button>
             </If>
-            <If cond={unknown}>
-              <Button
-                size="sm"
-                variant="tertiary"
-                className="h-7 text-xs"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onRecheck?.()
-                }}
-              >
-                {t('core.task_recheck')}
-              </Button>
-            </If>
           </>
         )}
         footer={(
@@ -493,9 +534,6 @@ function RemoteCoreRowView({ row, hidden, downloading, switching, unknown, busy,
             </If>
             <If cond={progress !== undefined}>
               <Description className="break-all text-xs text-muted">{progress}</Description>
-            </If>
-            <If cond={unknown}>
-              <Description className="break-all text-xs text-warning">{t('core.task_unknown_hint')}</Description>
             </If>
           </>
         )}

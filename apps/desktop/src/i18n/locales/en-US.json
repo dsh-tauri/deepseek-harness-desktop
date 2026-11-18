@@ -504,6 +504,7 @@
   "core.download_failed": "Failed to download the core version",
   "core.download_unknown": "Download result unknown",
   "core.switch_unknown": "Switch result unknown",
+  "core.switch_blocked": "This machine still has a switch with an unknown result — check it again first",
   "core.task_unknown": "Result unknown",
   "core.task_unknown_hint": "The task may still be running on the remote machine — check the result again.",
   "core.task_recheck": "Check again",

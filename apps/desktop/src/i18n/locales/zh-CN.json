@@ -504,6 +504,7 @@
   "core.download_failed": "下载核心版本失败",
   "core.download_unknown": "下载结果未知",
   "core.switch_unknown": "切换结果未知",
+  "core.switch_blocked": "这台机器还有结果未知的切换任务，请先重新查询结果",
   "core.task_unknown": "结果未知",
   "core.task_unknown_hint": "任务可能仍在远端机器上执行，可以重新查询结果。",
   "core.task_recheck": "重新查询",
