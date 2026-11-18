@@ -1,5 +1,5 @@
 import type { RuntimeInfo } from '@/types'
-import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power, TriangleExclamation } from '@gravity-ui/icons'
+import { ArrowRotateRight, ArrowsRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power, TriangleExclamation } from '@gravity-ui/icons'
 import { Button, Chip, Description, Input, InputGroup, Link, ListBox, Select, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
@@ -45,7 +45,9 @@ const PROXY_TEST_MESSAGE: Record<string, string> = {
 
 export function ConfigDebug() {
   const { t, i18n } = useTranslation()
-  const { serviceRunning, busyAction } = useStore(store.harness)
+  const { serviceRunning, busyAction, webviewLoaded } = useStore(store.harness)
+  // 刷新是「重挂载文档」而不是服务操作，旋转态跟文档加载走，否则按钮点下去毫无反馈
+  const webviewLoading = serviceRunning && !webviewLoaded
   const { updateInfo } = useStore(store.harnessUpdater)
 
   // 端口编辑态：用户尚未输入时为 undefined，展示值始终以 store 中已保存的端口为准。
@@ -301,6 +303,16 @@ export function ConfigDebug() {
               aria-label={t('app.open_browser')}
             >
               <If cond={busyAction === 'openBrowser'} then={<Spinner size="sm" color="current" />} else={<ArrowUpRightFromSquare className="size-3.5" />} />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              isIconOnly
+              onPress={store.harness.reloadWebview}
+              isDisabled={busyAction !== null || !serviceRunning}
+              aria-label={t('app.reload_page')}
+            >
+              <If cond={webviewLoading} then={<Spinner size="sm" color="current" />} else={<ArrowsRotateRight className="size-3.5" />} />
             </Button>
           </div>
         </div>

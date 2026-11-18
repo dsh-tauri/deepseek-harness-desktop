@@ -6,6 +6,7 @@
   "messages.harness_restart_failed": "Harness restart failed",
   "app.shutdown": "Stop",
   "app.open_browser": "Open in Browser",
+  "app.reload_page": "Reload Page",
   "app.reveal_dir": "Open Data Folder",
   "status.installing": "Installing dependencies...",
   "status.updating": "Updating DeepSeek Harness...",

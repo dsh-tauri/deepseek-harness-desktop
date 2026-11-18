@@ -1110,6 +1110,20 @@ export const harness = defineStore({
         this.busyAction = null
       }
     },
+
+    /**
+     * 只重挂载承载文档的 webview，不碰核心进程。
+     *
+     * 与 `recoverWebviewBoot` 的区别是这里由用户主动触发：先把重载闸门清零，
+     * 否则用户连点几次会被当成自动恢复次数耗尽，反而弹出「客户端启动停滞」。
+     * 旋转态由 `webviewLoaded` 驱动（refreshWebview 自带 800ms 防抖），不占 busyAction。
+     */
+    reloadWebview() {
+      if (!this.serviceRunning)
+        return
+      webviewReloadGate.reset()
+      this.refreshWebview()
+    },
   },
 })
 

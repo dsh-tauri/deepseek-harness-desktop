@@ -6,6 +6,7 @@
   "messages.harness_restart_failed": "Не удалось перезапустить Harness",
   "app.shutdown": "Остановить",
   "app.open_browser": "Открыть в браузере",
+  "app.reload_page": "Обновить страницу",
   "app.reveal_dir": "Открыть папку с данными",
   "status.installing": "Установка зависимостей…",
   "status.updating": "Обновление DeepSeek Harness…",

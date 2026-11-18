@@ -6,6 +6,7 @@
   "messages.harness_restart_failed": "Harness를 다시 시작하지 못했습니다",
   "app.shutdown": "중지",
   "app.open_browser": "브라우저에서 열기",
+  "app.reload_page": "페이지 새로고침",
   "app.reveal_dir": "데이터 폴더 열기",
   "status.installing": "의존성 설치 중…",
   "status.updating": "DeepSeek Harness 업데이트 중…",
