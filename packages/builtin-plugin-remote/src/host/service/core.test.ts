@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net'
 import type { RemoteExecOptions, RemoteExecResult, RemoteSession } from '../types/index'
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -578,9 +578,9 @@ describe('remote core contract', () => {
 
     try {
       const first = await core.installVersion(machineId, 'dsh-0.2.3-43000000000')
-      const lock = join(home, '.dsh-desktop', 'tmp', 'slot-dsh-0.2.3-43000000000.lock')
+      const lockDir = join(home, '.dsh-desktop', 'tmp', 'slot-dsh-0.2.3-43000000000.lock')
       await vi.waitFor(() => {
-        expect(existsSync(lock)).toBe(true)
+        expect(readdirSync(lockDir).some(name => name.startsWith('claim-'))).toBe(true)
       }, { timeout: 5000 })
 
       // 运行时重置后重试：去重登记清空，重试会另起一个远端脚本。

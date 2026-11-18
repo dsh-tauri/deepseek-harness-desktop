@@ -1,7 +1,7 @@
 import type { RemoteExecResult, RemoteSession } from '../types/index'
 import type { DshVersionInstallPlan, DshZipPlan, RemoteInstallPlan } from './bootstrap.types'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -143,17 +143,19 @@ describe('指定版本下载脚本', () => {
 
   it('同一槽位只允许一个安装脚本在跑，后到的明确失败', () => {
     const script = buildCoreVersionInstallScript(plan, { slot: plan.tag })
-    expect(script).toContain('LOCK="$ROOT/tmp/slot-dsh-0.2.3-43000000000.lock"')
+    expect(script).toContain('LOCKDIR="$ROOT/tmp/slot-dsh-0.2.3-43000000000.lock"')
+    expect(script).toContain('CLAIM="$LOCKDIR/claim-$$"')
     expect(script).toContain('REMOTE_CORE_SLOT_BUSY')
-    // 锁必须原子发布持有者：先写好 pid，再用一次 ln 把锁挂出去。
-    // 不能先建目录再补写 pid —— 那中间后到的脚本会读到空持有者，把活锁当陈旧锁接管。
-    expect(script).not.toContain('mkdir "$LOCK"')
-    expect(script.indexOf('printf \'%s\\n\' "$$" > "$LOCKOWNER"')).toBeLessThan(script.indexOf('ln "$LOCKOWNER" "$LOCK"'))
-    expect(script.indexOf('ln "$LOCKOWNER" "$LOCK"')).toBeLessThan(script.indexOf('trap cleanup EXIT'))
-    // 陈旧锁的接管也要原子：先换走旧锁再抢，抢不到就明确失败。
-    expect(script).toContain('mv "$LOCK" "$TMP/stale-lock.$$" 2>/dev/null || true')
-    // 退出清理只删自己仍然持有的锁。
-    expect(script).toContain('if [ "$(cat "$LOCK" 2>/dev/null || true)" = "$$" ]; then rm -f "$LOCK"; fi')
+    // 占用声明与持有者 pid 一起原子发布：先写好 pid，再用一次 ln 把声明挂出去。
+    expect(script.indexOf('printf \'%s\\n\' "$$" > "$TMP/claim.$$"')).toBeLessThan(script.indexOf('ln "$TMP/claim.$$" "$CLAIM"'))
+    expect(script.indexOf('ln "$TMP/claim.$$" "$CLAIM"')).toBeLessThan(script.indexOf('trap cleanup EXIT'))
+    // 锁目录本身绝不能被整体搬走或删除：那正是「按先前读到的 pid 移走当前锁」的竞态。
+    expect(script).not.toContain('mv "$LOCKDIR"')
+    expect(script).not.toContain('rm -rf "$LOCKDIR"')
+    // 回收陈旧声明时只删单条声明，不动别人的。
+    expect(script).toContain('rm -f "$_f"')
+    // 退出清理只删自己的声明。
+    expect(script).toContain('cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }')
   })
 
   it('发布时先换走旧槽位再 rename 就绪目录', () => {
@@ -188,8 +190,17 @@ describe('远端槽位锁的并发行为', () => {
   const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
   const slot = 'dsh-test'
 
-  function lockPath(home: string): string {
+  function lockDir(home: string): string {
     return join(home, '.dsh-desktop', 'tmp', `slot-${slot}.lock`)
+  }
+
+  function claimsOf(home: string): string[] {
+    try {
+      return readdirSync(lockDir(home)).filter(name => name.startsWith('claim-'))
+    }
+    catch {
+      return []
+    }
   }
 
   /** 用生产代码生成的锁片段搭一段可执行脚本，锁之外的变量与正式脚本保持一致。 */
@@ -218,9 +229,9 @@ describe('远端槽位锁的并发行为', () => {
     return { code: result.status, output: `${result.stdout}${result.stderr}` }
   }
 
-  function spawnLock(home: string, before: string[] = [], after: string[] = []): Promise<{ code: number | null, output: string }> {
+  function spawnLock(home: string, before: string[] = [], after: string[] = [], env: NodeJS.ProcessEnv = {}): Promise<{ code: number | null, output: string }> {
     return new Promise((resolve) => {
-      const child = spawn('sh', ['-c', lockScript(before, after)], { env: { ...process.env, HOME: home } })
+      const child = spawn('sh', ['-c', lockScript(before, after)], { env: { ...process.env, HOME: home, ...env } })
       let output = ''
       child.stdout.on('data', (chunk) => {
         output += String(chunk)
@@ -232,17 +243,17 @@ describe('远端槽位锁的并发行为', () => {
     })
   }
 
-  async function waitForFile(path: string): Promise<boolean> {
-    const deadline = Date.now() + 5000
+  async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      if (existsSync(path))
+      if (predicate())
         return true
       await new Promise(resolve => setTimeout(resolve, 20))
     }
     return false
   }
 
-  /** 拿一个已经退出的进程号，用它伪造被强杀留下的陈旧锁。 */
+  /** 拿一个已经退出的进程号，用它伪造被强杀留下的陈旧声明。 */
   async function deadPid(): Promise<number> {
     const child = spawn('sh', ['-c', 'exit 0'], { stdio: 'ignore' })
     await new Promise(resolve => child.on('close', resolve))
@@ -253,16 +264,18 @@ describe('远端槽位锁的并发行为', () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-slot-lock-'))
     const holder = spawn('sh', ['-c', lockScript([], ['sleep 5'])], { env: { ...process.env, HOME: home }, stdio: 'ignore' })
     try {
-      expect(await waitForFile(lockPath(home))).toBe(true)
-      // 锁一旦出现就必须带着持有者 pid：不存在「锁已存在但持有者未知」的窗口，
-      // 否则后到的脚本会把还在跑的安装当成陈旧锁接管，两个脚本同时发布同一槽位。
-      const owner = readFileSync(lockPath(home), 'utf8').trim()
+      expect(await waitFor(() => claimsOf(home).length > 0)).toBe(true)
+      // 声明一旦出现就必须带着持有者 pid：不存在「声明已在但持有者未知」的窗口，
+      // 否则后到的脚本会把还在跑的安装当成陈旧声明清掉，两个脚本同时发布同一槽位。
+      const owner = readFileSync(join(lockDir(home), claimsOf(home)[0]!), 'utf8').trim()
       expect(owner).toMatch(/^\d+$/)
       expect(() => process.kill(Number(owner), 0)).not.toThrow()
 
       const contender = runLock(home)
       expect(contender.code).toBe(17)
       expect(contender.output).toContain('REMOTE_CORE_SLOT_BUSY')
+      // 失败的一方不能把持有者的声明删掉。
+      expect(claimsOf(home)).toHaveLength(1)
     }
     finally {
       holder.kill()
@@ -270,11 +283,9 @@ describe('远端槽位锁的并发行为', () => {
     }
   })
 
-  it.skipIf(!SHELL_AVAILABLE)('两个脚本同时接管同一把陈旧锁时只有一个能装上', async () => {
+  it.skipIf(!SHELL_AVAILABLE)('两个脚本同时抢同一个槽位时最多只有一个能装上', async () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-slot-lock-'))
     try {
-      mkdirSync(join(home, '.dsh-desktop', 'tmp'), { recursive: true })
-      writeFileSync(lockPath(home), `${await deadPid()}\n`)
       // 栅栏：两个脚本都等到同一个信号才去抢锁，确保真的撞在一起。
       const ready = (name: string): string[] => [
         `printf 'ready\\n' > "$HOME/ready-${name}"`,
@@ -282,27 +293,116 @@ describe('远端槽位锁的并发行为', () => {
       ]
       const first = spawnLock(home, ready('1'), ['sleep 2'])
       const second = spawnLock(home, ready('2'), ['sleep 2'])
-      expect(await waitForFile(join(home, 'ready-1'))).toBe(true)
-      expect(await waitForFile(join(home, 'ready-2'))).toBe(true)
+      expect(await waitFor(() => existsSync(join(home, 'ready-1')) && existsSync(join(home, 'ready-2')))).toBe(true)
       writeFileSync(join(home, 'go'), 'go\n')
 
       const results = await Promise.all([first, second])
-      const succeeded = results.filter(result => result.code === 0)
-      const failed = results.filter(result => result.code === 17)
-      expect(succeeded).toHaveLength(1)
-      expect(failed).toHaveLength(1)
-      expect(failed[0].output).toContain('REMOTE_CORE_SLOT_BUSY')
+      // 互斥的底线：两个脚本绝不能同时认为自己拿到了槽位。
+      expect(results.filter(result => result.code === 0).length).toBeLessThanOrEqual(1)
+      for (const result of results.filter(failed => failed.code === 17))
+        expect(result.output).toContain('REMOTE_CORE_SLOT_BUSY')
     }
     finally {
       rmSync(home, { recursive: true, force: true })
     }
   })
 
-  it.skipIf(!SHELL_AVAILABLE)('持有者退出后锁被释放，下一次安装能继续', () => {
+  it.skipIf(!SHELL_AVAILABLE)('后到的脚本不会把已经接管槽位的脚本的声明删掉', async () => {
+    // 用假的 ln 把后到的脚本停在「发布声明」这一步，等先到的脚本接管完再放行。
+    const home = mkdtempSync(join(tmpdir(), 'dsh-slot-lock-'))
+    const bin = join(home, 'fake-bin')
+    mkdirSync(bin, { recursive: true })
+    const realLn = spawnSync('sh', ['-c', 'command -v ln'], { encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(bin, 'ln'), [
+      '#!/bin/sh',
+      'case "$2" in',
+      '  */slot-*.lock*)',
+      '    printf \'paused\\n\' > "$HOME/ln-paused"',
+      '    while [ ! -e "$HOME/ln-go" ]; do sleep 0.05; done',
+      '    ;;',
+      'esac',
+      `exec ${realLn} "$@"`,
+    ].join('\n'))
+    chmodSync(join(bin, 'ln'), 0o755)
+    const path = `${bin}:${process.env.PATH ?? ''}`
+    try {
+      // 后到的脚本停在发布声明之前。
+      const late = spawnLock(home, [], ['sleep 2'], { PATH: path, DSH_TEST_PAUSE_ON_LN: '1' })
+      expect(await waitFor(() => existsSync(join(home, 'ln-paused')))).toBe(true)
+
+      // 先到的脚本这时接管槽位并持有。
+      const holder = spawn('sh', ['-c', lockScript([], ['sleep 5'])], { env: { ...process.env, HOME: home }, stdio: 'ignore' })
+      try {
+        expect(await waitFor(() => claimsOf(home).length > 0)).toBe(true)
+        const holderClaim = claimsOf(home)[0]!
+
+        // 放行后到的脚本：它必须看到活着的持有者并明确失败，不能把持有者的声明删掉。
+        writeFileSync(join(home, 'ln-go'), 'go\n')
+        const result = await late
+        expect(result.code).toBe(17)
+        expect(result.output).toContain('REMOTE_CORE_SLOT_BUSY')
+        // 持有者的声明还在：后到的脚本没有按先前读到的 pid 搬走当前的锁。
+        expect(claimsOf(home)).toContain(holderClaim)
+      }
+      finally {
+        holder.kill()
+      }
+    }
+    finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('回收陈旧声明只删那条声明，不会误伤活着的持有者', async () => {
+    // 用假的 rm 把后到的脚本停在「回收陈旧声明」这一步：这时它已经判定旧持有者不在了。
+    const home = mkdtempSync(join(tmpdir(), 'dsh-slot-lock-'))
+    const bin = join(home, 'fake-bin')
+    mkdirSync(bin, { recursive: true })
+    const realRm = spawnSync('sh', ['-c', 'command -v rm'], { encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(bin, 'rm'), [
+      '#!/bin/sh',
+      'if [ -n "$DSH_TEST_PAUSE_ON_RM" ]; then',
+      '  case "$*" in',
+      '    *slot-*.lock*)',
+      '      printf \'paused\\n\' > "$HOME/rm-paused"',
+      '      while [ ! -e "$HOME/rm-go" ]; do sleep 0.05; done',
+      '      ;;',
+      '  esac',
+      'fi',
+      `exec ${realRm} "$@"`,
+    ].join('\n'))
+    chmodSync(join(bin, 'rm'), 0o755)
+    const path = `${bin}:${process.env.PATH ?? ''}`
+    try {
+      // 槽位里先留一条持有者已经不在的声明。
+      mkdirSync(lockDir(home), { recursive: true })
+      const stale = await deadPid()
+      writeFileSync(join(lockDir(home), `claim-${stale}`), `${stale}\n`)
+
+      const late = spawnLock(home, [], ['sleep 1'], { PATH: path, DSH_TEST_PAUSE_ON_RM: '1' })
+      expect(await waitFor(() => existsSync(join(home, 'rm-paused')))).toBe(true)
+
+      // 这时另一个脚本进来：它必须被后到脚本的存活声明挡住，不能同时装同一个槽位。
+      const other = runLock(home)
+      expect(other.code).toBe(17)
+      expect(other.output).toContain('REMOTE_CORE_SLOT_BUSY')
+
+      // 放行后到的脚本：它只该清掉那条已经死掉的声明，然后正常安装。
+      writeFileSync(join(home, 'rm-go'), 'go\n')
+      const result = await late
+      expect(result.code).toBe(0)
+      expect(claimsOf(home).includes(`claim-${stale}`)).toBe(false)
+    }
+    finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('持有者退出后声明被清理，下一次安装能继续', () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-slot-lock-'))
     try {
       expect(runLock(home).code).toBe(0)
-      expect(existsSync(lockPath(home))).toBe(false)
+      expect(claimsOf(home)).toHaveLength(0)
       expect(runLock(home).code).toBe(0)
     }
     finally {
@@ -310,13 +410,25 @@ describe('远端槽位锁的并发行为', () => {
     }
   })
 
-  it.skipIf(!SHELL_AVAILABLE)('旧版本留下的目录形态锁仍按占用处理', async () => {
+  it.skipIf(!SHELL_AVAILABLE)('持有者被强杀留下的陈旧声明不会挡住下一次安装', async () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-slot-lock-'))
     try {
-      mkdirSync(lockPath(home), { recursive: true })
+      mkdirSync(lockDir(home), { recursive: true })
+      writeFileSync(join(lockDir(home), `claim-${await deadPid()}`), `${await deadPid()}\n`)
+      expect(runLock(home).code).toBe(0)
+    }
+    finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('上一版留下的文件形态锁仍按占用处理', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-slot-lock-'))
+    try {
+      mkdirSync(join(home, '.dsh-desktop', 'tmp'), { recursive: true })
       const holder = spawn('sh', ['-c', 'sleep 5'], { stdio: 'ignore' })
       try {
-        writeFileSync(join(lockPath(home), 'pid'), `${holder.pid}\n`)
+        writeFileSync(lockDir(home), `${holder.pid}\n`)
         const contender = runLock(home)
         expect(contender.code).toBe(17)
         expect(contender.output).toContain('REMOTE_CORE_SLOT_BUSY')
@@ -325,8 +437,8 @@ describe('远端槽位锁的并发行为', () => {
         holder.kill()
       }
 
-      // 持有者已经不在时，目录形态的陈旧锁同样要被接管。
-      writeFileSync(join(lockPath(home), 'pid'), `${await deadPid()}\n`)
+      // 持有者已经不在时，上一版留下的文件形态锁要被清掉，不能挡住新的安装。
+      writeFileSync(lockDir(home), `${await deadPid()}\n`)
       expect(runLock(home).code).toBe(0)
     }
     finally {

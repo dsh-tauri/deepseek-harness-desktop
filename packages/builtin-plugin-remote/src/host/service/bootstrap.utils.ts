@@ -548,46 +548,55 @@ export async function planRemoteVersionInstall(
 /**
  * 槽位锁的 shell 片段：同一槽位只允许一个安装脚本在跑。
  *
- * 锁用硬链接原子发布：先把持有者 pid 写进自己的临时文件，再用 link 一次性挂到锁路径上。
- * link 成功的那一刻，锁的内容就是持有者 pid，不存在「锁已经存在但还不知道是谁持有」的窗口——
- * 后到的脚本一定能读到持有者，不会把活着的锁当成陈旧锁接管。
+ * 锁不是「一把锁」，而是槽位目录下的一组**占用声明**：每个安装脚本发布一条
+ * `claim-<pid>` 声明，声明内容就是自己的进程号。
  *
- * 陈旧锁（持有者进程已经不在）的接管同样是原子的：先把旧锁原子换走再抢，
- * 只有换走成功的一方能接管，两个脚本不会同时接管同一把陈旧锁。
- *
- * 锁放在 tmp 下，不进依赖目录，不会被副本枚举看到。
+ * - 声明与持有者 pid 一起原子发布（`ln` 一个已经写好 pid 的文件），
+ *   不存在「声明已在但不知道是谁持有」的窗口。
+ * - 同一时刻只允许一条存活的声明：别人的声明还活着就明确失败（`REMOTE_CORE_SLOT_BUSY`）。
+ * - 回收陈旧声明时只删**进程已经不在**的那一条，活着的持有者的声明不会被碰。
+ * - 锁目录本身从不被搬动或替换，因此不存在「按先前读到的 pid 搬走当前锁」的窗口——
+ *   这正是单一锁路径方案里最容易被忽略的竞态。
  */
 export function coreSlotLockShell(slot: string): string[] {
   return [
-    `LOCK="$ROOT/tmp/slot-${slot}.lock"`,
-    'LOCKOWNER="$TMP/lock-owner.$$"',
-    'printf \'%s\\n\' "$$" > "$LOCKOWNER"',
-    // ln 是原子的：锁成立的那一刻，持有者 pid 就已经在锁里。
-    // 目标是目录时 ln 会把链接放进目录里并返回成功，所以以锁的内容判定是否真的拿到锁。
-    'ln "$LOCKOWNER" "$LOCK" 2>/dev/null || true',
-    'if [ "$(cat "$LOCK" 2>/dev/null || true)" != "$$" ]; then',
-    '  _owner="$(cat "$LOCK" 2>/dev/null || true)"',
-    // 兼容旧版本留下的目录形态锁：持有者写在锁目录里的 pid 文件上。
-    '  if [ -z "$_owner" ] && [ -d "$LOCK" ]; then',
-    '    _owner="$(cat "$LOCK/pid" 2>/dev/null || true)"',
-    '  fi',
-    '  if [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; then',
-    '    rm -rf "$TMP"',
-    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行（pid $_owner），请等它结束后重试"',
+    `LOCKDIR="$ROOT/tmp/slot-${slot}.lock"`,
+    'CLAIM="$LOCKDIR/claim-$$"',
+    // 上一版用的是文件形态的锁，先按老规矩处理：持有者还在就明确失败，
+    // 持有者已经不在就把这份旧锁清掉，否则这个路径会挡住新的声明目录。
+    'if [ -f "$LOCKDIR" ]; then',
+    '  _old="$(cat "$LOCKDIR" 2>/dev/null || true)"',
+    '  if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then',
+    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装正在进行（pid $_old），请等它结束后重试"',
     '    exit 17',
     '  fi',
-    // 陈旧锁：原子换走旧锁后重抢。换走失败说明别的脚本已经接管或刚释放，
-    // 无论哪种情况都由 link 和锁内容来裁决，抢不到就明确失败。
-    '  mv "$LOCK" "$TMP/stale-lock.$$" 2>/dev/null || true',
-    '  ln "$LOCKOWNER" "$LOCK" 2>/dev/null || true',
-    '  if [ "$(cat "$LOCK" 2>/dev/null || true)" != "$$" ]; then',
-    '    rm -rf "$TMP"',
-    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装在进行，请等它结束后重试"',
-    '    exit 17',
-    '  fi',
+    '  rm -f "$LOCKDIR"',
     'fi',
-    // 退出清理只删自己仍然持有的锁：锁被接管后不能把新持有者的锁删掉。
-    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; if [ "$(cat "$LOCK" 2>/dev/null || true)" = "$$" ]; then rm -f "$LOCK"; fi; }',
+    'mkdir -p "$LOCKDIR"',
+    'printf \'%s\\n\' "$$" > "$TMP/claim.$$"',
+    // ln 是原子的：声明与持有者 pid 同时出现，不存在「声明已在但不知道是谁」的窗口。
+    'ln "$TMP/claim.$$" "$CLAIM" 2>/dev/null || true',
+    'if [ ! -f "$CLAIM" ]; then',
+    '  log failed "REMOTE_CORE_LOCK_FAILED: 无法在 $LOCKDIR 下发布占用声明"',
+    '  exit 18',
+    'fi',
+    // 同一时刻只允许一条存活的占用声明：别的声明还活着就明确失败。
+    'for _f in "$LOCKDIR"/claim-*; do',
+    '  [ -f "$_f" ] || continue',
+    '  if [ "$_f" = "$CLAIM" ]; then continue; fi',
+    '  _pid="$(cat "$_f" 2>/dev/null || true)"',
+    '  [ -n "$_pid" ] || continue',
+    '  if kill -0 "$_pid" 2>/dev/null; then',
+    '    rm -f "$CLAIM"',
+    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装正在进行（pid $_pid），请等它结束后重试"',
+    '    exit 17',
+    '  fi',
+    // 持有者已经不在：清掉这条陈旧声明。这里只动已经死掉的进程留下的声明，
+    // 活着的持有者的声明不会被碰，锁目录也不会被整体搬走。
+    '  rm -f "$_f"',
+    'done',
+    // 退出清理只删自己的声明。
+    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }',
   ]
 }
 
