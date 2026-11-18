@@ -10,10 +10,12 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   build: vi.fn(),
   settingState: { proxy_url: '', port: 3080, zoom_factor: 1, harness_max_heap_mb: null } as Record<string, unknown>,
-  harnessState: { serviceRunning: true, busyAction: null } as Record<string, unknown>,
+  harnessState: { serviceRunning: true, busyAction: null, webviewLoaded: true } as Record<string, unknown>,
   harnessUpdaterState: { updateInfo: null } as Record<string, unknown>,
   proxyTestResult: { ok: true, reason: null, status: 200, latency_ms: 12 } as Record<string, unknown>,
   changeLanguage: vi.fn(async () => {}),
+  openBrowser: vi.fn(),
+  reloadWebview: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
@@ -46,7 +48,7 @@ vi.mock('@/store/modules/setting', () => ({
   setting: { $state: mocks.settingState, update: mocks.update },
 }))
 vi.mock('@/store/modules/harness', () => ({
-  harness: { $state: mocks.harnessState, restart: vi.fn(), shutdown: vi.fn(), openBrowser: vi.fn() },
+  harness: { $state: mocks.harnessState, restart: vi.fn(), shutdown: vi.fn(), openBrowser: mocks.openBrowser, reloadWebview: mocks.reloadWebview },
 }))
 vi.mock('@/store/modules/harness-updater', () => ({
   harnessUpdater: { $state: mocks.harnessUpdaterState, showToast: vi.fn(), handleUpdate: vi.fn() },
@@ -54,7 +56,7 @@ vi.mock('@/store/modules/harness-updater', () => ({
 vi.mock('@/store', () => ({
   store: {
     setting: { $state: mocks.settingState, update: mocks.update },
-    harness: { $state: mocks.harnessState, restart: vi.fn(), shutdown: vi.fn(), openBrowser: vi.fn() },
+    harness: { $state: mocks.harnessState, restart: vi.fn(), shutdown: vi.fn(), openBrowser: mocks.openBrowser, reloadWebview: mocks.reloadWebview },
     harnessUpdater: { $state: mocks.harnessUpdaterState, showToast: vi.fn(), handleUpdate: vi.fn() },
   },
 }))
@@ -308,5 +310,44 @@ describe('配置面板代理连通性测试', () => {
     fireEvent.change(proxyInput(), { target: { value: '   ' } })
 
     expect((screen.getByTestId('dsh-proxy-test') as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('配置面板的运行控制按钮', () => {
+  it('刷新页面按钮只重挂载文档，不触发服务重启或关闭', async () => {
+    renderDebug()
+
+    const reload = await screen.findByRole('button', { name: 'app.reload_page' })
+    fireEvent.click(reload)
+
+    expect(mocks.reloadWebview).toHaveBeenCalledOnce()
+    expect(mocks.harnessState.busyAction).toBeNull()
+    expect(mocks.invoke).not.toHaveBeenCalledWith('restart_harness', expect.anything())
+    expect(mocks.invoke).not.toHaveBeenCalledWith('shutdown_harness', expect.anything())
+  })
+
+  it('刷新页面按钮排在「在浏览器中打开」右侧', async () => {
+    renderDebug()
+
+    const open = await screen.findByRole('button', { name: 'app.open_browser' })
+    const reload = await screen.findByRole('button', { name: 'app.reload_page' })
+    expect(open.compareDocumentPosition(reload) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(open.parentElement).toBe(reload.parentElement)
+  })
+
+  it('文档加载完成后刷新按钮显示常规图标，不残留加载态', async () => {
+    renderDebug()
+
+    const reload = await screen.findByRole('button', { name: 'app.reload_page' })
+    // 非加载态渲染的是图标本身，加载态渲染的是 Spinner；用 svg 有无区分，不绑定具体实现类名
+    expect(reload.querySelector('svg')).not.toBeNull()
+  })
+
+  it('服务未运行时刷新按钮禁用，避免对着已停的核心重挂载', async () => {
+    mocks.harnessState.serviceRunning = false
+    renderDebug()
+
+    const reload = await screen.findByRole('button', { name: 'app.reload_page' })
+    expect((reload as HTMLButtonElement).disabled).toBe(true)
   })
 })
