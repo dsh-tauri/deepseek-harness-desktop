@@ -2,7 +2,7 @@ import type { Page, Request, Response } from 'playwright'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, diagnose, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, diagnose, HEAVY_E2E_ENABLED, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 interface RuntimeInfo {
   app_version: string
@@ -204,7 +204,8 @@ describe('desktop boot and profile lifecycle', () => {
     expect(await pageErrors(main), '菜单开关不应产生壳层页面异常').toEqual([])
   })
 
-  it('reuses same-profile cores and isolates cloned-profile windows', async () => {
+  // 三个窗口 + 克隆档案同时起多套核心，CI 上与 Rust lane 抢同一台 runner 时跑不出结果（见 HEAVY_E2E_ENABLED）。
+  it.runIf(HEAVY_E2E_ENABLED)('reuses same-profile cores and isolates cloned-profile windows', async () => {
     const shell = app.get()
     const main = shell.window.page
     await waitHealthy(main)
