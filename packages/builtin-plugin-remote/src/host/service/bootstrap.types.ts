@@ -25,6 +25,17 @@ export interface DshZipPlan {
   tag: string
 }
 
+export interface DshVersionInstallPlan {
+  os: RemoteOs
+  arch: RemoteArch
+  repo: string
+  tag: string
+  version: string
+  dshEntry: string
+  dsh: DshNpmPlan | DshZipPlan
+  notes: string[]
+}
+
 export interface RemoteInstallPlan {
   os: RemoteOs
   arch: RemoteArch

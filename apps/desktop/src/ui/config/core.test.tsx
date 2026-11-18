@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { queryKeys } from '@/config/query-keys'
 import enUS from '@/i18n/locales/en-US.json'
 import { ConfigCore } from './core'
 
@@ -14,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   restart: vi.fn(),
   toast: Object.assign(vi.fn(), { close: vi.fn() }),
   loadRemoteMachines: vi.fn(),
+  getCoreCurrent: vi.fn(),
+  getCoreProfiles: vi.fn(),
+  getCoreVersions: vi.fn(),
+  getCoreTasksEvents: vi.fn(),
+  postCoreInstall: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
@@ -23,6 +29,13 @@ vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 vi.mock('@/hooks/use-remote', () => ({
   dotClassOf: () => 'bg-success',
   loadRemoteMachines: mocks.loadRemoteMachines,
+}))
+vi.mock('@/apis/remote', () => ({
+  getCoreCurrent: mocks.getCoreCurrent,
+  getCoreProfiles: mocks.getCoreProfiles,
+  getCoreVersions: mocks.getCoreVersions,
+  getCoreTasksEvents: mocks.getCoreTasksEvents,
+  postCoreInstall: mocks.postCoreInstall,
 }))
 
 const localFixture: HarnessCore = {
@@ -76,15 +89,18 @@ function findDialog() {
 function renderCore() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.add(client)
-  return render(
-    <I18nextProvider i18n={translations}>
-      <QueryClientProvider client={client}>
-        <OverlaysProvider>
-          <ConfigCore />
-        </OverlaysProvider>
-      </QueryClientProvider>
-    </I18nextProvider>,
-  )
+  return {
+    client,
+    ...render(
+      <I18nextProvider i18n={translations}>
+        <QueryClientProvider client={client}>
+          <OverlaysProvider>
+            <ConfigCore />
+          </OverlaysProvider>
+        </QueryClientProvider>
+      </I18nextProvider>,
+    ),
+  }
 }
 
 function expectNoCoreOrProfileSwitch() {
@@ -135,6 +151,10 @@ beforeEach(async () => {
   })
   mocks.restart.mockResolvedValue(undefined)
   mocks.loadRemoteMachines.mockResolvedValue({ enabled: false, machines: [] })
+  mocks.getCoreCurrent.mockResolvedValue({ item: undefined, error: 'REMOTE_CORE_UNAVAILABLE' })
+  mocks.getCoreProfiles.mockResolvedValue({ items: [] })
+  mocks.getCoreVersions.mockResolvedValue({ items: [] })
+  mocks.getCoreTasksEvents.mockResolvedValue({ items: [] })
   mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'get_cores')
       return cores.map(core => ({ ...core }))
@@ -239,6 +259,114 @@ describe('核心激活兼容性', () => {
 })
 
 describe('本地核心更新档案安全', () => {
+  it('manages one target at a time: the local machine or a remote machine', async () => {
+    mocks.loadRemoteMachines.mockResolvedValue({
+      enabled: true,
+      machines: [{ id: 'build', name: 'Build box', state: 'connected' }],
+    })
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: {
+        id: 'remote:build:remote',
+        scope: 'remote',
+        machineId: 'build',
+        remoteProfile: 'remote',
+        capabilities: ['listVersions', 'installVersion'],
+        platforms: ['linux-x64'],
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      },
+    })
+    renderCore()
+
+    expect(await screen.findByText('0.2.2-rc.1')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-core-remote-list')).toBeNull()
+
+    const select = screen.getByTestId('dsh-config-core-target').closest('[data-slot="select"]')!.querySelector('select')!
+    fireEvent.change(select, { target: { value: 'remote:build' } })
+
+    expect(await screen.findByTestId('dsh-core-remote-list')).toBeTruthy()
+    expect(await screen.findByText('0.2.4')).toBeTruthy()
+    expect(screen.queryByText('0.2.2-rc.1')).toBeNull()
+  })
+
+  it('keeps a remote machine named local apart from the local core scope', async () => {
+    mocks.loadRemoteMachines.mockResolvedValue({
+      enabled: true,
+      machines: [{ id: 'local', name: 'Local box', state: 'connected' }],
+    })
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: {
+        id: 'remote:local:remote',
+        scope: 'remote',
+        machineId: 'local',
+        remoteProfile: 'remote',
+        capabilities: ['listVersions', 'installVersion', 'activate'],
+        platforms: ['linux-x64'],
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      },
+    })
+    renderCore()
+
+    expect(await screen.findByText('0.2.2-rc.1')).toBeTruthy()
+    const select = screen.getByTestId('dsh-config-core-target').closest('[data-slot="select"]')!.querySelector('select')!
+    fireEvent.change(select, { target: { value: 'remote:local' } })
+
+    expect(await screen.findByTestId('dsh-core-remote-list')).toBeTruthy()
+    expect(await screen.findByText('0.2.4')).toBeTruthy()
+    expect(mocks.getCoreCurrent).toHaveBeenCalledWith({ machineId: 'local' })
+    expect(screen.queryByText('0.2.2-rc.1')).toBeNull()
+  })
+
+  it('falls back to the local core scope when the selected remote machine disappears', async () => {
+    mocks.loadRemoteMachines.mockResolvedValue({
+      enabled: true,
+      machines: [{ id: 'build', name: 'Build box', state: 'connected' }],
+    })
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: {
+        id: 'remote:build:remote',
+        scope: 'remote',
+        machineId: 'build',
+        remoteProfile: 'remote',
+        capabilities: ['listVersions', 'installVersion', 'activate'],
+        platforms: ['linux-x64'],
+        availability: 'present',
+        slots: [],
+      },
+    })
+    const { client } = renderCore()
+    await waitFor(() => {
+      const option = screen.getByTestId('dsh-config-core-target').closest('[data-slot="select"]')?.querySelector('option[value="remote:build"]')
+      expect(option).not.toBeNull()
+    })
+    const select = screen.getByTestId('dsh-config-core-target').closest('[data-slot="select"]')!.querySelector('select')!
+    fireEvent.change(select, { target: { value: 'remote:build' } })
+    await screen.findByTestId('dsh-core-remote-list')
+
+    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [] })
+    await client.invalidateQueries({ queryKey: queryKeys.remoteMachines })
+
+    expect(await screen.findByText('0.2.2-rc.1')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-core-remote-list')).toBeNull()
+  })
+
   it('在用本地核心不可原地更新，提示先切受管核心且不发送更新命令', async () => {
     cores[0].active = true
     cores[1].active = false

@@ -45,6 +45,18 @@ export function enabledOf(value: { enabled?: unknown }): boolean {
   return value.enabled
 }
 
+export function coreTagOf(value: { tag?: unknown }): string {
+  if (typeof value.tag !== 'string' || !/^[\w.-]+$/u.test(value.tag))
+    throw new Error('invalid tag')
+  return value.tag
+}
+
+export function taskIdOf(value: { taskId?: unknown }): string {
+  if (typeof value.taskId !== 'string' || value.taskId === '')
+    throw new Error('missing taskId')
+  return value.taskId
+}
+
 export function sinceSeqOf(value: { sinceSeq?: unknown }): number | undefined {
   const raw = value.sinceSeq
   if (raw === undefined || raw === '')
