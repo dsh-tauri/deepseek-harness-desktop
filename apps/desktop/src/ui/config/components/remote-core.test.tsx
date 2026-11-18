@@ -7,7 +7,7 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/config/query-keys'
 import enUS from '@/i18n/locales/en-US.json'
-import { RemoteCoreList } from './remote-core'
+import { RemoteCoreList, RemoteCoreTasksProvider } from './remote-core'
 
 const mocks = vi.hoisted(() => ({
   getCoreCurrent: vi.fn(),
@@ -53,11 +53,13 @@ type TargetState
 const clients = new Set<QueryClient>()
 let translations = createInstance()
 
-function remoteCoreUi(machineId: string, client: QueryClient) {
+function remoteCoreUi(machineId: string, client: QueryClient, show = true) {
   return (
     <I18nextProvider i18n={translations}>
       <QueryClientProvider client={client}>
-        <RemoteCoreList machineId={machineId} />
+        <RemoteCoreTasksProvider>
+          {show ? <RemoteCoreList machineId={machineId} /> : null}
+        </RemoteCoreTasksProvider>
       </QueryClientProvider>
     </I18nextProvider>
   )
@@ -459,7 +461,7 @@ describe('远端核心清单', () => {
     expect(mocks.postCoreSwitch).not.toHaveBeenCalled()
   })
 
-  it('does not allow another download while one machine is already downloading', async () => {
+  it('does not allow another download on the same machine while one is already downloading', async () => {
     mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
       item: targetOf(machineId, {
         availability: 'present',
@@ -483,16 +485,45 @@ describe('远端核心清单', () => {
     await waitFor(() => expect(mocks.postCoreInstall).toHaveBeenCalledWith({ machineId: 'build', tag: 'dsh-0.2.6-1' }))
     await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenCalledWith({ taskId: 'task-pending' }))
 
+    // 同一台机器：下载还在跑，不能再来一次。
+    view.rerender(remoteCoreUi('build', view.client))
+    const sameList = await screen.findByTestId('dsh-core-remote-list')
+    const sameDownloads = await within(sameList).findAllByRole('button', { name: 'Download' })
+    expect(sameDownloads.every(button => isDisabled(button))).toBe(true)
+    fireEvent.click(sameDownloads[0])
+    expect(mocks.postCoreInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets another machine download while one machine is downloading', async () => {
+    mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+      item: targetOf(machineId, {
+        availability: 'present',
+        slots: [{
+          kind: 'installed',
+          slotKey: 'dsh',
+          version: '0.2.4',
+          dir: `/home/remote/${machineId}/.dsh-desktop/dependencies/dsh`,
+          active: true,
+          removable: false,
+          preview: false,
+        }],
+      }),
+    }))
+    mocks.postCoreInstall.mockResolvedValue({ taskId: 'task-pending' })
+    mocks.getCoreTasksEvents.mockImplementation(() => new Promise(() => {}))
+    const view = renderRemoteCore('build')
+
+    const firstList = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click((await within(firstList).findAllByRole('button', { name: 'Download' }))[0])
+    await waitFor(() => expect(mocks.postCoreInstall).toHaveBeenCalledWith({ machineId: 'build', tag: 'dsh-0.2.6-1' }))
+
+    // 两台机器的版本槽位互不相干：一台在下载不挡另一台。
     view.rerender(remoteCoreUi('ops', view.client))
     await waitFor(() => expect(mocks.getCoreCurrent).toHaveBeenCalledWith({ machineId: 'ops' }))
     const secondList = await screen.findByTestId('dsh-core-remote-list')
     const downloads = await within(secondList).findAllByRole('button', { name: 'Download' })
-    expect(downloads.every(button =>
-      (button as HTMLButtonElement).disabled
-      || button.getAttribute('aria-disabled') === 'true'
-      || button.getAttribute('data-disabled') === 'true')).toBe(true)
     fireEvent.click(downloads[0])
-    expect(mocks.postCoreInstall).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(mocks.postCoreInstall).toHaveBeenCalledWith({ machineId: 'ops', tag: 'dsh-0.2.6-1' }))
   })
 
   it('keeps watching the same task when reading the task events fails transiently', async () => {
@@ -679,6 +710,88 @@ describe('远端核心清单', () => {
     fireEvent.click(recheck)
     await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenLastCalledWith({ taskId: 'task-unknown' }))
     expect(mocks.postCoreSwitch).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the pending task when the list is closed and opened again', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({ item: twoCopiesTarget() })
+    mocks.postCoreSwitch.mockResolvedValue({ taskId: 'task-unknown' })
+    mocks.getCoreTasksEvents.mockResolvedValue({ error: 'REMOTE_TASK_READ_FAILED' })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.add(client)
+    const view = render(remoteCoreUi('build', client))
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switch result unknown', expect.objectContaining({ variant: 'warning' })), { timeout: 20_000 })
+
+    // 切到本机：远端清单被卸载，任务记录不能跟着没。
+    view.rerender(remoteCoreUi('build', client, false))
+    // 切回这台机器：记录还在，还能重新查询。
+    view.rerender(remoteCoreUi('build', client))
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeTruthy()
+  })
+
+  it('keeps another machine protected while re-checking this one', async () => {
+    mocks.getCoreCurrent.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+      item: targetOf(machineId, {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: `/home/remote/${machineId}/.dsh-desktop/dependencies/dsh`,
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.6-1',
+            tag: 'dsh-0.2.6-1',
+            version: '0.2.6',
+            dir: `/home/remote/${machineId}/.dsh-desktop/dependencies/dsh-0.2.6-1`,
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    }))
+    mocks.postCoreSwitch.mockImplementation(async ({ machineId }: { machineId: string }) => ({ taskId: `task-${machineId}` }))
+    // build 的第一次读不出结果；ops 的切换一直在轮询。
+    let buildUnknown = true
+    mocks.getCoreTasksEvents.mockImplementation(async ({ taskId }: { taskId: string }) => {
+      if (taskId === 'task-build') {
+        if (buildUnknown)
+          return { error: 'REMOTE_TASK_READ_FAILED' }
+        return { items: [{ taskId, seq: 1, ts: '', state: 'succeeded', stage: 'switch', line: '核心已切换至 0.2.6', terminal: 'success' }] }
+      }
+      return new Promise(() => {})
+    })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.add(client)
+    const view = render(remoteCoreUi('build', client))
+
+    const buildList = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(buildList).findByRole('checkbox', { name: '0.2.6' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switch result unknown', expect.objectContaining({ variant: 'warning' })), { timeout: 20_000 })
+
+    // 另一台机器上的切换还在跑。
+    view.rerender(remoteCoreUi('ops', client))
+    const opsList = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(opsList).findByRole('checkbox', { name: '0.2.6' }))
+    await waitFor(() => expect(mocks.postCoreSwitch).toHaveBeenCalledWith({ machineId: 'ops', slotKey: 'dsh-0.2.6-1' }))
+
+    // 重查 build：它的结果查到了，但这台机器的保护不能因此被解除。
+    buildUnknown = false
+    view.rerender(remoteCoreUi('build', client))
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }))
+    await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenLastCalledWith({ taskId: 'task-build' }))
+
+    view.rerender(remoteCoreUi('ops', client))
+    const opsCheckbox = await screen.findByRole('checkbox', { name: '0.2.6' })
+    expect(isDisabled(opsCheckbox)).toBe(true)
   })
 
   it('keeps the re-check entry available when the version list cannot be read', async () => {

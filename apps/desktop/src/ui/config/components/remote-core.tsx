@@ -1,3 +1,4 @@
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import type { RemoteCoreRow, RemoteCoreTarget } from './remote-core.rows'
 import type { GetApiTauriRemoteCoreProfilesResponse, GetApiTauriRemoteCoreTasksEventsResponse } from '@/apis/remote.types'
 import { ChevronRight, Copy, CircleArrowDown as DownloadIcon } from '@gravity-ui/icons'
@@ -5,7 +6,7 @@ import { Button, Checkbox, Chip, Description, Label, Spinner } from '@heroui/rea
 import { useOverlay } from '@overlastic/react'
 import { useToggle } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { createContext, use, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { getCoreCurrent, getCoreProfiles, getCoreTasksEvents, getCoreVersions, postCoreInstall, postCoreSwitch } from '@/apis/remote'
@@ -84,9 +85,35 @@ interface RemoteTask {
   taskId?: string
   /** 结果未知：任务可能还在远端执行。 */
   unknown?: boolean
+  /** 这个任务正在跑：按机器分别记，重查一台机器不会解除另一台的保护。 */
+  pending?: boolean
 }
 
 type RemoteTaskMap = Record<string, RemoteTask>
+
+interface RemoteCoreTasks {
+  downloads: RemoteTaskMap
+  switchings: RemoteTaskMap
+  /** 每台机器的进度行：两台机器同时在跑时不会串。 */
+  progress: Record<string, string>
+  setDownloads: Dispatch<SetStateAction<RemoteTaskMap>>
+  setSwitchings: Dispatch<SetStateAction<RemoteTaskMap>>
+  setProgress: Dispatch<SetStateAction<Record<string, string>>>
+}
+
+const RemoteCoreTasksContext = createContext<RemoteCoreTasks | undefined>(undefined)
+
+/**
+ * 任务记录放在列表组件外面：切到本机再切回这台机器时，
+ * 未决任务与「结果未知」的记录都还在，用户还能重新查询它的结果。
+ */
+export function RemoteCoreTasksProvider({ children }: { children: ReactNode }) {
+  const [downloads, setDownloads] = useState<RemoteTaskMap>({})
+  const [switchings, setSwitchings] = useState<RemoteTaskMap>({})
+  const [progress, setProgress] = useState<Record<string, string>>({})
+  const value = useMemo<RemoteCoreTasks>(() => ({ downloads, switchings, progress, setDownloads, setSwitchings, setProgress }), [downloads, switchings, progress])
+  return <RemoteCoreTasksContext value={value}>{children}</RemoteCoreTasksContext>
+}
 
 function patchTask(tasks: RemoteTaskMap, machineId: string, patch: Partial<RemoteTask>): RemoteTaskMap {
   const existing = tasks[machineId]
@@ -137,9 +164,22 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const machine = machinesQuery.data?.machines.find(item => item.id === machineId)
 
   // 任务按机器分别记着：换到另一台机器上操作，不会把这边未决任务的记录盖掉。
-  const [downloads, setDownloads] = useState<RemoteTaskMap>({})
-  const [switchings, setSwitchings] = useState<RemoteTaskMap>({})
-  const [progress, setProgress] = useState<string>()
+  const tasks = use(RemoteCoreTasksContext)
+  if (tasks === undefined)
+    throw new Error('RemoteCoreList 需要放在 RemoteCoreTasksProvider 里')
+  const { downloads, switchings, progress, setDownloads, setSwitchings, setProgress } = tasks
+
+  /** 进度也按机器记：两台机器同时在跑时，进度行不会串到另一台去。 */
+  function reportProgress(machineId: string, line: string | undefined): void {
+    setProgress((current) => {
+      const next = { ...current }
+      if (line === undefined)
+        delete next[machineId]
+      else
+        next[machineId] = line
+      return next
+    })
+  }
 
   async function startInstallTask(machineId: string, tag: string): Promise<string> {
     const response = await postCoreInstall({ machineId, tag })
@@ -160,21 +200,21 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const installMutation = useMutation({
     mutationFn: async (input: { machineId: string, tag: string, version: string, taskId?: string }) => {
       const taskId = input.taskId ?? await startInstallTask(input.machineId, input.tag)
-      await waitForCoreTask(taskId, setProgress, t('core.download_failed'))
+      await waitForCoreTask(taskId, line => reportProgress(input.machineId, line), t('core.download_failed'))
       return input.version
     },
     onSuccess: (version, input) => {
       toast(t('core.downloaded_toast', { version }))
       setDownloads(current => dropTask(current, input.machineId))
-      setProgress(undefined)
+      reportProgress(input.machineId, undefined)
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
     },
     onError: (error, input) => {
       const message = error instanceof Error ? error.message : String(error)
-      setProgress(undefined)
+      reportProgress(input.machineId, undefined)
       if (error instanceof UnknownTaskResultError) {
         // 结果未知：任务可能还在远端跑，记住任务号让用户能重新查询。
-        setDownloads(current => patchTask(current, input.machineId, { taskId: error.taskId, unknown: true }))
+        setDownloads(current => patchTask(current, input.machineId, { taskId: error.taskId, unknown: true, pending: false }))
         toast(t('core.download_unknown'), { variant: 'warning', description: message })
         return
       }
@@ -186,7 +226,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const switchMutation = useMutation({
     mutationFn: async (input: { machineId: string, slotKey: string, version: string, taskId?: string }) => {
       const taskId = input.taskId ?? await startSwitchTask(input.machineId, input.slotKey)
-      await waitForCoreTask(taskId, setProgress, t('core.switch_failed'))
+      await waitForCoreTask(taskId, line => reportProgress(input.machineId, line), t('core.switch_failed'))
       return input.version
     },
     onSuccess: (version, input) => {
@@ -196,18 +236,18 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
         timeout: 10_000,
       })
       setSwitchings(current => dropTask(current, input.machineId))
-      setProgress(undefined)
+      reportProgress(input.machineId, undefined)
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteMachines })
     },
     onError: (error, input) => {
       const message = error instanceof Error ? error.message : String(error)
-      setProgress(undefined)
+      reportProgress(input.machineId, undefined)
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.remoteMachines })
       if (error instanceof UnknownTaskResultError) {
         // 结果未知：切换可能已经在服务端完成或仍在进行，别让用户以为切换失败了。
-        setSwitchings(current => patchTask(current, input.machineId, { taskId: error.taskId, unknown: true }))
+        setSwitchings(current => patchTask(current, input.machineId, { taskId: error.taskId, unknown: true, pending: false }))
         toast(t('core.switch_unknown'), { variant: 'warning', description: message })
         return
       }
@@ -221,8 +261,8 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
     const current = downloads[machineId]
     if (current?.taskId === undefined)
       return
-    setDownloads(state => patchTask(state, machineId, { unknown: false }))
-    setProgress(undefined)
+    setDownloads(state => patchTask(state, machineId, { unknown: false, pending: true }))
+    reportProgress(machineId, undefined)
     installMutation.mutate({ machineId, tag: current.tag, version: current.version, taskId: current.taskId })
   }
 
@@ -231,21 +271,22 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
     const current = switchings[machineId]
     if (current?.taskId === undefined)
       return
-    setSwitchings(state => patchTask(state, machineId, { unknown: false }))
-    setProgress(undefined)
+    setSwitchings(state => patchTask(state, machineId, { unknown: false, pending: true }))
+    reportProgress(machineId, undefined)
     switchMutation.mutate({ machineId, slotKey: current.tag, version: current.version, taskId: current.taskId })
   }
 
   async function onActivate(row: RemoteCoreRow) {
     const slotKey = row.tag
-    if (slotKey === undefined || row.active || !row.present || row.unsupported || switchMutation.isPending)
-      return
-    // 这台机器还有结果未知的切换任务：不能再发起新的切换。
+    const current = switchings[machineId]
+    // 这台机器还有切换任务没结束：不能再发起新的切换。
     // 新任务会覆盖原记录，用户就再也查不到第一次切换的结果了。
-    if (switchings[machineId]?.unknown === true) {
+    if (current?.pending === true || current?.unknown === true) {
       toast(t('core.switch_blocked'), { variant: 'warning' })
       return
     }
+    if (slotKey === undefined || row.active || !row.present || row.unsupported)
+      return
     try {
       await openDialog({
         status: 'warning',
@@ -257,7 +298,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       silence(error, 'remote core switch: dialog cancelled')
       return
     }
-    setSwitchings(current => ({ ...current, [machineId]: { tag: slotKey, version: row.version } }))
+    setSwitchings(current => ({ ...current, [machineId]: { tag: slotKey, version: row.version, pending: true } }))
     switchMutation.mutate({ machineId, slotKey, version: row.version })
   }
 
@@ -344,16 +385,16 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
               rows={rows}
               download={activeDownload}
               switching={activeSwitching}
-              progress={activeDownload === undefined && activeSwitching === undefined ? undefined : progress}
-              downloading={installMutation.isPending}
-              activating={switchMutation.isPending}
+              progress={progress[machineId]}
+              downloading={activeDownload?.pending === true}
+              activating={activeSwitching?.pending === true}
               canDownload={capabilities.includes('installVersion')}
               canActivate={capabilities.includes('activate')}
               onDownload={(row) => {
                 const tag = row.tag
-                if (tag === undefined || installMutation.isPending)
+                if (tag === undefined || activeDownload?.pending === true)
                   return
-                setDownloads(current => ({ ...current, [machineId]: { tag, version: row.version } }))
+                setDownloads(current => ({ ...current, [machineId]: { tag, version: row.version, pending: true } }))
                 installMutation.mutate({ machineId, tag, version: row.version })
               }}
               onActivate={row => void onActivate(row)}
@@ -385,8 +426,9 @@ function RemoteCoreRows({ rows, download, switching, progress, downloading, acti
   const incompatibleRows = orderedRows.filter(row => row.unsupported)
   const displayRows = [...orderedRows.filter(row => !row.unsupported), ...incompatibleRows]
   const firstOrphanRow = displayRows.find(row => row.orphaned)
-  // 还有结果未知的切换任务时，这台机器不能再发起新的切换。
-  const switchBlocked = switching !== undefined && switching.unknown === true
+  // 这台机器还有切换任务没结束时，不能再发起新的切换：
+  // 新任务会覆盖原记录，用户就再也查不到第一次切换的结果了。
+  const switchBlocked = switching !== undefined && (switching.unknown === true || switching.pending === true)
 
   return (
     <>

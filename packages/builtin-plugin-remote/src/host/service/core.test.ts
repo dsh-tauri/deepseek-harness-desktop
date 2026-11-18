@@ -760,7 +760,12 @@ describe('remote core contract', () => {
 
     expect(commands).toHaveLength(1)
     expect(machine.reconnect).toHaveBeenCalledTimes(1)
-    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false, lease: { machineId, generation: 1 } })
+    // 恢复重连要用探测到的旧核心入口：旧副本可能是 npm 布局。
+    expect(machine.reconnect).toHaveBeenCalledWith(machineId, {
+      profileSync: false,
+      lease: { machineId, generation: 1 },
+      dshBin: '$HOME/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js',
+    })
     const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
     expect(failed?.reason).toContain('远端实例仍在运行')
     expect(failed?.reason).toContain('旧版本已重新连接')
@@ -921,6 +926,38 @@ describe('remote core contract', () => {
     expect(machine.reconnect).not.toHaveBeenCalled()
     const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
     expect(failed?.reason).toContain('REMOTE_CORE_SWITCH_ABORTED')
+  })
+
+  it('does not reconnect when the switch script did not report a conclusion', async () => {
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('LOCKDIR_ACTIVE='))
+        return { code: 137, stdout: '', stderr: 'connection closed by peer' }
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    const last = tasks.since(accepted.taskId!).events.at(-1)?.line ?? ''
+    expect(last).toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
+    // 脚本没给出结论：远端目录可能停在中间状态，这时重连会连到半切换的那份。
+    expect(machine.reconnect).not.toHaveBeenCalled()
   })
 
   it('refuses to switch to the active slot or an unsafe slot name', async () => {

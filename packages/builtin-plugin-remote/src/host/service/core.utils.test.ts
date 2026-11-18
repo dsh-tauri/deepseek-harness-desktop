@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildCoreSwitchScript, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
+import { buildCoreSwitchRestoreScript, buildCoreSwitchScript, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
 
 const homes: string[] = []
 const SWITCH_PORT = 38471
@@ -108,6 +108,48 @@ describe('remote core switch scripts', () => {
     expect(readFileSync(join(deps, 'dsh-old', 'version'), 'utf8')).toBe('old')
     expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-new\n')
     expect(() => readFileSync(join(deps, 'dsh-new', 'version'))).toThrow()
+  })
+
+  it('leaves the active tag alone when another desktop wrote it before the switch was refused', () => {
+    const { home, deps } = fixtureHome()
+    const bin = join(home, 'bin')
+    mkdirSync(bin)
+    // 假 mkdir：占用槽位时（版本记录快照之后）别的桌面写入了新的版本记录。
+    writeFileSync(join(bin, 'mkdir'), `#!/bin/sh\ncase "$*" in\n  *slot-*) printf 'dsh-other\\n' > "${join(deps, '.active-tag')}" ;;\nesac\nexec /bin/mkdir "$@"\n`)
+    chmodSync(join(bin, 'mkdir'), 0o755)
+
+    // 版本核对不通过：脚本在停机前就拒绝，这次切换没动过远端状态。
+    const result = runScript(home, switchScript({ activeVersion: '9.9.9' }), bin)
+    expect(result.status).not.toBe(0)
+    // 别人的版本记录不能被写回旧值。
+    expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-other\n')
+    expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
+  })
+
+  it('refuses to restore the old core when the target position was taken', () => {
+    const { home, deps } = fixtureHome()
+    // 切换已经成功：活动目录是新核心，旧核心在备份槽位里。
+    writeFileSync(join(deps, 'dsh', 'version'), 'new')
+    mkdirSync(join(deps, 'dsh-old'), { recursive: true })
+    writeFileSync(join(deps, 'dsh-old', 'version'), 'old')
+    // 目标位置被别人重新填上了：这时恢复会把新核心当成旧核心。
+    mkdirSync(join(deps, 'dsh-new'), { recursive: true })
+
+    const result = runScript(home, buildCoreSwitchRestoreScript({
+      targetTag: 'dsh-new',
+      backupTag: 'dsh-old',
+      runId: 'restore',
+      profileName: 'remote',
+      remotePort: SWITCH_PORT,
+      startCommand: listenerStartCommand(),
+      healthPollAttempts: 20,
+      healthPollIntervalMs: 500,
+    }))
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
+    // 没恢复就不能写回版本记录。
+    expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-old\n')
   })
 
   it.skipIf(process.platform === 'win32')('keeps the old core active when moving the target into place fails', () => {

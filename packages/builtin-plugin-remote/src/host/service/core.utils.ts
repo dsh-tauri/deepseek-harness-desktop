@@ -187,13 +187,9 @@ export function buildCoreSwitchScript(options: CoreSwitchScriptOptions): string 
     'STARTED=0',
     'PREV_TAG=""',
     'HAD_TAG=0',
+    'TAG_CHANGED=0',
     'mkdir -p "$TMP"',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
-    // 切换前的版本记录：回滚时要跟着目录一起换回去。
-    'if [ -f "$DEPS/.active-tag" ]; then',
-    '  IFS= read -r PREV_TAG < "$DEPS/.active-tag" || true',
-    '  HAD_TAG=1',
-    'fi',
     // 副本的版本号：占槽之后要核对副本没被别人换掉。
     'dsh_version_of() {',
     '  for _pkg in "$1/node_modules/@deepseek-ai/dsh/package.json" "$1/package.json"; do',
@@ -215,11 +211,14 @@ export function buildCoreSwitchScript(options: CoreSwitchScriptOptions): string 
     '    if [ -d "$BACKUP" ] && [ ! -e "$DEPS/dsh" ]; then mv "$BACKUP" "$DEPS/dsh" || RECOVERED=0; else RECOVERED=0; fi',
     '  fi',
     // 目录换回去了，版本记录也要换回去：否则清单会把旧核心标成新版本。
-    '  if [ "$HAD_TAG" = 1 ]; then',
-    `    printf '%s\\n' "$PREV_TAG" > "$TAG_NEW" && mv -f "$TAG_NEW" "$DEPS/.active-tag" || RECOVERED=0`,
-    '  else',
+    // 只有本次真的改过版本记录才回写：停在停机前就拒绝时不能动别人的记录。
+    '  if [ "$TAG_CHANGED" = 1 ]; then',
+    '    if [ "$HAD_TAG" = 1 ]; then',
+    `      printf '%s\\n' "$PREV_TAG" > "$TAG_NEW" && mv -f "$TAG_NEW" "$DEPS/.active-tag" || RECOVERED=0`,
+    '    else',
     // 原本没有版本记录：删掉切换时写的那份。删不掉就不能算恢复成功。
-    '    rm -f "$DEPS/.active-tag" || RECOVERED=0',
+    '      rm -f "$DEPS/.active-tag" || RECOVERED=0',
+    '    fi',
     '  fi',
     '  [ -d "$DEPS/dsh" ] || RECOVERED=0',
     '}',
@@ -239,6 +238,12 @@ export function buildCoreSwitchScript(options: CoreSwitchScriptOptions): string 
     '}',
     'trap on_exit EXIT',
     ...switchSlotClaims(targetTag, backupTag),
+    // 版本记录要在占槽之后才读：占槽之前读到的可能已经被别的桌面换掉了，
+    // 拿旧快照去回写会把别人的记录抹掉。
+    'if [ -f "$DEPS/.active-tag" ]; then',
+    '  IFS= read -r PREV_TAG < "$DEPS/.active-tag" || true',
+    '  HAD_TAG=1',
+    'fi',
     'fail() {',
     // 回滚之前先把本次拉起的实例停掉：它可能刚好在最后一轮探测之后才起来。
     // 不停就换目录，恢复出来的旧核心旁边还挂着一个新核心，恢复重连会连错。
@@ -277,6 +282,7 @@ export function buildCoreSwitchScript(options: CoreSwitchScriptOptions): string 
     'TARGET_MOVED=1',
     `printf '%s\\n' ${shQuote(targetTag)} > "$TAG_NEW" || fail "无法记录当前核心版本"`,
     'mv -f "$TAG_NEW" "$DEPS/.active-tag" || fail "无法保存当前核心版本"',
+    'TAG_CHANGED=1',
     'log switch "拉起远端核心实例"',
     // 拉起命令放在子 shell 里：它自己 exit 1 时只会退出子 shell，
     // 由这里的 fail 接手回滚，不会把目录留在换了一半的状态。
@@ -356,12 +362,15 @@ export function buildCoreSwitchRestoreScript(options: CoreSwitchRestoreOptions):
     '}',
     '[ -d "$BACKUP" ] || fail "旧核心备份不存在"',
     '[ -d "$DEPS/dsh" ] || fail "新核心目录不存在"',
+    // 恢复需要目标位置空着：被别人填上就不能恢复，否则活动目录里还是新核心，
+    // 却把版本记录写回旧核心，清单会把两样东西对错。
+    '[ ! -e "$TARGET" ] || fail "目标副本位置已被占用，无法恢复旧核心"',
     'log rollback "停止远端核心实例"',
     'stop_instance',
     'sleep 1',
     'log rollback "恢复旧核心目录"',
-    'if [ -d "$DEPS/dsh" ] && [ ! -e "$TARGET" ]; then mv "$DEPS/dsh" "$TARGET" || fail "无法移走新核心"; fi',
-    'if [ -d "$BACKUP" ] && [ ! -e "$DEPS/dsh" ]; then mv "$BACKUP" "$DEPS/dsh" || fail "无法恢复旧核心"; fi',
+    'mv "$DEPS/dsh" "$TARGET" || fail "无法移走新核心"',
+    'mv "$BACKUP" "$DEPS/dsh" || fail "无法恢复旧核心"',
     '[ -d "$DEPS/dsh" ] || fail "旧核心目录不存在"',
     // 版本记录也要换回去，否则清单会把旧核心标成新版本。
     ...(restoreTag === undefined

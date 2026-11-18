@@ -255,6 +255,8 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
   let lease: CoreSwitchLease | undefined
   let switched = false
   let backupTag: string | undefined
+  // 旧核心的入口：失败恢复时要用它找回来的是哪一份。
+  let activeEntry = ''
   // 固定这台机器的主机与档案：任务期间配置变了就不能继续在旧会话上操作。
   let identity = ''
   // 固定这台机器的代次：探测期间用户断开或改了配置，就不能再动它的目录。
@@ -273,6 +275,7 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
     // 旧核心的入口路径也要知道：连接没建起来时要靠它把旧核心换回去。
     if (active.entry === undefined)
       throw new Error('REMOTE_CORE_SWITCH_FAILED: 当前使用的核心副本不可读，无法切换')
+    activeEntry = active.entry
     assertSupportedDshVersion(target.version)
     const candidates = backupCandidatesOf(copies, active, slotKey)
 
@@ -382,7 +385,7 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
     }
     // 只有真的动过这台机器才需要恢复：切换在拿到所有权之前就失败的话，
     // 连接是用户自己的状态，不能替他重连（那会把用户刚做的断开撤销掉）。
-    const recovery = switched || lease === undefined ? '' : await recoverOldCore(machineId, lease, identity, taskId)
+    const recovery = switched || lease === undefined ? '' : await recoverOldCore(machineId, lease, identity, taskId, activeEntry)
     const reason = `${normalizeSwitchFailure(original)}${recovery === '' ? '' : `；${recovery}`}`
     tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
   }
@@ -469,19 +472,21 @@ function switchFailureOf(output: string, code: number | null): { message: string
     .at(-1)
   if (line !== undefined)
     return { message: line, fromScript: true }
+  // 没有结论就是不知道远端目录成了什么样：不能当成普通失败，那会按「没动过」去重连。
   const tail = output.trim().split('\n').slice(-3).join(' | ')
-  return { message: `REMOTE_CORE_SWITCH_FAILED: 切换脚本失败（exit ${code ?? '?'}）${tail === '' ? '' : `：${tail}`}`, fromScript: false }
+  return { message: `REMOTE_CORE_SWITCH_UNRECOVERED: 切换脚本没有给出结论（exit ${code ?? '?'}）${tail === '' ? '' : `：${tail}`}`, fromScript: false }
 }
 
 /** 切换没成功时把旧核心重新拉起来：目录已经换回去了，只需要重建连接。 */
-async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease, identity: string, taskId: string): Promise<string> {
+async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease, identity: string, taskId: string, activeEntry: string): Promise<string> {
   if (!machine.switchLeaseValid(lease))
     return '连接已被重置，未重建连接'
   // 档案身份变了就不要再连：现在连上去的是另一台机器。
   if (profileIdentityOf(machine.profile(machineId)) !== identity)
     return '远端机器配置已变更，未重建连接'
   try {
-    await machine.reconnect(machineId, { profileSync: false, lease })
+    // 用探测到的旧核心入口：旧副本可能是 npm 布局，按默认的 ZIP 布局去找会找不到。
+    await machine.reconnect(machineId, { profileSync: false, lease, dshBin: switchEntryPath(switchEntryRelative(activeEntry, 'dsh')) })
     tasks.append(taskId, 'rollback', '旧版本已重新连接')
     return '旧版本已重新连接'
   }

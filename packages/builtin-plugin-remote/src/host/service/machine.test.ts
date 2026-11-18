@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
     switchOwner?: { machineId: string, generation: number }
     session?: { close: () => Promise<void> }
     connectAttempting?: Promise<void>
+    installing?: Promise<unknown>
+    link?: { machineId: string, tunnelBaseUrl: string }
   }>(),
   emitStatus: vi.fn(),
   transportConnect: vi.fn(),
@@ -127,5 +129,24 @@ describe('切换独占机器', () => {
     await machine.disconnect(machineId)
 
     await expect(machine.beginSwitch(machineId)).rejects.toThrow(/reconnecting/)
+  })
+
+  it('安装请求在等断开时就占住机器', async () => {
+    const { machine } = await import('./machine')
+    mocks.machineStates.set(machineId, {
+      generation: 0,
+      phase: 'connected',
+      link: { machineId, tunnelBaseUrl: 'http://127.0.0.1:4000' },
+    })
+
+    const first = machine.install(machineId, { force: true })
+    // 断开还没走完，安装就已经登记好了：切换进不来，后来的请求也复用同一个。
+    const tracked = mocks.machineStates.get(machineId)?.installing
+    expect(tracked).toBeDefined()
+    const second = machine.install(machineId)
+    expect(mocks.machineStates.get(machineId)?.installing).toBe(tracked)
+    await expect(machine.beginSwitch(machineId)).rejects.toThrow(/already connecting or installing/)
+
+    await Promise.all([first.catch(() => undefined), second.catch(() => undefined)])
   })
 })

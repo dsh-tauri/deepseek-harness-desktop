@@ -22,8 +22,6 @@ export interface MachineState {
   phase: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'switching' | 'reconnecting' | 'given-up'
   connecting?: Promise<RemoteLink>
   installing?: Promise<RemoteInstallResult>
-  /** 安装已占位（可能还在等断开）：核心切换要躲开这段等待。 */
-  installReserved?: boolean
   session?: RemoteSession
   tunnel?: RemoteStreamHandle
   gateway?: MachineGatewayHandle

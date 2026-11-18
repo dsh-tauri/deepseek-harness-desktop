@@ -21,7 +21,7 @@ import { compareVersions, isCoreUnsupported, MIN_SUPPORTED_CORE_VERSION } from '
 import { formatBytes } from '@/utils/format-bytes'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
-import { RemoteCoreList } from './components/remote-core'
+import { RemoteCoreList, RemoteCoreTasksProvider } from './components/remote-core'
 
 /** 迁移进度面板保留的日志行数 */
 const PROGRESS_LOG_LIMIT = 8
@@ -732,9 +732,12 @@ export function ConfigCore() {
           </Panel.Loadable>
         </>
       </If>
-      <If cond={selectedMachineId !== undefined}>
-        <RemoteCoreList machineId={selectedMachineId!} />
-      </If>
+      {/* 任务记录放在远端清单外面：切到本机再切回这台机器，未决任务的记录还在。 */}
+      <RemoteCoreTasksProvider>
+        <If cond={selectedMachineId !== undefined}>
+          <RemoteCoreList machineId={selectedMachineId!} />
+        </If>
+      </RemoteCoreTasksProvider>
     </div>
   )
 }

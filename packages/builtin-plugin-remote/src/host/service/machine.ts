@@ -211,7 +211,7 @@ export const machine = defineService({
     // 否则它们可能在目录互换前连回旧核心，或让两次切换互相踩。
     if (target.switchOwner !== undefined)
       throw new RemoteError('machine-busy', machineId, 'machine is already switching the core')
-    if (target.connecting !== undefined || target.installing !== undefined || target.installReserved === true)
+    if (target.connecting !== undefined || target.installing !== undefined)
       throw new RemoteError('machine-busy', machineId, 'machine is already connecting or installing')
     // 自动重连已经跑起来了就不能切：它可能在切换停机或互换目录期间把旧实例拉起来。
     if (target.connectAttempting !== undefined)
@@ -380,26 +380,22 @@ export const machine = defineService({
     refuseWhileSwitching(machineId, target)
     refuseWhileReconnecting(machineId, target)
     if (target.installing === undefined) {
-      // 占位要先登记：强装要先等断开，这段等待里不能让核心切换插进来。
-      target.installReserved = true
-      try {
+      // 安装 Promise 在第一次 await 之前就登记好：强装要先等断开，
+      // 这段等待里不能让核心切换插进来；后来的安装请求复用同一个，
+      // 不会各自去等断开，也不会把前一个的占位清掉。
+      const attempt = (async () => {
         if (options.force === true && target.link !== undefined)
           await machine.disconnect(machineId)
         target.progress = { phase: 'installing' }
         emit(machineId)
-        const attempt = performInstall(machineId, profile, options, signal)
-        const tracked: Promise<RemoteInstallResult> = attempt.finally(() => {
-          const current = machineStates.get(machineId)
-          if (current?.installing === tracked)
-            delete current.installing
-        })
-        target.installing = tracked
-      }
-      finally {
+        return await performInstall(machineId, profile, options, signal)
+      })()
+      const tracked: Promise<RemoteInstallResult> = attempt.finally(() => {
         const current = machineStates.get(machineId)
-        if (current !== undefined)
-          delete current.installReserved
-      }
+        if (current?.installing === tracked)
+          delete current.installing
+      })
+      target.installing = tracked
     }
     return target.installing
   },
