@@ -502,8 +502,6 @@
   "core.downloaded_toast": "Downloaded version {{version}}",
   "core.download_failed": "Failed to download the core version",
   "core.downloading": "Downloading core version {{version}}",
-  "core.downloading_hint": "Downloading and extracting {{version}}, please wait…",
-  "core.download_close": "Close",
   "core.download_switch": "Switch to this version",
   "core.open_dir": "Open folder",
   "core.open_dir_failed": "Failed to open the folder",

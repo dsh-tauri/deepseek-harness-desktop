@@ -502,8 +502,6 @@
   "core.downloaded_toast": "已下载版本 {{version}}",
   "core.download_failed": "下载核心版本失败",
   "core.downloading": "正在下载核心版本 {{version}}",
-  "core.downloading_hint": "正在下载并解压 {{version}}，请稍候…",
-  "core.download_close": "关闭",
   "core.download_switch": "切换到此版本",
   "core.open_dir": "打开目录",
   "core.open_dir_failed": "打开目录失败",
