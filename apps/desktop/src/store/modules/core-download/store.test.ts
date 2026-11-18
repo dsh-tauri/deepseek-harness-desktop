@@ -132,6 +132,47 @@ describe('核心下载的进度气泡', () => {
     warn.mockRestore()
   })
 
+  it('旧气泡的切换入口不会作用到后来开始的新版本', async () => {
+    mocks.invoke.mockResolvedValueOnce(CORE)
+    await coreDownload.start('dsh-0.2.3', '0.2.3')
+    const stale = lastToastCall()
+
+    mocks.invoke.mockReturnValue(new Promise(() => {}))
+    mocks.listeners.length = 0
+    void coreDownload.start('dsh-0.2.4', '0.2.4')
+    await vi.waitFor(() => expect(mocks.listeners.length).toBe(1))
+
+    mocks.invoke.mockClear()
+    stale.options.actionProps!.onPress()
+    await Promise.resolve()
+
+    expect(mocks.invoke).not.toHaveBeenCalledWith('set_active_core', expect.anything())
+    expect(mocks.restart).not.toHaveBeenCalled()
+    expect(coreDownload.task?.tag).toBe('dsh-0.2.4')
+  })
+
+  it('旧气泡的重试入口不会重下后来开始的新版本', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.invoke.mockRejectedValueOnce(new Error('CORE_DOWNLOAD_FAILED: network unreachable'))
+    await coreDownload.start('dsh-0.2.3', '0.2.3')
+    const stale = lastToastCall()
+
+    mocks.invoke.mockReturnValue(new Promise(() => {}))
+    mocks.listeners.length = 0
+    void coreDownload.start('dsh-0.2.4', '0.2.4')
+    await vi.waitFor(() => expect(mocks.listeners.length).toBe(1))
+    emitProgress(30, '已下载 9.0 MB / 38.0 MB')
+
+    mocks.invoke.mockClear()
+    stale.options.actionProps!.onPress()
+    await Promise.resolve()
+
+    expect(mocks.invoke).not.toHaveBeenCalledWith('download_core', expect.anything())
+    expect(coreDownload.task?.tag).toBe('dsh-0.2.4')
+    expect(coreDownload.task?.percentage).toBe(30)
+    error.mockRestore()
+  })
+
   it('进度气泡被可见限额淘汰后重建，而不是继续更新死 key', async () => {
     mocks.invoke.mockReturnValue(new Promise(() => {}))
     void coreDownload.start('dsh-0.2.3', '0.2.3')
@@ -166,7 +207,7 @@ describe('核心下载的切换', () => {
     mocks.toast.mockClear()
 
     mocks.invoke.mockRejectedValueOnce(new Error('CORE_ACTIVATE_FAILED'))
-    await coreDownload.activate()
+    await coreDownload.activate('dsh-0.2.3')
 
     expect(mocks.restart).not.toHaveBeenCalled()
     expect(coreDownload.task?.status).toBe('failed')

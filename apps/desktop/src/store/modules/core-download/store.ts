@@ -35,9 +35,10 @@ export const coreDownload = defineStore({
       await this.run()
     },
 
-    async retry() {
+    /** 重试只针对提示对应的那次下载：任务已被后来的下载替换时不再代为重试 */
+    async retry(tag: string) {
       const current = this.task
-      if (!current || current.status !== 'failed')
+      if (!current || current.tag !== tag || current.status !== 'failed')
         return
       this.task = { ...current, status: 'running', percentage: 0, detail: '', error: '' }
       this.syncProgress()
@@ -110,12 +111,13 @@ export const coreDownload = defineStore({
       const current = this.task
       if (!current)
         return
+      const { tag } = current
       toast(i18next.t('core.downloaded_toast', { version: current.version }), {
         variant: 'success',
         timeout: 10_000,
         actionProps: {
           children: i18next.t('core.download_switch'),
-          onPress: () => void this.activate(),
+          onPress: () => void this.activate(tag),
         },
       })
     },
@@ -124,21 +126,22 @@ export const coreDownload = defineStore({
       const current = this.task
       if (!current)
         return
+      const { tag } = current
       toast(i18next.t('core.download_failed'), {
         variant: 'danger',
         timeout: 10_000,
         description: current.error,
         actionProps: {
           children: i18next.t('app.retry'),
-          onPress: () => void this.retry(),
+          onPress: () => void this.retry(tag),
         },
       })
     },
 
     /** 切换到刚下载的核心并重启服务；重启失败由 harness 自身上报 */
-    async activate() {
+    async activate(tag: string) {
       const current = this.task
-      if (!current || current.status !== 'success')
+      if (!current || current.tag !== tag || current.status !== 'success')
         return
       this.task = { ...current, status: 'switching' }
       try {
