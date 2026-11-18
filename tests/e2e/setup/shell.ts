@@ -49,9 +49,20 @@ export const PROFILE_MIGRATE_CANCEL = '[data-testid="dsh-profile-migrate-cancel"
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
-/** 冷装配（真实下载 Node + dsh）的等待上限。 */
-export const ASSEMBLY_TIMEOUT_MS = process.platform === 'darwin' ? 300_000 : 900_000
-export const WINDOW_TIMEOUT_MS = 30_000
+/**
+ * 冷装配（真实下载 Node + dsh）的等待上限。
+ *
+ * 曾经 darwin 只有 300s、其它平台 900s——最慢的机器反而给了最紧的预算，
+ * macos-26 上 boot/theme 就卡在这个 300s 上，装配本身完全正常（同机
+ * profile-window 34s 就跑完了）。统一成 900s，与其它平台同口径。
+ */
+export const ASSEMBLY_TIMEOUT_MS = 900_000
+/**
+ * 单次「等界面/等服务就绪」的上限。这些等待是在与 Rust lane 抢 CPU 的共享 runner 上
+ * 等首帧，30s 会把正常启动判成失败（同机 profile-window 34s 才跑完）。
+ * 它只是等待上限，不做性能断言：产品真坏会由断言而不是超时暴露。
+ */
+export const WINDOW_TIMEOUT_MS = 120_000
 export const SETTLE_MS = 3_000
 
 /**

@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, completePreinstall, diagnose, invoke, SHELL_ROOT, startShellApp } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, completePreinstall, diagnose, invoke, SHELL_ROOT, startShellApp, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 declare global {
   interface Window {
@@ -125,25 +125,25 @@ for (const preference of ['light'] as const) {
       })
     }
     try {
-      await page.locator(SHELL_ROOT).waitFor({ state: 'visible', timeout: 15000 })
+      await page.locator(SHELL_ROOT).waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
       await page.context().addInitScript(recordThemeFrames)
       await page.emulateMedia({ colorScheme: null })
       await nativeSystemTheme(app.output(), preference === 'light')
       await completePreinstall(page, ASSEMBLY_TIMEOUT_MS)
       const info = await invoke<{ service_url: string, data_dir: string }>(page, 'get_runtime_info')
       await expect.poll(() => new URL(page.url()).origin, { message: '产品必须自动导航到真实 Harness 文档' }).toBe(new URL(info.service_url).origin)
-      await page.locator('div[class$="_frame"]').waitFor({ state: 'visible', timeout: 60000 })
+      await page.locator('div[class$="_frame"]').waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
       const background = preference === 'light' ? 'rgb(255, 255, 255)' : 'rgb(21, 21, 23)'
       const bootFrames = await page.evaluate(() => window.__dshThemeFrames)
       expect(bootFrames.length, '必须采集真实原生文档首帧').toBeGreaterThan(0)
       expect(bootFrames.filter(frame => frame.background !== background), '原生启动至DSH首屏不能出现相反画布帧').toEqual([])
       const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/, exact: true })
       if (!await accountMenu.isVisible())
-        await page.getByTestId('dsh-navbar-sidebar-toggle').click({ timeout: 5000 })
+        await page.getByTestId('dsh-navbar-sidebar-toggle').click({ timeout: WINDOW_TIMEOUT_MS })
       await accountMenu.click()
       await page.getByRole('menuitem', { name: /设置|Settings/, exact: true }).click()
       const dialog = page.getByRole('dialog', { name: /设置|Settings/, exact: true })
-      await dialog.getByRole('button', { name: preference === 'light' ? /浅色|Light/ : /深色|Dark/, exact: true }).waitFor({ timeout: 30000 })
+      await dialog.getByRole('button', { name: preference === 'light' ? /浅色|Light/ : /深色|Dark/, exact: true }).waitFor({ timeout: WINDOW_TIMEOUT_MS })
       await expect.poll(() => dialog.getByRole('button', { name: preference === 'light' ? /浅色|Light/ : /深色|Dark/, exact: true }).getAttribute('aria-pressed'), { message: '设置面板必须完成持久主题水合' }).toBe('true')
       const frames = await page.evaluate(() => window.__dshThemeFrames)
       expect(frames.length, '必须采集真实原生文档首帧至就绪阶段').toBeGreaterThan(0)
@@ -154,9 +154,9 @@ for (const preference of ['light'] as const) {
       await expect.poll(() => systemButton.getAttribute('aria-pressed'), { message: '系统主题按钮必须完成选中状态更新' }).toBe('true')
       await captureTheme('after-system')
       await expect.poll(() => readFile(patchFile, 'utf8'), { message: '跟随系统偏好必须先完成真实持久化' }).toContain('preference: system')
-      await expect.poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches), { timeout: 15000, message: '跟随系统必须在原生主题监控周期内恢复真实系统主题' }).toBe(preference === 'light')
+      await expect.poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches), { timeout: WINDOW_TIMEOUT_MS, message: '跟随系统必须在原生主题监控周期内恢复真实系统主题' }).toBe(preference === 'light')
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.dsThemeSource), { message: '初始化交接后必须允许用户选择跟随系统' }).toBe('system')
-      await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor), { timeout: 15000, message: '用户切换跟随系统必须在原生主题监控周期内切换画布色' }).toBe(preference === 'light' ? 'rgb(21, 21, 23)' : 'rgb(255, 255, 255)')
+      await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor), { timeout: WINDOW_TIMEOUT_MS, message: '用户切换跟随系统必须在原生主题监控周期内切换画布色' }).toBe(preference === 'light' ? 'rgb(21, 21, 23)' : 'rgb(255, 255, 255)')
       await captureTheme('before-opposite')
       const oppositeButton = dialog.getByRole('button', { name: preference === 'light' ? /深色|Dark/ : /浅色|Light/, exact: true })
       await oppositeButton.click()
