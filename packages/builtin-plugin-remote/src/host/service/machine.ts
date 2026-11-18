@@ -170,6 +170,7 @@ export const machine = defineService({
     const target = ensureState(machineId)
     if (target.link !== undefined)
       return target.link
+    refuseWhileSwitching(machineId, target)
     refuseWhileReconnecting(machineId, target)
     if (target.connecting === undefined) {
       target.phase = 'connecting'
@@ -206,6 +207,10 @@ export const machine = defineService({
 
   async beginSwitch(machineId: MachineId): Promise<CoreSwitchLease> {
     const target = ensureState(machineId)
+    // 切换期间这台机器归切换任务独占：普通连接、安装和另一次切换都要让开，
+    // 否则它们可能在目录互换前连回旧核心，或让两次切换互相踩。
+    if (target.switchOwner !== undefined)
+      throw new RemoteError('machine-busy', machineId, 'machine is already switching the core')
     if (target.connecting !== undefined || target.installing !== undefined)
       throw new RemoteError('machine-busy', machineId, 'machine is already connecting or installing')
     // 自动重连已经跑起来了就不能切：它可能在切换停机或互换目录期间把旧实例拉起来。
@@ -233,19 +238,36 @@ export const machine = defineService({
       tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
       session === undefined ? undefined : session.close().catch(() => undefined),
     ])
-    return { machineId, generation: target.generation }
+    const lease: CoreSwitchLease = { machineId, generation: target.generation }
+    target.switchOwner = lease
+    return lease
+  },
+
+  /** 切换任务结束后把机器交还给普通连接。 */
+  endSwitch(lease: CoreSwitchLease): void {
+    const target = machineStates.get(lease.machineId)
+    if (target === undefined || target.switchOwner?.generation !== lease.generation)
+      return
+    delete target.switchOwner
+    emit(lease.machineId)
   },
 
   /** 切换租约是否仍然有效：用户断开、配置变更或插件停用都会让它失效。 */
   switchLeaseValid(lease: CoreSwitchLease): boolean {
     const target = machineStates.get(lease.machineId)
-    return target !== undefined && target.generation === lease.generation && target.phase === 'switching'
+    return target !== undefined
+      && target.generation === lease.generation
+      && target.phase === 'switching'
+      && target.switchOwner?.generation === lease.generation
   },
 
-  async reconnect(machineId: MachineId, options: { profileSync?: boolean } = {}): Promise<RemoteLink> {
+  async reconnect(machineId: MachineId, options: { profileSync?: boolean, lease?: CoreSwitchLease } = {}): Promise<RemoteLink> {
     const profile = requireProfile(machineId)
     requireCapabilities(machineId, profile, ['exec', 'stream'])
     const target = ensureState(machineId)
+    // 切换独占期间只有持有租约的切换任务能重建连接。
+    if (target.switchOwner !== undefined && target.switchOwner.generation !== options.lease?.generation)
+      throw new RemoteError('machine-busy', machineId, 'machine is switching the core')
     if (target.link !== undefined)
       return target.link
     if (target.connecting !== undefined)
@@ -300,6 +322,7 @@ export const machine = defineService({
     const profile = requireProfile(machineId)
     requireCapabilities(machineId, profile, ['exec'])
     const target = ensureState(machineId)
+    refuseWhileSwitching(machineId, target)
     refuseWhileReconnecting(machineId, target)
     if (target.installing === undefined) {
       if (options.force === true && target.link !== undefined)
@@ -851,6 +874,13 @@ function stopReconnect(target: MachineState): void {
   if (target.reconnect?.timer !== undefined)
     clearTimeout(target.reconnect.timer)
   delete target.reconnect
+}
+
+/** 切换独占期间拒绝普通连接与安装：它们会跟切换任务抢这台机器。 */
+function refuseWhileSwitching(machineId: MachineId, target: MachineState): void {
+  if (target.switchOwner === undefined)
+    return
+  throw new RemoteError('machine-busy', machineId, 'machine is switching the core; wait for the switch to finish')
 }
 
 function refuseWhileReconnecting(machineId: MachineId, target: MachineState): void {

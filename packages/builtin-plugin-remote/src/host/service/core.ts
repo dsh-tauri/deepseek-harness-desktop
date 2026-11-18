@@ -307,7 +307,7 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
       tasks.append(taskId, 'switch', `核心已切换至 ${target.version}，但连接已被重置`, { terminal: 'success' })
       return
     }
-    await machine.reconnect(machineId, { profileSync: false })
+    await machine.reconnect(machineId, { profileSync: false, lease })
     tasks.append(taskId, 'switch', `核心已切换至 ${target.version}`, { terminal: 'success' })
   }
   catch (error) {
@@ -331,6 +331,9 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
   finally {
     if (session !== undefined)
       await session.close().catch(() => undefined)
+    // 任务结束（成功、失败或恢复结束）后把机器交还给普通连接。
+    if (lease !== undefined)
+      machine.endSwitch(lease)
   }
 }
 
@@ -375,7 +378,7 @@ async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease | und
   if (lease !== undefined && !machine.switchLeaseValid(lease))
     return '连接已被重置，未重建连接'
   try {
-    await machine.reconnect(machineId, { profileSync: false })
+    await machine.reconnect(machineId, { profileSync: false, lease })
     tasks.append(taskId, 'rollback', '旧版本已重新连接')
     return '旧版本已重新连接'
   }

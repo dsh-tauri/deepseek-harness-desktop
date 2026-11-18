@@ -31,6 +31,8 @@ export interface MachineState {
   gatewayExhausted?: boolean
   progress?: RemoteProgress
   reconnect?: ReconnectState
+  /** 正在进行的核心切换：切换期间这台机器的连接操作归切换任务独占。 */
+  switchOwner?: CoreSwitchLease
   preferredTunnelPort?: number
   preferredGatewayPort?: number
   authMethod?: RemoteAuthMethod

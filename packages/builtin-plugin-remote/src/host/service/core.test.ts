@@ -55,6 +55,7 @@ vi.mock('./machine', () => ({
   machine: {
     openSession: vi.fn(),
     beginSwitch: vi.fn(),
+    endSwitch: vi.fn(),
     profile: vi.fn(),
     profileName: vi.fn(),
     reconnect: vi.fn(),
@@ -670,7 +671,7 @@ describe('remote core contract', () => {
 
     expect(machine.beginSwitch).toHaveBeenCalledWith(machineId)
     // 切换只重建连接，不写远端档案。
-    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false })
+    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false, lease: { machineId, generation: 1 } })
     expect(commands).toHaveLength(1)
     expect(commands[0]).toContain('TARGET="$DEPS/dsh-0.2.3-43000000000"')
     expect(commands[0]).toContain('BACKUP="$DEPS/dsh-0.2.2-rc.1"')
@@ -716,7 +717,7 @@ describe('remote core contract', () => {
 
     expect(commands).toHaveLength(1)
     expect(machine.reconnect).toHaveBeenCalledTimes(1)
-    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false })
+    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false, lease: { machineId, generation: 1 } })
     const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
     expect(failed?.reason).toContain('远端实例仍在运行')
     expect(failed?.reason).toContain('旧版本已重新连接')
