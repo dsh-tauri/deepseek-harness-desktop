@@ -88,6 +88,23 @@ describe('reconcileSwitcher（切换语义）', () => {
     expect(next).toEqual({ activeId: 'm1', pendingId: null, activeTunnelUrl: 'http://127.0.0.1:4001', switching: false })
   })
 
+  it('切换发起的重连期间保持不可交互，连回来之后才恢复', () => {
+    const reconnecting = reconcileSwitcher(
+      { activeId: 'm1', pendingId: null, activeTunnelUrl: 'http://127.0.0.1:4001', switching: true },
+      [machineOf({ id: 'm1', state: 'connecting' })],
+    )
+    expect(reconnecting.switching).toBe(true)
+    expect(reconnecting.activeTunnelUrl).toBe('http://127.0.0.1:4001')
+  })
+
+  it('普通连接不受影响：没有切换过就不显示切换遮罩', () => {
+    const connecting = reconcileSwitcher(
+      { activeId: 'm1', pendingId: null, activeTunnelUrl: 'http://127.0.0.1:4001', switching: false },
+      [machineOf({ id: 'm1', state: 'connecting' })],
+    )
+    expect(connecting.switching).toBe(false)
+  })
+
   it('待切换机器就绪 → 升为活动；放弃或消失 → 撤销待切换留在本地', () => {
     const promoted = reconcileSwitcher(
       { activeId: null, pendingId: 'm1', activeTunnelUrl: '', switching: false },

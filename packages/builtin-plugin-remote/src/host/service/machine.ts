@@ -249,6 +249,9 @@ export const machine = defineService({
     if (target === undefined || target.switchOwner?.generation !== lease.generation)
       return
     delete target.switchOwner
+    // 切换结束却没有重建连接时，机器不能停在「切换中」：界面会一直挡着。
+    if (target.phase === 'switching')
+      target.phase = 'disconnected'
     emit(lease.machineId)
   },
 

@@ -273,11 +273,13 @@ export function reconcileSwitcher(prev: SwitcherTargets, machines: readonly Remo
     // 不能退回本机内容，否则用户会在毫不知情的情况下操作本机核心。
     switching = true
   }
-  else {
+  else if (active.state === 'connected') {
     switching = false
-    if (active.state === 'connected' && active.tunnelBaseUrl !== undefined)
+    if (active.tunnelBaseUrl !== undefined)
       activeTunnelUrl = active.tunnelBaseUrl
   }
+  // 重连中保持原样：切换发起的重连连回来之前，遮罩不能撤——
+  // 远端页面这时还是失效的，撤了就会让人对着旧页面继续操作。
   const pending = machines.find(machine => machine.id === pendingId)
   if (pending === undefined || pending.state === 'given-up') {
     pendingId = null

@@ -723,6 +723,27 @@ describe('remote core contract', () => {
     expect(failed?.reason).toContain('旧版本已重新连接')
   })
 
+  it('does not reconnect when the switch fails before taking the machine over', async () => {
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+    ])
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    expect(machine.beginSwitch).not.toHaveBeenCalled()
+    // 连接是用户自己的状态：还没动过这台机器，就不该替用户重连。
+    expect(machine.reconnect).not.toHaveBeenCalled()
+  })
+
   it('does not reconnect when the switch could not restore the old core', async () => {
     const session = sessionWithRemote([
       {

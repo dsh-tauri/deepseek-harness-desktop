@@ -309,6 +309,11 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
       tasks.append(taskId, 'switch', `核心已切换至 ${target.version}，但连接已被重置`, { terminal: 'success' })
       return
     }
+    // 配置在互换目录期间又变了：目录已经换好，但不能拿新配置去连。
+    if (profileIdentityOf(machine.profile(machineId)) !== identity) {
+      tasks.append(taskId, 'switch', `核心已切换至 ${target.version}，但远端机器配置已变更，未重建连接`, { terminal: 'success' })
+      return
+    }
     await machine.reconnect(machineId, { profileSync: false, lease })
     tasks.append(taskId, 'switch', `核心已切换至 ${target.version}`, { terminal: 'success' })
   }
@@ -326,7 +331,9 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
       tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
       return
     }
-    const recovery = switched ? '' : await recoverOldCore(machineId, lease, taskId)
+    // 只有真的动过这台机器才需要恢复：切换在拿到所有权之前就失败的话，
+    // 连接是用户自己的状态，不能替他重连（那会把用户刚做的断开撤销掉）。
+    const recovery = switched || lease === undefined ? '' : await recoverOldCore(machineId, lease, taskId)
     const reason = `${normalizeSwitchFailure(original)}${recovery === '' ? '' : `；${recovery}`}`
     tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
   }
@@ -376,8 +383,8 @@ function switchFailureOf(output: string, code: number | null): string {
 }
 
 /** 切换没成功时把旧核心重新拉起来：目录已经换回去了，只需要重建连接。 */
-async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease | undefined, taskId: string): Promise<string> {
-  if (lease !== undefined && !machine.switchLeaseValid(lease))
+async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease, taskId: string): Promise<string> {
+  if (!machine.switchLeaseValid(lease))
     return '连接已被重置，未重建连接'
   try {
     await machine.reconnect(machineId, { profileSync: false, lease })
