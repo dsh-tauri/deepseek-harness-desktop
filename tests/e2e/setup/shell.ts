@@ -49,8 +49,11 @@ export const PROFILE_MIGRATE_CANCEL = '[data-testid="dsh-profile-migrate-cancel"
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
-/** 冷装配（真实下载 Node + dsh）的等待上限。 */
-export const ASSEMBLY_TIMEOUT_MS = process.platform === 'darwin' ? 300_000 : 900_000
+/**
+ * 冷装配（真实下载 Node + dsh）的等待上限。macOS runner 与 Rust lane 抢 CPU，
+ * 300s 会在正常装配上先切断，和用例级上限撞在一起还会被误报成测试超时。
+ */
+export const ASSEMBLY_TIMEOUT_MS = 900_000
 /**
  * 单次「等界面/等服务就绪」的上限。这些等待是在共享 runner 上等首帧与核心启动，
  * 30s 会让慢机器把正常启动判成失败（macOS 跑完整套能到二十多分钟）。
