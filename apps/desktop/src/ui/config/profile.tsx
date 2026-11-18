@@ -1,8 +1,8 @@
 import type { Profile } from '@/types'
 import { CopyArrowRight, Plus } from '@gravity-ui/icons'
-import { AlertDialog, Button, Checkbox, Chip, Description, Input, Label, Switch } from '@heroui/react'
+import { AlertDialog, Button, Checkbox, Chip, Description, Input, Label, ListBox, Select, Switch } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
-import { useToggle } from '@reause/core'
+import { useToggle, useWatch } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
@@ -15,6 +15,7 @@ import { Modal } from '@/components/modal'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { useInvalidateOnSettingUpdated } from '@/hooks/use-invalidate-on-setting-updated'
+import { loadRemoteMachines } from '@/hooks/use-remote'
 import { store } from '@/store'
 import { waitForHarnessStopped } from '@/store/modules/harness'
 import { ConfigBackup } from '@/ui/config/backup'
@@ -22,8 +23,20 @@ import { ProfileMigrateDialog } from '@/ui/dialog/profile-migrate'
 import { normalizeProfileId } from '@/utils/profile-id'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
+import { RemoteProfileSection } from './components/remote-profile'
 
 type ProfileView = 'list' | { profile: string }
+
+/** 档案作用域：本机，或某台远端机器 */
+const LOCAL_TARGET_ID = 'local'
+/**
+ * 远端机器在选择器里的前缀。
+ *
+ * 远端机器的 id 来自 SSH 配置里的 Host 名，用户完全可以把一台机器叫 `local`。
+ * 选择值里带上前缀，本机与远端就落在两个命名空间里；查询时再把前缀去掉，
+ * 还原成机器自身的 id。
+ */
+const REMOTE_TARGET_PREFIX = 'remote:'
 
 /** 宿主档案错误的 `CODE` → 提示 key（错误串是 `CODE: 详情`，详见 `service::profile`） */
 const PROFILE_ERROR_KEYS: Record<string, string> = {
@@ -114,6 +127,22 @@ export function ConfigProfile() {
   const [advanced, toggleAdvanced] = useToggle()
   const [name, setName] = useState('')
   const [activeView, setActiveView] = useState<ProfileView>('list')
+
+  // —— 档案作用域 ——
+  // 档案页一次只展示一个作用域：本机（桌面壳提供完整功能），或某台远端机器（只读视图）。
+  const [targetId, setTargetId] = useState(LOCAL_TARGET_ID)
+  const remoteMachinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines })
+  const remoteMachines = remoteMachinesQuery.data?.machines
+  /** 选择值里的远端前缀只用于界面区分，查询时还原成机器自身的 id */
+  const selectedMachineId = targetId.startsWith(REMOTE_TARGET_PREFIX) ? targetId.slice(REMOTE_TARGET_PREFIX.length) : undefined
+  const isLocalTarget = selectedMachineId === undefined
+  const selectedMachine = remoteMachines?.find(machine => machine.id === selectedMachineId)
+
+  // 选中的远端机器消失（被移除或远端功能关闭）时回到本机作用域，避免停在空视图上。
+  useWatch([remoteMachines, targetId], () => {
+    if (selectedMachineId !== undefined && !remoteMachines?.some(machine => machine.id === selectedMachineId))
+      setTargetId(LOCAL_TARGET_ID)
+  })
 
   // 克隆档案：命名对话框状态
   const [cloning, setCloning] = useState<{ sourceId: string, sourceName: string } | null>(null)
@@ -366,180 +395,214 @@ export function ConfigProfile() {
     <div className="space-y-3">
       <Panel.Header
         title={t('profiles.title')}
-        description={t('profiles.tooltip')}
+        description={isLocalTarget ? t('profiles.tooltip') : t('profiles.remote_tooltip')}
         testId="dsh-config-panel-title"
         action={(
           <div className="flex shrink-0 items-center gap-3">
-            <Switch
-              size="sm"
-              isSelected={advanced}
-              onChange={() => toggleAdvanced()}
-              aria-label={t('profiles.advanced_options')}
+            <Select
+              variant="secondary"
+              className="w-44"
+              selectedKey={targetId}
+              onSelectionChange={key => setTargetId(String(key))}
+              aria-label={t('core.scope')}
             >
-              <Switch.Content className="gap-2">
-                <Switch.Control>
-                  <Switch.Thumb />
-                </Switch.Control>
-                <span className="text-xs font-medium text-muted">{t('profiles.advanced_options')}</span>
-              </Switch.Content>
-            </Switch>
-            <Button
-              data-testid="dsh-profile-migrate-open"
-              size="sm"
-              variant="primary"
-              isDisabled={migrateBlocked}
-              onPress={() => void openMigrateDialog()}
-            >
-              <CopyArrowRight className="size-3.5" />
-              {t('profiles.migrate')}
-            </Button>
+              <Select.Trigger data-testid="dsh-config-profile-target">
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  <ListBox.Item id={LOCAL_TARGET_ID} textValue={t('core.local')}>
+                    {t('core.local')}
+                  </ListBox.Item>
+                  {remoteMachines?.map(machine => (
+                    <ListBox.Item id={`${REMOTE_TARGET_PREFIX}${machine.id}`} key={machine.id} textValue={machine.name}>
+                      {machine.name}
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
+            <If cond={isLocalTarget}>
+              <Switch
+                size="sm"
+                isSelected={advanced}
+                onChange={() => toggleAdvanced()}
+                aria-label={t('profiles.advanced_options')}
+              >
+                <Switch.Content className="gap-2">
+                  <Switch.Control>
+                    <Switch.Thumb />
+                  </Switch.Control>
+                  <span className="text-xs font-medium text-muted">{t('profiles.advanced_options')}</span>
+                </Switch.Content>
+              </Switch>
+            </If>
+            <If cond={isLocalTarget}>
+              <Button
+                data-testid="dsh-profile-migrate-open"
+                size="sm"
+                variant="primary"
+                isDisabled={migrateBlocked}
+                onPress={() => void openMigrateDialog()}
+              >
+                <CopyArrowRight className="size-3.5" />
+                {t('profiles.migrate')}
+              </Button>
+            </If>
           </div>
         )}
       />
 
-      {/* 加载 / 失败 / 列表 */}
-      <Panel.Loadable loading={loading} error={error}>
-        <div className="flex flex-col gap-4">
-          {profiles.map(profile => (
-            <Item
-              key={profile.id}
-              onClick={() => onActivate(profile.id)}
-              left={(
-                <div className="flex min-w-0 items-baseline gap-1">
-                  <Label className="min-w-0 truncate text-sm font-medium text-ink">
-                    {profile.name}
-                  </Label>
-                  <If cond={profile.builtin}>
-                    <Description className="min-w-0 text-xs text-muted">
-                      <Ellipsis>{t('profiles.default_desc')}</Ellipsis>
-                    </Description>
-                  </If>
-                </div>
-              )}
-              right={(
-                <>
-                  <Checkbox
-                    isSelected={profile.active}
-                    isDisabled={busy}
-                    onChange={() => onActivate(profile.id)}
-                    aria-label={profile.name}
-                    className="shrink-0"
-                  >
-                    <Checkbox.Content>
-                      <Checkbox.Control>
-                        <Checkbox.Indicator />
-                      </Checkbox.Control>
-                    </Checkbox.Content>
-                  </Checkbox>
-                  {/* 单独包一层拦冒泡：行本体是「切换档案」，按钮点击不该顺带切档案 */}
-                  <span onClick={event => event.stopPropagation()}>
-                    <Button
-                      size="sm"
-                      variant="tertiary"
-                      className="h-7"
+      {/* 本机作用域：桌面壳提供完整功能（新建、克隆、切换、删除、迁移） */}
+      <If cond={isLocalTarget}>
+        {/* 加载 / 失败 / 列表 */}
+        <Panel.Loadable loading={loading} error={error}>
+          <div className="flex flex-col gap-4">
+            {profiles.map(profile => (
+              <Item
+                key={profile.id}
+                onClick={() => onActivate(profile.id)}
+                left={(
+                  <div className="flex min-w-0 items-baseline gap-1">
+                    <Label className="min-w-0 truncate text-sm font-medium text-ink">
+                      {profile.name}
+                    </Label>
+                    <If cond={profile.builtin}>
+                      <Description className="min-w-0 text-xs text-muted">
+                        <Ellipsis>{t('profiles.default_desc')}</Ellipsis>
+                      </Description>
+                    </If>
+                  </div>
+                )}
+                right={(
+                  <>
+                    <Checkbox
+                      isSelected={profile.active}
                       isDisabled={busy}
-                      onPress={() => void openProfileWindow(profile)}
+                      onChange={() => onActivate(profile.id)}
+                      aria-label={profile.name}
+                      className="shrink-0"
                     >
-                      {t('profiles.open_window')}
-                    </Button>
-                  </span>
-                  <If cond={advanced}>
-                    <Chip
-                      size="sm"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setActiveView({ profile: profile.id })
-                      }}
-                    >
-                      {t('backup.manage')}
-                    </Chip>
+                      <Checkbox.Content>
+                        <Checkbox.Control>
+                          <Checkbox.Indicator />
+                        </Checkbox.Control>
+                      </Checkbox.Content>
+                    </Checkbox>
+                    {/* 单独包一层拦冒泡：行本体是「切换档案」，按钮点击不该顺带切档案 */}
+                    <span onClick={event => event.stopPropagation()}>
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        className="h-7"
+                        isDisabled={busy}
+                        onPress={() => void openProfileWindow(profile)}
+                      >
+                        {t('profiles.open_window')}
+                      </Button>
+                    </span>
+                    <If cond={advanced}>
+                      <Chip
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setActiveView({ profile: profile.id })
+                        }}
+                      >
+                        {t('backup.manage')}
+                      </Chip>
+                      <Chip
+                        className={busy ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}
+                        color="accent"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          if (!busy)
+                            openCloneDialog(profile)
+                        }}
+                      >
+                        {t('profiles.clone')}
+                      </Chip>
+                    </If>
                     <Chip
                       className={busy ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}
-                      color="accent"
+                      variant="primary"
+                      color="danger"
                       size="sm"
                       onClick={(event) => {
                         event.stopPropagation()
-                        if (!busy)
-                          openCloneDialog(profile)
+                        if (busy)
+                          return
+                        if (profile.builtin) {
+                          onReset(profile.id)
+                          return
+                        }
+                        onRemove(profile.id)
                       }}
                     >
-                      {t('profiles.clone')}
+                      {profile.builtin ? t('profiles.reset') : t('profiles.remove')}
                     </Chip>
-                  </If>
-                  <Chip
-                    className={busy ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}
-                    variant="primary"
-                    color="danger"
-                    size="sm"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      if (busy)
-                        return
-                      if (profile.builtin) {
-                        onReset(profile.id)
-                        return
-                      }
-                      onRemove(profile.id)
-                    }}
-                  >
-                    {profile.builtin ? t('profiles.reset') : t('profiles.remove')}
-                  </Chip>
-                </>
-              )}
-            />
-          ))}
-          {/* 新建档案：内联输入 or 触发入口 */}
-          <If
-            cond={!creating}
-            else={(
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2 px-1">
-                  <Input
-                    autoFocus
-                    variant="secondary"
-                    className="h-8 flex-1"
-                    placeholder={t('profiles.name_placeholder')}
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter')
-                        commitCreate()
-                    }}
+                  </>
+                )}
+              />
+            ))}
+            {/* 新建档案：内联输入 or 触发入口 */}
+            <If
+              cond={!creating}
+              else={(
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2 px-1">
+                    <Input
+                      autoFocus
+                      variant="secondary"
+                      className="h-8 flex-1"
+                      placeholder={t('profiles.name_placeholder')}
+                      value={name}
+                      onChange={e => setName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter')
+                          commitCreate()
+                      }}
+                    />
+                    <Button size="sm" variant="tertiary" className="h-8" onPress={cancelCreate}>
+                      {t('profiles.create_cancel')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="h-8"
+                      isDisabled={!name.trim() || createNameHint !== null || busy}
+                      onPress={commitCreate}
+                    >
+                      {t('profiles.create_confirm')}
+                    </Button>
+                  </div>
+                  <If
+                    cond={createNameHint !== null}
+                    then={(
+                      <p className="px-1 text-xs text-muted">{createNameHint}</p>
+                    )}
                   />
-                  <Button size="sm" variant="tertiary" className="h-8" onPress={cancelCreate}>
-                    {t('profiles.create_cancel')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    className="h-8"
-                    isDisabled={!name.trim() || createNameHint !== null || busy}
-                    onPress={commitCreate}
-                  >
-                    {t('profiles.create_confirm')}
-                  </Button>
                 </div>
-                <If
-                  cond={createNameHint !== null}
-                  then={(
-                    <p className="px-1 text-xs text-muted">{createNameHint}</p>
-                  )}
-                />
-              </div>
-            )}
-          >
-            <Button
-              onClick={startCreate}
-              variant="tertiary"
-              className="flex w-full"
-              isDisabled={busy}
+              )}
             >
-              <Plus className="size-3.5" />
-              <span>{t('profiles.new_profile')}</span>
-            </Button>
-          </If>
-        </div>
-      </Panel.Loadable>
+              <Button
+                onClick={startCreate}
+                variant="tertiary"
+                className="flex w-full"
+                isDisabled={busy}
+              >
+                <Plus className="size-3.5" />
+                <span>{t('profiles.new_profile')}</span>
+              </Button>
+            </If>
+          </div>
+        </Panel.Loadable>
+      </If>
+
+      {/* 远端作用域：只读展示所选机器上的档案 */}
+      {!isLocalTarget && selectedMachine && <RemoteProfileSection machine={selectedMachine} />}
 
       {/* 克隆档案：命名对话框（创建型，accent；可编辑建议名称） */}
       <AlertDialog
