@@ -2,10 +2,11 @@ import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ASSEMBLY_TIMEOUT_MS, completePreinstall, CONFIG_DIALOG, CONFIG_DIALOG_CLOSE, CONFIG_DIALOG_TITLE, CONFIG_NAV_APPLICATION, HEAVY_E2E_ENABLED, installErrorCollector, invoke, MAIN_LABEL, NAVBAR_ITEM_PROFILES, NAVBAR_MENU_CONFIG, pageErrors, PROFILE_MIGRATE_CANCEL, PROFILE_MIGRATE_DIALOG, PROFILE_MIGRATE_OPEN, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
-const app = shellAppScope()
-
 // 克隆档案要复制整份 node_modules，CI 上与 Rust lane 抢盘抢 CPU 时跑不稳（见 HEAVY_E2E_ENABLED）。
+// 作用域注册放在 describe 内：跳过时连装配都不发生，否则它仍会冷启一套应用再被判超时。
 describe.skipIf(!HEAVY_E2E_ENABLED)('nested profile dialog', () => {
+  const app = shellAppScope()
+
   beforeAll(async () => {
     await completePreinstall(app.get().window.page)
   }, ASSEMBLY_TIMEOUT_MS)
