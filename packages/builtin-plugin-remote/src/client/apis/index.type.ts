@@ -3,8 +3,8 @@ export interface PostApiTauriRemoteSettingsResponse { enabled?: false | true, er
 export interface GetApiTauriRemoteSessionRoleResponse { role?: string, remote?: false | true, origin?: string, error?: string }
 export interface GetApiTauriRemoteMachinesResponse {
   enabled?: false | true
-  items?: { id?: string, name?: string, host?: string, port?: number, user?: string, hasPassword?: false | true, hasPassphrase?: false | true, remotePort?: number, profileName?: string, startCommand?: string, color?: string, tintBorder?: false | true, state?: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'reconnecting' | 'given-up', tunnelBaseUrl?: string, lastError?: string, dshMissing?: false | true, progress?: { phase: 'handshake' | 'starting' | 'probing' | 'installing' | 'syncing', attempt?: number, total?: number, item?: string, log?: string }, nextRetryAt?: number, authMethod?: 'agent' | 'key' | 'password' }[]
-  discovered?: { id?: string, name?: string, host?: string, port?: number, user?: string, hasPassword?: false | true, hasPassphrase?: false | true, remotePort?: number, profileName?: string, startCommand?: string, color?: string, tintBorder?: false | true, state?: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'reconnecting' | 'given-up', tunnelBaseUrl?: string, lastError?: string, dshMissing?: false | true, progress?: { phase: 'handshake' | 'starting' | 'probing' | 'installing' | 'syncing', attempt?: number, total?: number, item?: string, log?: string }, nextRetryAt?: number, authMethod?: 'agent' | 'key' | 'password' }[]
+  items?: { id?: string, name?: string, host?: string, port?: number, user?: string, hasPassword?: false | true, hasPassphrase?: false | true, remotePort?: number, profileName?: string, startCommand?: string, color?: string, tintBorder?: false | true, state?: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'switching' | 'reconnecting' | 'given-up', tunnelBaseUrl?: string, lastError?: string, dshMissing?: false | true, progress?: { phase: 'handshake' | 'starting' | 'probing' | 'installing' | 'syncing', attempt?: number, total?: number, item?: string, log?: string }, nextRetryAt?: number, authMethod?: 'agent' | 'key' | 'password' }[]
+  discovered?: { id?: string, name?: string, host?: string, port?: number, user?: string, hasPassword?: false | true, hasPassphrase?: false | true, remotePort?: number, profileName?: string, startCommand?: string, color?: string, tintBorder?: false | true, state?: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'switching' | 'reconnecting' | 'given-up', tunnelBaseUrl?: string, lastError?: string, dshMissing?: false | true, progress?: { phase: 'handshake' | 'starting' | 'probing' | 'installing' | 'syncing', attempt?: number, total?: number, item?: string, log?: string }, nextRetryAt?: number, authMethod?: 'agent' | 'key' | 'password' }[]
   error?: string
 }
 export interface PostApiTauriRemoteMachinesResponse { error?: string }
@@ -28,6 +28,7 @@ export interface GetApiTauriRemoteCoreProfilesResponse { items?: { name: string,
 export type GetApiTauriRemoteCoreProfilesQueryMachineId = string
 export interface GetApiTauriRemoteCoreVersionsResponse { items?: { version: string, tag: string, preview: false | true }[], error?: string }
 export interface PostApiTauriRemoteCoreInstallResponse { taskId?: string, error?: string }
+export interface PostApiTauriRemoteCoreSwitchResponse { taskId?: string, error?: string }
 export interface GetApiTauriRemoteCoreTasksEventsResponse { items?: { taskId: string, seq: number, ts: string, state: 'failed' | 'running' | 'queued' | 'succeeded' | 'cancelled', stage: string, line: string, terminal?: 'failed' | 'success', reason?: string }[], nextSeq?: number, error?: string }
 export type GetApiTauriRemoteCoreTasksEventsQueryTaskId = string
 export type GetApiTauriRemoteCoreTasksEventsQuerySinceSeq = string | number
@@ -153,6 +154,10 @@ export interface PostApiTauriRemoteCoreInstallBody {
   machineId?: string
   tag?: string
   force?: false | true
+}
+export interface PostApiTauriRemoteCoreSwitchBody {
+  machineId?: string
+  slotKey?: string
 }
 export interface PostApiTauriRemoteSyncApplyBody {
   machineId?: string

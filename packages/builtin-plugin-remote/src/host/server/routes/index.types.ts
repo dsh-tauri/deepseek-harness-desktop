@@ -212,6 +212,11 @@ export interface RemoteCoreInstallBody {
   force?: boolean
 }
 
+export interface RemoteCoreSwitchBody {
+  machineId?: string
+  slotKey?: string
+}
+
 export interface RemoteCoreTaskAcceptedResponse {
   taskId?: string
   error?: string

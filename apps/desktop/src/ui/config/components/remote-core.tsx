@@ -2,18 +2,21 @@ import type { RemoteCoreRow, RemoteCoreTarget } from './remote-core.rows'
 import type { GetApiTauriRemoteCoreProfilesResponse } from '@/apis/remote.types'
 import { ChevronRight, Copy, CircleArrowDown as DownloadIcon } from '@gravity-ui/icons'
 import { Button, Checkbox, Chip, Description, Label, Spinner } from '@heroui/react'
+import { useOverlay } from '@overlastic/react'
 import { useToggle } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
-import { getCoreCurrent, getCoreProfiles, getCoreTasksEvents, getCoreVersions, postCoreInstall } from '@/apis/remote'
+import { getCoreCurrent, getCoreProfiles, getCoreTasksEvents, getCoreVersions, postCoreInstall, postCoreSwitch } from '@/apis/remote'
 import { Empty } from '@/components/empty'
 import { Item } from '@/components/item'
+import { Modal } from '@/components/modal'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { loadRemoteMachines } from '@/hooks/use-remote'
 import { writeClipboardText } from '@/utils/clipboard'
+import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 import { buildRemoteCoreRows } from './remote-core.rows'
 
@@ -26,6 +29,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+async function waitForCoreTask(taskId: string, onProgress: (line: string | undefined) => void, failure: string): Promise<void> {
+  for (let attempt = 0; attempt < DOWNLOAD_POLL_LIMIT; attempt++) {
+    const events = await getCoreTasksEvents({ taskId })
+    if (events.error !== undefined)
+      throw new Error(events.error)
+    const items = events.items ?? []
+    onProgress(items.at(-1)?.line)
+    const finished = items.find(item => item.terminal !== undefined)
+    if (finished !== undefined) {
+      if (finished.terminal === 'failed')
+        throw new Error(finished.reason ?? finished.line)
+      return
+    }
+    await sleep(DOWNLOAD_POLL_INTERVAL_MS)
+  }
+  throw new Error(failure)
+}
+
 interface RemoteDownload {
   machineId: string
   tag: string
@@ -35,6 +56,7 @@ interface RemoteDownload {
 export function RemoteCoreList({ machineId }: { machineId: string }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const openDialog = useOverlay(Modal)
 
   const versionsQuery = useQuery({
     queryKey: queryKeys.remoteCoreVersions,
@@ -63,10 +85,11 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       return response.items ?? []
     },
   })
-  const machinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines })
+  const machinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines, refetchInterval: 2000 })
   const machine = machinesQuery.data?.machines.find(item => item.id === machineId)
 
   const [download, setDownload] = useState<RemoteDownload>()
+  const [switching, setSwitching] = useState<RemoteDownload>()
   const [progress, setProgress] = useState<string>()
 
   const installMutation = useMutation({
@@ -74,22 +97,8 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       const response = await postCoreInstall({ machineId: input.machineId, tag: input.tag })
       if (response.taskId === undefined)
         throw new Error(response.error ?? t('core.download_failed'))
-      const taskId = response.taskId
-      for (let attempt = 0; attempt < DOWNLOAD_POLL_LIMIT; attempt++) {
-        const events = await getCoreTasksEvents({ taskId })
-        if (events.error !== undefined)
-          throw new Error(events.error)
-        const items = events.items ?? []
-        setProgress(items.at(-1)?.line)
-        const finished = items.find(item => item.terminal !== undefined)
-        if (finished !== undefined) {
-          if (finished.terminal === 'failed')
-            throw new Error(finished.reason ?? finished.line)
-          return input.version
-        }
-        await sleep(DOWNLOAD_POLL_INTERVAL_MS)
-      }
-      throw new Error(t('core.download_failed'))
+      await waitForCoreTask(response.taskId, setProgress, t('core.download_failed'))
+      return input.version
     },
     onSuccess: (version, input) => {
       toast(t('core.downloaded_toast', { version }))
@@ -104,6 +113,52 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
     },
   })
 
+  const switchMutation = useMutation({
+    mutationFn: async (input: { machineId: string, slotKey: string, version: string }) => {
+      const response = await postCoreSwitch({ machineId: input.machineId, slotKey: input.slotKey })
+      if (response.taskId === undefined)
+        throw new Error(response.error ?? t('core.switch_failed'))
+      await waitForCoreTask(response.taskId, setProgress, t('core.switch_failed'))
+      return input.version
+    },
+    onSuccess: (version, input) => {
+      toast(t('core.activate_toast', { version }), {
+        variant: 'accent',
+        description: t('core.switch_restart_hint'),
+        timeout: 10_000,
+      })
+      setSwitching(current => current?.machineId === input.machineId ? undefined : current)
+      setProgress(undefined)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.remoteMachines })
+    },
+    onError: (error, input) => {
+      toast(t('core.switch_failed'), { variant: 'danger', description: error instanceof Error ? error.message : String(error) })
+      setSwitching(current => current?.machineId === input.machineId ? undefined : current)
+      setProgress(undefined)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(input.machineId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.remoteMachines })
+    },
+  })
+
+  async function onActivate(row: RemoteCoreRow) {
+    if (row.tag === undefined || row.active || !row.present || row.unsupported || switchMutation.isPending)
+      return
+    try {
+      await openDialog({
+        status: 'warning',
+        title: t('core.switch_confirm_title'),
+        description: <p>{t('core.switch_confirm_desc', { version: row.version })}</p>,
+      })
+    }
+    catch (error) {
+      silence(error, 'remote core switch: dialog cancelled')
+      return
+    }
+    setSwitching({ machineId, tag: row.tag, version: row.version })
+    switchMutation.mutate({ machineId, slotKey: row.tag, version: row.version })
+  }
+
   const targetError = targetQuery.error === null ? '' : String(targetQuery.error)
   const profilesError = profilesQuery.error === null ? '' : String(profilesQuery.error)
   const versionsError = versionsQuery.error === null ? '' : String(versionsQuery.error)
@@ -113,6 +168,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   const versions = versionsQuery.data ?? []
   const rows = buildRemoteCoreRows(targetSlots, versions)
   const activeDownload = download?.machineId === machineId ? download : undefined
+  const activeSwitching = switching?.machineId === machineId ? switching : undefined
 
   return (
     <div className="space-y-2" data-testid="dsh-core-remote-list">
@@ -153,15 +209,19 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
             <RemoteCoreRows
               rows={rows}
               download={activeDownload}
-              progress={activeDownload === undefined ? undefined : progress}
+              switching={activeSwitching}
+              progress={activeDownload === undefined && activeSwitching === undefined ? undefined : progress}
               downloading={installMutation.isPending}
+              activating={switchMutation.isPending}
               canDownload={capabilities.includes('installVersion')}
+              canActivate={capabilities.includes('activate')}
               onDownload={(row) => {
                 if (row.tag === undefined || installMutation.isPending)
                   return
                 setDownload({ machineId, tag: row.tag, version: row.version })
                 installMutation.mutate({ machineId, tag: row.tag, version: row.version })
               }}
+              onActivate={row => void onActivate(row)}
             />
           </If>
         </Panel.Loadable>
@@ -170,13 +230,17 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
   )
 }
 
-function RemoteCoreRows({ rows, download, progress, downloading, canDownload, onDownload }: {
+function RemoteCoreRows({ rows, download, switching, progress, downloading, activating, canDownload, canActivate, onDownload, onActivate }: {
   rows: RemoteCoreRow[]
   download?: RemoteDownload
+  switching?: RemoteDownload
   progress?: string
   downloading: boolean
+  activating: boolean
   canDownload: boolean
+  canActivate: boolean
   onDownload: (row: RemoteCoreRow) => void
+  onActivate: (row: RemoteCoreRow) => void
 }) {
   const { t } = useTranslation()
   const [showIncompatible, toggleIncompatible] = useToggle(false)
@@ -211,10 +275,13 @@ function RemoteCoreRows({ rows, download, progress, downloading, canDownload, on
             row={row}
             hidden={!showIncompatible && row.unsupported}
             downloading={downloading && download?.tag === row.tag}
-            busy={downloading}
-            progress={download?.tag === row.tag ? progress : undefined}
+            switching={activating && switching?.tag === row.tag}
+            busy={downloading || activating}
+            progress={download?.tag === row.tag || switching?.tag === row.tag ? progress : undefined}
             canDownload={canDownload}
+            canActivate={canActivate}
             onDownload={() => onDownload(row)}
+            onActivate={() => onActivate(row)}
           />
         </div>
       ))}
@@ -222,26 +289,35 @@ function RemoteCoreRows({ rows, download, progress, downloading, canDownload, on
   )
 }
 
-function RemoteCoreRowView({ row, hidden, downloading, busy, progress, canDownload, onDownload }: {
+function RemoteCoreRowView({ row, hidden, downloading, switching, busy, progress, canDownload, canActivate, onDownload, onActivate }: {
   row: RemoteCoreRow
   hidden: boolean
   downloading: boolean
+  switching: boolean
   busy: boolean
   progress?: string
   canDownload: boolean
+  canActivate: boolean
   onDownload: () => void
+  onActivate: () => void
 }) {
   const { t } = useTranslation()
 
   return (
     <div className={hidden ? 'hidden' : undefined} data-testid={`dsh-core-remote-row-${row.id}`}>
       <Item
+        onClick={!busy && canActivate && row.present && !row.active && !row.unsupported && row.tag !== undefined
+          ? onActivate
+          : undefined}
         left={(
           <>
             <Label className="min-w-0 truncate font-mono text-sm font-medium text-ink">{row.version}</Label>
             <Chip size="sm" variant="soft" color="accent" className="shrink-0 font-medium">{t('core.remote')}</Chip>
             <If cond={row.active}>
               <Chip size="sm" variant="soft" color="success" className="shrink-0 font-medium">{t('core.active')}</Chip>
+            </If>
+            <If cond={switching}>
+              <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">{t('core.switching')}</Chip>
             </If>
             <If cond={row.preview}>
               <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">{t('core.preview')}</Chip>
@@ -276,7 +352,8 @@ function RemoteCoreRowView({ row, hidden, downloading, busy, progress, canDownlo
             <If cond={row.present}>
               <Checkbox
                 isSelected={row.active}
-                isDisabled
+                isDisabled={busy || !canActivate || row.active || row.unsupported || row.tag === undefined}
+                onChange={onActivate}
                 aria-label={row.version}
                 className="shrink-0"
               >

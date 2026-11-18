@@ -89,6 +89,10 @@ export const machine = defineService({
     return safeProfileName(machineProfiles.get(machineId)?.profileName)
   },
 
+  profile(machineId: MachineId): MachineProfile {
+    return requireProfile(machineId)
+  },
+
   setProgress(machineId: MachineId, progress?: RemoteProgress): void {
     const target = ensureState(machineId)
     if (progress === undefined)
@@ -198,6 +202,55 @@ export const machine = defineService({
     requireCapabilities(machineId, profile, ['exec'])
     refuseWhileReconnecting(machineId, ensureState(machineId))
     return await openTransportSession(profile, signal)
+  },
+
+  async beginSwitch(machineId: MachineId): Promise<void> {
+    const target = ensureState(machineId)
+    if (target.connecting !== undefined || target.installing !== undefined)
+      throw new RemoteError('machine-busy', machineId, 'machine is already connecting or installing')
+    target.generation += 1
+    stopReconnect(target)
+    const entry = target.gateway
+    const tunnel = target.tunnel
+    const session = target.session
+    delete target.gateway
+    delete target.tunnel
+    delete target.session
+    delete target.link
+    delete target.progress
+    delete target.lastError
+    delete target.dshMissing
+    delete target.gatewayExhausted
+    target.phase = 'switching'
+    if (entry !== undefined)
+      entry.unsubscribe()
+    emit(machineId)
+    await Promise.all([
+      entry === undefined ? undefined : gateway.stop(entry.id).catch(() => undefined),
+      tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
+      session === undefined ? undefined : session.close().catch(() => undefined),
+    ])
+  },
+
+  async reconnect(machineId: MachineId): Promise<RemoteLink> {
+    const profile = requireProfile(machineId)
+    requireCapabilities(machineId, profile, ['exec', 'stream'])
+    const target = ensureState(machineId)
+    if (target.link !== undefined)
+      return target.link
+    if (target.connecting !== undefined)
+      return await target.connecting
+    target.phase = 'connecting'
+    delete target.lastError
+    delete target.dshMissing
+    delete target.gatewayExhausted
+    target.progress = { phase: 'handshake' }
+    emit(machineId)
+    const attempt = performConnect(machineId, profile)
+    target.connecting = attempt.finally(() => {
+      delete machineStates.get(machineId)?.connecting
+    })
+    return await target.connecting
   },
 
   async disconnect(machineId: MachineId): Promise<void> {

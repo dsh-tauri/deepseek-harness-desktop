@@ -54,7 +54,10 @@ vi.mock('../utils/version', async importOriginal => ({
 vi.mock('./machine', () => ({
   machine: {
     openSession: vi.fn(),
+    beginSwitch: vi.fn(),
+    profile: vi.fn(),
     profileName: vi.fn(),
+    reconnect: vi.fn(),
   },
 }))
 
@@ -131,6 +134,17 @@ async function expectProfileDirectoryUnreadable(mode: number): Promise<void> {
 
 beforeEach(() => {
   vi.mocked(machine.profileName).mockReturnValue('remote')
+  vi.mocked(machine.profile).mockReturnValue({
+    id: machineId,
+    name: 'remote',
+    host: 'example.test',
+    port: 22,
+    user: 'dsh',
+    remotePort: 3089,
+    profileName: 'remote',
+  })
+  vi.mocked(machine.beginSwitch).mockResolvedValue(undefined)
+  vi.mocked(machine.reconnect).mockResolvedValue({ machineId, tunnelBaseUrl: 'http://127.0.0.1:4000' })
   runtimeGeneration.value = 1
   installAborts.clear()
   installTasks.clear()
@@ -212,7 +226,7 @@ describe('remote core contract', () => {
       scope: 'remote',
       machineId,
       remoteProfile: 'remote',
-      capabilities: ['listVersions', 'installVersion'],
+      capabilities: ['listVersions', 'installVersion', 'activate'],
       platforms: ['linux-x64', 'linux-arm64', 'macos-x64'],
       availability: 'present',
       slots: [{
@@ -623,5 +637,87 @@ describe('remote core contract', () => {
     const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
     expect(failed?.reason).toContain('REMOTE_DSH_RELEASE_UNAVAILABLE')
     vi.unstubAllGlobals()
+  })
+
+  it('switches the active remote core, restarts the instance and reconnects the machine', async () => {
+    const commands: string[] = []
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('HOLDING='))
+        commands.push(command)
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'success')).toBe(true)
+    })
+
+    expect(machine.beginSwitch).toHaveBeenCalledWith(machineId)
+    expect(machine.reconnect).toHaveBeenCalledWith(machineId)
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toContain('TARGET="$DEPS/dsh-0.2.3-43000000000"')
+    expect(commands[0]).toContain('BACKUP="$DEPS/dsh-0.2.2-rc.1"')
+    // 切换同时占住「当前使用的那份」与「目标副本」两个槽位。
+    expect(commands[0]).toContain('LOCKDIR_ACTIVE="$ROOT/tmp/slot-dsh.lock"')
+    expect(commands[0]).toContain('LOCKDIR_TARGET="$ROOT/tmp/slot-dsh-0.2.3-43000000000.lock"')
+    expect(tasks.since(accepted.taskId!).events.at(-1)?.line).toBe('核心已切换至 0.2.3')
+  })
+
+  it('rolls back and reconnects the old remote core when the new instance cannot start', async () => {
+    vi.mocked(machine.reconnect)
+      .mockRejectedValueOnce(new Error('health check timed out'))
+      .mockResolvedValueOnce({ machineId, tunnelBaseUrl: 'http://127.0.0.1:4001' })
+    const commands: string[] = []
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('.active-tag.rollback.'))
+        commands.push(command)
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    expect(machine.reconnect).toHaveBeenCalledTimes(2)
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toContain('TARGET="$DEPS/dsh-0.2.3-43000000000"')
+    expect(commands[0]).toContain('BACKUP="$DEPS/dsh-0.2.2-rc.1"')
+    const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
+    expect(failed?.reason).toContain('health check timed out')
+    expect(failed?.reason).toContain('旧版本已重新连接')
+  })
+
+  it('refuses to switch to the active slot or an unsafe slot name', async () => {
+    await expect(core.switchVersion(machineId, 'dsh')).rejects.toThrow('REMOTE_CORE_SLOT_INVALID')
+    await expect(core.switchVersion(machineId, '../escape')).rejects.toThrow('REMOTE_CORE_SLOT_INVALID')
   })
 })

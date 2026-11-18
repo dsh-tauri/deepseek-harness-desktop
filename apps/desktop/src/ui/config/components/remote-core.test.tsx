@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   getCoreTasksEvents: vi.fn(),
   getCoreVersions: vi.fn(),
   loadRemoteMachines: vi.fn(),
+  openDialog: vi.fn(),
   postCoreInstall: vi.fn(),
+  postCoreSwitch: vi.fn(),
   writeClipboardText: vi.fn(),
   toast: vi.fn(),
 }))
@@ -25,7 +27,9 @@ vi.mock('@/apis/remote', () => ({
   getCoreTasksEvents: mocks.getCoreTasksEvents,
   getCoreVersions: mocks.getCoreVersions,
   postCoreInstall: mocks.postCoreInstall,
+  postCoreSwitch: mocks.postCoreSwitch,
 }))
+vi.mock('@overlastic/react', () => ({ useOverlay: () => mocks.openDialog }))
 vi.mock('@/hooks/use-remote', () => ({
   dotClassOf: () => 'bg-success',
   loadRemoteMachines: mocks.loadRemoteMachines,
@@ -71,7 +75,7 @@ function targetOf(machineId: string, target: TargetState): CoreTarget {
     scope: 'remote',
     machineId,
     remoteProfile: 'remote',
-    capabilities: ['listVersions', 'installVersion'],
+    capabilities: ['listVersions', 'installVersion', 'activate'],
     platforms: ['linux-x64'],
     ...target,
   } as CoreTarget
@@ -107,6 +111,7 @@ beforeEach(async () => {
     ],
   }))
   mocks.getCoreTasksEvents.mockResolvedValue({ items: [] })
+  mocks.openDialog.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -319,6 +324,94 @@ describe('远端核心清单', () => {
     fireEvent.click(downloads[0])
 
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Failed to download the core version', expect.objectContaining({ variant: 'danger' })))
+  })
+
+  it('confirms and switches to a downloaded remote core version', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.6-1',
+            tag: 'dsh-0.2.6-1',
+            version: '0.2.6',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.6-1',
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    })
+    mocks.postCoreSwitch.mockResolvedValue({ taskId: 'task-switch' })
+    mocks.getCoreTasksEvents.mockResolvedValue({
+      items: [
+        { taskId: 'task-switch', seq: 1, ts: '', state: 'running', stage: 'switch', line: '停止远端核心实例' },
+        { taskId: 'task-switch', seq: 2, ts: '', state: 'succeeded', stage: 'switch', line: '核心已切换至 0.2.6', terminal: 'success' },
+      ],
+    })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+
+    await waitFor(() => expect(mocks.openDialog).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Switch version',
+      description: expect.anything(),
+    })))
+    await waitFor(() => expect(mocks.postCoreSwitch).toHaveBeenCalledWith({ machineId: 'build', slotKey: 'dsh-0.2.6-1' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switched to 0.2.6', {
+      variant: 'accent',
+      description: 'Core switched — restarting the service…',
+      timeout: 10_000,
+    }))
+  })
+
+  it('does not switch when the remote core confirmation is dismissed', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.6-1',
+            tag: 'dsh-0.2.6-1',
+            version: '0.2.6',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.6-1',
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    })
+    mocks.openDialog.mockRejectedValue(new Error('cancelled'))
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+
+    await waitFor(() => expect(mocks.openDialog).toHaveBeenCalledOnce())
+    expect(mocks.postCoreSwitch).not.toHaveBeenCalled()
   })
 
   it('does not allow another download while one machine is already downloading', async () => {

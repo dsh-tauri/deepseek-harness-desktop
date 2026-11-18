@@ -64,6 +64,7 @@ export type RemoteConnectionState
     | 'testing'
     | 'connecting'
     | 'connected'
+    | 'switching'
     | 'reconnecting'
     | 'given-up'
 
@@ -140,6 +141,7 @@ export type RemoteErrorCode
   = | 'machine-not-found'
     | 'machine-connect-failed'
     | 'machine-bootstrap-failed'
+    | 'machine-busy'
     | 'machine-dsh-missing'
     | 'machine-install-failed'
     | 'machine-reconnecting'

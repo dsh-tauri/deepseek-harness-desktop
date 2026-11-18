@@ -19,7 +19,7 @@ export interface MachineGatewayHandle {
 
 export interface MachineState {
   generation: number
-  phase: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'reconnecting' | 'given-up'
+  phase: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'switching' | 'reconnecting' | 'given-up'
   connecting?: Promise<RemoteLink>
   installing?: Promise<RemoteInstallResult>
   session?: RemoteSession

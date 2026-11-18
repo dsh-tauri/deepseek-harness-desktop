@@ -8,6 +8,7 @@ describe('machineRowsOf', () => {
       items: [
         { id: 'b', name: 'beta', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4002', color: '#123456', tintBorder: true },
         { id: 'a', name: 'alpha', state: 'disconnected', lastError: 'boom', authMethod: 'key', nextRetryAt: 1725000000000 },
+        { id: 's', name: 'switching', state: 'switching' },
         { id: '', name: 'bad', state: 'connected' },
         { id: 'x' },
         { id: 'c', name: 'gamma', state: 'nonsense' },
@@ -17,7 +18,7 @@ describe('machineRowsOf', () => {
     })
 
     expect(enabled).toBe(true)
-    expect(machines.map(row => row.id)).toEqual(['alias', 'a', 'b'])
+    expect(machines.map(row => row.id)).toEqual(['alias', 'a', 'b', 's'])
     expect(machines[2]).toMatchObject({ color: '#123456', tintBorder: true, tunnelBaseUrl: 'http://127.0.0.1:4002' })
     expect(machines[1]).toMatchObject({ authMethod: 'key', nextRetryAt: 1725000000000, lastError: 'boom' })
   })

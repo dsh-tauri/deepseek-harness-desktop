@@ -13,7 +13,7 @@ function machineOf(partial: Partial<RemoteMachineRow>): RemoteMachineRow {
 
 describe('dotClassOf（S3 词汇表色点语义）', () => {
   it('机器标识色优先：任何状态都不覆盖内联色', () => {
-    for (const state of ['disconnected', 'connected', 'reconnecting', 'given-up'] as const) {
+    for (const state of ['disconnected', 'connected', 'switching', 'reconnecting', 'given-up'] as const) {
       expect(dotClassOf({ color: '#ff00ff', state })).toBe('')
     }
   })
@@ -22,6 +22,7 @@ describe('dotClassOf（S3 词汇表色点语义）', () => {
     expect(dotClassOf({ state: 'connected' })).toBe('bg-success')
     expect(dotClassOf({ state: 'reconnecting' })).toBe('bg-warning')
     expect(dotClassOf({ state: 'connecting' })).toBe('bg-warning')
+    expect(dotClassOf({ state: 'switching' })).toBe('bg-warning')
     expect(dotClassOf({ state: 'testing' })).toBe('bg-warning')
     expect(dotClassOf({ state: 'given-up' })).toBe('bg-danger')
     expect(dotClassOf({ state: 'disconnected' })).toBe('bg-line-strong')
@@ -69,6 +70,14 @@ describe('reconcileSwitcher（切换语义）', () => {
       [machineOf({ id: 'm1', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4009' })],
     )
     expect(moved.activeTunnelUrl).toBe('http://127.0.0.1:4009')
+  })
+
+  it('切换核心时保留活动机器但暂时清空失效的隧道 URL', () => {
+    const next = reconcileSwitcher(
+      { activeId: 'm1', pendingId: null, activeTunnelUrl: 'http://127.0.0.1:4001' },
+      [machineOf({ id: 'm1', state: 'switching' })],
+    )
+    expect(next).toEqual({ activeId: 'm1', pendingId: null, activeTunnelUrl: '' })
   })
 
   it('待切换机器就绪 → 升为活动；放弃或消失 → 撤销待切换留在本地', () => {

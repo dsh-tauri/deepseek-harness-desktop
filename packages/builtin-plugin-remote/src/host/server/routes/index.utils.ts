@@ -51,6 +51,12 @@ export function coreTagOf(value: { tag?: unknown }): string {
   return value.tag
 }
 
+export function coreSlotKeyOf(value: { slotKey?: unknown }): string {
+  if (typeof value.slotKey !== 'string' || !/^[\w.-]+$/u.test(value.slotKey) || value.slotKey === 'dsh')
+    throw new Error('invalid slotKey')
+  return value.slotKey
+}
+
 export function taskIdOf(value: { taskId?: unknown }): string {
   if (typeof value.taskId !== 'string' || value.taskId === '')
     throw new Error('missing taskId')

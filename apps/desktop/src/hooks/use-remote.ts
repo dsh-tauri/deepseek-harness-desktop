@@ -248,6 +248,7 @@ export function dotClassOf(machine: Pick<RemoteMachineRow, 'color' | 'state'>): 
       return 'bg-success'
     case 'reconnecting':
     case 'connecting':
+    case 'switching':
     case 'testing':
       return 'bg-warning'
     case 'given-up':
@@ -262,6 +263,9 @@ export function reconcileSwitcher(prev: SwitcherTargets, machines: readonly Remo
   const active = machines.find(machine => machine.id === activeId)
   if (active === undefined || active.state === 'disconnected' || active.state === 'given-up') {
     activeId = null
+    activeTunnelUrl = ''
+  }
+  else if (active.state === 'switching') {
     activeTunnelUrl = ''
   }
   else if (active.state === 'connected' && active.tunnelBaseUrl !== undefined) {
@@ -304,7 +308,7 @@ function machineRowOf(raw: unknown): RemoteMachineRow | undefined {
   const value = raw as Record<string, unknown>
   if (typeof value.id !== 'string' || value.id === '' || typeof value.name !== 'string' || value.name === '')
     return undefined
-  if (!['disconnected', 'testing', 'connecting', 'connected', 'reconnecting', 'given-up'].includes(String(value.state)))
+  if (!['disconnected', 'testing', 'connecting', 'connected', 'switching', 'reconnecting', 'given-up'].includes(String(value.state)))
     return undefined
   return {
     id: value.id,

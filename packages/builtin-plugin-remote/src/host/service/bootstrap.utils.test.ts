@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { GithubHttpError } from '../utils/version'
-import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, coreSlotLockShell, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
+import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, coreSlotClaimShell, coreSlotLockShell, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 
@@ -186,6 +186,30 @@ describe('指定版本下载脚本', () => {
     expect(script).toContain('rm -f "$_f"')
     // 退出清理只删自己的声明。
     expect(script).toContain('cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }')
+  })
+
+  it('占用声明能换一套变量名，同一段脚本里可以占住两个槽位', () => {
+    const script = [
+      ...coreSlotClaimShell('dsh', {
+        lockVar: 'LOCKDIR_ACTIVE',
+        claimVar: 'CLAIM_ACTIVE',
+        claimName: 'claim-active-$$',
+        tmpClaim: 'claim-active.$$',
+      }),
+      ...coreSlotClaimShell('dsh-0.2.3-43000000000', {
+        lockVar: 'LOCKDIR_TARGET',
+        claimVar: 'CLAIM_TARGET',
+        claimName: 'claim-target-$$',
+        tmpClaim: 'claim-target.$$',
+      }),
+    ].join('\n')
+
+    expect(script).toContain('LOCKDIR_ACTIVE="$ROOT/tmp/slot-dsh.lock"')
+    expect(script).toContain('CLAIM_ACTIVE="$LOCKDIR_ACTIVE/claim-active-$$"')
+    expect(script).toContain('LOCKDIR_TARGET="$ROOT/tmp/slot-dsh-0.2.3-43000000000.lock"')
+    expect(script).toContain('CLAIM_TARGET="$LOCKDIR_TARGET/claim-target-$$"')
+    // 两套声明各落各的锁目录，不能共用同一份声明名。
+    expect(script).not.toContain('CLAIM="$LOCKDIR/claim-$$"')
   })
 
   it('发布时先换走旧槽位再 rename 就绪目录', () => {
