@@ -123,6 +123,21 @@ describe('remote core switch scripts', () => {
     expect(result.stderr).toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
   })
 
+  it.skipIf(process.platform === 'win32')('restores the old core and its tag when the instance cannot be started', () => {
+    const { home, deps } = fixtureHome()
+
+    // 拉起命令自己 exit 1：它必须被接住，不能把目录留在换了一半的状态。
+    const result = runScript(home, switchScript({ startCommand: 'echo "REMOTE_NOT_INSTALLED: 远端三件套未安装完整"; exit 1' }))
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('REMOTE_CORE_SWITCH_FAILED')
+    expect(result.stderr).not.toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
+    expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
+    expect(readFileSync(join(deps, 'dsh-new', 'version'), 'utf8')).toBe('new')
+    // 版本记录也要跟着目录换回去，否则清单会把旧核心标成新版本。
+    expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-old\n')
+  })
+
   it.skipIf(process.platform === 'win32')('refuses to switch while the backup slot is taken', () => {
     const { home, deps } = fixtureHome()
     mkdirSync(join(deps, 'dsh-old'), { recursive: true })

@@ -282,7 +282,9 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
         targetTag: slotKey,
         backupTag: candidate,
         runId: taskId,
-        profileName: profile.profileName ?? machine.profileName(machineId),
+        // 停实例用的档案名要与拉起时用的完全一致：拉起走的是 safeProfileName，
+        // 这里也必须用它规范化过的名字，否则进程匹配不上，等于没停。
+        profileName: machine.profileName(machineId),
         remotePort: profile.remotePort,
         startCommand,
         entryRelativePath,
