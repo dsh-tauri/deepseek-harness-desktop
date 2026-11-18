@@ -58,6 +58,7 @@ vi.mock('./machine', () => ({
     profile: vi.fn(),
     profileName: vi.fn(),
     reconnect: vi.fn(),
+    switchLeaseValid: vi.fn(),
   },
 }))
 
@@ -143,7 +144,8 @@ beforeEach(() => {
     remotePort: 3089,
     profileName: 'remote',
   })
-  vi.mocked(machine.beginSwitch).mockResolvedValue(undefined)
+  vi.mocked(machine.beginSwitch).mockResolvedValue({ machineId, generation: 1 })
+  vi.mocked(machine.switchLeaseValid).mockReturnValue(true)
   vi.mocked(machine.reconnect).mockResolvedValue({ machineId, tunnelBaseUrl: 'http://127.0.0.1:4000' })
   runtimeGeneration.value = 1
   installAborts.clear()
@@ -655,7 +657,7 @@ describe('remote core contract', () => {
         pkg: JSON.stringify({ version: '0.2.3' }),
       },
     ], { code: 0, stdout: '', stderr: '' }, (command) => {
-      if (command.includes('HOLDING='))
+      if (command.includes('LOCKDIR_ACTIVE='))
         commands.push(command)
       return undefined
     })
@@ -667,20 +669,23 @@ describe('remote core contract', () => {
     })
 
     expect(machine.beginSwitch).toHaveBeenCalledWith(machineId)
-    expect(machine.reconnect).toHaveBeenCalledWith(machineId)
+    // 切换只重建连接，不写远端档案。
+    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false })
     expect(commands).toHaveLength(1)
     expect(commands[0]).toContain('TARGET="$DEPS/dsh-0.2.3-43000000000"')
     expect(commands[0]).toContain('BACKUP="$DEPS/dsh-0.2.2-rc.1"')
-    // 切换同时占住「当前使用的那份」与「目标副本」两个槽位。
+    // 切换同时占住「当前使用的那份」「目标副本」与「备份槽位」三个槽位。
     expect(commands[0]).toContain('LOCKDIR_ACTIVE="$ROOT/tmp/slot-dsh.lock"')
     expect(commands[0]).toContain('LOCKDIR_TARGET="$ROOT/tmp/slot-dsh-0.2.3-43000000000.lock"')
+    expect(commands[0]).toContain('LOCKDIR_BACKUP="$ROOT/tmp/slot-dsh-0.2.2-rc.1.lock"')
+    // 停机、互换、拉起在同一个脚本里，锁覆盖整段。
+    expect(commands[0]).toContain('ps -eo args=')
+    expect(commands[0]).toContain('mv "$DEPS/dsh" "$BACKUP"')
+    expect(commands[0]).toContain('mv "$TARGET" "$DEPS/dsh"')
     expect(tasks.since(accepted.taskId!).events.at(-1)?.line).toBe('核心已切换至 0.2.3')
   })
 
-  it('rolls back and reconnects the old remote core when the new instance cannot start', async () => {
-    vi.mocked(machine.reconnect)
-      .mockRejectedValueOnce(new Error('health check timed out'))
-      .mockResolvedValueOnce({ machineId, tunnelBaseUrl: 'http://127.0.0.1:4001' })
+  it('reconnects the old remote core when the switch script reports a recovered failure', async () => {
     const commands: string[] = []
     const session = sessionWithRemote([
       {
@@ -696,8 +701,10 @@ describe('remote core contract', () => {
         pkg: JSON.stringify({ version: '0.2.3' }),
       },
     ], { code: 0, stdout: '', stderr: '' }, (command) => {
-      if (command.includes('.active-tag.rollback.'))
+      if (command.includes('LOCKDIR_ACTIVE=')) {
         commands.push(command)
+        return { code: 1, stdout: '', stderr: 'REMOTE_CORE_SWITCH_FAILED: 远端实例仍在运行，未改动目录' }
+      }
       return undefined
     })
     vi.mocked(machine.openSession).mockResolvedValue(session)
@@ -707,13 +714,112 @@ describe('remote core contract', () => {
       expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
     })
 
-    expect(machine.reconnect).toHaveBeenCalledTimes(2)
     expect(commands).toHaveLength(1)
-    expect(commands[0]).toContain('TARGET="$DEPS/dsh-0.2.3-43000000000"')
-    expect(commands[0]).toContain('BACKUP="$DEPS/dsh-0.2.2-rc.1"')
+    expect(machine.reconnect).toHaveBeenCalledTimes(1)
+    expect(machine.reconnect).toHaveBeenCalledWith(machineId, { profileSync: false })
     const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
-    expect(failed?.reason).toContain('health check timed out')
+    expect(failed?.reason).toContain('远端实例仍在运行')
     expect(failed?.reason).toContain('旧版本已重新连接')
+  })
+
+  it('does not reconnect when the switch could not restore the old core', async () => {
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('LOCKDIR_ACTIVE='))
+        return { code: 1, stdout: '', stderr: 'REMOTE_CORE_SWITCH_UNRECOVERED: 无法移走当前使用的核心' }
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    // 目录状态未知时不能直接重连：那台机器上可能已经没有可用的核心了。
+    expect(machine.reconnect).not.toHaveBeenCalled()
+    const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
+    expect(failed?.reason).toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
+    expect(failed?.reason).toContain('可能处于中间状态')
+  })
+
+  it('aborts the switch when the machine configuration changed', async () => {
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('LOCKDIR_ACTIVE='))
+        throw new Error('配置变了就不该动目录')
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+    // 切换期间机器被改成了另一台主机。
+    vi.mocked(machine.profile)
+      .mockReturnValueOnce({ id: machineId, name: 'remote', host: 'example.test', port: 22, user: 'dsh', remotePort: 3089, profileName: 'remote' })
+      .mockReturnValue({ id: machineId, name: 'remote', host: 'other.test', port: 22, user: 'dsh', remotePort: 3089, profileName: 'remote' })
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'failed')).toBe(true)
+    })
+
+    const failed = tasks.since(accepted.taskId!).events.find(event => event.terminal === 'failed')
+    expect(failed?.reason).toContain('远端机器配置在切换期间发生变化')
+    expect(machine.reconnect).not.toHaveBeenCalled()
+  })
+
+  it('does not rebuild the connection when the lease was invalidated', async () => {
+    vi.mocked(machine.switchLeaseValid).mockReturnValue(false)
+    const session = sessionWithRemote([
+      {
+        name: 'dsh',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+        entry: entryPath,
+        pkg: JSON.stringify({ version: '0.2.2-rc.1' }),
+      },
+      {
+        name: 'dsh-0.2.3-43000000000',
+        dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000',
+        entry: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.3-43000000000/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        pkg: JSON.stringify({ version: '0.2.3' }),
+      },
+    ], { code: 0, stdout: '', stderr: '' }, (command) => {
+      if (command.includes('LOCKDIR_ACTIVE='))
+        return undefined
+      return undefined
+    })
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    const accepted = await core.switchVersion(machineId, 'dsh-0.2.3-43000000000')
+    await vi.waitFor(() => {
+      expect(tasks.since(accepted.taskId!).events.some(event => event.terminal === 'success')).toBe(true)
+    })
+
+    // 用户在这期间断开了连接：切换本身成功，但不再替他重建连接。
+    expect(machine.reconnect).not.toHaveBeenCalled()
+    expect(tasks.since(accepted.taskId!).events.at(-1)?.line).toContain('连接已被重置')
   })
 
   it('refuses to switch to the active slot or an unsafe slot name', async () => {

@@ -4,7 +4,7 @@ import type { MachineProfile, MachineSaveRow, MachineSecretWrite, MachineView, R
 import type { WorkspaceAllowlist } from '../utils/allowlist'
 import type { SshHostBlock } from '../utils/ssh-config'
 import type { BootstrapHooks } from './bootstrap.types'
-import type { MachineState, ReconnectState } from './machine.types'
+import type { CoreSwitchLease, MachineState, ReconnectState } from './machine.types'
 import type { RemoteTransportCapabilities } from './transport.types'
 import { request } from 'node:http'
 import { defineService } from 'dsh-tauri'
@@ -204,10 +204,13 @@ export const machine = defineService({
     return await openTransportSession(profile, signal)
   },
 
-  async beginSwitch(machineId: MachineId): Promise<void> {
+  async beginSwitch(machineId: MachineId): Promise<CoreSwitchLease> {
     const target = ensureState(machineId)
     if (target.connecting !== undefined || target.installing !== undefined)
       throw new RemoteError('machine-busy', machineId, 'machine is already connecting or installing')
+    // 自动重连已经跑起来了就不能切：它可能在切换停机或互换目录期间把旧实例拉起来。
+    if (target.reconnect?.attempting !== undefined)
+      throw new RemoteError('machine-busy', machineId, 'machine is reconnecting; wait for the automatic retry or disconnect first')
     target.generation += 1
     stopReconnect(target)
     const entry = target.gateway
@@ -230,9 +233,16 @@ export const machine = defineService({
       tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
       session === undefined ? undefined : session.close().catch(() => undefined),
     ])
+    return { machineId, generation: target.generation }
   },
 
-  async reconnect(machineId: MachineId): Promise<RemoteLink> {
+  /** 切换租约是否仍然有效：用户断开、配置变更或插件停用都会让它失效。 */
+  switchLeaseValid(lease: CoreSwitchLease): boolean {
+    const target = machineStates.get(lease.machineId)
+    return target !== undefined && target.generation === lease.generation && target.phase === 'switching'
+  },
+
+  async reconnect(machineId: MachineId, options: { profileSync?: boolean } = {}): Promise<RemoteLink> {
     const profile = requireProfile(machineId)
     requireCapabilities(machineId, profile, ['exec', 'stream'])
     const target = ensureState(machineId)
@@ -246,7 +256,7 @@ export const machine = defineService({
     delete target.gatewayExhausted
     target.progress = { phase: 'handshake' }
     emit(machineId)
-    const attempt = performConnect(machineId, profile)
+    const attempt = performConnect(machineId, profile, undefined, options.profileSync === false ? { profileSync: false } : undefined)
     target.connecting = attempt.finally(() => {
       delete machineStates.get(machineId)?.connecting
     })
@@ -464,41 +474,46 @@ async function checkHostKey(machineId: MachineId, hostKey: Buffer): Promise<bool
 
 class AttemptCancelled extends Error {}
 
-async function performConnect(machineId: MachineId, profile: MachineProfile, signal?: AbortSignal): Promise<RemoteLink> {
+async function performConnect(machineId: MachineId, profile: MachineProfile, signal?: AbortSignal, options: { profileSync?: boolean } = {}): Promise<RemoteLink> {
   const target = ensureState(machineId)
   const generation = target.generation
+  const withProfile = options.profileSync !== false
   let bootstrapSettled = false
   let portExhausted = false
   const onEvent = settlingEventSink(machineId, () => {
     bootstrapSettled = true
   })
   const session = await openSessionOrFail(machineId, profile, signal)
-  try {
-    await syncBundledPlugins(session, safeProfileName(profile.profileName), profile.remotePort, {
-      tree: machineRuntimeDeps().bundledPluginsTree,
-      onEvent: (stage, line) => {
-        if (generation === target.generation)
-          events.append(machineId, stage, line)
-      },
-    })
-  }
-  catch (error) {
-    events.append(machineId, 'install', `捆绑插件同步失败（降级原生 UI）: ${messageOf(error)}`)
-  }
-  try {
-    await session.exec(ensurePnpmCommand())
-    events.append(machineId, 'install', '远端 pnpm 垫片就绪（dsh plugin 依赖它）')
-  }
-  catch (error) {
-    events.append(machineId, 'install', `远端 pnpm 垫片写入失败: ${messageOf(error)}`)
-  }
-  try {
-    const added = await carryWorkspaceAllowlist(session, safeProfileName(profile.profileName), machine.localAllowlist())
-    if (added.length > 0)
-      events.append(machineId, 'install', `远端构建放行白名单已补齐 ${added.length} 项（git 插件 prepare 门禁）`)
-  }
-  catch (error) {
-    events.append(machineId, 'install', `构建放行白名单同步失败: ${messageOf(error)}`)
+  // 切换核心时只重建连接，不碰远端档案：常规连接的档案同步会改远端工作区白名单与插件链接，
+  // 切换失败回滚时这些改动撤不回来。
+  if (withProfile) {
+    try {
+      await syncBundledPlugins(session, safeProfileName(profile.profileName), profile.remotePort, {
+        tree: machineRuntimeDeps().bundledPluginsTree,
+        onEvent: (stage, line) => {
+          if (generation === target.generation)
+            events.append(machineId, stage, line)
+        },
+      })
+    }
+    catch (error) {
+      events.append(machineId, 'install', `捆绑插件同步失败（降级原生 UI）: ${messageOf(error)}`)
+    }
+    try {
+      await session.exec(ensurePnpmCommand())
+      events.append(machineId, 'install', '远端 pnpm 垫片就绪（dsh plugin 依赖它）')
+    }
+    catch (error) {
+      events.append(machineId, 'install', `远端 pnpm 垫片写入失败: ${messageOf(error)}`)
+    }
+    try {
+      const added = await carryWorkspaceAllowlist(session, safeProfileName(profile.profileName), machine.localAllowlist())
+      if (added.length > 0)
+        events.append(machineId, 'install', `远端构建放行白名单已补齐 ${added.length} 项（git 插件 prepare 门禁）`)
+    }
+    catch (error) {
+      events.append(machineId, 'install', `构建放行白名单同步失败: ${messageOf(error)}`)
+    }
   }
   try {
     await bootstrap.provision(
@@ -794,8 +809,14 @@ async function attemptReconnect(machineId: MachineId, expected: ReconnectState):
   delete rec.nextRetryAt
   current.progress = { phase: 'handshake' }
   emit(machineId)
+  // 登记这次尝试：切换必须等它结束，不能与一次正在跑的自动重连并行。
+  const attempting = performConnect(machineId, profile)
+  rec.attempting = attempting.then(() => undefined, () => undefined).finally(() => {
+    if (machineStates.get(machineId)?.reconnect === rec)
+      delete rec.attempting
+  })
   try {
-    await performConnect(machineId, profile)
+    await attempting
   }
   catch (error) {
     if (error instanceof AttemptCancelled)

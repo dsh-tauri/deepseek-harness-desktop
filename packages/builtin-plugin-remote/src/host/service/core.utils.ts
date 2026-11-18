@@ -1,4 +1,5 @@
 import { REMOTE_ROOT } from '../config/constants'
+import { remoteInstanceStopCommand } from '../utils/instance'
 import { shQuote } from '../utils/shell'
 import { BOOTSTRAP_LOG_PREFIX, coreSlotClaimShell } from './bootstrap.utils'
 
@@ -131,57 +132,109 @@ export function fallbackActiveTag(version: string | undefined): string {
   return normalized === '' || normalized === 'dsh' ? 'dsh-unknown' : `dsh-${normalized}`
 }
 
-export function buildCoreSwitchScript(targetTag: string, backupTag: string, runId: string): string {
+export interface CoreSwitchScriptOptions {
+  targetTag: string
+  backupTag: string
+  runId: string
+  profileName: string
+  remotePort: number
+  startCommand: string
+  entryRelativePath: string
+  healthPollAttempts: number
+  healthPollIntervalMs: number
+}
+
+/**
+ * 切换脚本：停实例 → 确认实例已退出 → 互换目录 → 记录版本 → 拉起实例 → 等端口就绪。
+ *
+ * 整段都在两个槽位的占用声明之内：与「下载同一版本」「另一次切换」互斥，
+ * 也保证备份槽位在互换期间不会被别的任务发布。
+ *
+ * 任何一步失败都先回滚目录；回滚本身失败时用另一个错误码报出来，
+ * 调用方据此知道「旧核心没恢复」，不能当成普通失败直接重连。
+ */
+export function buildCoreSwitchScript(options: CoreSwitchScriptOptions): string {
+  const { targetTag, backupTag, runId, profileName, remotePort, startCommand, entryRelativePath } = options
   assertSlotName(targetTag)
   assertSlotName(backupTag)
   assertSlotName(runId)
+  assertSlotName(profileName)
   if (targetTag === backupTag)
     throw new Error(`REMOTE_CORE_SWITCH_FAILED: ${targetTag} 与当前使用版本的槽位相同`)
+  if (!/^[\w@./-]+$/u.test(entryRelativePath) || entryRelativePath.includes('..'))
+    throw new Error(`REMOTE_CORE_SLOT_INVALID: 非法核心入口路径 ${entryRelativePath}`)
+  const attempts = Math.max(1, Math.min(120, Math.trunc(options.healthPollAttempts)))
+  const intervalMs = Math.max(200, Math.min(10_000, Math.trunc(options.healthPollIntervalMs)))
   return [
     `ROOT="$HOME/${REMOTE_ROOT}"`,
     'DEPS="$ROOT/dependencies"',
     `TARGET="$DEPS/${targetTag}"`,
     `BACKUP="$DEPS/${backupTag}"`,
-    `HOLDING="$DEPS/.switch-holding-${runId}"`,
     `TAG_NEW="$DEPS/.active-tag.new.${runId}"`,
     `TMP="$ROOT/tmp/switch-${runId}"`,
     'ACTIVE_MOVED=0',
     'TARGET_MOVED=0',
-    'HELD=0',
+    'RECOVERED=1',
     'mkdir -p "$TMP"',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
-    'cleanup() { rm -rf "$TMP"; rm -f "$CLAIM_ACTIVE" "$CLAIM_TARGET"; }',
-    // 清理只删自己那两条声明（声明名带自己的 pid），拿不到锁时不会碰到别人的。
+    'cleanup() { rm -rf "$TMP"; rm -f "$CLAIM_ACTIVE" "$CLAIM_TARGET" "$CLAIM_BACKUP"; }',
+    // 清理只删自己那几条声明（声明名带自己的 pid），拿不到锁时不会碰到别人的。
     'trap cleanup EXIT',
-    ...switchSlotClaims(targetTag),
+    ...switchSlotClaims(targetTag, backupTag),
     'rollback() {',
-    '  if [ "$TARGET_MOVED" = 1 ] && [ -d "$DEPS/dsh" ] && [ ! -e "$TARGET" ]; then mv "$DEPS/dsh" "$TARGET" || true; fi',
-    '  if [ "$ACTIVE_MOVED" = 1 ] && [ -d "$BACKUP" ] && [ ! -e "$DEPS/dsh" ]; then mv "$BACKUP" "$DEPS/dsh" || true; fi',
-    '  if [ "$HELD" = 1 ] && [ -d "$HOLDING" ] && [ ! -e "$BACKUP" ]; then mv "$HOLDING" "$BACKUP" || true; fi',
+    '  if [ "$TARGET_MOVED" = 1 ]; then',
+    '    if [ -d "$DEPS/dsh" ] && [ ! -e "$TARGET" ]; then mv "$DEPS/dsh" "$TARGET" || RECOVERED=0; else RECOVERED=0; fi',
+    '  fi',
+    '  if [ "$ACTIVE_MOVED" = 1 ]; then',
+    '    if [ -d "$BACKUP" ] && [ ! -e "$DEPS/dsh" ]; then mv "$BACKUP" "$DEPS/dsh" || RECOVERED=0; else RECOVERED=0; fi',
+    '  fi',
+    '  [ -d "$DEPS/dsh" ] || RECOVERED=0',
     '}',
-    'fail() { rollback; rm -f "$TAG_NEW"; echo "REMOTE_CORE_SWITCH_FAILED: $1" >&2; exit 1; }',
+    'fail() {',
+    '  rollback',
+    '  rm -f "$TAG_NEW"',
+    '  if [ "$RECOVERED" = 1 ]; then',
+    '    echo "REMOTE_CORE_SWITCH_FAILED: $1" >&2',
+    '  else',
+    '    echo "REMOTE_CORE_SWITCH_UNRECOVERED: $1" >&2',
+    '  fi',
+    '  exit 1',
+    '}',
     '[ -d "$DEPS/dsh" ] || fail "当前使用的核心目录不存在"',
     '[ -d "$TARGET" ] || fail "目标核心副本不存在"',
-    'if [ -e "$BACKUP" ]; then',
-    '  mv "$BACKUP" "$HOLDING" || fail "无法移走旧备份"',
-    '  HELD=1',
-    'fi',
+    // 备份槽位已经被占住时直接失败：绝不把当前核心挪进别人的目录里。
+    '[ ! -e "$BACKUP" ] || fail "备份槽位已被占用，请重试"',
+    'log switch "停止远端核心实例"',
+    ...remoteInstanceStopCommand(profileName, remotePort),
+    'sleep 1',
+    // 停止命令末尾的 true 会吞掉退出码，只能自己确认监听进程真的没了。
+    'if ps -eo args= 2>/dev/null | grep -Eq "$PATTERN"; then fail "远端实例仍在运行，未改动目录"; fi',
+    'log switch "互换核心目录"',
     'mv "$DEPS/dsh" "$BACKUP" || fail "无法移走当前使用的核心"',
     'ACTIVE_MOVED=1',
     'mv "$TARGET" "$DEPS/dsh" || fail "无法启用目标核心副本"',
     'TARGET_MOVED=1',
     `printf '%s\\n' ${shQuote(targetTag)} > "$TAG_NEW" || fail "无法记录当前核心版本"`,
     'mv -f "$TAG_NEW" "$DEPS/.active-tag" || fail "无法保存当前核心版本"',
-    'if [ "$HELD" = 1 ] && [ -e "$HOLDING" ]; then rm -rf "$HOLDING" || echo "REMOTE_CORE_SWITCH_WARNING: 旧备份清理失败" >&2; fi',
+    'log switch "拉起远端核心实例"',
+    ...startCommand.split('\n'),
+    // 端口应声之前不做别的：拉不起来就换回旧核心。
+    'attempt=0',
+    `while [ "$attempt" -lt ${attempts} ]; do`,
+    '  attempt=$((attempt + 1))',
+    `  if curl -s -o /dev/null -m 2 http://127.0.0.1:${remotePort}/ 2>/dev/null || wget -q -T 2 -O /dev/null http://127.0.0.1:${remotePort}/ 2>/dev/null; then break; fi`,
+    `  sleep ${Math.round(intervalMs / 1000)}`,
+    'done',
+    `if [ "$attempt" -ge ${attempts} ]; then fail "远端核心未能在限定时间内就绪"; fi`,
     'echo "REMOTE_CORE_SWITCH_READY"',
   ].join('\n')
 }
 
 /**
- * 切换要同时动两个槽位：当前使用的那份（`dsh`）与目标副本。
- * 两边都占住，才能和「下载同一版本」「两次切换」互斥。
+ * 切换要同时动三个槽位：当前使用的那份（`dsh`）、目标副本，以及放旧核心的备份槽位。
+ * 三边都占住，才能和「下载同一版本」「另一次切换」互斥，备份槽位也不会被别任务占去。
  */
-function switchSlotClaims(targetTag: string): string[] {
+function switchSlotClaims(targetTag: string, backupTag: string): string[] {
   return [
     ...coreSlotClaimShell('dsh', {
       lockVar: 'LOCKDIR_ACTIVE',
@@ -197,39 +250,14 @@ function switchSlotClaims(targetTag: string): string[] {
       tmpClaim: 'claim-target.$$',
       busyText: '目标核心槽位正在被其它操作占用',
     }),
+    ...coreSlotClaimShell(backupTag, {
+      lockVar: 'LOCKDIR_BACKUP',
+      claimVar: 'CLAIM_BACKUP',
+      claimName: 'claim-backup-$$',
+      tmpClaim: 'claim-backup.$$',
+      busyText: '备份核心槽位正在被其它操作占用',
+    }),
   ]
-}
-
-export function buildCoreSwitchRollbackScript(targetTag: string, backupTag: string, restoreTag: string | undefined, runId: string): string {
-  assertSlotName(targetTag)
-  assertSlotName(backupTag)
-  assertSlotName(runId)
-  if (restoreTag !== undefined)
-    assertSlotName(restoreTag)
-  const tagNew = `TAG_NEW="$DEPS/.active-tag.rollback.${runId}"`
-  const restore = restoreTag === undefined
-    ? 'rm -f "$DEPS/.active-tag"'
-    : `printf '%s\\n' ${shQuote(restoreTag)} > "$TAG_NEW" && mv -f "$TAG_NEW" "$DEPS/.active-tag"`
-  return [
-    `ROOT="$HOME/${REMOTE_ROOT}"`,
-    'DEPS="$ROOT/dependencies"',
-    `TARGET="$DEPS/${targetTag}"`,
-    `BACKUP="$DEPS/${backupTag}"`,
-    tagNew,
-    `TMP="$ROOT/tmp/switch-rollback-${runId}"`,
-    'mkdir -p "$TMP"',
-    `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
-    'cleanup() { rm -rf "$TMP"; rm -f "$CLAIM_ACTIVE" "$CLAIM_TARGET"; }',
-    'trap cleanup EXIT',
-    ...switchSlotClaims(targetTag),
-    '[ -d "$DEPS/dsh" ] || { echo "REMOTE_CORE_ROLLBACK_FAILED: 新核心目录不存在" >&2; exit 1; }',
-    '[ -d "$BACKUP" ] || { echo "REMOTE_CORE_ROLLBACK_FAILED: 旧核心备份不存在" >&2; exit 1; }',
-    '[ ! -e "$TARGET" ] || { echo "REMOTE_CORE_ROLLBACK_FAILED: 目标槽位已被占用" >&2; exit 1; }',
-    'mv "$DEPS/dsh" "$TARGET" || { echo "REMOTE_CORE_ROLLBACK_FAILED: 无法移走新核心" >&2; exit 1; }',
-    'mv "$BACKUP" "$DEPS/dsh" || { mv "$TARGET" "$DEPS/dsh" || true; echo "REMOTE_CORE_ROLLBACK_FAILED: 无法恢复旧核心" >&2; exit 1; }',
-    `${restore} || { echo "REMOTE_CORE_ROLLBACK_FAILED: 无法恢复当前版本记录" >&2; exit 1; }`,
-    'echo "REMOTE_CORE_SWITCH_ROLLED_BACK"',
-  ].join('\n')
 }
 
 function validSlotName(value: string): boolean {

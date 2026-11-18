@@ -11,19 +11,19 @@ import { ConnectDialog } from './connect-dialog'
 import { remoteMachineStateTextOf, remoteMachineSubtitleOf } from './machine.utils'
 
 export function RemoteSwitcher({ onChange, visible = true, onManage, onSync }: {
-  onChange: (url: string, tint: string | null) => void
+  onChange: (url: string, tint: string | null, switching: boolean) => void
   visible?: boolean
   onManage?: () => void
   onSync?: () => void
 }) {
   const { t } = useTranslation()
   const remote = useRemote()
-  const { machines, activeId, activeTunnelUrl, available, enabled, pendingId } = remote
+  const { machines, activeId, activeTunnelUrl, available, enabled, pendingId, switching } = remote
 
   const activeMachine = machines.find(machine => machine.id === activeId)
   const activeColor = activeMachine?.color
   const tint = activeTunnelUrl !== '' && activeMachine?.tintBorder ? activeColor ?? null : null
-  useWatch([activeTunnelUrl, tint], () => onChange(activeTunnelUrl, tint), { immediate: true })
+  useWatch([activeTunnelUrl, tint, switching], () => onChange(activeTunnelUrl, tint, switching), { immediate: true })
 
   function handleOpenWindowError(err: unknown) {
     toast(t('remote.open_window_failed'), {})

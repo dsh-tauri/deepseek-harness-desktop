@@ -450,6 +450,103 @@ describe('远端核心清单', () => {
     expect(mocks.postCoreInstall).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps watching the same task when reading the task events fails transiently', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.6-1',
+            tag: 'dsh-0.2.6-1',
+            version: '0.2.6',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.6-1',
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    })
+    mocks.postCoreSwitch.mockResolvedValue({ taskId: 'task-retry' })
+    mocks.getCoreTasksEvents
+      .mockResolvedValueOnce({ error: 'REMOTE_TASK_READ_FAILED' })
+      .mockResolvedValue({
+        items: [
+          { taskId: 'task-retry', seq: 1, ts: '', state: 'succeeded', stage: 'switch', line: '核心已切换至 0.2.6', terminal: 'success' },
+        ],
+      })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+
+    await waitFor(() => expect(mocks.postCoreSwitch).toHaveBeenCalledTimes(1), { timeout: 15_000 })
+    await waitFor(() => expect(mocks.getCoreTasksEvents).toHaveBeenCalledTimes(2), { timeout: 15_000 })
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switched to 0.2.6', expect.objectContaining({ variant: 'accent' })), { timeout: 15_000 })
+    expect(mocks.toast).not.toHaveBeenCalledWith('Failed to switch the core', expect.anything())
+    expect(mocks.toast).not.toHaveBeenCalledWith('Switch result unknown', expect.anything())
+  })
+
+  it('reports an unknown switch result and checks the same task again instead of switching twice', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', {
+        availability: 'present',
+        slots: [
+          {
+            kind: 'installed',
+            slotKey: 'dsh',
+            version: '0.2.4',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh',
+            active: true,
+            removable: false,
+            preview: false,
+          },
+          {
+            kind: 'installed',
+            slotKey: 'dsh-0.2.6-1',
+            tag: 'dsh-0.2.6-1',
+            version: '0.2.6',
+            dir: '/home/remote/.dsh-desktop/dependencies/dsh-0.2.6-1',
+            active: false,
+            removable: true,
+            preview: false,
+          },
+        ],
+      }),
+    })
+    mocks.postCoreSwitch.mockResolvedValue({ taskId: 'task-unknown' })
+    mocks.getCoreTasksEvents.mockResolvedValue({ error: 'REMOTE_TASK_READ_FAILED' })
+    renderRemoteCore()
+
+    const list = await screen.findByTestId('dsh-core-remote-list')
+    fireEvent.click(await within(list).findByRole('checkbox', { name: '0.2.6' }))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switch result unknown', expect.objectContaining({ variant: 'warning' })), { timeout: 20_000 })
+    expect(mocks.toast).not.toHaveBeenCalledWith('Failed to switch the core', expect.anything())
+
+    const recheck = await within(list).findByRole('button', { name: 'Check again' })
+    mocks.getCoreTasksEvents.mockResolvedValue({
+      items: [
+        { taskId: 'task-unknown', seq: 1, ts: '', state: 'succeeded', stage: 'switch', line: '核心已切换至 0.2.6', terminal: 'success' },
+      ],
+    })
+    fireEvent.click(recheck)
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Switched to 0.2.6', expect.objectContaining({ variant: 'accent' })), { timeout: 15_000 })
+    expect(mocks.postCoreSwitch).toHaveBeenCalledTimes(1)
+    expect(mocks.getCoreTasksEvents).toHaveBeenLastCalledWith({ taskId: 'task-unknown' })
+  })
+
   it('reports an unreadable target instead of an empty list', async () => {
     mocks.getCoreCurrent.mockResolvedValue({
       item: targetOf('build', {

@@ -3,9 +3,10 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildCoreSwitchRollbackScript, buildCoreSwitchScript, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
+import { buildCoreSwitchScript, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
 
 const homes: string[] = []
+const SWITCH_PORT = 38471
 
 function fixtureHome(): { home: string, deps: string } {
   const home = mkdtempSync(join(tmpdir(), 'dsh-core-switch-'))
@@ -23,6 +24,25 @@ function runScript(home: string, script: string, path?: string): ReturnType<type
   return spawnSync('sh', ['-c', script], {
     encoding: 'utf8',
     env: { ...process.env, HOME: home, ...path === undefined ? {} : { PATH: `${path}:${process.env.PATH ?? ''}` } },
+  })
+}
+
+/** 拉起一个只会应答端口的假远端实例：切换脚本要等端口应声才算就绪。 */
+function listenerStartCommand(): string {
+  return `( node -e 'require("http").createServer((_, res) => res.end("ok")).listen(${SWITCH_PORT})' </dev/null >/dev/null 2>&1 & )`
+}
+
+function switchScript(overrides: { backupTag?: string, startCommand?: string } = {}): string {
+  return buildCoreSwitchScript({
+    targetTag: 'dsh-new',
+    backupTag: overrides.backupTag ?? 'dsh-old',
+    runId: 'test',
+    profileName: 'remote',
+    remotePort: SWITCH_PORT,
+    startCommand: overrides.startCommand ?? listenerStartCommand(),
+    entryRelativePath: 'lib/bin.js',
+    healthPollAttempts: 20,
+    healthPollIntervalMs: 500,
   })
 }
 
@@ -61,28 +81,13 @@ describe('remote core switch scripts', () => {
 
   it('swaps the active and downloaded directories and writes the new active tag', () => {
     const { home, deps } = fixtureHome()
-    mkdirSync(join(deps, 'dsh-old'), { recursive: true })
-    writeFileSync(join(deps, 'dsh-old', 'version'), 'stale')
 
-    const result = runScript(home, buildCoreSwitchScript('dsh-new', 'dsh-old', 'test'))
-
+    const result = runScript(home, switchScript())
     expect(result.status).toBe(0)
     expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('new')
     expect(readFileSync(join(deps, 'dsh-old', 'version'), 'utf8')).toBe('old')
     expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-new\n')
     expect(() => readFileSync(join(deps, 'dsh-new', 'version'))).toThrow()
-  })
-
-  it('restores the old active directory and tag during rollback', () => {
-    const { home, deps } = fixtureHome()
-    expect(runScript(home, buildCoreSwitchScript('dsh-new', 'dsh-old', 'test')).status).toBe(0)
-
-    const result = runScript(home, buildCoreSwitchRollbackScript('dsh-new', 'dsh-old', 'dsh-old', 'test'))
-
-    expect(result.status).toBe(0)
-    expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
-    expect(readFileSync(join(deps, 'dsh-new', 'version'), 'utf8')).toBe('new')
-    expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-old\n')
   })
 
   it.skipIf(process.platform === 'win32')('keeps the old core active when moving the target into place fails', () => {
@@ -93,13 +98,44 @@ describe('remote core switch scripts', () => {
     writeFileSync(mv, `#!/bin/sh\nif [ "$1" = "${join(deps, 'dsh-new')}" ] && [ "$2" = "${join(deps, 'dsh')}" ]; then exit 1; fi\nexec /bin/mv "$@"\n`)
     chmodSync(mv, 0o755)
 
-    const result = runScript(home, buildCoreSwitchScript('dsh-new', 'dsh-old', 'test'), bin)
+    const result = runScript(home, switchScript(), bin)
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('REMOTE_CORE_SWITCH_FAILED')
+    expect(result.stderr).not.toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
     expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
     expect(readFileSync(join(deps, 'dsh-new', 'version'), 'utf8')).toBe('new')
     expect(readFileSync(join(deps, '.active-tag'), 'utf8')).toBe('dsh-old\n')
+  })
+
+  it.skipIf(process.platform === 'win32')('reports an unrecovered switch when the old core cannot be restored', () => {
+    const { home, deps } = fixtureHome()
+    const bin = join(home, 'bin')
+    mkdirSync(bin)
+    const mv = join(bin, 'mv')
+    // 换回去也失败：这时旧核心没恢复，必须和普通失败区分开。
+    writeFileSync(mv, `#!/bin/sh\nif [ "$2" = "${join(deps, 'dsh')}" ] || [ "$1" = "${join(deps, 'dsh-old')}" ]; then exit 1; fi\nexec /bin/mv "$@"\n`)
+    chmodSync(mv, 0o755)
+
+    const result = runScript(home, switchScript(), bin)
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('REMOTE_CORE_SWITCH_UNRECOVERED')
+  })
+
+  it.skipIf(process.platform === 'win32')('refuses to switch while the backup slot is taken', () => {
+    const { home, deps } = fixtureHome()
+    mkdirSync(join(deps, 'dsh-old'), { recursive: true })
+    writeFileSync(join(deps, 'dsh-old', 'version'), 'downloaded')
+
+    const result = runScript(home, switchScript())
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('备份槽位已被占用')
+    // 别人的副本不能被挪走或删掉。
+    expect(readFileSync(join(deps, 'dsh-old', 'version'), 'utf8')).toBe('downloaded')
+    expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
+    expect(readFileSync(join(deps, 'dsh-new', 'version'), 'utf8')).toBe('new')
   })
 
   it.skipIf(process.platform === 'win32')('refuses to switch while the target slot is taken', () => {
@@ -108,7 +144,7 @@ describe('remote core switch scripts', () => {
     mkdirSync(lock, { recursive: true })
     writeFileSync(join(lock, `claim-${process.pid}`), `${process.pid}\n`)
 
-    const result = runScript(home, buildCoreSwitchScript('dsh-new', 'dsh-old', 'test'))
+    const result = runScript(home, switchScript())
 
     expect(result.status).not.toBe(0)
     expect(`${result.stdout}${result.stderr}`).toContain('REMOTE_CORE_SLOT_BUSY')
@@ -122,12 +158,25 @@ describe('remote core switch scripts', () => {
     mkdirSync(lock, { recursive: true })
     writeFileSync(join(lock, `claim-${process.pid}`), `${process.pid}\n`)
 
-    const result = runScript(home, buildCoreSwitchScript('dsh-new', 'dsh-old', 'test'))
+    const result = runScript(home, switchScript())
 
     expect(result.status).not.toBe(0)
     expect(`${result.stdout}${result.stderr}`).toContain('REMOTE_CORE_SLOT_BUSY')
     expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
     expect(readFileSync(join(deps, 'dsh-new', 'version'), 'utf8')).toBe('new')
+  })
+
+  it.skipIf(process.platform === 'win32')('refuses to switch while the backup slot is claimed by another task', () => {
+    const { home, deps } = fixtureHome()
+    const lock = join(home, '.dsh-desktop', 'tmp', 'slot-dsh-old.lock')
+    mkdirSync(lock, { recursive: true })
+    writeFileSync(join(lock, `claim-${process.pid}`), `${process.pid}\n`)
+
+    const result = runScript(home, switchScript())
+
+    expect(result.status).not.toBe(0)
+    expect(`${result.stdout}${result.stderr}`).toContain('REMOTE_CORE_SLOT_BUSY')
+    expect(readFileSync(join(deps, 'dsh', 'version'), 'utf8')).toBe('old')
   })
 })
 

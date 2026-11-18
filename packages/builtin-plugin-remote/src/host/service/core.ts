@@ -1,15 +1,16 @@
 import type { CoreProfileItem, CoreSlotState, CoreTarget, CoreTaskAccepted, CoreVersionItem } from '../../shared/core'
-import type { MachineId, RemoteSession } from '../types/index'
+import type { MachineId, MachineProfile, RemoteSession } from '../types/index'
 import type { RemoteCoreCopy } from './core.utils'
+import type { CoreSwitchLease } from './machine.types'
 import { defineService } from 'dsh-tauri'
 import semver from 'semver'
 import { REMOTE_CORE_CAPABILITIES, REMOTE_CORE_PLATFORMS, remoteCoreTargetId } from '../../shared/core'
 import { messageOf } from '../../shared/error'
+import { REMOTE_ROOT } from '../config/constants'
 import { clearCoreInstallTask, coreInstallTask, hostConfig, hostRuntimeGeneration, registerCoreInstallTask } from '../config/runtime'
-import { remoteInstanceStopCommand } from '../utils/instance'
 import { assertSupportedDshVersion, isPreviewTag, listGithubReleases, MINIMUM_DSH_VERSION, parseVersionFromTag, pkgRepoOf } from '../utils/version'
-import { buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall } from './bootstrap.utils'
-import { buildCoreSwitchRollbackScript, buildCoreSwitchScript, fallbackActiveTag, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
+import { buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall, startCommandFor } from './bootstrap.utils'
+import { buildCoreSwitchScript, fallbackActiveTag, parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
 import { machine } from './machine'
 import { tasks } from './tasks'
 
@@ -248,11 +249,11 @@ async function installVersionTask(machineId: MachineId, tag: string, force: bool
 
 async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: string): Promise<void> {
   let session: RemoteSession | undefined
-  let suspended = false
+  let lease: CoreSwitchLease | undefined
   let switched = false
-  let backupTag: string | undefined
-  let restoreTag: string | undefined
   try {
+    // 固定这台机器的主机与档案：任务期间配置变了就不能继续在旧会话上操作。
+    const identity = profileIdentityOf(machine.profile(machineId))
     session = await machine.openSession(machineId)
     tasks.append(taskId, 'probe', `检查核心副本 ${slotKey}`)
     const copies = await readRemoteCopies(session)
@@ -260,39 +261,70 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
     const target = copies.find(copy => copy.name === slotKey)
     if (active === undefined)
       throw new Error('REMOTE_CORE_SWITCH_FAILED: 当前使用的核心副本不存在')
-    if (target === undefined || target.unreadable !== undefined || target.version === undefined)
+    if (target === undefined || target.unreadable !== undefined || target.version === undefined || target.entry === undefined)
       throw new Error(`REMOTE_CORE_SWITCH_FAILED: 目标核心副本 ${slotKey} 不存在或不可读`)
     assertSupportedDshVersion(target.version)
-    restoreTag = active.tag
-    backupTag = uniqueBackupTag(copies.map(copy => copy.name), active.tag ?? fallbackActiveTag(active.version), slotKey)
+    const candidates = backupCandidatesOf(copies, active, slotKey)
 
-    tasks.append(taskId, 'switch', '停止远端核心实例')
-    await machine.beginSwitch(machineId)
-    suspended = true
-    const profile = machineProfileOf(machineId)
-    const stopped = await session.exec([
-      ...remoteInstanceStopCommand(profile.name, profile.port),
-      'sleep 1',
-      'true',
-    ].join('\n'))
-    if (stopped.code !== 0)
-      throw new Error(`REMOTE_CORE_SWITCH_STOP_FAILED: ${describeExecFailure(stopped.code, stopped.stderr)}`)
+    lease = await machine.beginSwitch(machineId)
+    // 机器配置在切换期间变了：现在操作的不是刚才那台机器，不能继续动它的目录，
+    // 也不能替用户把这台新机器连起来。
+    if (profileIdentityOf(machine.profile(machineId)) !== identity)
+      throw new Error('REMOTE_CORE_SWITCH_ABORTED: 远端机器配置在切换期间发生变化')
 
-    tasks.append(taskId, 'switch', `互换核心目录 ${slotKey}`)
-    const swapped = await session.exec(buildCoreSwitchScript(slotKey, backupTag, taskId), { timeoutMs: 30_000 })
-    if (swapped.code !== 0)
-      throw new Error(swapped.stderr.trim() || swapped.stdout.trim() || 'REMOTE_CORE_SWITCH_FAILED: 互换核心目录失败')
-    switched = true
+    const profile = machine.profile(machineId)
+    const config = hostConfig()
+    const entryRelativePath = switchEntryRelative(target.entry, slotKey)
+    const startCommand = startCommandFor(profile, undefined, { dshBin: switchEntryPath(entryRelativePath) })
+    let failure: string | undefined
+    for (const candidate of candidates) {
+      const outcome = await runSwitchScript(session, {
+        targetTag: slotKey,
+        backupTag: candidate,
+        runId: taskId,
+        profileName: profile.profileName ?? machine.profileName(machineId),
+        remotePort: profile.remotePort,
+        startCommand,
+        entryRelativePath,
+        healthPollAttempts: config.healthPollAttempts,
+        healthPollIntervalMs: config.healthPollIntervalMs,
+      })
+      if (outcome.ok) {
+        switched = true
+        break
+      }
+      failure = outcome.message
+      // 只有备份槽位被别人占了才换一个候选；其它失败重试没有意义。
+      if (!outcome.backupTaken)
+        break
+    }
+    if (!switched)
+      throw new Error(failure ?? 'REMOTE_CORE_SWITCH_FAILED: 互换核心目录失败')
 
-    tasks.append(taskId, 'launch', `拉起远端核心 ${target.version}`)
-    await machine.reconnect(machineId)
+    tasks.append(taskId, 'launch', `重建远端连接 ${target.version}`)
+    // 用户在这期间断开或改了配置时，租约失效：不再替他重建连接。
+    if (lease !== undefined && !machine.switchLeaseValid(lease)) {
+      tasks.append(taskId, 'switch', `核心已切换至 ${target.version}，但连接已被重置`, { terminal: 'success' })
+      return
+    }
+    await machine.reconnect(machineId, { profileSync: false })
     tasks.append(taskId, 'switch', `核心已切换至 ${target.version}`, { terminal: 'success' })
   }
   catch (error) {
     const original = messageOf(error)
-    const recovery = suspended
-      ? await recoverSwitch(machineId, session, slotKey, backupTag, restoreTag, switched, taskId)
-      : ''
+    // 机器配置变了：这时连上去的是另一台机器，不能替他重建连接。
+    if (original.includes('REMOTE_CORE_SWITCH_ABORTED')) {
+      const reason = `${original}；未改动远端目录，也未重建连接`
+      tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
+      return
+    }
+    // 脚本没恢复旧核心时，目录状态未知：这时不能直接重连，只能把情况说清楚。
+    if (original.includes('REMOTE_CORE_SWITCH_UNRECOVERED')) {
+      const reason = `${original}；远端核心目录可能处于中间状态，请在远端机器上确认后重试`
+      tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
+      return
+    }
+    const recovery = switched ? '' : await recoverOldCore(machineId, lease, taskId)
     const reason = `${normalizeSwitchFailure(original)}${recovery === '' ? '' : `；${recovery}`}`
     tasks.append(taskId, 'failed', reason, { terminal: 'failed', reason })
   }
@@ -302,77 +334,85 @@ async function switchVersionTask(machineId: MachineId, slotKey: string, taskId: 
   }
 }
 
-async function recoverSwitch(
-  machineId: MachineId,
-  session: RemoteSession | undefined,
-  slotKey: string,
-  backupTag: string | undefined,
-  restoreTag: string | undefined,
-  switched: boolean,
-  taskId: string,
-): Promise<string> {
-  let recoverySession = session
-  let closeRecovery = false
-  const notes: string[] = []
+interface SwitchScriptOptions {
+  targetTag: string
+  backupTag: string
+  runId: string
+  profileName: string
+  remotePort: number
+  startCommand: string
+  entryRelativePath: string
+  healthPollAttempts: number
+  healthPollIntervalMs: number
+}
+
+interface SwitchScriptOutcome {
+  ok: boolean
+  message: string
+  backupTaken: boolean
+}
+
+async function runSwitchScript(session: RemoteSession, options: SwitchScriptOptions): Promise<SwitchScriptOutcome> {
+  const script = buildCoreSwitchScript(options)
+  const timeoutMs = Math.max(60_000, options.healthPollAttempts * options.healthPollIntervalMs + 60_000)
+  const result = await session.exec(script, { timeoutMs })
+  if (result.code === 0)
+    return { ok: true, message: '', backupTaken: false }
+  const message = switchFailureOf(`${result.stderr}\n${result.stdout}`, result.code)
+  return { ok: false, message, backupTaken: message.includes('备份槽位已被占用') }
+}
+
+function switchFailureOf(output: string, code: number | null): string {
+  const line = output.split('\n').map(item => item.trim()).filter(item => item.startsWith('REMOTE_CORE_SWITCH')).at(-1)
+  if (line !== undefined)
+    return line
+  const tail = output.trim().split('\n').slice(-3).join(' | ')
+  return `REMOTE_CORE_SWITCH_FAILED: 切换脚本失败（exit ${code ?? '?'}）${tail === '' ? '' : `：${tail}`}`
+}
+
+/** 切换没成功时把旧核心重新拉起来：目录已经换回去了，只需要重建连接。 */
+async function recoverOldCore(machineId: MachineId, lease: CoreSwitchLease | undefined, taskId: string): Promise<string> {
+  if (lease !== undefined && !machine.switchLeaseValid(lease))
+    return '连接已被重置，未重建连接'
   try {
-    if (switched && backupTag !== undefined) {
-      tasks.append(taskId, 'rollback', '恢复切换前的核心')
-      try {
-        if (recoverySession === undefined)
-          throw new Error('missing session')
-        await recoverySession.exec([
-          ...remoteInstanceStopCommand(machineProfileOf(machineId).name, machineProfileOf(machineId).port),
-          'sleep 1',
-          'true',
-        ].join('\n'))
-      }
-      catch {
-        recoverySession = await machine.openSession(machineId)
-        closeRecovery = true
-        await recoverySession.exec([
-          ...remoteInstanceStopCommand(machineProfileOf(machineId).name, machineProfileOf(machineId).port),
-          'sleep 1',
-          'true',
-        ].join('\n')).catch(() => undefined)
-      }
-      const rollback = await recoverySession.exec(buildCoreSwitchRollbackScript(slotKey, backupTag, restoreTag, `${taskId}-rollback`), { timeoutMs: 30_000 })
-      if (rollback.code !== 0)
-        notes.push(`目录回滚失败：${rollback.stderr.trim() || rollback.stdout.trim() || `exit ${rollback.code ?? '?'}`}`)
-      else
-        notes.push('目录已回滚')
-    }
-    try {
-      await machine.reconnect(machineId)
-      notes.push('旧版本已重新连接')
-    }
-    catch (error) {
-      notes.push(`旧版本重连失败：${messageOf(error)}`)
-    }
+    await machine.reconnect(machineId, { profileSync: false })
+    tasks.append(taskId, 'rollback', '旧版本已重新连接')
+    return '旧版本已重新连接'
   }
   catch (error) {
-    notes.push(`自动回滚失败：${messageOf(error)}`)
+    return `旧版本重连失败：${messageOf(error)}`
   }
-  finally {
-    if (closeRecovery && recoverySession !== undefined)
-      await recoverySession.close().catch(() => undefined)
-  }
-  return notes.join('；')
 }
 
-function uniqueBackupTag(names: string[], preferred: string, target: string): string {
-  const occupied = new Set(names.filter(name => name !== 'dsh'))
-  let candidate = preferred
-  let suffix = 1
-  while (!/^[\w.-]+$/u.test(candidate) || candidate === 'dsh' || candidate === target || occupied.has(candidate)) {
-    candidate = `${preferred}-previous${suffix === 1 ? '' : `-${suffix}`}`
-    suffix += 1
+function backupCandidatesOf(copies: RemoteCoreCopy[], active: RemoteCoreCopy, target: string): string[] {
+  const occupied = new Set(copies.map(copy => copy.name))
+  const preferred = active.tag ?? fallbackActiveTag(active.version)
+  const candidates: string[] = []
+  for (const name of [preferred, `${preferred}-previous`, `${preferred}-previous-2`]) {
+    if (!/^[\w.-]+$/u.test(name) || name === 'dsh' || name === target || occupied.has(name))
+      continue
+    candidates.push(name)
   }
-  return candidate
+  if (candidates.length === 0)
+    throw new Error('REMOTE_CORE_SWITCH_FAILED: 没有可用的备份槽位')
+  return candidates
 }
 
-function machineProfileOf(machineId: MachineId): { name: string, port: number } {
-  const profile = machine.profile(machineId)
-  return { name: profile.profileName ?? machine.profileName(machineId), port: profile.remotePort }
+/** 目标副本换到活动目录后，入口路径要跟着换过去。 */
+function switchEntryRelative(entry: string, targetTag: string): string {
+  const marker = `dependencies/${targetTag}/`
+  const index = entry.indexOf(marker)
+  if (index < 0)
+    throw new Error(`REMOTE_CORE_SLOT_INVALID: 目标核心入口路径与槽位不符 ${entry}`)
+  return entry.slice(index + marker.length)
+}
+
+function switchEntryPath(relativePath: string): string {
+  return `$HOME/${REMOTE_ROOT}/dependencies/dsh/${relativePath}`
+}
+
+function profileIdentityOf(profile: MachineProfile): string {
+  return [profile.host, profile.user, profile.port, profile.remotePort, profile.profileName ?? ''].join('\u0000')
 }
 
 function normalizeSwitchFailure(message: string): string {

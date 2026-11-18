@@ -43,7 +43,15 @@ export interface ReconnectState {
   timer?: NodeJS.Timeout
   /** 上一次连接（会话 / 隧道 / 网关入口）的回收：下一次拨号必须等它落地，端口才可能被原样复用。 */
   pending?: Promise<void>
+  /** 已经在跑的自动重连尝试：切换必须等它结束，不能与它并行。 */
+  attempting?: Promise<void>
   reasons: string[]
+}
+
+/** 一次核心切换的租约：机器状态一旦变化（用户断开、配置变更、插件停用），租约即失效。 */
+export interface CoreSwitchLease {
+  machineId: MachineId
+  generation: number
 }
 
 export interface MachineDeps {

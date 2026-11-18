@@ -388,6 +388,9 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  fetch_verified "$TMP/dsh-pkg.zip" "${plan.dsh.digest ?? ''}" "${plan.dsh.zipName}" ${quoteUrls(plan.dsh.urls)}`,
         `  extract_zip "$TMP/dsh-pkg.zip" "$ROOT/dependencies/dsh.new"`,
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
+        // 活动目录被换成了新的副本，它不再对应任何版本槽位：旧的版本标识要清掉，
+        // 否则清单会把新副本标成旧版本。
+        `  rm -f "$ROOT/dependencies/.active-tag"`,
         `  log install "dsh 安装完成 (${plan.dsh.tag})"`,
         `fi`,
       ].join('\n')
@@ -411,6 +414,7 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  mkdir -p "$ROOT/dependencies/dsh.new"`,
         `  tar -xzf "$TMP/dsh.tgz" -C "$ROOT/dependencies/dsh.new" --strip-components=1`,
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
+        `  rm -f "$ROOT/dependencies/.active-tag"`,
         `  install_dsh_deps || exit 13`,
         `  log install "dsh 安装完成 (${plan.dsh.packageName}@${plan.dsh.version})"`,
         `fi`,
@@ -813,13 +817,13 @@ export function safeProfileName(raw: string | undefined): string {
   return raw !== undefined && /^[\w-]+$/.test(raw) ? raw : DEFAULT_REMOTE_PROFILE
 }
 
-export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan): string {
+export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan, options: { dshBin?: string } = {}): string {
   if (plan !== undefined)
     assertSupportedDshVersion(plan.dshVersion)
   if (profile.startCommand !== undefined)
     return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${REMOTE_WEB_LOG}" 2>&1 < /dev/null & ) &`
   const node = `$HOME/${REMOTE_ROOT}/runtime/bin/node`
-  const dshBin = layoutDshEntry(plan)
+  const dshBin = options.dshBin ?? layoutDshEntry(plan)
   const profileName = safeProfileName(profile.profileName)
   return [
     `ROOT="$HOME/${REMOTE_ROOT}"`,
