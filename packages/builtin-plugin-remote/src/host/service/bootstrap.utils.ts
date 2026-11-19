@@ -7,12 +7,23 @@ import { messageOf } from '../../shared/error'
 import { DEFAULT_REMOTE_PROFILE, REMOTE_ROOT, remotePidfile } from '../config/constants'
 import { assetMatrixFor, dshNpmTarballUrls, dshZipDownloadUrls, NODE_SHASUMS256_SHA256, NODE_VERSION, nodeDownloadUrls, nodeShasumUrls, parsePlatform, PNPM_SHA256, PNPM_VERSION, pnpmDownloadUrls } from '../utils/assets'
 import { clientUrlsFromBootHtml, looksLikePluginBundle, releaseVersionFromBootHtml } from '../utils/boot-html'
+import { assertListenerProfile, listenerSnapshotCommand, parseListenerSnapshot } from '../utils/instance'
 import { shQuote } from '../utils/shell'
 import { assertSupportedDshVersion, listGithubAssets, listGithubReleases, npmDistMetadata, parseGitHubRepo, parseVersionFromTag, pickReleaseTag, pkgRepoOf } from '../utils/version'
 
-export const REMOTE_WEB_LOG = '.dsh/dsh-remote-web.log'
+/**
+ * 旧版桌面拉起的实例写的是整机一份的日志：同一台机器上多个实例都往里追加，
+ * 拿最后一行就会拿到别的实例的令牌。读令牌时按端口过滤它，见 remoteWebTokenCommand。
+ * issue #1573。
+ */
+const LEGACY_REMOTE_WEB_LOG = '.dsh/dsh-remote-web.log'
 
 export const BOOTSTRAP_LOG_PREFIX = '::dsh '
+
+/** 远端实例的日志：按端口区分，一个端口上的实例写自己那份。 */
+function remoteWebLog(port: number): string {
+  return `.dsh/dsh-remote-web-${port}.log`
+}
 
 const DSH_ZIP_ENTRY = 'node_modules/@deepseek-ai/dsh/lib/bin.js'
 
@@ -782,8 +793,23 @@ export function dshEntryProbeCommand(): string {
   ].join('\n')
 }
 
-export function remoteWebTokenCommand(): string {
-  return `grep -oE 'token=[A-Za-z0-9._~-]+' "$HOME/${REMOTE_WEB_LOG}" 2>/dev/null | tail -n 1 | cut -d= -f2`
+/**
+ * 取远端实例的启动令牌。
+ *
+ * 令牌属于实例，不属于机器：整机一份日志里取最后一行，拿到的是最后启动的那个实例的令牌。
+ * 现在每个实例写自己那份日志（旧版桌面起的实例仍写整机日志，按端口过滤回退），
+ * 取到的令牌就一定是这个端口上的实例的。issue #1573。
+ */
+export function remoteWebTokenCommand(port: number): string {
+  return [
+    `LOG="$HOME/${remoteWebLog(port)}"`,
+    `LEGACY="$HOME/${LEGACY_REMOTE_WEB_LOG}"`,
+    'TOKEN=""',
+    'if [ -f "$LOG" ]; then TOKEN="$(grep -oE \'token=[A-Za-z0-9._~-]+\' "$LOG" 2>/dev/null | tail -n 1 | cut -d= -f2)"; fi',
+    `if [ -z "$TOKEN" ] && [ -f "$LEGACY" ]; then TOKEN="$(grep -E ":${port}[/?]" "$LEGACY" 2>/dev/null | grep -oE 'token=[A-Za-z0-9._~-]+' | tail -n 1 | cut -d= -f2)"; fi`,
+    'if [ -z "$TOKEN" ] && [ -f "$LEGACY" ]; then COUNT="$(grep -c -oE \'token=[A-Za-z0-9._~-]+\' "$LEGACY" 2>/dev/null || true)"; if [ "$COUNT" = "1" ]; then TOKEN="$(grep -oE \'token=[A-Za-z0-9._~-]+\' "$LEGACY" 2>/dev/null | tail -n 1 | cut -d= -f2)"; fi; fi',
+    'printf \'%s\' "$TOKEN"',
+  ].join('\n')
 }
 
 export function safeProfileName(raw: string | undefined): string {
@@ -794,7 +820,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
   if (plan !== undefined)
     assertSupportedDshVersion(plan.dshVersion)
   if (profile.startCommand !== undefined)
-    return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${REMOTE_WEB_LOG}" 2>&1 < /dev/null & ) &`
+    return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${remoteWebLog(profile.remotePort)}" 2>&1 < /dev/null & ) &`
   const node = `$HOME/${REMOTE_ROOT}/runtime/bin/node`
   const dshBin = layoutDshEntry(plan)
   const profileName = safeProfileName(profile.profileName)
@@ -803,7 +829,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
     `NODE=${node}`,
     `DSH_BIN=${dshBin}`,
     `LOG_DIR="$HOME/.dsh"`,
-    `LOG="$LOG_DIR/dsh-remote-web.log"`,
+    `LOG="$LOG_DIR/dsh-remote-web-${profile.remotePort}.log"`,
     `if [ ! -x "$NODE" ] || [ ! -f "$DSH_BIN" ]; then echo "REMOTE_NOT_INSTALLED: 远端三件套未安装完整"; exit 1; fi`,
     `mkdir -p "$LOG_DIR"`,
     `export PATH="$ROOT/runtime/bin:$PATH"`,
@@ -814,7 +840,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
     `if "$NODE" --use-system-ca -e 0 2>/dev/null; then export NODE_OPTIONS="\${NODE_OPTIONS:-} --use-system-ca"; fi`,
     `export DSH_TELEMETRY_DISABLED=1 NO_COLOR=1 DSH_WEB_PORT=${profile.remotePort}`,
     `export DSH_REMOTE_SESSION_ORIGIN=${shQuote(profile.name)}`,
-    `( sh -c 'echo $$ > "$1"; exec "$2" "$3" --profile "$5" --host 127.0.0.1 --port "$4" --no-open' dsh-remote "$HOME/${remotePidfile(profileName, profile.remotePort)}" "$NODE" "$DSH_BIN" ${profile.remotePort} ${profileName} </dev/null >>"$LOG" 2>&1 & )`,
+    `( sh -c 'echo $$ > "$1"; exec "$2" "$3" --profile "$5" --host 127.0.0.1 --port "$4" --no-open' dsh-remote "$HOME/${remotePidfile(profile.remotePort)}" "$NODE" "$DSH_BIN" ${profile.remotePort} ${profileName} </dev/null >>"$LOG" 2>&1 & )`,
     `echo "远端实例已拉起（档案: ${profileName}, 日志: $LOG）"`,
   ].join('\n')
 }
@@ -906,39 +932,17 @@ export function splitBundleProbeStdout(stdout: string): { body: string, status: 
   return Number.isNaN(status) ? { body: trimmed, status: 0 } : { body: trimmed.slice(0, index), status }
 }
 
-export function logTailCommand(): string {
-  return `tail -n 20 "$HOME/${REMOTE_WEB_LOG}" 2>/dev/null || true`
+export function logTailCommand(port: number): string {
+  return [
+    `LOG="$HOME/${remoteWebLog(port)}"`,
+    `LEGACY="$HOME/${LEGACY_REMOTE_WEB_LOG}"`,
+    'if [ -f "$LOG" ]; then tail -n 20 "$LOG"; elif [ -f "$LEGACY" ]; then tail -n 20 "$LEGACY"; fi',
+  ].join('\n')
 }
 
 export function describeExecFailure(code: number | null, stderr: string): string {
   const tail = stderr.trim().split('\n').slice(-3).join(' | ')
   return `exit ${code ?? '?'}${tail === '' ? '' : `: ${tail}`}`
-}
-
-function listenerSnapshotCommand(port: number): string {
-  return [
-    'fail() { echo "REMOTE_DSH_LISTENER_$1" >&2; exit 1; }',
-    'OS=$(uname -s) || fail PLATFORM',
-    'case "$OS" in Linux|Darwin) ;; *) fail PLATFORM ;; esac',
-    `if command -v lsof >/dev/null 2>&1; then PIDS=$(lsof -a -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | sort -u)`,
-    `elif [ "$OS" = Linux ] && command -v ss >/dev/null 2>&1; then PIDS=$(ss -H -lntp 'sport = :${port}' 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)`,
-    'else fail TOOLS_MISSING; fi',
-    'set -f; set -- $PIDS; [ "$#" -eq 1 ] || fail PID_MISSING_OR_MULTIPLE',
-    'REMOTE_DSH_LISTENER_PID=$1',
-    'case "$REMOTE_DSH_LISTENER_PID" in ""|*[!0-9]*) fail PID_INVALID ;; esac',
-    'if [ "$OS" = Linux ]; then',
-    '  CWD=$(readlink "/proc/$REMOTE_DSH_LISTENER_PID/cwd") || fail CWD_UNREADABLE',
-    '  STAMP=$(stat -Lc "%d:%i" "/proc/$REMOTE_DSH_LISTENER_PID") || fail PROCESS_UNREADABLE',
-    '  [ -r "/proc/$REMOTE_DSH_LISTENER_PID/cmdline" ] || fail COMMAND_UNREADABLE',
-    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP"',
-    '  cat "/proc/$REMOTE_DSH_LISTENER_PID/cmdline" || fail COMMAND_UNREADABLE',
-    'else',
-    '  CWD=$(lsof -a -p "$REMOTE_DSH_LISTENER_PID" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p") || fail CWD_UNREADABLE',
-    '  STAMP=$(ps -p "$REMOTE_DSH_LISTENER_PID" -o lstart=) || fail PROCESS_UNREADABLE',
-    '  ARGS=$(ps -ww -p "$REMOTE_DSH_LISTENER_PID" -o command=) || fail COMMAND_UNREADABLE',
-    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP" "$ARGS"',
-    'fi',
-  ].join('\n')
 }
 
 async function assertListenerDshVersion(session: RemoteSession, port: number): Promise<void> {
@@ -949,10 +953,10 @@ async function assertListenerDshVersion(session: RemoteSession, port: number): P
   const snapshot = await session.exec(command)
   if (snapshot.code !== 0)
     return unverifiable(snapshot.stderr.trim() || 'listener identity unavailable')
-  const [os, pid, cwd, stamp, ...rest] = snapshot.stdout.split('\n')
-  if (!['Linux', 'Darwin'].includes(os ?? '') || !/^\d+$/u.test(pid ?? '') || !cwd?.startsWith('/') || !stamp?.trim())
+  const identity = parseListenerSnapshot(snapshot.stdout)
+  if (identity === undefined)
     return unverifiable('invalid listener identity')
-  const argv = os === 'Linux' ? rest.join('\n').split('\0') : rest.join('\n').trim().split(/\s+/u)
+  const { cwd, argv } = identity
   const entry = argv[1]
   if (!/(?:^|\/)node(?:js)?$/u.test(argv[0] ?? '') || entry === undefined || entry === '' || entry.startsWith('-'))
     return unverifiable('unknown DSH command entry')
@@ -1071,7 +1075,7 @@ export async function ensureRemoteInstance(
       return target
     }
   }
-  const tail = await logTail(session)
+  const tail = await logTail(session, profile.remotePort)
   return failBootstrap(
     onEvent,
     `remote dsh web did not become ready on "${target}" within ${config.healthPollAttempts} polls; `
@@ -1081,6 +1085,15 @@ export async function ensureRemoteInstance(
 }
 
 async function judgeReadiness(session: RemoteSession, profile: MachineProfile, config: Config): Promise<string | undefined> {
+  const verdict = await probeReadiness(session, profile, config)
+  if (verdict === undefined)
+    return undefined
+  // 端口上跑的是不是自己以为的那个档案：认得出且不是它就报错，不再静默复用别人的实例。
+  await assertListenerProfile(session, profile.remotePort, safeProfileName(profile.profileName))
+  return verdict
+}
+
+async function probeReadiness(session: RemoteSession, profile: MachineProfile, config: Config): Promise<string | undefined> {
   const root = await session.exec(rootProbeCommand(profile.remotePort, config.healthCheckTimeoutMs))
   if (root.code !== 0)
     return undefined
@@ -1176,9 +1189,9 @@ function failBootstrap(onEvent: BootstrapHooks['onEvent'], reason: string, line 
   throw new Error(reason)
 }
 
-async function logTail(session: RemoteSession): Promise<string> {
+async function logTail(session: RemoteSession, remotePort: number): Promise<string> {
   try {
-    const result = await session.exec(logTailCommand())
+    const result = await session.exec(logTailCommand(remotePort))
     const tail = result.stdout.trim()
     return tail === '' ? '(log is empty)' : tail.split('\n').slice(-5).join(' | ')
   }

@@ -281,7 +281,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
       const pid = Number(unrelated.stdout.trim())
       expect(Number.isInteger(pid) && pid > 0, `需要先拿到一个无关进程: ${unrelated.stderr}`).toBe(true)
       startedPids.push(pid)
-      writeFileSync(join(sandbox.home, remotePidfile(PROFILE, REMOTE_PORT)), `${pid}\n`)
+      writeFileSync(join(sandbox.home, remotePidfile(REMOTE_PORT)), `${pid}\n`)
 
       const result = runSyncScript(sandbox)
 

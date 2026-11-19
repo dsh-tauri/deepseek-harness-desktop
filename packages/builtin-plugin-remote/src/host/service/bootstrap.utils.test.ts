@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { GithubHttpError } from '../utils/version'
-import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, coreSlotLockShell, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
+import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, coreSlotLockShell, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, remoteWebTokenCommand, startCommandFor } from './bootstrap.utils'
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 
@@ -56,6 +56,64 @@ function sessionOfResult(result: RemoteExecResult): RemoteSession {
     close: vi.fn(async () => {}),
   }
 }
+
+describe('远端实例启动令牌', () => {
+  function tokenOf(home: string, port: number): string {
+    const result = spawnSync('sh', ['-c', remoteWebTokenCommand(port)], { encoding: 'utf8', env: { ...process.env, HOME: home } })
+    return result.stdout.trim()
+  }
+
+  function homeWith(files: Record<string, string>): string {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-web-token-'))
+    mkdirSync(join(home, '.dsh'), { recursive: true })
+    for (const [name, content] of Object.entries(files))
+      writeFileSync(join(home, '.dsh', name), content)
+    return home
+  }
+
+  it('实例日志按端口分文件，取令牌只读这个端口那一份', () => {
+    const home = homeWith({
+      'dsh-remote-web-41990.log': 'dsh web: http://127.0.0.1:41990/?token=token-a\n',
+      'dsh-remote-web-41991.log': 'dsh web: http://127.0.0.1:41991/?token=token-b\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('token-a')
+    expect(tokenOf(home, 41991)).toBe('token-b')
+  })
+
+  it('旧版桌面写的整机日志按端口过滤，不取别的实例的令牌', () => {
+    const home = homeWith({
+      'dsh-remote-web.log': 'dsh web: http://127.0.0.1:41991/?token=token-b\ndsh web: http://127.0.0.1:41990/?token=token-a\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('token-a')
+    expect(tokenOf(home, 41992)).toBe('')
+  })
+
+  it('整机日志里只有一枚令牌时用它', () => {
+    const home = homeWith({
+      'dsh-remote-web.log': 'dsh web: https://dsh.example.com/?token=only-one\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('only-one')
+  })
+
+  it('整机日志里有多个实例的令牌时不去猜', () => {
+    const home = homeWith({
+      'dsh-remote-web.log': 'dsh web: https://a.example.com/?token=token-a\ndsh web: https://b.example.com/?token=token-b\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('')
+  })
+
+  it('实例的日志与 pidfile 都按端口命名', () => {
+    const profile = { id: 'm1', name: '远端机器', host: '127.0.0.1', port: 22, user: 'tester', remotePort: 41990, profileName: 'remote' } as never
+    const script = startCommandFor(profile)
+
+    expect(script).toContain('dsh-remote-web-41990.log')
+    expect(script).toContain('.dsh/.dsh-remote-41990.pid')
+  })
+})
 
 describe('远端 DSH 包版本读取', () => {
   it('reads the installed package version', async () => {
