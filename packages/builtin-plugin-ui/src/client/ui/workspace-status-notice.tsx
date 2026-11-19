@@ -6,7 +6,7 @@ import { Button } from '../components/button'
 import { Notice } from '../components/notice'
 import { locale } from '../locales'
 
-interface WorkspaceStatusNoticeProps {
+export interface WorkspaceStatusNoticeProps {
   sessionId: PropsRuntime<'conversation.composer.dock'>['sessionId']
   checkWorkspace: (sessionId: string, signal: AbortSignal) => Promise<PostApiTauriUiSessionWorkspaceStatusResponse>
   onWindowFocus: (refresh: () => void) => () => void

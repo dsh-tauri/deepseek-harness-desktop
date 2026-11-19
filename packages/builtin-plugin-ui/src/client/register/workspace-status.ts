@@ -1,5 +1,6 @@
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ClientContext } from 'dsh-tauri/client'
+import type { WorkspaceStatusNoticeProps } from '../ui/workspace-status-notice'
 import { defineRegister } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 import { postSessionWorkspaceStatus } from '../apis'
@@ -11,7 +12,7 @@ export const registerWorkspaceStatus = defineRegister<ClientContext>((controller
   if (!('dshDesktop' in globalThis))
     return
 
-  const notice = {
+  const notice: Omit<WorkspaceStatusNoticeProps, 'sessionId'> = {
     checkWorkspace: (sessionId: string, signal: AbortSignal) => postSessionWorkspaceStatus({ sessionId }, { signal }),
     onWindowFocus: (refresh: () => void) => controller.listenWindow('focus', refresh),
     chooseFolder: () => adapter.addWorkspace({ openSession: true }),
