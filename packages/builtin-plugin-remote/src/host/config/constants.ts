@@ -6,9 +6,18 @@ export const DEFAULT_MACHINE_TRANSPORT = 'ssh'
 
 export const REMOTE_ROOT = '.dsh-desktop'
 
-/** 远端实例的 pidfile：按档案与端口区分，同一台主机上的多个档案互不覆盖。 */
-export function remotePidfile(profileName: string, port: number): string {
-  return `.dsh/.dsh-remote-${profileName}-${port}.pid`
+/** 远端脚本的日志行前缀：桌面端按它把远端脚本的输出认成事件。 */
+export const BOOTSTRAP_LOG_PREFIX = '::dsh '
+
+/**
+ * 远端实例的 pidfile：按端口区分。
+ *
+ * 实例身份是「主机 + 端口」：一个端口上只可能有一个实例。按档案再分一份 pidfile
+ * 会让同一端口上的两份 pidfile 指向不同实例，后续按 pidfile 做的判断（读 pid、
+ * 核对命令行）就会落到错的进程上。issue #1574。
+ */
+export function remotePidfile(port: number): string {
+  return `.dsh/.dsh-remote-${port}.pid`
 }
 
 /** 内部来源标识的两枚头名（S2 §9）；网关注入侧与插件判定侧必须逐字一致。 */

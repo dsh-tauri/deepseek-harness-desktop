@@ -24,8 +24,12 @@ export const bootstrap = defineService({
       plan,
       hostConfig().installTimeoutMs!,
       hooks,
-      options.failureLine ?? 'bootstrap 失败',
-      options.force === true,
+      {
+        ...(options.failureLine === undefined ? {} : { failureLine: options.failureLine }),
+        ...(options.force === undefined ? {} : { force: options.force }),
+        ...(options.profileName === undefined ? {} : { profileName: options.profileName }),
+        ...(options.remotePort === undefined ? {} : { remotePort: options.remotePort }),
+      },
     )
   },
 })

@@ -1,8 +1,8 @@
 import type { Buffer } from 'node:buffer'
 import type { MachineProfile } from '../types/index'
-import type { BundledPluginsTree } from './plugins-sync'
+import type { BundledPluginsTree, PluginSyncMarker } from './plugins-sync'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
@@ -10,12 +10,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { remotePidfile } from '../config/constants'
 import { startCommandFor } from '../service/bootstrap.utils'
 import { MachineId } from '../types/index'
-import { pluginSyncApplyCommand, pluginSyncMarkerCommand } from './plugins-sync'
+import { bundleContentHash, decidePluginSync, pluginSyncApplyCommand, pluginSyncMarkerCommand } from './plugins-sync'
 
 const PROFILE = 'plugins-sync-test'
 const REMOTE_PORT = 41983
 const HASH = 'b7e9c1f2d4a6'
-const TREE: BundledPluginsTree = { root: '/unused', pluginNames: ['plugin-alpha', 'plugin-beta'] }
+const MARKER: PluginSyncMarker = { hash: HASH, version: '0.6.7' }
+const TREE: BundledPluginsTree = { root: '/unused', pluginNames: ['plugin-alpha', 'plugin-beta'], version: '0.6.7' }
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v tar >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 const PKILL_AVAILABLE = spawnSync('pkill', ['-f', 'dsh-plugins-sync-probe-absent']).status === 1
@@ -96,8 +97,8 @@ function startInstance(sandbox: Sandbox, env: Record<string, string> = {}): void
   expect(result.status, `远端实例启动失败: ${result.stderr}`).toBe(0)
 }
 
-function runSyncScript(sandbox: Sandbox, options: { shims?: string[], env?: Record<string, string> } = {}) {
-  const script = [...options.shims ?? [], pluginSyncApplyCommand(TREE, HASH, PROFILE, REMOTE_PORT)].join('\n')
+function runSyncScript(sandbox: Sandbox, options: { shims?: string[], env?: Record<string, string>, expectedHash?: string } = {}) {
+  const script = [...options.shims ?? [], pluginSyncApplyCommand(TREE, MARKER, PROFILE, REMOTE_PORT, options.expectedHash ?? '')].join('\n')
   const result = spawnSync('sh', ['-c', script], {
     input: archive(),
     env: childEnv(sandbox, options.env),
@@ -149,8 +150,11 @@ function pkillShim(sandbox: Sandbox): string {
 }`
 }
 
-function markerOf(sandbox: Sandbox): string {
-  return spawnSync('sh', ['-c', pluginSyncMarkerCommand()], { env: childEnv(sandbox), encoding: 'utf8' }).stdout.trim()
+function markerOf(sandbox: Sandbox): PluginSyncMarker | undefined {
+  const text = spawnSync('sh', ['-c', pluginSyncMarkerCommand()], { env: childEnv(sandbox), encoding: 'utf8' }).stdout.trim()
+  if (text === '')
+    return undefined
+  return JSON.parse(text) as PluginSyncMarker
 }
 
 function livenessOf(sandbox: Sandbox): string[] {
@@ -171,6 +175,69 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('捆绑插件内容哈希', () => {
+  it('内容相同、文件时间不同的两份树哈希相同', () => {
+    const left = mkdtempSync(join(tmpdir(), 'dsh-bundle-hash-'))
+    const right = mkdtempSync(join(tmpdir(), 'dsh-bundle-hash-'))
+    try {
+      for (const root of [left, right]) {
+        writeFileSync(join(ensureDirectory(join(root, 'plugin-alpha')), 'package.json'), '{"name":"plugin-alpha"}')
+      }
+      const early = new Date('2026-01-01T00:00:00Z')
+      const late = new Date('2026-06-01T00:00:00Z')
+      utimesSync(join(left, 'plugin-alpha', 'package.json'), early, early)
+      utimesSync(join(right, 'plugin-alpha', 'package.json'), late, late)
+
+      expect(bundleContentHash(left)).toBe(bundleContentHash(right))
+    }
+    finally {
+      rmSync(left, { recursive: true, force: true })
+      rmSync(right, { recursive: true, force: true })
+    }
+  })
+
+  it('内容不同的两份树哈希不同', () => {
+    const left = mkdtempSync(join(tmpdir(), 'dsh-bundle-hash-'))
+    const right = mkdtempSync(join(tmpdir(), 'dsh-bundle-hash-'))
+    try {
+      writeFileSync(join(ensureDirectory(join(left, 'plugin-alpha')), 'package.json'), '{"name":"plugin-alpha"}')
+      writeFileSync(join(ensureDirectory(join(right, 'plugin-alpha')), 'package.json'), '{"name":"plugin-beta"}')
+
+      expect(bundleContentHash(left)).not.toBe(bundleContentHash(right))
+    }
+    finally {
+      rmSync(left, { recursive: true, force: true })
+      rmSync(right, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('远端捆绑插件要不要覆盖', () => {
+  it('远端还没有部署过捆绑插件时要同步', () => {
+    expect(decidePluginSync(undefined, MARKER).sync).toBe(true)
+  })
+
+  it('远端已经是这份捆绑插件时不再同步', () => {
+    expect(decidePluginSync(MARKER, MARKER).sync).toBe(false)
+  })
+
+  it('远端由更新版本的桌面部署时本机不覆盖', () => {
+    const decision = decidePluginSync({ hash: 'other-hash', version: '0.6.8' }, MARKER)
+
+    expect(decision.sync).toBe(false)
+    expect(decision.reason).toContain('0.6.8')
+  })
+
+  it('本机版本更新时覆盖远端', () => {
+    expect(decidePluginSync({ hash: 'other-hash', version: '0.6.6' }, MARKER).sync).toBe(true)
+  })
+
+  it('同一版本时按内容哈希定胜负，两端算出同一个结果', () => {
+    expect(decidePluginSync({ hash: 'aaaa', version: '0.6.7' }, MARKER).sync).toBe(true)
+    expect(decidePluginSync({ hash: 'zzzz', version: '0.6.7' }, MARKER).sync).toBe(false)
+  })
+})
+
 describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
   it('换树后新树生效、写 marker 并输出 PLUGINS_SYNCED', () => {
     const sandbox = createSandbox()
@@ -181,7 +248,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     expect(result.stdout).toContain('PLUGINS_SYNCED')
     expect(readFileSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json'), 'utf8')).toBe('{"name":"plugin-alpha"}')
     expect(existsSync(join(sandbox.plugins, 'node_modules', 'legacy.txt')), '旧树必须整体换走').toBe(false)
-    expect(markerOf(sandbox)).toBe(HASH)
+    expect(markerOf(sandbox)).toEqual(MARKER)
   })
 
   it('同步先停掉 pidfile 记录的旧实例', async () => {
@@ -195,7 +262,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
 
     expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
     expect(processAlive(pid), '同步后旧实例必须已退出').toBe(false)
-    expect(markerOf(sandbox)).toBe(HASH)
+    expect(markerOf(sandbox)).toEqual(MARKER)
   })
 
   it('rm 对旧树返回非 0 时同步仍走完并输出 PLUGINS_SYNCED', () => {
@@ -206,7 +273,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     expect(result.status, `旧树删不掉不得中止同步: ${result.stderr}`).toBe(0)
     expect(result.stdout).toContain('PLUGINS_SYNCED')
     expect(readFileSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json'), 'utf8')).toBe('{"name":"plugin-alpha"}')
-    expect(markerOf(sandbox)).toBe(HASH)
+    expect(markerOf(sandbox)).toEqual(MARKER)
   })
 
   it('旧树删不掉时下次同步仍能重跑', () => {
@@ -214,7 +281,8 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const shims = [rmShim(sandbox)]
     expect(runSyncScript(sandbox, { shims }).status).toBe(0)
 
-    const second = runSyncScript(sandbox, { shims })
+    // 第二次：远端标记已经是上一次写的那份，判定要带着它。
+    const second = runSyncScript(sandbox, { shims, expectedHash: HASH })
 
     expect(second.status, `残留旧树不得阻塞下次同步: ${second.stderr}`).toBe(0)
     expect(second.stdout).toContain('PLUGINS_SYNCED')
@@ -239,7 +307,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
 
     expect(result.status, '接线失败必须让同步整体失败').not.toBe(0)
     expect(result.stdout).not.toContain('PLUGINS_SYNCED')
-    expect(markerOf(sandbox), '未完成同步不得留下 marker').toBe('')
+    expect(markerOf(sandbox), '未完成同步不得留下 marker').toBeUndefined()
   })
 
   it('停实例的 pkill 模式命中真实启动 argv 且不误伤别的端口', async () => {
@@ -269,7 +337,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
   it('停实例的匹配串在运行期拼装，脚本不会命中自己', () => {
     // 匹配串若在生成期展开，脚本自身的命令行就包含它，`pkill -f` 会在 Linux 上
     // 把正在执行同步的 shell 一起杀掉（同步失败且退出码为空）。
-    const script = pluginSyncApplyCommand(TREE, HASH, PROFILE, REMOTE_PORT)
+    const script = pluginSyncApplyCommand(TREE, MARKER, PROFILE, REMOTE_PORT, '')
 
     expect(script).not.toContain(`bin.js --profile ${PROFILE} --host 127.0.0.1 --port ${REMOTE_PORT}`)
   })
@@ -281,14 +349,50 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
       const pid = Number(unrelated.stdout.trim())
       expect(Number.isInteger(pid) && pid > 0, `需要先拿到一个无关进程: ${unrelated.stderr}`).toBe(true)
       startedPids.push(pid)
-      writeFileSync(join(sandbox.home, remotePidfile(PROFILE, REMOTE_PORT)), `${pid}\n`)
+      writeFileSync(join(sandbox.home, remotePidfile(REMOTE_PORT)), `${pid}\n`)
 
       const result = runSyncScript(sandbox)
 
       expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
       expect(processAlive(pid), '命令行不匹配的进程必须保留').toBe(true)
-      expect(markerOf(sandbox)).toBe(HASH)
+      expect(markerOf(sandbox)).toEqual(MARKER)
     })
+  })
+
+  it('别的写入方正在准备的暂存目录不能删', () => {
+    const sandbox = createSandbox()
+    const others = join(sandbox.home, '.dsh-desktop', `plugins.new.${process.pid}-1`)
+    ensureDirectory(others)
+
+    const result = runSyncScript(sandbox)
+
+    expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
+    expect(existsSync(others), '写入方还活着的暂存目录不能被删掉').toBe(true)
+  })
+
+  it('拿到占用声明时远端标记已经变了，这次同步必须作废', () => {
+    const sandbox = createSandbox()
+    // 远端已经被另一台桌面换过：判定时读到的是旧标记。
+    writeFileSync(join(sandbox.plugins, '.sync.json'), JSON.stringify({ hash: 'someone-else', version: '0.6.8' }))
+
+    const result = runSyncScript(sandbox, { expectedHash: HASH })
+
+    expect(result.status, '标记变了就作废，交给桌面端重新判定').toBe(22)
+    expect(`${result.stdout}${result.stderr}`).toContain('PLUGIN_SYNC_MARKER_CHANGED')
+    expect(existsSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json')), '判定作废时不得换树').toBe(false)
+    expect(markerOf(sandbox), '判定作废时不得改远端标记').toEqual({ hash: 'someone-else', version: '0.6.8' })
+  })
+
+  it('远端有别的操作占着活动槽位时同步必须失败', () => {
+    const sandbox = createSandbox()
+    const claim = ensureDirectory(join(sandbox.home, '.dsh-desktop', 'tmp', 'slot-dsh.lock'))
+    writeFileSync(join(claim, `claim-${process.pid}`), `${process.pid}\n`)
+
+    const result = runSyncScript(sandbox)
+
+    expect(result.status, '占着活动槽位时不能继续换树').not.toBe(0)
+    expect(`${result.stdout}${result.stderr}`).toContain('REMOTE_CORE_SLOT_BUSY')
+    expect(existsSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json')), '占着锁时不得换树').toBe(false)
   })
 
   describe.skipIf(!PKILL_AVAILABLE)('真实 pkill 兜底', () => {

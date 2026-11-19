@@ -15,7 +15,7 @@ import { DEFAULT_MACHINE_TRANSPORT, REMOTE_ROOT } from '../config/constants'
 import { harnessHome, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
 import { MachineId, RemoteError } from '../types/index'
 import { carryWorkspaceAllowlist } from '../utils/allowlist'
-import { remoteInstanceStopCommand } from '../utils/instance'
+import { assertListenerProfile } from '../utils/instance'
 import { syncBundledPlugins } from '../utils/plugins-sync'
 import { discoverableHosts, loadSshConfigBlocks, lookupSshConfig, resolveSshAuth } from '../utils/ssh-config'
 import { bootstrap } from './bootstrap'
@@ -386,9 +386,9 @@ async function openTransportSession(profile: MachineProfile, signal?: AbortSigna
   )
 }
 
-async function readRemoteWebToken(session: RemoteSession): Promise<string | undefined> {
+async function readRemoteWebToken(session: RemoteSession, remotePort: number): Promise<string | undefined> {
   try {
-    const result = await session.exec(remoteWebTokenCommand())
+    const result = await session.exec(remoteWebTokenCommand(remotePort))
     const token = result.stdout.trim()
     return token === '' ? undefined : token
   }
@@ -475,7 +475,7 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
         upstream: `http://127.0.0.1:${tunnel.localPort}`,
         port: target.preferredGatewayPort ?? 0,
         tokenProvider: async (authority) => {
-          const token = await readRemoteWebToken(session)
+          const token = await readRemoteWebToken(session, profile.remotePort)
           return token === undefined ? undefined : `http://${authority}/?token=${token}`
         },
       })
@@ -821,9 +821,10 @@ async function performInstall(machineId: MachineId, profile: MachineProfile, opt
     for (const note of plan.notes)
       onEvent('probe', note)
     await assertRemoteDshVersion(session, true)
+    const profileName = safeProfileName(profile.profileName)
     if (force) {
-      const stopped = await session.exec(remoteInstanceStopCommand(safeProfileName(profile.profileName), profile.remotePort).join('\n'))
-      onEvent('probe', stopped.code === 0 ? '重新安装: 已停止远端旧实例' : '重新安装: 停止远端旧实例失败，继续安装')
+      // 端口上跑的不是自己以为的那个档案时不能动手：那是别人的实例。
+      await assertListenerProfile(session, profile.remotePort, profileName)
     }
     const missing = missingComponentsOf((await session.exec(checkMissingCommand())).stdout)
     const skips: string[] = []
@@ -837,7 +838,7 @@ async function performInstall(machineId: MachineId, profile: MachineProfile, opt
           target.progress = progress
           emit(machineId)
         },
-      }, { force, failureLine: 'install 失败' }))
+      }, { force, failureLine: 'install 失败', profileName, remotePort: profile.remotePort }))
       if (generation !== target.generation)
         throw new AttemptCancelled()
     }
