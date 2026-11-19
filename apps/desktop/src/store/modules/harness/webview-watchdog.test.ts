@@ -32,6 +32,7 @@ afterEach(async () => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 it('cancels the five-second watchdog when the current guest proves its document', async () => {
@@ -79,6 +80,22 @@ it('reloads only the document generation and never stops the service', async () 
   expect(harness.serviceRunning).toBe(true)
   await vi.advanceTimersByTimeAsync(800)
   expect(harness.webviewKey).toBe(1)
+})
+
+it('reloads the hosted document itself when the window carries the page', async () => {
+  vi.stubGlobal('__DSH_HOSTED__', true)
+  vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+  const reload = vi.fn()
+  vi.stubGlobal('location', { reload })
+  harness.markWebviewLoaded()
+  harness.markWebviewAlive(0)
+
+  harness.reloadWebview()
+  await vi.advanceTimersByTimeAsync(1000)
+
+  expect(reload).toHaveBeenCalledOnce()
+  expect(harness.webviewKey).toBe(0)
+  expect(harness.serviceRunning).toBe(true)
 })
 
 it('ignores a reload request while the service is stopped', async () => {

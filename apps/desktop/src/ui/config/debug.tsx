@@ -45,9 +45,7 @@ const PROXY_TEST_MESSAGE: Record<string, string> = {
 
 export function ConfigDebug() {
   const { t, i18n } = useTranslation()
-  const { serviceRunning, busyAction, webviewLoaded } = useStore(store.harness)
-  // 刷新是「重挂载文档」而不是服务操作，旋转态跟文档加载走，否则按钮点下去毫无反馈
-  const webviewLoading = serviceRunning && !webviewLoaded
+  const { serviceRunning, busyAction } = useStore(store.harness)
   const { updateInfo } = useStore(store.harnessUpdater)
 
   // 端口编辑态：用户尚未输入时为 undefined，展示值始终以 store 中已保存的端口为准。
@@ -308,11 +306,12 @@ export function ConfigDebug() {
               size="sm"
               variant="ghost"
               isIconOnly
+              data-testid="dsh-config-reload-page"
               onPress={store.harness.reloadWebview}
               isDisabled={busyAction !== null || !serviceRunning}
               aria-label={t('app.reload_page')}
             >
-              <If cond={webviewLoading} then={<Spinner size="sm" color="current" />} else={<ArrowsRotateRight className="size-3.5" />} />
+              <ArrowsRotateRight className="size-3.5" />
             </Button>
           </div>
         </div>

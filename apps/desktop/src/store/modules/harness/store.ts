@@ -1112,16 +1112,21 @@ export const harness = defineStore({
     },
 
     /**
-     * 只重挂载承载文档的 webview，不碰核心进程。
+     * 只刷新承载文档的页面，不碰核心进程。
      *
-     * 与 `recoverWebviewBoot` 的区别是这里由用户主动触发：先把重载闸门清零，
-     * 否则用户连点几次会被当成自动恢复次数耗尽，反而弹出「客户端启动停滞」。
-     * 旋转态由 `webviewLoaded` 驱动（refreshWebview 自带 800ms 防抖），不占 busyAction。
+     * 壳层注入形态（生产）下本窗口文档就是那个页面，没有可重挂的子视图：`webviewKey`
+     * 只驱动看门狗与壳层状态，推进它不会重新拉取页面，表现为「点了没反应」。这种形态
+     * 只能整页重载——注入脚本会在新文档上重新挂起壳层。
+     * 独立壳层页（dev）由页面内 `<webview>` 承载，推进重载代次让它重挂即可。
      */
     reloadWebview() {
       if (!this.serviceRunning)
         return
       webviewReloadGate.reset()
+      if (isHostedDocument()) {
+        globalThis.location.reload()
+        return
+      }
       this.refreshWebview()
     },
   },
