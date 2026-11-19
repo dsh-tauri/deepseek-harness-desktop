@@ -1,6 +1,6 @@
-import type { Buffer } from 'node:buffer'
 import type { MachineProfile } from '../types/index'
-import type { BundledPluginsTree, PluginSyncMarker } from './plugins-sync'
+import type { PluginSyncMarker } from './plugins-sync'
+import { Buffer } from 'node:buffer'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,13 +10,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { remotePidfile } from '../config/constants'
 import { startCommandFor } from '../service/bootstrap.utils'
 import { MachineId } from '../types/index'
-import { bundleContentHash, decidePluginSync, pluginSyncApplyCommand, pluginSyncMarkerCommand } from './plugins-sync'
+import { bundleContentHash, planPluginSync, pluginSyncApplyCommand, pluginSyncMarkerCommand } from './plugins-sync'
 
 const PROFILE = 'plugins-sync-test'
 const REMOTE_PORT = 41983
 const HASH = 'b7e9c1f2d4a6'
-const MARKER: PluginSyncMarker = { hash: HASH, version: '0.6.7' }
-const TREE: BundledPluginsTree = { root: '/unused', pluginNames: ['plugin-alpha', 'plugin-beta'], version: '0.6.7' }
+const OURS: PluginSyncMarker = { hash: HASH, version: '0.6.7' }
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v tar >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 const PKILL_AVAILABLE = spawnSync('pkill', ['-f', 'dsh-plugins-sync-probe-absent']).status === 1
@@ -31,7 +30,11 @@ for _arg in "$@"; do
 done
 if [ -n "$STUB_ARGV_LOG" ]; then printf '%s\\n' "$0 $*" >> "$STUB_ARGV_LOG"; fi
 case "$*" in
-  *_wire.js*) printf 'wired %s\\n' "$*"; exit "\${STUB_WIRE_STATUS:-0}" ;;
+  *_wire.js*)
+    if [ -n "$STUB_WIRE_STATUS" ]; then printf 'wired %s\\n' "$*"; exit "$STUB_WIRE_STATUS"; fi
+    # 接线真的跑一遍：标记里的接线记录就是它写的。
+    exec "$STUB_REAL_NODE" "$@"
+    ;;
 esac
 if [ "$STUB_NODE_EXIT" = "1" ]; then exit 0; fi
 while :; do sleep 1; done
@@ -76,14 +79,14 @@ function createSandbox(): Sandbox {
 }
 
 function childEnv(sandbox: Sandbox, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { ...process.env, HOME: posix(sandbox.home), ...extra }
+  return { ...process.env, HOME: posix(sandbox.home), STUB_REAL_NODE: process.execPath, ...extra }
 }
 
 function archive(): Buffer {
   if (cachedArchive !== undefined)
     return cachedArchive
   staging = ensureDirectory(mkdtempSync(join(tmpdir(), 'dsh-plugins-sync-tree-')))
-  writeFileSync(join(ensureDirectory(join(staging, 'plugin-alpha')), 'package.json'), '{"name":"plugin-alpha"}')
+  writeFileSync(join(ensureDirectory(join(staging, 'plugin-alpha')), 'package.json'), '{"name":"plugin-alpha","dsh":{}}')
   const result = spawnSync('tar', ['-czf', '-', '-C', staging, '.'])
   if (result.error !== undefined)
     throw result.error
@@ -97,10 +100,18 @@ function startInstance(sandbox: Sandbox, env: Record<string, string> = {}): void
   expect(result.status, `远端实例启动失败: ${result.stderr}`).toBe(0)
 }
 
-function runSyncScript(sandbox: Sandbox, options: { shims?: string[], env?: Record<string, string>, expectedHash?: string } = {}) {
-  const script = [...options.shims ?? [], pluginSyncApplyCommand(TREE, MARKER, PROFILE, REMOTE_PORT, options.expectedHash ?? '')].join('\n')
+function runSyncScript(sandbox: Sandbox, options: { shims?: string[], env?: Record<string, string>, expectedHash?: string, replaceTree?: boolean, treeHash?: string, treeVersion?: string } = {}) {
+  const replaceTree = options.replaceTree !== false
+  const script = [...options.shims ?? [], pluginSyncApplyCommand({
+    profileName: PROFILE,
+    remotePort: REMOTE_PORT,
+    expectedHash: options.expectedHash ?? '',
+    replaceTree,
+    treeHash: options.treeHash ?? HASH,
+    treeVersion: options.treeVersion ?? '0.6.7',
+  })].join('\n')
   const result = spawnSync('sh', ['-c', script], {
-    input: archive(),
+    input: replaceTree ? archive() : Buffer.alloc(0),
     env: childEnv(sandbox, options.env),
     encoding: 'utf8',
     timeout: 60_000,
@@ -148,6 +159,11 @@ function pkillShim(sandbox: Sandbox): string {
   printf '%s\\n' "$*" >> '${log}'
   return 0
 }`
+}
+
+function profileStateOf(sandbox: Sandbox, profile = PROFILE): string | undefined {
+  const path = join(sandbox.home, '.dsh-desktop', 'profiles-sync', profile)
+  return existsSync(path) ? readFileSync(path, 'utf8').trim() : undefined
 }
 
 function markerOf(sandbox: Sandbox): PluginSyncMarker | undefined {
@@ -212,29 +228,55 @@ describe('捆绑插件内容哈希', () => {
   })
 })
 
-describe('远端捆绑插件要不要覆盖', () => {
-  it('远端还没有部署过捆绑插件时要同步', () => {
-    expect(decidePluginSync(undefined, MARKER).sync).toBe(true)
+describe('远端捆绑插件换树与接线怎么排', () => {
+  it('远端还没有部署过捆绑插件时要换树也要接线', () => {
+    const plan = planPluginSync(undefined, OURS, undefined)
+
+    expect(plan.replaceTree).toBe(true)
+    expect(plan.wireProfile).toBe(true)
   })
 
-  it('远端已经是这份捆绑插件时不再同步', () => {
-    expect(decidePluginSync(MARKER, MARKER).sync).toBe(false)
+  it('远端已经是这份且本档案接过线时什么都不做', () => {
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, HASH)
+
+    expect(plan.replaceTree).toBe(false)
+    expect(plan.wireProfile).toBe(false)
   })
 
-  it('远端由更新版本的桌面部署时本机不覆盖', () => {
-    const decision = decidePluginSync({ hash: 'other-hash', version: '0.6.8' }, MARKER)
+  it('远端已经是这份但本档案没接过线时只补接线', () => {
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, undefined)
 
-    expect(decision.sync).toBe(false)
-    expect(decision.reason).toContain('0.6.8')
+    expect(plan.replaceTree, '远端这份已经是本机这份，不该再换一遍').toBe(false)
+    expect(plan.wireProfile, '本档案还没接过线，必须补上').toBe(true)
   })
 
-  it('本机版本更新时覆盖远端', () => {
-    expect(decidePluginSync({ hash: 'other-hash', version: '0.6.6' }, MARKER).sync).toBe(true)
+  it('远端由更新版本的桌面部署时本机不换树', () => {
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, 'other-hash')
+
+    expect(plan.replaceTree).toBe(false)
+    expect(plan.wireProfile).toBe(false)
+    expect(plan.reason).toContain('0.6.8')
+  })
+
+  it('远端由更新版本的桌面部署但本档案没接过线时只补接线，不动远端那份', () => {
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, undefined)
+
+    expect(plan.replaceTree).toBe(false)
+    expect(plan.wireProfile).toBe(true)
+    expect(plan.treeHash, '接线要接到远端现在这份上').toBe('other-hash')
+  })
+
+  it('本机版本更新时换树并接线', () => {
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.6' }, OURS, undefined)
+
+    expect(plan.replaceTree).toBe(true)
+    expect(plan.wireProfile).toBe(true)
+    expect(plan.treeHash).toBe(HASH)
   })
 
   it('同一版本时按内容哈希定胜负，两端算出同一个结果', () => {
-    expect(decidePluginSync({ hash: 'aaaa', version: '0.6.7' }, MARKER).sync).toBe(true)
-    expect(decidePluginSync({ hash: 'zzzz', version: '0.6.7' }, MARKER).sync).toBe(false)
+    expect(planPluginSync({ hash: 'aaaa', version: '0.6.7' }, OURS, undefined).replaceTree).toBe(true)
+    expect(planPluginSync({ hash: 'zzzz', version: '0.6.7' }, OURS, undefined).replaceTree).toBe(false)
   })
 })
 
@@ -246,9 +288,9 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
 
     expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
     expect(result.stdout).toContain('PLUGINS_SYNCED')
-    expect(readFileSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json'), 'utf8')).toBe('{"name":"plugin-alpha"}')
+    expect(readFileSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json'), 'utf8')).toBe('{"name":"plugin-alpha","dsh":{}}')
     expect(existsSync(join(sandbox.plugins, 'node_modules', 'legacy.txt')), '旧树必须整体换走').toBe(false)
-    expect(markerOf(sandbox)).toEqual(MARKER)
+    expect(markerOf(sandbox)).toEqual({ hash: HASH, version: '0.6.7' })
   })
 
   it('同步先停掉 pidfile 记录的旧实例', async () => {
@@ -262,7 +304,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
 
     expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
     expect(processAlive(pid), '同步后旧实例必须已退出').toBe(false)
-    expect(markerOf(sandbox)).toEqual(MARKER)
+    expect(markerOf(sandbox)).toEqual({ hash: HASH, version: '0.6.7' })
   })
 
   it('rm 对旧树返回非 0 时同步仍走完并输出 PLUGINS_SYNCED', () => {
@@ -272,8 +314,8 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
 
     expect(result.status, `旧树删不掉不得中止同步: ${result.stderr}`).toBe(0)
     expect(result.stdout).toContain('PLUGINS_SYNCED')
-    expect(readFileSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json'), 'utf8')).toBe('{"name":"plugin-alpha"}')
-    expect(markerOf(sandbox)).toEqual(MARKER)
+    expect(readFileSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json'), 'utf8')).toBe('{"name":"plugin-alpha","dsh":{}}')
+    expect(markerOf(sandbox)).toEqual({ hash: HASH, version: '0.6.7' })
   })
 
   it('旧树删不掉时下次同步仍能重跑', () => {
@@ -337,7 +379,14 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
   it('停实例的匹配串在运行期拼装，脚本不会命中自己', () => {
     // 匹配串若在生成期展开，脚本自身的命令行就包含它，`pkill -f` 会在 Linux 上
     // 把正在执行同步的 shell 一起杀掉（同步失败且退出码为空）。
-    const script = pluginSyncApplyCommand(TREE, MARKER, PROFILE, REMOTE_PORT, '')
+    const script = pluginSyncApplyCommand({
+      profileName: PROFILE,
+      remotePort: REMOTE_PORT,
+      expectedHash: '',
+      replaceTree: true,
+      treeHash: HASH,
+      treeVersion: '0.6.7',
+    })
 
     expect(script).not.toContain(`bin.js --profile ${PROFILE} --host 127.0.0.1 --port ${REMOTE_PORT}`)
   })
@@ -355,7 +404,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
 
       expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
       expect(processAlive(pid), '命令行不匹配的进程必须保留').toBe(true)
-      expect(markerOf(sandbox)).toEqual(MARKER)
+      expect(markerOf(sandbox)).toEqual({ hash: HASH, version: '0.6.7' })
     })
   })
 
@@ -368,6 +417,53 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
 
     expect(result.status, `同步脚本必须成功: ${result.stderr}`).toBe(0)
     expect(existsSync(others), '写入方还活着的暂存目录不能被删掉').toBe(true)
+  })
+
+  it('只补接线时不上传插件包，也不换目录', () => {
+    const wiring = pluginSyncApplyCommand({
+      profileName: PROFILE,
+      remotePort: REMOTE_PORT,
+      expectedHash: 'other-hash',
+      replaceTree: false,
+      treeHash: 'other-hash',
+      treeVersion: '0.6.8',
+    })
+
+    expect(wiring, '不换树时不该收插件包').not.toContain('tar -xzf')
+    expect(wiring, '不换树时不该动插件目录').not.toContain('mv "$NEW" "$BASE"')
+    expect(wiring, '接线脚本要用当前这份实现').toContain('DSH_WIRE_EOF')
+  })
+
+  it('只补接线时不换远端那份插件目录', () => {
+    const sandbox = createSandbox()
+    // 远端这份是别的桌面部署的：本机只给档案补接线。
+    writeFileSync(join(ensureDirectory(join(sandbox.plugins, 'node_modules', 'plugin-alpha')), 'package.json'), '{"name":"plugin-alpha","dsh":{}}')
+    writeFileSync(join(sandbox.plugins, '.sync.json'), JSON.stringify({ hash: 'other-hash', version: '0.6.8' }))
+
+    const result = runSyncScript(sandbox, { replaceTree: false, expectedHash: 'other-hash', treeHash: 'other-hash', treeVersion: '0.6.8' })
+
+    expect(result.status, `补接线必须成功: ${result.stderr}`).toBe(0)
+    expect(result.stdout).toContain('PLUGINS_SYNCED')
+    expect(existsSync(join(sandbox.plugins, 'node_modules', 'legacy.txt')), '不换树时远端那份不能被动').toBe(true)
+    expect(existsSync(join(sandbox.plugins, 'node_modules', 'plugin-alpha', 'package.json')), '不换树时远端那份不能被换掉').toBe(true)
+    const profilePkg = JSON.parse(readFileSync(join(sandbox.home, '.dsh', 'profiles', PROFILE, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }
+    expect(profilePkg.dependencies?.['plugin-alpha'], '档案要接到远端这份插件目录上').toContain('plugin-alpha')
+    expect(markerOf(sandbox)).toEqual({ hash: 'other-hash', version: '0.6.8' })
+    expect(profileStateOf(sandbox), '接线状态按档案单独记').toBe('other-hash')
+  })
+
+  it('每个档案的接线状态各记各的，互不影响', () => {
+    const sandbox = createSandbox()
+    // 另一个档案已经接过线：它接的是哪一份，不能被本档案的同步改掉。
+    const otherState = ensureDirectory(join(sandbox.home, '.dsh-desktop', 'profiles-sync'))
+    writeFileSync(join(otherState, 'other-profile'), 'other-hash\n')
+    writeFileSync(join(sandbox.plugins, '.sync.json'), JSON.stringify({ hash: HASH, version: '0.6.7' }))
+
+    const result = runSyncScript(sandbox, { expectedHash: HASH })
+
+    expect(result.status, `同步必须成功: ${result.stderr}`).toBe(0)
+    expect(profileStateOf(sandbox)).toBe(HASH)
+    expect(profileStateOf(sandbox, 'other-profile'), '别的档案的接线状态不能被动').toBe('other-hash')
   })
 
   it('拿到占用声明时远端标记已经变了，这次同步必须作废', () => {
