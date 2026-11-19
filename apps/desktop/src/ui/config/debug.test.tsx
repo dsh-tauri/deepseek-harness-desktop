@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   build: vi.fn(),
   settingState: { proxy_url: '', port: 3080, zoom_factor: 1, harness_max_heap_mb: null } as Record<string, unknown>,
-  harnessState: { serviceRunning: true, busyAction: null, webviewLoaded: true } as Record<string, unknown>,
+  harnessState: { serviceRunning: true, busyAction: null } as Record<string, unknown>,
   harnessUpdaterState: { updateInfo: null } as Record<string, unknown>,
   proxyTestResult: { ok: true, reason: null, status: 200, latency_ms: 12 } as Record<string, unknown>,
   changeLanguage: vi.fn(async () => {}),
@@ -314,7 +314,7 @@ describe('配置面板代理连通性测试', () => {
 })
 
 describe('配置面板的运行控制按钮', () => {
-  it('刷新页面按钮只重挂载文档，不触发服务重启或关闭', async () => {
+  it('刷新页面按钮只刷新文档，不触发服务重启或关闭', async () => {
     renderDebug()
 
     const reload = await screen.findByRole('button', { name: 'app.reload_page' })
@@ -335,15 +335,14 @@ describe('配置面板的运行控制按钮', () => {
     expect(open.parentElement).toBe(reload.parentElement)
   })
 
-  it('文档加载完成后刷新按钮显示常规图标，不残留加载态', async () => {
+  it('刷新按钮常驻常规图标，不随文档加载态换形', async () => {
     renderDebug()
 
     const reload = await screen.findByRole('button', { name: 'app.reload_page' })
-    // 非加载态渲染的是图标本身，加载态渲染的是 Spinner；用 svg 有无区分，不绑定具体实现类名
     expect(reload.querySelector('svg')).not.toBeNull()
   })
 
-  it('服务未运行时刷新按钮禁用，避免对着已停的核心重挂载', async () => {
+  it('服务未运行时刷新按钮禁用，避免对着已停的核心刷新页面', async () => {
     mocks.harnessState.serviceRunning = false
     renderDebug()
 
