@@ -4,10 +4,10 @@ import type { BootstrapHooks, BootstrapLogLine, DshVersionInstallPlan, EnvCreden
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
 import { messageOf } from '../../shared/error'
-import { DEFAULT_REMOTE_PROFILE, REMOTE_ROOT, remotePidfile } from '../config/constants'
+import { BOOTSTRAP_LOG_PREFIX, DEFAULT_REMOTE_PROFILE, REMOTE_ROOT, remotePidfile } from '../config/constants'
 import { assetMatrixFor, dshNpmTarballUrls, dshZipDownloadUrls, NODE_SHASUMS256_SHA256, NODE_VERSION, nodeDownloadUrls, nodeShasumUrls, parsePlatform, PNPM_SHA256, PNPM_VERSION, pnpmDownloadUrls } from '../utils/assets'
 import { clientUrlsFromBootHtml, looksLikePluginBundle, releaseVersionFromBootHtml } from '../utils/boot-html'
-import { assertListenerProfile, listenerSnapshotCommand, parseListenerSnapshot } from '../utils/instance'
+import { assertListenerProfile, listenerSnapshotCommand, parseListenerSnapshot, remoteInstanceStopCommand, remoteSlotClaimShell } from '../utils/instance'
 import { shQuote } from '../utils/shell'
 import { assertSupportedDshVersion, listGithubAssets, listGithubReleases, npmDistMetadata, parseGitHubRepo, parseVersionFromTag, pickReleaseTag, pkgRepoOf } from '../utils/version'
 
@@ -17,8 +17,6 @@ import { assertSupportedDshVersion, listGithubAssets, listGithubReleases, npmDis
  * issue #1573。
  */
 const LEGACY_REMOTE_WEB_LOG = '.dsh/dsh-remote-web.log'
-
-export const BOOTSTRAP_LOG_PREFIX = '::dsh '
 
 /** 远端实例的日志：按端口区分，一个端口上的实例写自己那份。 */
 function remoteWebLog(port: number): string {
@@ -386,10 +384,18 @@ const INSTALL_SHELL_HELPERS: string[] = [
   '}',
 ]
 
-export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: boolean } = {}): string {
+export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: boolean, profileName?: string, remotePort?: number } = {}): string {
   assertSupportedDshVersion(plan.dshVersion)
   assertSupportedDshVersion(plan.dsh.kind === 'pkg-zip' ? parseVersionFromTag(plan.dsh.tag) ?? '' : plan.dsh.version)
   const reinstallMarker = options.force === true ? ['REINSTALL=1'] : ['REINSTALL=']
+  // 强制重装要先停掉远端实例。停与装必须同属一次远端操作：分开执行，中间那一段
+  // 没有占用，别的操作（插件同步、切换核心）会插进来动同一个实例。issue #1572。
+  const stopSection = options.force === true && options.profileName !== undefined && options.remotePort !== undefined
+    ? [
+        'log install "重新安装: 停掉远端旧实例"',
+        ...remoteInstanceStopCommand(options.profileName, options.remotePort),
+      ]
+    : []
   const dshSection = plan.dsh.kind === 'pkg-zip'
     ? [
         `if [ -f "$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}" ] && [ -z "$REINSTALL" ]; then`,
@@ -441,10 +447,16 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
     '  kill -0 "$_pid" 2>/dev/null || rm -rf "$_d"',
     'done',
     'mkdir -p "$TMP"',
-    'cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; }',
+    // 占用声明的路径在拿到声明之前是空的：退出清理按它判断自己有没有占住槽位。
+    'CLAIM=""',
+    // 没拿到占用声明就退出时，不能删固定名字的暂存目录：那是拿到声明的那一次安装正在写的。
+    'cleanup() { rm -rf "$TMP"; if [ -f "$CLAIM" ]; then rm -rf "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; fi; rm -f "$CLAIM"; }',
     'trap cleanup EXIT',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
     ...INSTALL_SHELL_HELPERS,
+    // 活动槽位的占用声明：装的就是活动槽位，与切换核心、插件同步共用这一把锁。
+    ...remoteSlotClaimShell('dsh', { busyText: '远端实例正被其它操作改动（切换核心、强制重装或插件同步）' }),
+    ...stopSection,
     'if [ -x "$ROOT/runtime/bin/node" ]; then',
     '  log install "node 已就绪: $("$ROOT/runtime/bin/node" --version 2>/dev/null || echo installed)"',
     'else',
@@ -565,65 +577,6 @@ export async function planRemoteVersionInstall(
   }
 }
 
-/**
- * 槽位锁的 shell 片段：同一槽位只允许一个安装脚本在跑。
- *
- * 锁不是「一把锁」，而是槽位目录下的一组**占用声明**：每个安装脚本发布一条
- * `claim-<pid>` 声明，声明内容就是自己的进程号。
- *
- * - 声明与持有者 pid 一起原子发布（`ln` 一个已经写好 pid 的文件），
- *   不存在「声明已在但不知道是谁持有」的窗口。
- * - 同一时刻只允许一条存活的声明：别人的声明还活着就明确失败（`REMOTE_CORE_SLOT_BUSY`）。
- * - 回收陈旧声明时只删**进程已经不在**的那一条，活着的持有者的声明不会被碰。
- * - 锁目录本身从不被搬动或替换，因此不存在「按先前读到的 pid 搬走当前锁」的窗口——
- *   这正是单一锁路径方案里最容易被忽略的竞态。
- */
-export function coreSlotLockShell(slot: string): string[] {
-  return [
-    `LOCKDIR="$ROOT/tmp/slot-${slot}.lock"`,
-    'CLAIM="$LOCKDIR/claim-$$"',
-    // 上一版用的是文件形态的锁，先按老规矩处理：持有者还在就明确失败，
-    // 持有者已经不在就把这份旧锁清掉，否则这个路径会挡住新的声明目录。
-    'if [ -f "$LOCKDIR" ]; then',
-    '  _old="$(cat "$LOCKDIR" 2>/dev/null || true)"',
-    '  if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then',
-    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装正在进行（pid $_old），请等它结束后重试"',
-    '    exit 17',
-    '  fi',
-    '  rm -f "$LOCKDIR"',
-    'fi',
-    'mkdir -p "$LOCKDIR"',
-    'printf \'%s\\n\' "$$" > "$TMP/claim.$$"',
-    // ln 是原子的：声明与持有者 pid 同时出现，不存在「声明已在但不知道是谁」的窗口。
-    'ln "$TMP/claim.$$" "$CLAIM" 2>/dev/null || true',
-    'if [ ! -f "$CLAIM" ]; then',
-    '  rm -rf "$TMP"',
-    '  log failed "REMOTE_CORE_LOCK_FAILED: 无法在 $LOCKDIR 下发布占用声明"',
-    '  exit 18',
-    'fi',
-    // 同一时刻只允许一条存活的占用声明：别的声明还活着就明确失败。
-    'for _f in "$LOCKDIR"/claim-*; do',
-    '  [ -f "$_f" ] || continue',
-    '  if [ "$_f" = "$CLAIM" ]; then continue; fi',
-    '  _pid="$(cat "$_f" 2>/dev/null || true)"',
-    '  [ -n "$_pid" ] || continue',
-    '  if kill -0 "$_pid" 2>/dev/null; then',
-    // 退出清理还没挂上（trap 在拿锁之后才注册），这里要自己收尾：
-    // 删掉自己的声明与本次临时目录，别在远端留下垃圾。
-    '    rm -f "$CLAIM"',
-    '    rm -rf "$TMP"',
-    '    log failed "REMOTE_CORE_SLOT_BUSY: 该版本槽位已有安装正在进行（pid $_pid），请等它结束后重试"',
-    '    exit 17',
-    '  fi',
-    // 持有者已经不在：清掉这条陈旧声明。这里只动已经死掉的进程留下的声明，
-    // 活着的持有者的声明不会被碰，锁目录也不会被整体搬走。
-    '  rm -f "$_f"',
-    'done',
-    // 退出清理只删自己的声明。
-    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }',
-  ]
-}
-
 export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, options: { slot: string, force?: boolean }): string {
   assertSupportedDshVersion(plan.version)
   if (!/^[\w.-]+$/u.test(options.slot))
@@ -658,7 +611,9 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     'mkdir -p "$ROOT/dependencies" "$TMP"',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
     // 拿锁：原子发布持有者，后到的安装直接失败而不是和旧脚本互相覆盖。
-    ...coreSlotLockShell(options.slot),
+    ...remoteSlotClaimShell(options.slot),
+    // 退出清理只删自己的声明与暂存目录。
+    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }',
     // 锁到手后才挂退出清理：拿锁失败时不能把别人的锁删掉。
     'trap cleanup EXIT',
     ...INSTALL_SHELL_HELPERS,
@@ -1141,9 +1096,10 @@ export async function runInstallScript(
   plan: RemoteInstallPlan,
   installTimeoutMs: number,
   hooks: BootstrapHooks,
-  failureLine = 'bootstrap 失败',
-  force = false,
+  options: { failureLine?: string, force?: boolean, profileName?: string, remotePort?: number } = {},
 ): Promise<string[]> {
+  const failureLine = options.failureLine ?? 'bootstrap 失败'
+  const force = options.force === true
   const { onEvent, onProgress } = hooks
   let log = ''
   const skips: string[] = []
@@ -1153,7 +1109,11 @@ export async function runInstallScript(
       skips.push(parsed.line)
     onEvent?.(parsed.stage, parsed.line)
   })
-  const result = await session.exec(buildInstallScript(plan, { force }), {
+  const result = await session.exec(buildInstallScript(plan, {
+    force,
+    ...(options.profileName === undefined ? {} : { profileName: options.profileName }),
+    ...(options.remotePort === undefined ? {} : { remotePort: options.remotePort }),
+  }), {
     timeoutMs: installTimeoutMs,
     onData: (chunk) => {
       log = `${log}${chunk}`.slice(-2000)

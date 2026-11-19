@@ -6,6 +6,9 @@ export const DEFAULT_MACHINE_TRANSPORT = 'ssh'
 
 export const REMOTE_ROOT = '.dsh-desktop'
 
+/** 远端脚本的日志行前缀：桌面端按它把远端脚本的输出认成事件。 */
+export const BOOTSTRAP_LOG_PREFIX = '::dsh '
+
 /**
  * 远端实例的 pidfile：按端口区分。
  *

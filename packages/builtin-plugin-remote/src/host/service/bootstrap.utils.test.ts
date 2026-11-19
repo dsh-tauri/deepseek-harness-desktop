@@ -5,8 +5,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { remoteSlotClaimShell } from '../utils/instance'
 import { GithubHttpError } from '../utils/version'
-import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, coreSlotLockShell, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, remoteWebTokenCommand, startCommandFor } from './bootstrap.utils'
+import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, remoteWebTokenCommand, startCommandFor } from './bootstrap.utils'
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 
@@ -24,7 +25,8 @@ function lockScript(before: string[] = [], after: string[] = []): string {
     'mkdir -p "$ROOT/dependencies" "$TMP"',
     'log() { printf \'log %s %s\\n\' "$1" "$2"; }',
     ...before,
-    ...coreSlotLockShell(LOCK_TEST_SLOT),
+    ...remoteSlotClaimShell(LOCK_TEST_SLOT),
+    'cleanup() { rm -rf "$TMP"; rm -f "$CLAIM"; }',
     'trap cleanup EXIT',
     ...after,
   ].join('\n')
@@ -676,7 +678,34 @@ describe('install 脚本的重新安装短路', () => {
     // 退出清理只删自己的临时目录：不能扫掉版本安装的临时目录和槽位锁。
     expect(script).toContain('TMP="$ROOT/tmp/bootstrap.$$"')
     expect(script).not.toContain('TMP="$ROOT/tmp"')
-    expect(script).toContain('cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; }')
+    expect(script).toContain('cleanup() { rm -rf "$TMP"; if [ -f "$CLAIM" ]; then rm -rf "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; fi; rm -f "$CLAIM"; }')
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('拿不到占用声明时不得删别人正在写的暂存目录', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-bootstrap-staging-'))
+    const holder = spawn('sh', ['-c', 'sleep 30'], { stdio: 'ignore' })
+    try {
+      // 别人持有活动槽位，并且正在写固定名字的暂存目录。
+      const claim = join(home, '.dsh-desktop', 'tmp', 'slot-dsh.lock')
+      mkdirSync(claim, { recursive: true })
+      writeFileSync(join(claim, `claim-${holder.pid}`), `${holder.pid}\n`)
+      const staging = join(home, '.dsh-desktop', 'dependencies', 'dsh.new')
+      mkdirSync(staging, { recursive: true })
+      writeFileSync(join(staging, 'marker'), 'in progress')
+
+      const result = spawnSync('sh', ['-c', buildInstallScript(zipPlan())], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home },
+        timeout: 60_000,
+      })
+
+      expect(result.status, '槽位被占时装不上').not.toBe(0)
+      expect(existsSync(join(staging, 'marker')), '别人的暂存目录不能被退出清理删掉').toBe(true)
+    }
+    finally {
+      holder.kill('SIGKILL')
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it.skipIf(!SHELL_AVAILABLE)('bootstrap 退出清理不会删掉版本安装的临时目录和槽位锁', () => {

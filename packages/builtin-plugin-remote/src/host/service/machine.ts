@@ -838,7 +838,7 @@ async function performInstall(machineId: MachineId, profile: MachineProfile, opt
           target.progress = progress
           emit(machineId)
         },
-      }, { force, failureLine: 'install 失败' }))
+      }, { force, failureLine: 'install 失败', profileName, remotePort: profile.remotePort }))
       if (generation !== target.generation)
         throw new AttemptCancelled()
     }

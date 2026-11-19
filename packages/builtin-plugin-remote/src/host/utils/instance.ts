@@ -88,6 +88,81 @@ export async function assertListenerProfile(session: RemoteSession, port: number
   throw new Error(`REMOTE_INSTANCE_PROFILE_MISMATCH: 端口 ${port} 上跑的是远端档案「${actual}」，本机这条远端机器配的是「${expectedProfile}」`)
 }
 
+export interface RemoteSlotClaimOptions {
+  lockVar?: string
+  claimVar?: string
+  claimName?: string
+  tmpClaim?: string
+  busyText?: string
+  busyCode?: string
+}
+
+/**
+ * 远端槽位的占用声明：同一槽位只允许一个操作在跑。
+ *
+ * 锁不是「一把锁」，而是槽位目录下的一组**占用声明**：每个操作脚本发布一条
+ * `claim-<pid>` 声明，声明内容就是自己的进程号。
+ *
+ * - 声明与持有者 pid 一起原子发布（`ln` 一个已经写好 pid 的文件），
+ *   不存在「声明已在但不知道是谁持有」的窗口。
+ * - 同一时刻只允许一条存活的声明：别人的声明还活着就明确失败（`REMOTE_CORE_SLOT_BUSY`）。
+ * - 回收陈旧声明时只删**进程已经不在**的那一条，活着的持有者的声明不会被碰。
+ * - 锁目录本身从不被搬动或替换，因此不存在「按先前读到的 pid 搬走当前锁」的窗口——
+ *   这正是单一锁路径方案里最容易被忽略的竞态。
+ *
+ * 插件同步与核心切换、强制重装共用「活动槽位」这一把锁：谁在动这个实例脚下的目录，
+ * 谁就得先占住它。
+ */
+export function remoteSlotClaimShell(slot: string, options: RemoteSlotClaimOptions = {}): string[] {
+  const lockVar = options.lockVar ?? 'LOCKDIR'
+  const claimVar = options.claimVar ?? 'CLAIM'
+  const claimName = options.claimName ?? 'claim-$$'
+  const tmpClaim = options.tmpClaim ?? 'claim.$$'
+  const busyText = options.busyText ?? '该版本槽位已有安装正在进行'
+  const busyCode = options.busyCode === undefined ? 'REMOTE_CORE_SLOT_BUSY' : `REMOTE_CORE_SLOT_BUSY:${options.busyCode}`
+  return [
+    `${lockVar}="$ROOT/tmp/slot-${slot}.lock"`,
+    `${claimVar}="$${lockVar}/${claimName}"`,
+    // 上一版用的是文件形态的锁，先按老规矩处理：持有者还在就明确失败，
+    // 持有者已经不在就把这份旧锁清掉，否则这个路径会挡住新的声明目录。
+    `if [ -f "$${lockVar}" ]; then`,
+    `  _old="$(cat "$${lockVar}" 2>/dev/null || true)"`,
+    '  if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then',
+    `    log failed "${busyCode}: ${busyText}（pid $_old），请等它结束后重试"`,
+    '    exit 17',
+    '  fi',
+    `  rm -f "$${lockVar}"`,
+    'fi',
+    `mkdir -p "$${lockVar}"`,
+    `printf '%s\\n' "$$" > "$TMP/${tmpClaim}"`,
+    // ln 是原子的：声明与持有者 pid 同时出现，不存在「声明已在但不知道是谁」的窗口。
+    `ln "$TMP/${tmpClaim}" "$${claimVar}" 2>/dev/null || true`,
+    `if [ ! -f "$${claimVar}" ]; then`,
+    '  rm -rf "$TMP"',
+    `  log failed "REMOTE_CORE_LOCK_FAILED: 无法在 $${lockVar} 下发布占用声明"`,
+    '  exit 18',
+    'fi',
+    // 同一时刻只允许一条存活的占用声明：别的声明还活着就明确失败。
+    `for _f in "$${lockVar}"/claim-*; do`,
+    '  [ -f "$_f" ] || continue',
+    `  if [ "$_f" = "$${claimVar}" ]; then continue; fi`,
+    '  _pid="$(cat "$_f" 2>/dev/null || true)"',
+    '  [ -n "$_pid" ] || continue',
+    '  if kill -0 "$_pid" 2>/dev/null; then',
+    // 退出清理还没挂上（trap 在拿锁之后才注册），这里要自己收尾：
+    // 删掉自己的声明与本次临时目录，别在远端留下垃圾。
+    `    rm -f "$${claimVar}"`,
+    '    rm -rf "$TMP"',
+    `    log failed "${busyCode}: ${busyText}（pid $_pid），请等它结束后重试"`,
+    '    exit 17',
+    '  fi',
+    // 持有者已经不在：清掉这条陈旧声明。这里只动已经死掉的进程留下的声明，
+    // 活着的持有者的声明不会被碰，锁目录也不会被整体搬走。
+    '  rm -f "$_f"',
+    'done',
+  ]
+}
+
 /**
  * 停掉远端实例的命令。
  *

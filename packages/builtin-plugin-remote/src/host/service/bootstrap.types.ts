@@ -63,4 +63,7 @@ export interface BootstrapInstallOptions {
   /** 无视远端既有的安装标记，强制重跑安装脚本的全部组件安装段。 */
   force?: boolean
   failureLine?: string
+  /** 强制重装时要停掉的远端实例：档案名与端口。 */
+  profileName?: string
+  remotePort?: number
 }
