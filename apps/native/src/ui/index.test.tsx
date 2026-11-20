@@ -19,6 +19,7 @@ const native = vi.hoisted(() => ({
   scheduleNotificationAsync: vi.fn<(...args: unknown[]) => Promise<string>>(),
   cancelAnimation: vi.fn(),
   alert: vi.fn<typeof import('react-native').Alert.alert>(),
+  openURL: vi.fn<(url: string) => Promise<void>>(),
   dimensions: { width: 440, height: 900 },
   theme: { 'background': '#ffffff', 'foreground': '#0f1115', 'accent-foreground': '#ffffff' } as Record<string, string>,
 }))
@@ -32,7 +33,7 @@ vi.mock('react-native', () => ({
   ScrollView: 'ScrollView',
   Pressable: 'Pressable',
   Platform: { OS: 'android' },
-  Linking: { openURL: vi.fn(async () => {}) },
+  Linking: { openURL: native.openURL },
   useWindowDimensions: () => native.dimensions,
   Dimensions: { get: () => ({ ...native.dimensions }) },
   Keyboard: {
@@ -62,6 +63,7 @@ vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'zh-CN' 
 // store 模块经 valtio-define persist 插件依赖 AsyncStorage，node 环境用最小实现顶替。
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: { getItem: vi.fn(async () => null), setItem: vi.fn(async () => {}) } }))
 vi.mock('expo-router', () => ({ router: { push: native.push }, useNavigation: () => native.navigation }))
+vi.mock('expo-constants', () => ({ default: { expoConfig: { version: '0.32.0' } } }))
 vi.mock('expo-network', () => ({ getIpAddressAsync: native.getIpAddressAsync }))
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'home-test-nonce' }))
 vi.mock('expo-notifications', () => ({
@@ -151,6 +153,8 @@ let screen: ReactTestRenderer | undefined
 let store: typeof import('@/store/modules/connection')
 let connection: typeof import('@/store/modules/connection').connection
 let runtime: typeof import('@/store/modules/connection/runtime')
+let updateStore: typeof import('@/store/modules/app-update')
+let appUpdate: typeof import('@/store/modules/app-update').appUpdate
 let HomeScreen: typeof import('@/app/index').default
 
 function text(node: ReactTestInstance | string): string {
@@ -262,6 +266,10 @@ beforeEach(async () => {
   store = await import('@/store/modules/connection')
   connection = store.connection
   resetConnection()
+  updateStore = await import('@/store/modules/app-update')
+  appUpdate = updateStore.appUpdate
+  appUpdate.$patch(updateStore.createAppUpdateState())
+  native.openURL.mockResolvedValue(undefined)
   runtime = await import('@/store/modules/connection/runtime')
   ;({ default: HomeScreen } = await import('@/app/index'))
 })
@@ -1031,5 +1039,40 @@ describe('rendered Home Android back handling', () => {
     expect(consumed).toBe(false)
     expect(drawer().props.open).toBe(true)
     expect(texts()).toContain('连接信息')
+  })
+})
+
+describe('rendered Home app version footer', () => {
+  it('shows only the running app version in the drawer footer until a newer release is known', async () => {
+    hydrate()
+    connection.cancelScan()
+    await mount()
+    await press('最近连接')
+
+    expect(texts()).toContain('版本 0.32.0')
+    expect(texts()).not.toContain('有新版本')
+    expect(root().findAll(node => node.props.accessibilityRole === 'link')).toHaveLength(0)
+  })
+
+  it('adds a tappable new-version link that opens the release download in the browser', async () => {
+    const downloadUrl = 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/download/v0.33.0/Deepseek.Harness.Android_0.33.0.apk'
+    hydrate()
+    connection.cancelScan()
+    await mount()
+    await press('最近连接')
+    expect(native.openURL).not.toHaveBeenCalled()
+
+    await act(async () => {
+      appUpdate.$patch({ latestVersion: '0.33.0', downloadUrl })
+    })
+
+    const link = root().find(node => node.props.accessibilityRole === 'link')
+    expect(text(link)).toBe('有新版本')
+    expect(texts()).toContain('版本 0.32.0')
+    await act(async () => {
+      link.props.onPress()
+    })
+
+    expect(native.openURL).toHaveBeenCalledExactlyOnceWith(downloadUrl)
   })
 })

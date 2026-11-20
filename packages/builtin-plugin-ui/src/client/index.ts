@@ -3,10 +3,8 @@ import type { ClientContext } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../shared/constants'
 import { CONTEXT_MENU_EFFECT, LOCALE_EFFECT, OBSTRUCTIONS_EFFECT, SECTIONS_EFFECT, SETTINGS_EFFECT, SETTINGS_OPEN_EFFECT, STYLES_EFFECT } from './constants'
 import { locale } from './locales'
-import { composerResumeFeature } from './register/composer-resume'
 import { registerContextMenu } from './register/context-menu'
 import { registerMenuIcons } from './register/context-menu.icons'
-import { registerContinueNotice } from './register/continue-notice'
 import { registerDesktopSettings } from './register/desktop-settings'
 import { registerSettingsObstructions } from './register/obstructions'
 import { registerSettingsSections } from './register/sections'
@@ -31,9 +29,6 @@ export * from './utils/style'
 export const name = PLUGIN_ID
 export const inject = ['slots', 'layout', 'locale', 'sessions', 'uiSession', 'uiWorkspace', 'workspaces']
 
-const COMPOSER_RESUME_EFFECT = `${PLUGIN_ID}: composer resume`
-const CONTINUE_NOTICE_EFFECT = `${PLUGIN_ID}: continue notice`
-
 export function apply(ctx: ClientContext): void {
   ctx.effect(locale.registerLocale, LOCALE_EFFECT)
   ctx.effect(registerStyles, STYLES_EFFECT)
@@ -41,8 +36,6 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(registerSettings, SETTINGS_EFFECT)
   ctx.effect(registerSettingsObstructions, OBSTRUCTIONS_EFFECT)
   ctx.effect(registerSettingsOpen, SETTINGS_OPEN_EFFECT)
-  ctx.effect(composerResumeFeature, COMPOSER_RESUME_EFFECT)
-  ctx.effect(registerContinueNotice, CONTINUE_NOTICE_EFFECT)
   ctx.effect(() => registerMenuIcons(ctx), `${CONTEXT_MENU_EFFECT} icons`)
   ctx.effect(() => registerContextMenu(ctx), CONTEXT_MENU_EFFECT)
   ctx.effect(registerDesktopSettings, `${PLUGIN_ID}: desktop settings`)

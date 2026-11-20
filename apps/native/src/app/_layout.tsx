@@ -6,12 +6,19 @@ import { useEffect } from 'react'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { queryClient } from '@/config/client'
+import { useAppUpdate } from '@/hooks/use-app-update'
 import { useHostsHealth } from '@/hooks/use-hosts-health'
 import { useNotifications } from '@/hooks/use-notifications'
 import { connection } from '@/store/modules/connection'
 import { connectAddress, startAutoScan, stopConnectionRuntime } from '@/store/modules/connection/runtime'
 import { bindConnectionPersistence, restoreConnections } from '@/store/modules/connection/storage'
 import '../global.css'
+
+/** toast 由 HeroUINativeProvider 内的 ToastProvider 提供，更新检查必须挂在它内部。 */
+function AppUpdateToast() {
+  useAppUpdate()
+  return null
+}
 
 function RootNavigator() {
   useNotifications()
@@ -62,6 +69,7 @@ function RootNavigator() {
       <SafeAreaProvider>
         <HeroUINativeProvider config={{ devInfo: { stylingPrinciples: false } }}>
           <StatusBar style="auto" />
+          <AppUpdateToast />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="scan" options={{ presentation: 'fullScreenModal' }} />

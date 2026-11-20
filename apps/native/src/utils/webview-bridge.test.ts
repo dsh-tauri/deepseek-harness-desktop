@@ -44,6 +44,7 @@ interface BrowserWindow {
   ReactNativeWebView?: { postMessage: (message: string) => void }
   __dshBridgeNonce?: string
   __dshBridgeReceive?: (data: Record<string, unknown>) => void
+  __dshBridgeDispose?: () => void
   __DSH_BOOT__?: Record<string, unknown>
   __dshClientCtx?: {
     get?: (name: string) => unknown
@@ -138,6 +139,8 @@ function createBrowser(options: { locationOrigin?: string, topFrame?: boolean, h
     dispatchEvent: vi.fn((event: Event) => documentEvents.dispatchEvent(event)),
   }
   const location = { origin: options.locationOrigin ?? origin }
+  const execCommand = vi.fn<(command: string) => boolean>().mockReturnValue(true)
+  Object.assign(document, { execCommand })
   const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 404 }))
   const context = createVmContext({ window, document, location, fetch, MutationObserver: BrowserMutationObserver, Event, CustomEvent, MessageEvent: BrowserMessageEvent, Date, setTimeout, clearTimeout })
   function run(script: string): unknown {
@@ -153,7 +156,7 @@ function createBrowser(options: { locationOrigin?: string, topFrame?: boolean, h
   function postMessage(data: unknown, eventOrigin = origin, source: unknown = window) {
     window.dispatchEvent(new BrowserMessageEvent('message', { data, origin: eventOrigin, source }))
   }
-  return { window, document, documentElement, body, styles, appendChild, mutations, location, posts, fetch, run, inject, postMessage }
+  return { window, document, documentElement, body, styles, appendChild, mutations, location, posts, fetch, execCommand, run, inject, postMessage }
 }
 
 function sessionNode(attributes: Record<string, string>): SessionNode {
@@ -1196,5 +1199,83 @@ describe('keyboardHeightScript', () => {
 
     expect(browser.run(keyboardHeightScript(origin, 400))).toBe(true)
     expect(seen).toHaveLength(0)
+  })
+})
+
+describe('composer Enter gesture', () => {
+  function composerKeydown(browser: ReturnType<typeof createBrowser>, init: { key?: string, shiftKey?: boolean, composing?: boolean, inComposer?: boolean } = {}) {
+    const input = { closest: (selector: string) => (init.inComposer === false ? null : selector === '[data-composer-input]' ? input : null) }
+    const event = new Event('keydown', { cancelable: true })
+    Object.defineProperties(event, {
+      key: { value: init.key ?? 'Enter' },
+      shiftKey: { value: init.shiftKey ?? false },
+      ctrlKey: { value: false },
+      metaKey: { value: false },
+      altKey: { value: false },
+      isComposing: { value: init.composing ?? false },
+      keyCode: { value: 13 },
+      target: { value: input },
+    })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    const stopImmediatePropagation = vi.spyOn(event, 'stopImmediatePropagation')
+    browser.document.dispatchEvent(event)
+    return { preventDefault, stopImmediatePropagation }
+  }
+
+  it('turns a soft-keyboard Enter into a line break instead of sending', () => {
+    const browser = createBrowser()
+    browser.inject()
+
+    const { preventDefault, stopImmediatePropagation } = composerKeydown(browser)
+
+    expect(browser.execCommand).toHaveBeenCalledExactlyOnceWith('insertLineBreak')
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(stopImmediatePropagation).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['Shift+Enter', { shiftKey: true }],
+    ['an IME composition Enter', { composing: true }],
+    ['another key', { key: 'a' }],
+  ])('leaves %s to the page', (_case, init) => {
+    const browser = createBrowser()
+    browser.inject()
+
+    const { preventDefault } = composerKeydown(browser, init)
+
+    expect(browser.execCommand).not.toHaveBeenCalled()
+    expect(preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('ignores Enter outside the composer', () => {
+    const browser = createBrowser()
+    browser.inject()
+
+    const { preventDefault } = composerKeydown(browser, { inComposer: false })
+
+    expect(browser.execCommand).not.toHaveBeenCalled()
+    expect(preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the page behavior when the line break cannot be inserted', () => {
+    const browser = createBrowser()
+    browser.execCommand.mockReturnValue(false)
+    browser.inject()
+
+    const { preventDefault, stopImmediatePropagation } = composerKeydown(browser)
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(stopImmediatePropagation).not.toHaveBeenCalled()
+  })
+
+  it('stops intercepting once the bridge is disposed', () => {
+    const browser = createBrowser()
+    browser.inject()
+    browser.window.__dshBridgeDispose?.()
+
+    const { preventDefault } = composerKeydown(browser)
+
+    expect(browser.execCommand).not.toHaveBeenCalled()
+    expect(preventDefault).not.toHaveBeenCalled()
   })
 })

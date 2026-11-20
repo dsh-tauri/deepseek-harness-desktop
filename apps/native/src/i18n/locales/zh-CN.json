@@ -61,5 +61,11 @@
   "scan.scanInstead": "改为扫码连接",
   "scan.invalidAddress": "请输入有效的 HTTP/HTTPS 连接地址。",
   "notification.channel": "连接与任务通知",
-  "notification.channelSilent": "连接与任务通知 · 静音"
+  "notification.channelSilent": "连接与任务通知 · 静音",
+  "update.title": "发现新版本",
+  "update.description": "DSH Mobile {{version}} 已发布，前往浏览器下载安装包。",
+  "update.now": "更新",
+  "update.later": "暂不更新",
+  "update.version": "版本 {{version}}",
+  "update.new_version": "有新版本"
 }

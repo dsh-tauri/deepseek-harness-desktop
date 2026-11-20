@@ -369,12 +369,32 @@ export function createNotificationShim(origin: string, nonce: string, nativeSafe
   window.__dshBridgeReady = ready;
   if (document.readyState === 'complete') ready();
   else window.addEventListener('load', ready, { once: true });
+  // Why: 手机软键盘的回车是换行手势，发送交给发送按钮；内核默认把普通回车当提交。
+  // 先让 execCommand 真正插入换行，成功后才吞掉事件；失败就原样放行，不制造「按了没反应」。
+  function isComposerEnter(event) {
+    if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (event.isComposing || event.keyCode === 229) return false;
+    var target = event.target;
+    return !!(target && typeof target.closest === 'function' && target.closest('[data-composer-input]'));
+  }
+  function insertComposerLineBreak(event) {
+    if (!isComposerEnter(event)) return;
+    var inserted = false;
+    try {
+      inserted = typeof document.execCommand === 'function' && document.execCommand('insertLineBreak') === true;
+    } catch (_) {}
+    if (!inserted) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+  document.addEventListener('keydown', insertComposerLineBreak, { capture: true });
   function dispose() {
     if (!active) return;
     active = false;
     window.removeEventListener('message', receiveNotification);
     window.removeEventListener('load', ready);
     window.removeEventListener('pagehide', dispose);
+    document.removeEventListener('keydown', insertComposerLineBreak, { capture: true });
     document.removeEventListener('DOMContentLoaded', suppressTapHighlight);
     if (window.__dshBridgeNonce === nonce) window.__dshBridgeNonce = null;
     pendingFocus = null;
