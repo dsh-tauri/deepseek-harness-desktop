@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { APP_IOS_TESTFLIGHT_URL } from '@/config/constants'
 import { isNewerVersion, parseLatestRelease, parseVersion, pickDownloadUrl } from './app-update'
 
 const pageUrl = 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/v0.33.0'
@@ -106,12 +107,13 @@ describe('pickDownloadUrl', () => {
     expect(pickDownloadUrl(release, 'android')).toBe(apkUrl)
   })
 
-  it('selects the ipa asset on iOS', () => {
-    expect(pickDownloadUrl(release, 'ios')).toBe(ipaUrl)
+  it('sends iOS to the TestFlight invite because the release ipa is unsigned', () => {
+    expect(pickDownloadUrl(release, 'ios')).toBe(APP_IOS_TESTFLIGHT_URL)
+    expect(pickDownloadUrl({ version: '0.33.0', pageUrl, assets: [] }, 'ios')).toBe(APP_IOS_TESTFLIGHT_URL)
   })
 
-  it('falls back to the release page when the platform asset is missing', () => {
+  it('falls back to the release page when the Android asset is missing', () => {
     expect(pickDownloadUrl({ ...release, assets: [{ name: 'Deepseek.Harness.iOS_0.33.0_unsigned.ipa', url: ipaUrl }] }, 'android')).toBe(pageUrl)
-    expect(pickDownloadUrl({ version: '0.33.0', pageUrl, assets: [] }, 'ios')).toBe(pageUrl)
+    expect(pickDownloadUrl({ version: '0.33.0', pageUrl, assets: [] }, 'android')).toBe(pageUrl)
   })
 })

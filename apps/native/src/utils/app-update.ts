@@ -1,7 +1,6 @@
 import type { AppPlatform, AppRelease, AppReleaseAsset } from '@/apis/index.types'
+import { APP_IOS_TESTFLIGHT_URL } from '@/config/constants'
 import { isRecord } from '@/utils/bridge-protocol'
-
-const PLATFORM_EXTENSIONS: Record<AppPlatform, string> = { android: '.apk', ios: '.ipa' }
 
 export function parseVersion(value: string): number[] | null {
   const normalized = value.trim().replace(/^v/i, '').split('-')[0] ?? ''
@@ -45,8 +44,10 @@ export function parseLatestRelease(payload: unknown): AppRelease | null {
   return { version, pageUrl, assets: parsed }
 }
 
+/** iOS 走 TestFlight 邀请链接：release 里的 ipa 未签名，无法直接安装。 */
 export function pickDownloadUrl(release: AppRelease, platform: AppPlatform): string {
-  const extension = PLATFORM_EXTENSIONS[platform]
-  const asset = release.assets.find(asset => asset.name.toLowerCase().endsWith(extension))
+  if (platform === 'ios')
+    return APP_IOS_TESTFLIGHT_URL
+  const asset = release.assets.find(asset => asset.name.toLowerCase().endsWith('.apk'))
   return asset?.url ?? release.pageUrl
 }
