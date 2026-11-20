@@ -74,19 +74,32 @@ function buildTree(processes: TaskProcess[]): TaskNode[] {
       ready: process.cpu_percent !== null,
     })
   }
-  const roots: TaskNode[] = []
+  const parents = new Map<TaskNode, TaskNode>()
   for (const node of nodes.values()) {
     const parent = node.process.parent_pid === null ? undefined : nodes.get(node.process.parent_pid)
-    if (parent && parent !== node)
+    if (parent && parent !== node && node.process.kind !== 'desktop')
+      parents.set(node, parent)
+  }
+  for (const node of nodes.values()) {
+    let current = parents.get(node)
+    for (let step = 0; current && step <= nodes.size; step++) {
+      if (current === node) {
+        parents.delete(node)
+        break
+      }
+      current = parents.get(current)
+    }
+  }
+  const roots: TaskNode[] = []
+  for (const node of nodes.values()) {
+    const parent = parents.get(node)
+    if (parent)
       parent.children.push(node)
     else
       roots.push(node)
   }
-  const seen = new Set<TaskNode>()
+  roots.sort((left, right) => Number(right.process.kind === 'desktop') - Number(left.process.kind === 'desktop') || left.process.pid - right.process.pid)
   const aggregate = (node: TaskNode, depth: number) => {
-    if (seen.has(node))
-      return
-    seen.add(node)
     node.depth = depth
     node.count = 1
     node.cpu = node.process.cpu_percent ?? 0
@@ -102,12 +115,6 @@ function buildTree(processes: TaskProcess[]): TaskNode[] {
   }
   for (const root of roots)
     aggregate(root, 0)
-  for (const node of nodes.values()) {
-    if (seen.has(node))
-      continue
-    aggregate(node, 0)
-    roots.push(node)
-  }
   return roots
 }
 

@@ -99,6 +99,22 @@ describe('task manager', () => {
     expect(rowPids()).toEqual(['10'])
   })
 
+  it('keeps the app root on top when parent links form a cycle', async () => {
+    rows = [
+      { pid: 10, parent_pid: null, name: 'desktop', kind: 'desktop', cpu_percent: 1, memory_bytes: 104857600, run_time: 3601, start_time: 100, can_end: false },
+      { pid: 20, parent_pid: 10, name: 'harness', kind: 'harness', cpu_percent: 12.5, memory_bytes: 209715200, run_time: 120, start_time: 101, can_end: false },
+      { pid: 30, parent_pid: 40, name: 'worker', kind: 'child', cpu_percent: 2, memory_bytes: 52428800, run_time: 61, start_time: 102, can_end: true },
+      { pid: 40, parent_pid: 30, name: 'helper', kind: 'child', cpu_percent: 3, memory_bytes: 314572800, run_time: 30, start_time: 103, can_end: true },
+    ]
+    await openManager()
+    expect(rowPids().sort()).toEqual(['10', '30'])
+    expand(10)
+    expand(30)
+    expect(rowPids().sort()).toEqual(['10', '20', '30', '40'])
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'helper' } })
+    expect(rowPids()).toEqual(['30', '40'])
+  })
+
   it('sorts siblings and filters by PID', async () => {
     await openManager()
     expand(10)
