@@ -88,6 +88,7 @@ describe('desktop update dialog', () => {
     desktopUpdater.updateInfo!.downloaded = true
     openDialog()
     expect(await screen.findByRole('button', { name: 'update.open_installer' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'update.now' })).toBeNull()
   })
 
   it('closes after an existing installer is opened successfully', async () => {

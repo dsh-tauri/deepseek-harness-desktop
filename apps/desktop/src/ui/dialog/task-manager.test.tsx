@@ -18,6 +18,7 @@ let client: QueryClient
 let rows: ReturnType<typeof fixtures>
 let failRead: boolean
 let ended: unknown[]
+let requests: string[]
 
 function fixtures() {
   return [
@@ -55,9 +56,11 @@ beforeEach(() => {
   rows = fixtures()
   failRead = false
   ended = []
+  requests = []
   restart.mockReset()
   toast.mockReset()
   mockIPC((command, args) => {
+    requests.push(command)
     if (command === 'get_task_manager_processes') {
       if (failRead)
         throw new Error('collector unavailable')
@@ -186,5 +189,6 @@ describe('task manager', () => {
     await openManager()
     fireEvent.click(screen.getByRole('button', { name: 'menu.run_logs' }))
     expect(await screen.findByText('Harness service started')).toBeTruthy()
+    expect(requests).toContain('read_run_logs')
   })
 })

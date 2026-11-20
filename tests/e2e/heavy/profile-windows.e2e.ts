@@ -1,12 +1,16 @@
 import type { Page, Request, Response } from 'playwright'
 import type { AppConfig, HealthCheck, RuntimeInfo } from '../setup/harness'
 import process from 'node:process'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { waitHealthy } from '../setup/harness'
-import { invoke, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, completePreinstall, invoke, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 describe('desktop profile window isolation', () => {
   const app = shellAppScope()
+
+  beforeAll(async () => {
+    await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
+  }, ASSEMBLY_TIMEOUT_MS)
 
   // 三个窗口 + 克隆档案同时起多套核心，PR 门禁的共享 runner 上跑不出结果，
   // 因此单独成 desktop-heavy project，只在手动执行时跑。

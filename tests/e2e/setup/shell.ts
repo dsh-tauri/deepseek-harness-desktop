@@ -320,6 +320,10 @@ export async function startShellApp(options: { downloadCacheDir?: string, prepar
         expect(controller, `关闭 ${label} 的命令必须由另一个存活窗口发出`).toBeTruthy()
         await controller!.page.evaluate(label => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), label)
         await expect.poll(() => target!.page.isClosed(), { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 的 CDP 页面必须销毁` }).toBe(true)
+        await expect.poll(
+          async () => (await invoke<string[]>(controller!.page, 'plugin:window|get_all_windows')).includes(label),
+          { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 必须从原生窗口管理器注销` },
+        ).toBe(false)
       },
       output: () => output,
       stop,
