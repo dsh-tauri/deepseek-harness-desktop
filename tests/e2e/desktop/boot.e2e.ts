@@ -242,6 +242,37 @@ describe('desktop boot and profile lifecycle', () => {
     expect(await pageErrors(main), '刷新页面不应产生页面异常').toEqual([])
   })
 
+  it('reloads the hosted page on F5 without restarting the core service', async () => {
+    const shell = app.get()
+    const main = shell.window.page
+    await main.context().addInitScript(collectPageErrors)
+    const health = await waitHealthy(main)
+    const corePid = (await invoke<{ pid: number, kind: string }[]>(main, 'get_task_manager_processes')).find(process => process.kind === 'harness')?.pid
+    expect(corePid, '刷新前必须能读到本应用托管的核心进程').toBeTruthy()
+    await expect.poll(() => main.locator(SHELL_ROOT).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: 'F5 必须由壳层接管，先等首屏渲染完成' }).toBe(true)
+
+    await main.evaluate((value) => {
+      (window as Window & { __dshE2eReloadNonce?: string }).__dshE2eReloadNonce = value
+    }, randomUUID())
+    await main.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await main.keyboard.press('F5')
+
+    // 与配置面板按钮同一条路径：文档被整个换掉，只推进 webviewKey 的重挂不会走到这里。
+    await expect.poll(async () => {
+      try {
+        return await main.evaluate(() => Boolean((window as Window & { __dshE2eReloadNonce?: string }).__dshE2eReloadNonce))
+      }
+      catch {
+        return false
+      }
+    }, { timeout: WINDOW_TIMEOUT_MS, message: 'F5 必须真正重新加载当前文档，而不是只切换壳层状态' }).toBe(false)
+
+    const reloaded = await waitHealthy(main)
+    expect(reloaded.service_url, 'F5 刷新不得更换核心服务地址').toBe(health.service_url)
+    expect((await invoke<{ pid: number, kind: string }[]>(main, 'get_task_manager_processes')).find(process => process.kind === 'harness')?.pid, 'F5 刷新不得重启核心进程').toBe(corePid)
+    expect(await pageErrors(main), 'F5 刷新不应产生页面异常').toEqual([])
+  })
+
   // 三个窗口 + 克隆档案同时起多套核心，CI 上与 Rust lane 抢同一台 runner 时跑不出结果（见 HEAVY_E2E_ENABLED）。
   it.runIf(HEAVY_E2E_ENABLED)('reuses same-profile cores and isolates cloned-profile windows', async () => {
     const shell = app.get()

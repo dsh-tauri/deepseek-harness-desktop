@@ -20,7 +20,7 @@ const { store, userAgent, openOverlay, openUrl, toggleDevtools, emitEvent } = vi
     toggleDevtools: vi.fn<() => Promise<void>>(),
     emitEvent: vi.fn(),
     store: {
-      harness: { status: 'ready', serviceHealthy: true, webviewSrc: 'http://127.0.0.1:3081', markHostedReady: vi.fn(), markWebviewLoaded: vi.fn(), markWebviewAlive: vi.fn(), markWebviewBootReady: vi.fn() },
+      harness: { status: 'ready', serviceHealthy: true, webviewSrc: 'http://127.0.0.1:3081', reloadWebview: vi.fn(), markHostedReady: vi.fn(), markWebviewLoaded: vi.fn(), markWebviewAlive: vi.fn(), markWebviewBootReady: vi.fn() },
       recovery: { recovery: { required: false } },
       desktopUpdater: { updateInfo: null, check: vi.fn().mockResolvedValue(null) },
       setting: { zoom: vi.fn() },
@@ -125,6 +125,7 @@ beforeEach(() => {
   menuEntries = []
   store.harness.status = 'ready'
   store.harness.serviceHealthy = true
+  store.harness.reloadWebview.mockClear()
   store.setting.zoom.mockClear()
   mockWindows('main')
   mockIPC((command, args) => {
@@ -440,6 +441,14 @@ describe('native View menu recipients', () => {
     mountWindow('remote-alpha')
     act(() => nativeEvent('macos-menu-action', 'desktop-zoom-in', 'remote-alpha'))
     expect(store.setting.zoom).toHaveBeenCalledExactlyOnceWith('increase')
+  })
+
+  it('reloads the page once for the targeted shell window', async () => {
+    mountWindow('main')
+    mountWindow('remote-alpha')
+    await waitFor(() => expect([...listeners.values()].filter(listener => listener.event === 'macos-menu-action')).toHaveLength(2))
+    act(() => nativeEvent('macos-menu-action', 'desktop-reload-page', 'remote-alpha'))
+    expect(store.harness.reloadWebview).toHaveBeenCalledOnce()
   })
 
   it('unsubscribes the recipient when its shell window closes', async () => {

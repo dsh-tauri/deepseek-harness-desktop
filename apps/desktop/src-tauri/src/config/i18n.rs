@@ -288,6 +288,7 @@ fn pick(key: &str, lang: Lang) -> String {
         "menu.zoom_in" => ("放大", "Zoom In", "확대", "Увеличить"),
         "menu.zoom_out" => ("缩小", "Zoom Out", "축소", "Уменьшить"),
         "menu.actual_size" => ("实际大小", "Actual Size", "실제 크기", "Фактический размер"),
+        "menu.reload_page" => ("刷新页面", "Reload Page", "페이지 새로고침", "Обновить страницу"),
         "menu.window" => ("窗口", "Window", "창", "Окно"),
         "menu.minimize" => ("最小化", "Minimize", "최소화", "Свернуть"),
         "menu.zoom" => ("缩放", "Zoom", "크기 조절", "Изменить масштаб"),

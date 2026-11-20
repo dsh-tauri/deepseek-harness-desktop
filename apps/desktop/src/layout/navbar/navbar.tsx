@@ -169,6 +169,9 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
       case 'desktop-zoom-reset':
         store.setting.zoom('reset')
         break
+      case 'desktop-reload-page':
+        store.harness.reloadWebview()
+        break
       case 'desktop-config':
         handleOpenConfig('application')
         break

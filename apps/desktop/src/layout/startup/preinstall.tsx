@@ -344,7 +344,7 @@ export function PreinstallSetup() {
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-startup">
-      <div className="flex w-[min(880px,92vw)] flex-col gap-4">
+      <div className="flex w-[min(880px,92vw)] flex-col gap-4 min-[1440px]:w-[min(1200px,92vw)]">
         <header className="flex flex-col items-center gap-1 text-center">
           <Typography type="h4" className="!text-ink">{t('preinstall.title')}</Typography>
           <Typography color="muted" type="body-sm" className="max-w-[440px]">{t('preinstall.subtitle')}</Typography>
@@ -360,13 +360,13 @@ export function PreinstallSetup() {
               else={(
                 <>
                   {/* 卡片网格限定高度滚动，上下溢出由 ScrollShadow 渐隐提示 */}
-                  <ScrollShadow className="max-h-[min(50vh,420px)]" size={36}>
-                    <div className="grid grid-cols-1 gap-2.5 pr-1 sm:grid-cols-2 lg:grid-cols-3">
+                  <ScrollShadow className="max-h-[min(70vh,480px)]" size={36} data-testid="dsh-setup-preinstall-scroll">
+                    <div className="grid grid-cols-1 gap-2.5 pr-1 min-[640px]:grid-cols-2 min-[1024px]:grid-cols-3 min-[1440px]:grid-cols-4" data-testid="dsh-setup-preinstall-grid">
                       <If
                         cond={preinstall.loadError === ''}
                         else={(
                           // 列表加载失败（区别于空列表）：错误说明 + 重试
-                          <div className="flex flex-col items-center gap-2 rounded-lg border border-danger/30 bg-danger/5 p-4 text-center sm:col-span-2 lg:col-span-3">
+                          <div className="flex flex-col items-center gap-2 rounded-lg border border-danger/30 bg-danger/5 p-4 text-center min-[640px]:col-span-2 min-[1024px]:col-span-3 min-[1440px]:col-span-4">
                             <p className="text-xs font-medium text-danger">{t('preinstall.load_failed')}</p>
                             <p className="max-h-[80px] max-w-full overflow-y-auto break-all font-mono text-[11px] text-muted">
                               {preinstall.loadError}
@@ -386,7 +386,7 @@ export function PreinstallSetup() {
                         <If
                           cond={preinstall.plugins.length > 0}
                           else={(
-                            <Empty className="sm:col-span-2 lg:col-span-3">{t('preinstall.empty')}</Empty>
+                            <Empty className="min-[640px]:col-span-2 min-[1024px]:col-span-3 min-[1440px]:col-span-4">{t('preinstall.empty')}</Empty>
                           )}
                         >
                           {preinstall.plugins.map((plugin) => {
