@@ -27,9 +27,14 @@ function runScript(home: string, script: string, path?: string, extraEnv?: Recor
   })
 }
 
-/** 拉起一个只会应答端口的假远端实例：切换脚本要等端口应声才算就绪。 */
+/**
+ * 拉起一个只会应答端口的假远端实例：切换脚本要等端口应声才算就绪。
+ *
+ * 进程号要记下来：上游的停实例命令会确认端口腾空才肯继续，
+ * 上一个用例留下的监听没被收走，后一个用例就会停不掉「旧实例」。
+ */
 function listenerStartCommand(): string {
-  return `( node -e 'require("http").createServer((_, res) => res.end("ok")).listen(${SWITCH_PORT})' </dev/null >/dev/null 2>&1 & )`
+  return `( node -e 'require("http").createServer((_, res) => res.end("ok")).listen(${SWITCH_PORT})' </dev/null >/dev/null 2>&1 & echo $! > "$HOME/listener.pid" )`
 }
 
 function switchScript(overrides: { backupTag?: string, startCommand?: string, healthPollAttempts?: number, activeVersion?: string, targetVersion?: string, remotePort?: number } = {}): string {
