@@ -164,16 +164,6 @@
         "version": "latest"
       },
       {
-        "id": "dsh-ops",
-        "spec": "dsh-ops",
-        "name": "DSH Optimize",
-        "description": "dsh-ops 底层操作工具插件，旨在减少 Token 消耗与任务耗时。 ｜ A toolkit for low-level operations in DSH, designed to reduce token usage and task execution time.",
-        "repo": "https://github.com/T-Auto/dsh-ops",
-        "recommended": true,
-        "checked": false,
-        "version": "latest"
-      },
-      {
         "id": "dsh-third-kernel",
         "spec": "dsh-third-kernel@0.1.0",
         "name": "DSH Third Kernel",

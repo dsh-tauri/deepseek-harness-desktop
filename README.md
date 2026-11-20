@@ -77,7 +77,6 @@
 - [DSH Market](https://github.com/dsh-market/dsh-market) — 社区插件市场
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — 对话回退与工作区备份
 - [DSH IM](https://github.com/xmanrui/dsh-im) — IM 渠道与机器人管理
-- [DSH OPS](https://github.com/T-Auto/dsh-ops) — 底层操作工具，减少 Token 消耗与任务耗时
 - [Billion Context](https://github.com/ranxianglei/billion-context) — 上下文压缩与历史恢复
 
 新增或更新预设请提交 [Issue](https://github.com/dsh-tauri/deepseek-harness-desktop/issues)；可用版本由清单中的内核兼容规则决定。
