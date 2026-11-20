@@ -24,6 +24,7 @@ function fixtures() {
     { pid: 10, parent_pid: null, name: 'desktop', kind: 'desktop', cpu_percent: 1, memory_bytes: 104857600, run_time: 3601, start_time: 100, can_end: false },
     { pid: 20, parent_pid: 10, name: 'harness', kind: 'harness', cpu_percent: 12.5, memory_bytes: 209715200, run_time: 120, start_time: 101, can_end: false },
     { pid: 30, parent_pid: 20, name: 'worker', kind: 'child', cpu_percent: 2, memory_bytes: 52428800, run_time: 61, start_time: 102, can_end: true },
+    { pid: 40, parent_pid: 20, name: 'helper', kind: 'child', cpu_percent: 3, memory_bytes: 314572800, run_time: 30, start_time: 103, can_end: true },
   ]
 }
 
@@ -38,7 +39,15 @@ function Launcher() {
 async function openManager() {
   render(<StrictMode><QueryClientProvider client={client}><OverlaysProvider><Launcher /></OverlaysProvider></QueryClientProvider></StrictMode>)
   fireEvent.click(screen.getByText('Open tasks'))
-  await screen.findByRole('button', { name: 'worker task_manager.kind.child' })
+  await screen.findByRole('button', { name: 'desktop task_manager.kind.desktop' })
+}
+
+function expand(pid: number) {
+  fireEvent.click(screen.getByTestId(`dsh-task-manager-toggle-${pid}`))
+}
+
+function rowPids() {
+  return within(screen.getByRole('table')).getAllByRole('row').slice(1).map(row => within(row).getAllByRole('cell')[1].textContent)
 }
 
 beforeEach(() => {
@@ -72,23 +81,41 @@ afterEach(() => {
 })
 
 describe('task manager', () => {
-  it('sorts actual process metrics and filters by PID', async () => {
+  it('folds child processes into the app root and expands on demand', async () => {
     await openManager()
     const table = screen.getByRole('table')
-    expect(within(table).getAllByRole('row').slice(1).map(row => within(row).getAllByRole('cell')[1].textContent)).toEqual(['20', '10', '30'])
-    expect(screen.getByText('15.5%').textContent).toBe('15.5%')
-    expect(screen.getByText('350 MB').textContent).toBe('350 MB')
+    expect(rowPids()).toEqual(['10'])
+    expect(within(table).getByText('(4)')).toBeTruthy()
+    expect(within(table).getByText('18.5%').textContent).toBe('18.5%')
+    expect(within(table).getByText('650 MB').textContent).toBe('650 MB')
+    expand(10)
+    expect(rowPids()).toEqual(['10', '20'])
+    expect(within(table).getByText('(3)')).toBeTruthy()
+    expect(within(table).getByText('550 MB').textContent).toBe('550 MB')
+    expand(20)
+    expect(rowPids()).toEqual(['10', '20', '40', '30'])
+    expect(within(table).getByText('50 MB').textContent).toBe('50 MB')
+    expand(10)
+    expect(rowPids()).toEqual(['10'])
+  })
+
+  it('sorts siblings and filters by PID', async () => {
+    await openManager()
+    expand(10)
+    expand(20)
+    expect(rowPids()).toEqual(['10', '20', '40', '30'])
     fireEvent.click(screen.getByRole('button', { name: 'task_manager.pid' }))
-    expect(within(table).getAllByRole('row').slice(1).map(row => within(row).getAllByRole('cell')[1].textContent)).toEqual(['10', '20', '30'])
+    expect(rowPids()).toEqual(['10', '20', '30', '40'])
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '30' } })
-    expect(within(table).getAllByRole('row')).toHaveLength(2)
-    expect(within(table).getByText('0:01:01').textContent).toBe('0:01:01')
+    expect(rowPids()).toEqual(['10', '20', '30'])
+    expect(within(screen.getByRole('table')).getByText('0:01:01').textContent).toBe('0:01:01')
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'missing' } })
     expect(screen.getByText('task_manager.empty').textContent).toBe('task_manager.empty')
   })
 
   it('protects the desktop and Harness roots from termination', async () => {
     await openManager()
+    expand(10)
     const end = screen.getByRole<HTMLButtonElement>('button', { name: 'task_manager.end' })
     expect(end.disabled).toBe(true)
     for (const name of ['desktop task_manager.kind.desktop', 'harness task_manager.kind.harness']) {
@@ -100,6 +127,8 @@ describe('task manager', () => {
 
   it('cancels without terminating and submits the confirmed process identity', async () => {
     await openManager()
+    expand(10)
+    expand(20)
     fireEvent.click(screen.getByRole('button', { name: 'worker task_manager.kind.child' }))
     fireEvent.click(screen.getByRole('button', { name: 'task_manager.end' }))
     const confirmation = await screen.findByRole('alertdialog')
@@ -116,6 +145,8 @@ describe('task manager', () => {
 
   it('clears an actionable selection when its PID is reused', async () => {
     await openManager()
+    expand(10)
+    expand(20)
     fireEvent.click(screen.getByRole('button', { name: 'worker task_manager.kind.child' }))
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'task_manager.end' }).disabled).toBe(false)
     rows[2].start_time = 200
@@ -126,6 +157,8 @@ describe('task manager', () => {
 
   it('shows refresh failures and disables termination on stale data', async () => {
     await openManager()
+    expand(10)
+    expand(20)
     fireEvent.click(screen.getByRole('button', { name: 'worker task_manager.kind.child' }))
     failRead = true
     fireEvent.click(screen.getByRole('button', { name: 'task_manager.refresh' }))
