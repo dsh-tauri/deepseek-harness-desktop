@@ -170,6 +170,21 @@ it('reloads an actual same-origin document only for a pending native restart', a
   expect(invoke).toHaveBeenCalledExactlyOnceWith('host_harness_document', { url: 'http://127.0.0.1:3081?t=1&dshDesktop=1' })
 })
 
+it('reloads the hosted document itself on F5 without touching the core service', async () => {
+  const reload = vi.fn()
+  vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+  vi.stubGlobal('location', Object.assign(new URL('http://127.0.0.1:3081/'), { reload }))
+  render(<Shell />)
+  await act(async () => {})
+  vi.mocked(invoke).mockClear()
+
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F5', cancelable: true }))
+
+  expect(reload).toHaveBeenCalledOnce()
+  expect(harness.webviewKey).toBe(0)
+  expect(invoke).not.toHaveBeenCalled()
+})
+
 it('does not repeat accepted hosted navigation when service health fluctuates', async () => {
   render(<Shell />)
   await act(async () => {})

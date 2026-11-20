@@ -277,6 +277,14 @@ pub fn install_macos_menu(app: &crate::AppHandle<ElectronRuntime>) -> tauri::Res
         true,
         Some("CmdOrCtrl+0"),
     )?;
+    let reload_separator = PredefinedMenuItem::separator(app)?;
+    let reload_page = MenuItem::with_id(
+        app,
+        "desktop-reload-page",
+        crate::config::i18n::t("menu.reload_page"),
+        true,
+        Some("F5"),
+    )?;
     let fullscreen_separator = PredefinedMenuItem::separator(app)?;
     let view_menu = Submenu::with_id_and_items(
         app,
@@ -292,6 +300,8 @@ pub fn install_macos_menu(app: &crate::AppHandle<ElectronRuntime>) -> tauri::Res
             &zoom_in,
             &zoom_out,
             &zoom_reset,
+            &reload_separator,
+            &reload_page,
             &fullscreen_separator,
             &fullscreen,
         ],
@@ -1572,6 +1582,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             | "desktop-zoom-in"
             | "desktop-zoom-out"
             | "desktop-zoom-reset"
+            | "desktop-reload-page"
             | "desktop-task-manager" => {
                 if let Some(window) = app
                     .windows()

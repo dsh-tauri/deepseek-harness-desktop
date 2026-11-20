@@ -1,6 +1,6 @@
 import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
 import { useOverlay } from '@overlastic/react'
-import { deepEqual, useMount, useWatch } from '@reause/core'
+import { deepEqual, useEventListener, useMount, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -73,6 +73,14 @@ export function Shell() {
       case 'reset':
         void store.setting.zoom(payload.action).catch(error => console.error('[Shell] zoom shortcut failed:', error))
     }
+  })
+  // F5 与「刷新页面」按钮同一条路径：只重载承载文档的页面，不重启核心。
+  // 带修饰键的 F5 是平台强制重载，页内已消费的 F5 归页面，壳层都不抢。
+  useEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key !== 'F5' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat || event.defaultPrevented)
+      return
+    event.preventDefault()
+    store.harness.reloadWebview()
   })
 
   // keep:effect 主窗口文档即 DSH：本机服务就绪后把当前 webview 导航到 DSH 页面。

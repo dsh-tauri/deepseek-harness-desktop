@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   dshStyle: { frame: { background: 'rgb(10, 20, 30)' }, sidebar: { background: 'rgb(40, 50, 60)' } },
   setDshStyle: vi.fn(),
   setting: { zoom: vi.fn().mockResolvedValue(undefined) },
-  harness: { markHostedReady: vi.fn(), status: 'ready', serviceHealthy: true, serviceRunning: true, webviewKey: 0, webviewLoaded: false, webviewAlive: false, webviewError: false, webviewSrc: 'http://127.0.0.1:3081', startupPhase: 'process-boot', busyAction: null },
+  harness: { markHostedReady: vi.fn(), reloadWebview: vi.fn(), status: 'ready', serviceHealthy: true, serviceRunning: true, webviewKey: 0, webviewLoaded: false, webviewAlive: false, webviewError: false, webviewSrc: 'http://127.0.0.1:3081', startupPhase: 'process-boot', busyAction: null },
   recovery: { recovery: { required: false } },
   emit: vi.fn().mockResolvedValue(undefined),
   getAllWindows: vi.fn(),
@@ -177,6 +177,37 @@ it.each([
   render(<Shell />)
   act(() => mocks.listeners.get('dsh://zoom-shortcut')!({ payload }))
   expect(mocks.setting.zoom).not.toHaveBeenCalled()
+})
+
+it('reloads the page on F5 and swallows the default reload', () => {
+  render(<Shell />)
+  const event = new KeyboardEvent('keydown', { key: 'F5', cancelable: true })
+  window.dispatchEvent(event)
+  expect(mocks.harness.reloadWebview).toHaveBeenCalledOnce()
+  expect(event.defaultPrevented).toBe(true)
+})
+
+it.each<[string, KeyboardEventInit]>([
+  ['Ctrl+F5', { key: 'F5', ctrlKey: true }],
+  ['Meta+F5', { key: 'F5', metaKey: true }],
+  ['Alt+F5', { key: 'F5', altKey: true }],
+  ['Shift+F5', { key: 'F5', shiftKey: true }],
+  ['a held F5', { key: 'F5', repeat: true }],
+  ['another function key', { key: 'F6' }],
+])('leaves %s to the platform instead of reloading the page', (_case, init) => {
+  render(<Shell />)
+  const event = new KeyboardEvent('keydown', { cancelable: true, ...init })
+  window.dispatchEvent(event)
+  expect(mocks.harness.reloadWebview).not.toHaveBeenCalled()
+  expect(event.defaultPrevented).toBe(false)
+})
+
+it('leaves an F5 already consumed by the page to the page', () => {
+  render(<Shell />)
+  const event = new KeyboardEvent('keydown', { key: 'F5', cancelable: true })
+  event.preventDefault()
+  window.dispatchEvent(event)
+  expect(mocks.harness.reloadWebview).not.toHaveBeenCalled()
 })
 
 it('returns to local content before opening remote settings after plugin readiness', () => {
