@@ -8,7 +8,7 @@ import { APPROVE_ACTION_ID, REJECT_ACTION_ID, REPLY_ACTION_ID } from '../constan
 import { locale } from '../locales'
 import { answerQuestionBatch, approveInteraction, pendingDetail, pendingIdentity, pendingNotificationKind, readPendingInteraction, rejectInteraction } from '../service/approval'
 import { allowPendingNotification, allowTurnNotification, boundText, notificationTag } from '../service/decision'
-import { showNativeNotification } from '../service/native'
+import { closeNativeNotifications, showNativeNotification } from '../service/native'
 import { advanceQuestionWizard, canDriveQuestions, questionWizardStep, syncQuestionWizard } from '../service/question-wizard'
 import { createSoundPlayer } from '../service/sound'
 import { readTurnEnd } from '../service/turn-end'
@@ -24,6 +24,8 @@ const FOCUS_RETRY_MS = 200
 /** 等待 `uiSession` 服务注册的上限（20 × 250ms = 5s）。 */
 const UI_SESSION_WAIT_LIMIT = 20
 const UI_SESSION_WAIT_MS = 250
+/** 记住多少条「已投递、还没关」的通知，超出后按投递顺序丢掉最旧的。 */
+const DELIVERED_LIMIT = 64
 
 /** 单次观察到的会话状态（`uiSession` 缺席时退化为列表里的 running）。 */
 interface SessionObservation {
@@ -52,6 +54,8 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
   const seenRunning = new Map<string, boolean | undefined>()
   const seenPending = new Map<string, string | undefined>()
   const timers = new Map<string, () => void>()
+  // 已投递到系统通知中心的通知：tag → 发起它的会话。用户回到该会话时按这张表关掉。
+  const delivered = new Map<string, string>()
   let sequence = 0
 
   const readSessions = (): SessionsFace | undefined => ctx.get('sessions') as SessionsFace | undefined
@@ -106,24 +110,64 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
     await emit('dsh://notification-ready', { sourceOrigin: location.origin })
   })().catch(error => console.error(`[${PLUGIN_ID}] notification listener failed`, error))
 
+  const rememberDelivered = (tag: string, sessionId: string): void => {
+    delivered.delete(tag)
+    delivered.set(tag, sessionId)
+    while (delivered.size > DELIVERED_LIMIT) {
+      const oldest = delivered.keys().next().value
+      if (oldest === undefined)
+        break
+      delivered.delete(oldest)
+    }
+  }
+
+  /** 用户回到某个会话即视为已读：把这个会话还挂在系统通知中心里的通知关掉。 */
+  const dismissSession = (sessionId: string): void => {
+    if (delivered.size === 0)
+      return
+    const tags = [...delivered].filter(([, owner]) => owner === sessionId).map(([tag]) => tag)
+    if (tags.length === 0)
+      return
+    for (const tag of tags)
+      delivered.delete(tag)
+    void closeNativeNotifications(tags)
+  }
+
+  /** 窗口回到前台时，用户正停在的那个会话的通知就算已读。 */
+  const dismissViewed = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden')
+      return
+    const current = adapter.sessionList()?.current
+    if (!current)
+      return
+    dismissSession(current)
+  }
+
+  // 窗口回到前台就按「用户此刻在看哪个会话」清掉那个会话的通知（issue #1587）。
+  if (typeof document !== 'undefined')
+    controller.listen('visibilitychange', dismissViewed)
+
   const notify = (sessionId: string, kind: NotificationKind, title: string, body: string, requireInteraction: boolean, actions?: NativeNotificationAction[], onAction?: (action: string, inputValue: string | null) => void, deliveryKey?: string): void => {
     if (controller.isDisposed() || isArchived(sessionId))
       return
     const settings = notificationSettings.$state
     sequence += 1
+    const tag = notificationTag(sessionId, kind, sequence)
     void showNativeNotification({
       title,
       body: boundText(body, MAX_BODY_CHARS),
-      tag: notificationTag(sessionId, kind, sequence),
+      tag,
       sessionId,
       deliveryKey,
       requireInteraction,
       silent: true,
       actions,
       onAction,
-    }).then((delivered) => {
-      if (delivered && !controller.isDisposed())
-        sound.play(settings.sound, settings.customSound)
+    }).then((accepted) => {
+      if (!accepted || controller.isDisposed())
+        return
+      rememberDelivered(tag, sessionId)
+      sound.play(settings.sound, settings.customSound)
     })
   }
 
@@ -351,6 +395,8 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
   }
 
   const observe = (): void => {
+    // 切会话不会改变「窗口是否在前台」，所以这里单独再看一次已读。
+    dismissViewed()
     const list = readSessions()?.list.getSnapshot()
     if (!list)
       return

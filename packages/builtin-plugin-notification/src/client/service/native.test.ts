@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 let showNativeNotification: typeof import('./native').showNativeNotification
+let closeNativeNotifications: typeof import('./native').closeNativeNotifications
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => true),
@@ -20,7 +21,7 @@ vi.mock('dsh-tauri/client', async () => ({
 
 beforeEach(async () => {
   vi.resetModules()
-  ;({ showNativeNotification } = await import('./native'))
+  ;({ showNativeNotification, closeNativeNotifications } = await import('./native'))
   mocks.clicked = null
   vi.stubGlobal('location', { origin: 'http://127.0.0.1:3081' })
   vi.stubGlobal('__DSH_NOTIFICATIONS_AVAILABLE__', true)
@@ -52,6 +53,29 @@ it('rejects an old action when the same tag now refers to a different interactio
   expect(currentAction).not.toHaveBeenCalled()
   mocks.clicked!({ payload: { ...payload, deliveryKey: JSON.stringify([payload.sourceOrigin, 'interaction-current']), inputValue: 'current reply' } })
   expect(currentAction).toHaveBeenCalledExactlyOnceWith('approve', 'current reply')
+})
+
+it('closes a delivered notification with the same id it was sent under', async () => {
+  await showNativeNotification({ title: 'Finished', body: 'Turn complete', tag: 'turn-1', sessionId: 'session-1' })
+  const calls = mocks.invoke.mock.calls as unknown as [string, { options: { id: number } }][]
+  const deliveredId = calls.find(([command]) => command === 'plugin:notifications|notify')?.[1].options.id
+  expect(deliveredId).toBeTypeOf('number')
+  await closeNativeNotifications(['turn-1'])
+  expect(mocks.invoke).toHaveBeenCalledWith('plugin:notifications|remove_active', { notifications: [{ id: deliveredId }] })
+})
+
+it('skips the close IPC when native notifications are unavailable', async () => {
+  vi.stubGlobal('__DSH_NOTIFICATIONS_AVAILABLE__', false)
+  await closeNativeNotifications(['turn-1'])
+  expect(mocks.invoke).not.toHaveBeenCalled()
+})
+
+it('drops the action handler once its notification is closed', async () => {
+  const onAction = vi.fn()
+  await showNativeNotification({ title: 'Approval', body: 'Approve?', tag: 'approval-1', sessionId: 'session-1', deliveryKey: 'interaction-1', onAction })
+  await closeNativeNotifications(['approval-1'])
+  mocks.clicked!({ payload: { sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081', tag: 'approval-1', action: 'approve', deliveryKey: JSON.stringify(['http://127.0.0.1:3081', 'interaction-1']) } })
+  expect(onAction).not.toHaveBeenCalled()
 })
 
 it('stores the producing window and session in the native activation payload', async () => {

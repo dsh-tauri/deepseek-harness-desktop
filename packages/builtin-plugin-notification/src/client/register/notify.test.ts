@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   openSession: vi.fn(() => ({ status: 'opened' })),
   emit: vi.fn(async () => {}),
   show: vi.fn(async () => true),
+  close: vi.fn(async () => {}),
   readTurnEnd: vi.fn(async () => ({ interrupted: false, turn: 42 })),
   play: vi.fn(),
 }))
@@ -23,11 +24,44 @@ vi.mock('dsh-tauri/client', () => ({
 }))
 vi.mock('../locales', () => ({ locale: { text: (key: string) => key } }))
 vi.mock('../store', () => ({ notificationSettings: { $state: {} } }))
-vi.mock('../service/native', () => ({ showNativeNotification: mocks.show }))
+vi.mock('../service/native', () => ({ showNativeNotification: mocks.show, closeNativeNotifications: mocks.close }))
 vi.mock('../service/sound', () => ({ createSoundPlayer: () => ({ play: mocks.play, dispose: vi.fn() }) }))
 vi.mock('../service/turn-end', () => ({ readTurnEnd: mocks.readTurnEnd }))
 
 beforeEach(() => vi.stubGlobal('location', { origin: 'http://127.0.0.1:3081' }))
+
+/** 页面的可见性由 document 决定：node 环境没有它，按用例给出可控的替身。 */
+function stubDocument(visibilityState: 'hidden' | 'visible') {
+  const listeners = new Map<string, EventListener>()
+  const document = {
+    visibilityState,
+    addEventListener: (type: string, handler: EventListener) => listeners.set(type, handler),
+    removeEventListener: (type: string) => listeners.delete(type),
+  }
+  vi.stubGlobal('document', document)
+  return { document, listeners }
+}
+
+async function deliverTurnNotification(currentSessionId: string) {
+  const { document, listeners } = stubDocument('hidden')
+  Object.assign(notificationSettings.$state, { turnComplete: 'always', sound: 'default' })
+  const observers = new Set<() => void>()
+  let running = true
+  const sessions = { list: {
+    getSnapshot: () => ({ ids: ['session-1'], byId: { 'session-1': { id: 'session-1', running, updatedAt: 100 } } }),
+    subscribe: (fn: () => void) => {
+      observers.add(fn)
+      return () => observers.delete(fn)
+    },
+  } }
+  const controller = createLifecycleController()
+  const setup = notifyFeature as unknown as (controller: LifecycleController, ctx: unknown, adapter: unknown) => void
+  setup(controller, { get: (name: string) => name === 'sessions' ? sessions : undefined }, { has: () => false, sessionList: () => ({ ids: ['session-1'], current: currentSessionId }) })
+  running = false
+  observers.forEach(fn => fn())
+  await vi.waitFor(() => expect(mocks.play).toHaveBeenCalledOnce())
+  return { controller, document, listeners }
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -88,5 +122,40 @@ it('gives two guest producers the same turn identity and plays sound only for th
   finally {
     controllers.forEach(controller => controller.dispose())
     vi.useRealTimers()
+  }
+})
+
+it('closes the notification of the session the user comes back to', async () => {
+  const { controller, document, listeners } = await deliverTurnNotification('session-1')
+  try {
+    document.visibilityState = 'visible'
+    listeners.get('visibilitychange')!({} as Event)
+    await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledWith(['dsh-notification-session-1-1']))
+  }
+  finally {
+    controller.dispose()
+  }
+})
+
+it('keeps the notification of a session the user did not open', async () => {
+  const { controller, document, listeners } = await deliverTurnNotification('session-2')
+  try {
+    document.visibilityState = 'visible'
+    listeners.get('visibilitychange')!({} as Event)
+    expect(mocks.close).not.toHaveBeenCalled()
+  }
+  finally {
+    controller.dispose()
+  }
+})
+
+it('keeps the notification while the window stays in the background', async () => {
+  const { controller, listeners } = await deliverTurnNotification('session-1')
+  try {
+    listeners.get('visibilitychange')!({} as Event)
+    expect(mocks.close).not.toHaveBeenCalled()
+  }
+  finally {
+    controller.dispose()
   }
 })
