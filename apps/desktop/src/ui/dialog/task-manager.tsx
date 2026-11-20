@@ -26,14 +26,13 @@ interface TaskProcess {
   can_end: boolean
 }
 
-interface TaskNode {
+interface TaskRow {
   process: TaskProcess
-  children: TaskNode[]
-  depth: number
   count: number
   cpu: number
   memory: number
   ready: boolean
+  group: boolean
 }
 
 type SortKey = 'name' | 'pid' | 'cpu_percent' | 'memory_bytes' | 'run_time'
@@ -61,95 +60,36 @@ function identity(process: TaskProcess) {
   return `${process.pid}-${process.start_time}`
 }
 
-function buildTree(processes: TaskProcess[]): TaskNode[] {
-  const nodes = new Map<number, TaskNode>()
-  for (const process of processes) {
-    nodes.set(process.pid, {
-      process,
-      children: [],
-      depth: 0,
-      count: 1,
-      cpu: process.cpu_percent ?? 0,
-      memory: process.memory_bytes,
-      ready: process.cpu_percent !== null,
-    })
-  }
-  const parents = new Map<TaskNode, TaskNode>()
-  for (const node of nodes.values()) {
-    const parent = node.process.parent_pid === null ? undefined : nodes.get(node.process.parent_pid)
-    if (parent && parent !== node && node.process.kind !== 'desktop')
-      parents.set(node, parent)
-  }
-  for (const node of nodes.values()) {
-    let current = parents.get(node)
-    for (let step = 0; current && step <= nodes.size; step++) {
-      if (current === node) {
-        parents.delete(node)
-        break
-      }
-      current = parents.get(current)
-    }
-  }
-  const roots: TaskNode[] = []
-  for (const node of nodes.values()) {
-    const parent = parents.get(node)
-    if (parent)
-      parent.children.push(node)
-    else
-      roots.push(node)
-  }
-  roots.sort((left, right) => Number(right.process.kind === 'desktop') - Number(left.process.kind === 'desktop') || left.process.pid - right.process.pid)
-  const aggregate = (node: TaskNode, depth: number) => {
-    node.depth = depth
-    node.count = 1
-    node.cpu = node.process.cpu_percent ?? 0
-    node.memory = node.process.memory_bytes
-    node.ready = node.process.cpu_percent !== null
-    for (const child of node.children) {
-      aggregate(child, depth + 1)
-      node.count += child.count
-      node.cpu += child.cpu
-      node.memory += child.memory
-      node.ready = node.ready && child.ready
-    }
-  }
-  for (const root of roots)
-    aggregate(root, 0)
-  return roots
-}
-
-function sortValue(node: TaskNode, key: SortKey): number | string {
+function sortValue(process: TaskProcess, key: SortKey): number | string {
   switch (key) {
-    case 'name': return node.process.name
-    case 'pid': return node.process.pid
-    case 'cpu_percent': return node.cpu
-    case 'memory_bytes': return node.memory
-    case 'run_time': return node.process.run_time
+    case 'name': return process.name
+    case 'pid': return process.pid
+    case 'cpu_percent': return process.cpu_percent ?? 0
+    case 'memory_bytes': return process.memory_bytes
+    case 'run_time': return process.run_time
   }
 }
 
-function flatten(roots: TaskNode[], expanded: Set<string>, sort: Sort, locale: string, query: string, label: (process: TaskProcess) => string): TaskNode[] {
-  const compare = (left: TaskNode, right: TaskNode) => {
+function sortProcesses(processes: TaskProcess[], sort: Sort, locale: string) {
+  return [...processes].sort((left, right) => {
     const a = sortValue(left, sort.key)
     const b = sortValue(right, sort.key)
     const order = typeof a === 'string' && typeof b === 'string'
       ? a.localeCompare(b, locale)
       : Number(a) - Number(b)
-    return (sort.ascending ? order : -order) || left.process.pid - right.process.pid
+    return (sort.ascending ? order : -order) || left.pid - right.pid
+  })
+}
+
+function leafRow(process: TaskProcess): TaskRow {
+  return {
+    process,
+    count: 1,
+    cpu: process.cpu_percent ?? 0,
+    memory: process.memory_bytes,
+    ready: process.cpu_percent !== null,
+    group: false,
   }
-  const matches = (node: TaskNode): boolean => label(node.process).includes(query) || node.children.some(matches)
-  const rows: TaskNode[] = []
-  const walk = (nodes: TaskNode[]) => {
-    for (const node of [...nodes].sort(compare)) {
-      if (query !== '' && !matches(node))
-        continue
-      rows.push(node)
-      if (query !== '' || expanded.has(identity(node.process)))
-        walk(node.children)
-    }
-  }
-  walk(roots)
-  return rows
 }
 
 export function TaskManagerDialog(props: PropsWithOverlays) {
@@ -159,10 +99,10 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
   const [action, setAction] = useState<{ type: 'end', process: TaskProcess } | { type: 'restart' } | null>(null)
   const [autoRefresh, toggleAutoRefresh] = useToggle<boolean>(true)
   const [showLogs, toggleLogs] = useToggle()
+  const [expanded, toggleExpanded] = useToggle<boolean>(false)
   const [search, setSearch] = useState('')
   const [selection, setSelection] = useState<{ pid: number, start_time: number } | null>(null)
   const [sort, setSort] = useState<Sort>({ key: 'memory_bytes', ascending: false })
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const processes = useQuery({
     queryKey: queryKeys.taskManager,
     queryFn: () => invoke<TaskProcess[]>('get_task_manager_processes'),
@@ -180,18 +120,20 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
   const all = processes.data ?? []
   const number = new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 })
   const query = search.trim().toLocaleLowerCase()
-  const rows = flatten(
-    buildTree(all),
-    expanded,
-    sort,
-    i18n.language,
-    query,
-    process => `${process.name} ${process.pid} ${t(`task_manager.kind.${process.kind}`)}`.toLocaleLowerCase(),
-  )
-  const selected = rows.find(node => node.process.pid === selection?.pid && node.process.start_time === selection.start_time)?.process
+  const label = (process: TaskProcess) => `${process.name} ${process.pid} ${t(`task_manager.kind.${process.kind}`)}`.toLocaleLowerCase()
+  const root = all.find(process => process.kind === 'desktop') ?? all.find(process => process.parent_pid === null) ?? all[0]
+  const children = sortProcesses(all.filter(process => process !== root), sort, i18n.language)
+  const visible = query === '' ? children : children.filter(process => label(process).includes(query))
   const totalMemory = all.reduce((sum, process) => sum + process.memory_bytes, 0)
   const totalCpu = all.reduce((sum, process) => sum + (process.cpu_percent ?? 0), 0)
   const cpuReady = all.length > 0 && all.every(process => process.cpu_percent !== null)
+  const open = query !== '' || expanded
+  const rows: TaskRow[] = []
+  if (root && (query === '' || label(root).includes(query) || visible.length > 0))
+    rows.push({ process: root, count: all.length, cpu: totalCpu, memory: totalMemory, ready: cpuReady, group: true })
+  if (open)
+    rows.push(...visible.map(leafRow))
+  const selected = rows.find(row => row.process.pid === selection?.pid && row.process.start_time === selection.start_time)?.process
   const endProcess = useMutation({
     mutationFn: (process: TaskProcess) => invoke('end_task_manager_process', { pid: process.pid, startTime: process.start_time }),
     onSuccess: async () => {
@@ -214,15 +156,6 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
 
   function sortBy(key: SortKey) {
     setSort(previous => ({ key, ascending: previous.key === key ? !previous.ascending : key === 'name' || key === 'pid' }))
-  }
-
-  function toggleExpanded(process: TaskProcess) {
-    setExpanded((previous) => {
-      const next = new Set(previous)
-      if (!next.delete(identity(process)))
-        next.add(identity(process))
-      return next
-    })
   }
 
   return (
@@ -277,21 +210,20 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((node) => {
-                      const process = node.process
-                      const open = query !== '' || expanded.has(identity(process))
+                    {rows.map((row) => {
+                      const process = row.process
                       return (
                         <tr key={identity(process)} className="border-t border-line data-[selected=true]:bg-accent/10" data-selected={selected === process}>
                           <td className="px-3 py-2">
-                            <div className="flex items-center gap-1" style={{ paddingLeft: node.depth * 14 }}>
-                              <If cond={node.children.length > 0} else={<span className="size-5 shrink-0" aria-hidden="true" />}>
+                            <div className="flex items-center gap-1" style={{ paddingLeft: row.group ? 0 : 24 }}>
+                              <If cond={row.group} else={<span className="size-5 shrink-0" aria-hidden="true" />}>
                                 <button
                                   type="button"
                                   className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:text-foreground"
                                   data-testid={`dsh-task-manager-toggle-${process.pid}`}
                                   aria-label={t(open ? 'task_manager.collapse' : 'task_manager.expand', { name: process.name })}
                                   aria-expanded={open}
-                                  onClick={() => toggleExpanded(process)}
+                                  onClick={() => toggleExpanded()}
                                 >
                                   <ChevronRight className={open ? 'size-3.5 rotate-90' : 'size-3.5'} />
                                 </button>
@@ -300,7 +232,7 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
                                 <span className="max-w-56 truncate">
                                   <span className="block truncate">
                                     {process.name}
-                                    <If cond={node.count > 1}><span aria-hidden="true">{` (${node.count})`}</span></If>
+                                    <If cond={row.count > 1}><span aria-hidden="true">{` (${row.count})`}</span></If>
                                   </span>
                                   <span className="block text-xs text-muted">{t(`task_manager.kind.${process.kind}`)}</span>
                                 </span>
@@ -308,8 +240,8 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
                             </div>
                           </td>
                           <td className="px-5 py-2 tabular-nums">{process.pid}</td>
-                          <td className="px-5 py-2 tabular-nums"><If cond={node.ready} else="—">{`${number.format(node.cpu)}%`}</If></td>
-                          <td className="px-5 py-2 whitespace-nowrap tabular-nums">{`${number.format(node.memory / 1024 / 1024)} MB`}</td>
+                          <td className="px-5 py-2 tabular-nums"><If cond={row.ready} else="—">{`${number.format(row.cpu)}%`}</If></td>
+                          <td className="px-5 py-2 whitespace-nowrap tabular-nums">{`${number.format(row.memory / 1024 / 1024)} MB`}</td>
                           <td className="px-5 py-2 tabular-nums">{duration(process.run_time)}</td>
                         </tr>
                       )

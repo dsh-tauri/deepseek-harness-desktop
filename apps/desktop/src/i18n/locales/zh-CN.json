@@ -724,7 +724,7 @@
   "task_manager.loading": "正在加载进程",
   "task_manager.empty": "没有匹配的进程",
   "task_manager.load_failed": "进程数据刷新失败：{{error}}",
-  "task_manager.metrics_hint": "仅可结束 Harness 的子进程。进程按父子关系收纳，括号内为整棵子树的进程数；CPU 按整机 100% 计算，与系统任务管理器一致；内存为所列进程的驻留内存。系统独立托管的 WebView 进程可能不在列表中。",
+  "task_manager.metrics_hint": "仅可结束 Harness 的子进程。子进程收纳到应用主进程一行，括号内为进程数；CPU 按整机 100% 计算，与系统任务管理器一致；内存为所列进程的驻留内存。系统独立托管的 WebView 进程可能不在列表中。",
   "task_manager.end": "结束进程",
   "task_manager.end_title": "结束所选进程？",
   "task_manager.end_description": "即将结束 {{name}}（PID {{pid}}），可能中断正在执行的任务。",
