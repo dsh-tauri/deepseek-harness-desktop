@@ -404,7 +404,11 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  log download "dsh ${plan.dsh.tag}"`,
         `  fetch_verified "$TMP/dsh-pkg.zip" "${plan.dsh.digest ?? ''}" "${plan.dsh.zipName}" ${quoteUrls(plan.dsh.urls)}`,
         `  extract_zip "$TMP/dsh-pkg.zip" "$ROOT/dependencies/dsh.new"`,
+        // 换活动目录前先占住活动槽位：和核心切换互斥。
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
+        // 活动目录被换成了新的副本，它不再对应任何版本槽位：旧的版本标识要清掉，
+        // 否则清单会把新副本标成旧版本。
+        `  rm -f "$ROOT/dependencies/.active-tag"`,
         `  log install "dsh 安装完成 (${plan.dsh.tag})"`,
         `fi`,
       ].join('\n')
@@ -427,7 +431,9 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  rm -rf "$ROOT/dependencies/dsh.new"`,
         `  mkdir -p "$ROOT/dependencies/dsh.new"`,
         `  tar -xzf "$TMP/dsh.tgz" -C "$ROOT/dependencies/dsh.new" --strip-components=1`,
+        // 换活动目录前先占住活动槽位：和核心切换互斥。
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
+        `  rm -f "$ROOT/dependencies/.active-tag"`,
         `  install_dsh_deps || exit 13`,
         `  log install "dsh 安装完成 (${plan.dsh.packageName}@${plan.dsh.version})"`,
         `fi`,
@@ -771,13 +777,13 @@ export function safeProfileName(raw: string | undefined): string {
   return raw !== undefined && /^[\w-]+$/.test(raw) ? raw : DEFAULT_REMOTE_PROFILE
 }
 
-export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan): string {
+export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan, options: { dshBin?: string } = {}): string {
   if (plan !== undefined)
     assertSupportedDshVersion(plan.dshVersion)
   if (profile.startCommand !== undefined)
     return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${remoteWebLog(profile.remotePort)}" 2>&1 < /dev/null & ) &`
   const node = `$HOME/${REMOTE_ROOT}/runtime/bin/node`
-  const dshBin = layoutDshEntry(plan)
+  const dshBin = options.dshBin ?? layoutDshEntry(plan)
   const profileName = safeProfileName(profile.profileName)
   return [
     `ROOT="$HOME/${REMOTE_ROOT}"`,
@@ -949,11 +955,19 @@ async function assertListenerDshVersion(session: RemoteSession, port: number): P
     unverifiable('listener changed during version check')
 }
 
+export interface EnsureRemoteInstanceOptions {
+  /** 是否允许安装：切换与恢复只验证与启动，不重新解析安装计划、不依赖发行源。 */
+  install?: boolean
+  /** 明确指定核心入口路径：切换后活动目录里的那份。 */
+  dshBin?: string
+}
+
 export async function ensureRemoteInstance(
   session: RemoteSession,
   profile: MachineProfile,
   config: Config,
   hooks: BootstrapHooks = {},
+  options: EnsureRemoteInstanceOptions = {},
 ): Promise<string> {
   const { onEvent, onProgress } = hooks
   const target = `${profile.host}:${profile.remotePort}`
@@ -969,7 +983,7 @@ export async function ensureRemoteInstance(
   }
   let plan: RemoteInstallPlan | undefined
   let skipSummary = ''
-  if (profile.startCommand === undefined) {
+  if (options.install !== false && profile.startCommand === undefined) {
     try {
       await assertRemoteDshVersion(session, true)
     }
@@ -1008,7 +1022,7 @@ export async function ensureRemoteInstance(
   }
   onProgress?.({ phase: 'starting' })
   onEvent?.('launch', `拉起远端实例 (端口 ${profile.remotePort})`)
-  const started = await session.exec(startCommandFor(profile, plan))
+  const started = await session.exec(startCommandFor(profile, plan, options.dshBin === undefined ? {} : { dshBin: options.dshBin }))
   if (started.code !== 0) {
     const message = started.stdout.includes('REMOTE_NOT_INSTALLED')
       ? `remote runtime incomplete on "${profile.host}" (REMOTE_NOT_INSTALLED)`

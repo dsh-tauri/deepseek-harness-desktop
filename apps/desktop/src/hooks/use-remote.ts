@@ -30,6 +30,8 @@ interface SwitcherTargets {
   activeId: string | null
   pendingId: string | null
   activeTunnelUrl: string
+  /** 远端正在切换核心：连接暂时不可用，但视图仍属于那台远端机器。 */
+  switching: boolean
 }
 
 function initialMachineId(): string | null {
@@ -49,7 +51,7 @@ function initialMachineId(): string | null {
 
 export function useRemote() {
   const queryClient = useQueryClient()
-  const [targets, setTargets] = useState<SwitcherTargets>({ activeId: null, pendingId: null, activeTunnelUrl: '' })
+  const [targets, setTargets] = useState<SwitcherTargets>({ activeId: null, pendingId: null, activeTunnelUrl: '', switching: false })
   const [bootId, setBootId] = useState(initialMachineId)
   const [connectTrail, setConnectTrail] = useState<RemoteProgressPhase[]>([])
   const [connectDismissed, setConnectDismissed] = useState(false)
@@ -114,7 +116,7 @@ export function useRemote() {
       return
     if (!enabled) {
       epochRef.current += 1
-      setTargets({ activeId: null, pendingId: null, activeTunnelUrl: '' })
+      setTargets({ activeId: null, pendingId: null, activeTunnelUrl: '', switching: false })
       connect.reset()
       setConnectTrail([])
       return
@@ -185,7 +187,7 @@ export function useRemote() {
     setConnectTrail([])
     setConnectDismissed(false)
     if (machine.state === 'connected' && machine.tunnelBaseUrl !== undefined) {
-      setTargets({ activeId: machineId, pendingId: null, activeTunnelUrl: machine.tunnelBaseUrl })
+      setTargets({ activeId: machineId, pendingId: null, activeTunnelUrl: machine.tunnelBaseUrl, switching: false })
       return
     }
     setTargets(previous => ({ ...previous, pendingId: machineId }))
@@ -210,7 +212,7 @@ export function useRemote() {
     }
     epochRef.current += 1
     setBootId(null)
-    setTargets({ activeId: null, pendingId: null, activeTunnelUrl: '' })
+    setTargets({ activeId: null, pendingId: null, activeTunnelUrl: '', switching: false })
     connect.reset()
     dismissConnect()
   }
@@ -248,6 +250,7 @@ export function dotClassOf(machine: Pick<RemoteMachineRow, 'color' | 'state'>): 
       return 'bg-success'
     case 'reconnecting':
     case 'connecting':
+    case 'switching':
     case 'testing':
       return 'bg-warning'
     case 'given-up':
@@ -258,15 +261,25 @@ export function dotClassOf(machine: Pick<RemoteMachineRow, 'color' | 'state'>): 
 }
 
 export function reconcileSwitcher(prev: SwitcherTargets, machines: readonly RemoteMachineRow[]): SwitcherTargets {
-  let { activeId, pendingId, activeTunnelUrl } = prev
+  let { activeId, pendingId, activeTunnelUrl, switching } = prev
   const active = machines.find(machine => machine.id === activeId)
   if (active === undefined || active.state === 'disconnected' || active.state === 'given-up') {
     activeId = null
     activeTunnelUrl = ''
+    switching = false
   }
-  else if (active.state === 'connected' && active.tunnelBaseUrl !== undefined) {
-    activeTunnelUrl = active.tunnelBaseUrl
+  else if (active.state === 'switching') {
+    // 切换核心时远端实例会重启，连接暂时不可用：视图仍属于这台远端机器，
+    // 不能退回本机内容，否则用户会在毫不知情的情况下操作本机核心。
+    switching = true
   }
+  else if (active.state === 'connected') {
+    switching = false
+    if (active.tunnelBaseUrl !== undefined)
+      activeTunnelUrl = active.tunnelBaseUrl
+  }
+  // 重连中保持原样：切换发起的重连连回来之前，遮罩不能撤——
+  // 远端页面这时还是失效的，撤了就会让人对着旧页面继续操作。
   const pending = machines.find(machine => machine.id === pendingId)
   if (pending === undefined || pending.state === 'given-up') {
     pendingId = null
@@ -275,8 +288,9 @@ export function reconcileSwitcher(prev: SwitcherTargets, machines: readonly Remo
     activeId = pending.id
     activeTunnelUrl = pending.tunnelBaseUrl
     pendingId = null
+    switching = false
   }
-  return { activeId, pendingId, activeTunnelUrl }
+  return { activeId, pendingId, activeTunnelUrl, switching }
 }
 
 export function machineRowsOf(value?: { enabled?: boolean, items?: readonly unknown[], discovered?: readonly unknown[] }): { enabled: boolean, machines: RemoteMachineRow[] } {
@@ -304,7 +318,7 @@ function machineRowOf(raw: unknown): RemoteMachineRow | undefined {
   const value = raw as Record<string, unknown>
   if (typeof value.id !== 'string' || value.id === '' || typeof value.name !== 'string' || value.name === '')
     return undefined
-  if (!['disconnected', 'testing', 'connecting', 'connected', 'reconnecting', 'given-up'].includes(String(value.state)))
+  if (!['disconnected', 'testing', 'connecting', 'connected', 'switching', 'reconnecting', 'given-up'].includes(String(value.state)))
     return undefined
   return {
     id: value.id,

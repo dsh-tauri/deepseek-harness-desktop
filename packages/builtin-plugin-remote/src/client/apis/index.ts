@@ -83,6 +83,11 @@ export function postCoreInstall(body: Types.PostApiTauriRemoteCoreInstallBody, o
   return ofetch<Types.PostApiTauriRemoteCoreInstallResponse>('/api/tauri/remote/core/install', { method: 'post', body, ...options })
 }
 
+/** @method post */
+export function postCoreSwitch(body: Types.PostApiTauriRemoteCoreSwitchBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteCoreSwitchResponse>('/api/tauri/remote/core/switch', { method: 'post', body, ...options })
+}
+
 /** @method get */
 export function getCoreTasksEvents(params?: Types.GetApiTauriRemoteCoreTasksEventsQuery, options?: FetchOptions) {
   return ofetch<Types.GetApiTauriRemoteCoreTasksEventsResponse>('/api/tauri/remote/core/tasks/events', { method: 'get', ...params === undefined ? {} : { params }, ...options })

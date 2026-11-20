@@ -1,4 +1,5 @@
 import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
+import { Spinner } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
 import { deepEqual, useMount, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
@@ -6,6 +7,7 @@ import { emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { type } from '@tauri-apps/plugin-os'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { useAppearance } from '@/hooks/use-appearance'
@@ -41,11 +43,12 @@ export function Shell() {
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
   const appearanceCss = useAppearance()
   const openConfigDialog = useOverlay(ConfigDialog)
+  const { t } = useTranslation()
 
   // 2. 本地用户选择状态
   const [fullSidebarRevealed, setFullSidebarRevealed] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [remoteView, setRemoteView] = useState({ url: '', tint: null as string | null })
+  const [remoteView, setRemoteView] = useState({ url: '', tint: null as string | null, switching: false })
   const pendingSettingsTabRef = useRef<string | null>(null)
 
   // 3. 远程视图数据 Query
@@ -150,8 +153,8 @@ export function Shell() {
     }
   })
 
-  function handleRemoteChange(url: string, tint: string | null) {
-    setRemoteView({ url, tint })
+  function handleRemoteChange(url: string, tint: string | null, switching: boolean) {
+    setRemoteView({ url, tint, switching })
   }
 
   function openSettingsTab(tab: string) {
@@ -237,6 +240,19 @@ export function Shell() {
         />
         <If cond={fullSidebar && !fullSidebarRevealed && status === 'ready'}>
           <div className="absolute inset-0 z-10" data-testid="dsh-full-sidebar-cover" style={{ background: dshStyle.sidebar?.background }} />
+        </If>
+        {/* 远端正在切换核心时远端实例会重启，远端页面暂时不可用：视图仍留在那台远端机器上，
+            但用一层不可交互的遮罩挡住失效内容，别让用户对着死掉的远端页面继续操作。 */}
+        <If cond={remoteView.switching}>
+          <div
+            className="absolute inset-0 z-20 flex items-center justify-center bg-panel pointer-events-auto"
+            data-testid="dsh-remote-switching"
+          >
+            <div className="pointer-events-none flex items-center gap-2 text-sm text-muted" role="status">
+              <Spinner size="sm" />
+              <span>{t('remote.switching_core')}</span>
+            </div>
+          </div>
         </If>
       </div>
     </main>

@@ -20,7 +20,7 @@ vi.mock('react-i18next', () => ({
 }))
 const toastSpy = vi.fn()
 const manageSpy = vi.fn()
-const changeSpy = vi.fn<(url: string, tint: string | null) => void>()
+const changeSpy = vi.fn<(url: string, tint: string | null, switching: boolean) => void>()
 const { windowInfo } = vi.hoisted(() => ({ windowInfo: { label: 'main' } }))
 const invokeSpy = vi.fn<(command: string, args?: { method?: string, payload?: unknown, machineId?: string, url?: string }) => Promise<unknown>>()
 vi.mock('@/utils/toast', () => ({
@@ -129,7 +129,7 @@ describe('remoteSwitcher 渲染', () => {
     const menu = await openMenu()
     expect(within(menu).getByText('remote.local')).toBeTruthy()
     expect(within(menu).getByText('remote.empty')).toBeTruthy()
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
 
     fireEvent.click(within(menu).getByText('remote.manage'))
     await waitFor(() => expect(manageSpy).toHaveBeenCalledOnce())
@@ -187,10 +187,10 @@ describe('remoteSwitcher 渲染', () => {
     const trigger = screen.getByRole('button', { name: 'remote.switcher' })
     expect(trigger.textContent).toContain('alpha')
     expect(trigger.querySelector('span[class*="rounded-full"]')?.getAttribute('style')).toContain('rgb(18, 52, 86)')
-    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null, false)
 
     fireEvent.click(within(await openMenu()).getByText('remote.local'))
-    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('', null))
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('', null, false))
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
   })
 })
@@ -205,7 +205,7 @@ describe('remoteSwitcher 交互与降级', () => {
       expect(queryClient.getQueryState(queryKeys.remoteMachines)?.fetchStatus).toBe('idle')
     })
     expect(screen.queryByRole('button', { name: 'remote.switcher' })).toBeNull()
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
 
     engineEnabled = true
     fireEvent(window, new Event('focus'))
@@ -216,7 +216,7 @@ describe('remoteSwitcher 交互与降级', () => {
     engineMachines = [machineOf({ id: 'm1', name: 'alpha', color: '#123456', tintBorder: true, state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
     renderSwitcher()
     await selectMachine('alpha')
-    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#123456'))
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#123456', false))
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('alpha')
     expect(screen.queryByRole('dialog')).toBeNull()
     const menu = await openMenu()
@@ -235,15 +235,15 @@ describe('remoteSwitcher 交互与降级', () => {
     await selectMachine('beta')
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('remote.connect.title:beta')).toBeTruthy()
-    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null, false)
     fireEvent.click(within(dialog).getByRole('button', { name: 'buttons.close' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     fireEvent.click(within(await openMenu()).getByText('remote.local'))
-    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('', null))
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('', null, false))
 
     engineMachines = engineMachines.map(machine => machine.id === 'm2' ? { ...machine, state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4002' } : machine)
     await refreshMachines()
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(requests('POST /api/tauri/remote/machines/disconnect')).toHaveLength(0)
@@ -263,7 +263,7 @@ describe('remoteSwitcher 交互与降级', () => {
     const item = within(menu).getByText('alpha').closest('[role="menuitem"]')
     expect(item?.getAttribute('aria-disabled')).toBe('true')
     fireEvent.click(within(menu).getByText('alpha'))
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
     expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(0)
 
     engineUnreachable = false
@@ -279,22 +279,38 @@ describe('remoteSwitcher 交互与降级', () => {
     engineMachines = [machineOf({ name: 'alpha', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001', color: '#123456', tintBorder: true })]
     renderSwitcher()
     await selectMachine('alpha')
-    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#123456')
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#123456', false)
     engineMachines = [machineOf({ name: 'alpha', state: 'reconnecting', color: '#654321', tintBorder: true })]
     await refreshMachines()
-    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#654321'))
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#654321', false))
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('alpha')
     engineMachines = [machineOf({ name: 'alpha', state: 'reconnecting', color: '#654321' })]
     await refreshMachines()
-    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null))
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null, false))
     engineMachines = [machineOf({ name: 'alpha', state: 'reconnecting', tintBorder: true })]
     await refreshMachines()
-    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null, false)
 
     engineEnabled = false
     await refreshMachines()
-    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('', null))
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('', null, false))
     expect(screen.queryByRole('button', { name: 'remote.switcher' })).toBeNull()
+  })
+
+  it('切换核心时保留远端视图：隧道 URL 不清空，改报「切换中」', async () => {
+    engineMachines = [machineOf({ name: 'alpha', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
+    renderSwitcher()
+    await selectMachine('alpha')
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null, false)
+
+    engineMachines = [machineOf({ name: 'alpha', state: 'switching' })]
+    await refreshMachines()
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null, true))
+    expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('alpha')
+
+    engineMachines = [machineOf({ name: 'alpha', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
+    await refreshMachines()
+    await waitFor(() => expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null, false))
   })
 
   it('内部连接弹窗呈现阶段与事件日志，取消向引擎断开且不切换视图', async () => {
@@ -306,13 +322,13 @@ describe('remoteSwitcher 交互与降级', () => {
     expect(within(dialog).getByText('remote.connect.title:alpha')).toBeTruthy()
     expect(within(dialog).getByText('remote.step.installing')).toBeTruthy()
     expect(await within(dialog).findByText('[installing] download 42%')).toBeTruthy()
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
     fireEvent.click(within(dialog).getByRole('button', { name: 'remote.connect.cancel' }))
     await waitFor(() => {
       expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'POST /api/tauri/remote/machines/disconnect', payload: { machineId: 'm1' } })
       expect(screen.queryByRole('dialog')).toBeNull()
     })
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
     expect(screen.queryByText('remote.connect.failed_title')).toBeNull()
   })
 
@@ -327,7 +343,7 @@ describe('remoteSwitcher 交互与降级', () => {
     })
     expect(screen.queryByRole('button', { name: 'remote.switcher' })).toBeNull()
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#123456')
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', '#123456', false)
     expect(requests('GET /api/tauri/remote/machines')).toHaveLength(1)
 
     engineMachines = [machineOf({ name: 'alpha', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4002', color: '#654321', tintBorder: true })]
@@ -335,10 +351,10 @@ describe('remoteSwitcher 交互与降级', () => {
       await vi.advanceTimersByTimeAsync(2000)
     })
     expect(requests('GET /api/tauri/remote/machines')).toHaveLength(2)
-    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4002', '#654321')
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4002', '#654321', false)
     rerender(switcherElement())
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('alpha')
-    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4002', '#654321')
+    expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4002', '#654321', false)
     expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(0)
     unmount()
     await act(async () => {
@@ -361,7 +377,7 @@ describe('remoteSwitcher 增强（4.4）', () => {
     fireEvent.click(within(menu).getByText('remote.disconnect_active'))
     await waitFor(() => {
       expect(invokeSpy).toHaveBeenCalledWith('remote', { method: 'POST /api/tauri/remote/machines/disconnect', payload: { machineId: 'm1' } })
-      expect(changeSpy).toHaveBeenLastCalledWith('', null)
+      expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
     })
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
   })
@@ -371,7 +387,7 @@ describe('remoteSwitcher 增强（4.4）', () => {
     renderSwitcher()
     const menu = await openMenu()
     expect(within(menu).queryByText('remote.disconnect_active')).toBeNull()
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
   })
 
   it('重连机器显示重试倒计时；已知凭据类型缀在状态后', async () => {
@@ -403,7 +419,7 @@ describe('remoteSwitcher 行内双动作（当前窗口 vs 新窗口）', () => 
     expect(within(menu).queryByText('remote.disconnect_active')).toBeNull()
     fireEvent.keyDown(menu, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(0)
@@ -417,7 +433,7 @@ describe('remoteSwitcher 行内双动作（当前窗口 vs 新窗口）', () => 
     await waitFor(() => expect(invokeSpy).toHaveBeenCalledWith('remote_open_window', { machineId: 'm2' }))
     fireEvent.keyDown(menu, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
-    expect(changeSpy).toHaveBeenLastCalledWith('', null)
+    expect(changeSpy).toHaveBeenLastCalledWith('', null, false)
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(0)

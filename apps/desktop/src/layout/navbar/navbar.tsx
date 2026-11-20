@@ -54,7 +54,7 @@ const CONFIG_TABS = [
 ] as const
 
 export interface NavbarProps {
-  onRemoteChange: (url: string, tint: string | null) => void
+  onRemoteChange: (url: string, tint: string | null, switching: boolean) => void
 
   sidebarCollapsed?: boolean
 

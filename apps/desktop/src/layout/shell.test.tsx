@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => mocks.window, getAllWindows: mocks.getAllWindows }))
 vi.mock('@tauri-apps/api/event', () => ({
@@ -181,7 +182,7 @@ it.each([
 
 it('returns to local content before opening remote settings after plugin readiness', () => {
   render(<Shell />)
-  act(() => navbar().onRemoteChange('https://remote.test', null))
+  act(() => navbar().onRemoteChange('https://remote.test', null, false))
   act(() => navbar().onOpenMachineManager?.())
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://settings:open', expect.anything())
   act(() => mocks.listeners.get('dsh://appearance:ready')!({ payload: undefined }))
@@ -199,7 +200,7 @@ it.each([
   vi.stubGlobal('location', new URL('https://hosted.test/?token=current'))
   mocks.harness.webviewSrc = ''
   render(<Shell />)
-  act(() => navbar().onRemoteChange(target, null))
+  act(() => navbar().onRemoteChange(target, null, false))
   const metadata = { tag: 'hosted-tag', sessionId: 'hosted-session', windowLabel: 'window-2', sourceOrigin: 'https://hosted.test' }
   await act(async () => {
     if (kind === 'click')
@@ -373,14 +374,14 @@ it('retains queued local clicks while the owning shell displays a remote host', 
   await act(async () => {
     await mocks.clicked!({ data: { sessionId: 'local-session', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
   })
-  act(() => navbar().onRemoteChange('https://remote.test/?token=secret', null))
+  act(() => navbar().onRemoteChange('https://remote.test/?token=secret', null, false))
   await act(async () => {
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'https://remote.test' } })
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
   expect(window.localStorage.getItem('dsh-notification-source:window-2')).toBe('https://remote.test')
   expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
-  act(() => navbar().onRemoteChange('', null))
+  act(() => navbar().onRemoteChange('', null, false))
   await act(async () => {
     mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
@@ -451,4 +452,23 @@ it('retains a notification when delivery fails and retries on the next ready eve
     ['dsh://notification-clicked', { tag: undefined, sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081' }],
     ['dsh://notification-clicked', { tag: undefined, sessionId: 'session-2', sourceOrigin: 'http://127.0.0.1:3081' }],
   ])
+})
+
+it('keeps the remote view while the remote core is switching and blocks interaction until it reconnects', () => {
+  const { container } = render(<Shell />)
+  const harnessSrc = () => container.querySelector('[title="Harness"]')?.getAttribute('data-src')
+
+  act(() => navbar().onRemoteChange('https://remote.test', null, false))
+  expect(harnessSrc()).toBe('https://remote.test')
+  expect(container.querySelector('[data-testid="dsh-remote-switching"]')).toBeNull()
+
+  act(() => navbar().onRemoteChange('https://remote.test', null, true))
+  expect(harnessSrc()).toBe('https://remote.test')
+  const cover = container.querySelector('[data-testid="dsh-remote-switching"]')
+  expect(cover).not.toBeNull()
+  expect(cover?.className).toContain('pointer-events-auto')
+
+  act(() => navbar().onRemoteChange('https://remote.test', null, false))
+  expect(container.querySelector('[data-testid="dsh-remote-switching"]')).toBeNull()
+  expect(harnessSrc()).toBe('https://remote.test')
 })

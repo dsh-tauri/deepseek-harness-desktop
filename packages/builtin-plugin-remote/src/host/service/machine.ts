@@ -4,7 +4,7 @@ import type { MachineProfile, MachineSaveRow, MachineSecretWrite, MachineView, R
 import type { WorkspaceAllowlist } from '../utils/allowlist'
 import type { SshHostBlock } from '../utils/ssh-config'
 import type { BootstrapHooks } from './bootstrap.types'
-import type { MachineState, ReconnectState } from './machine.types'
+import type { CoreSwitchLease, MachineState, ReconnectState } from './machine.types'
 import type { RemoteTransportCapabilities } from './transport.types'
 import { request } from 'node:http'
 import { defineService } from 'dsh-tauri'
@@ -12,7 +12,7 @@ import { join } from 'pathe'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { messageOf } from '../../shared/error'
 import { DEFAULT_MACHINE_TRANSPORT, REMOTE_ROOT } from '../config/constants'
-import { harnessHome, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
+import { harnessHome, hasCoreInstallTask, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
 import { MachineId, RemoteError } from '../types/index'
 import { carryWorkspaceAllowlist } from '../utils/allowlist'
 import { assertListenerProfile } from '../utils/instance'
@@ -87,6 +87,10 @@ export const machine = defineService({
 
   profileName(machineId: MachineId): string {
     return safeProfileName(machineProfiles.get(machineId)?.profileName)
+  },
+
+  profile(machineId: MachineId): MachineProfile {
+    return requireProfile(machineId)
   },
 
   setProgress(machineId: MachineId, progress?: RemoteProgress): void {
@@ -166,6 +170,7 @@ export const machine = defineService({
     const target = ensureState(machineId)
     if (target.link !== undefined)
       return target.link
+    refuseWhileSwitching(machineId, target)
     refuseWhileReconnecting(machineId, target)
     if (target.connecting === undefined) {
       target.phase = 'connecting'
@@ -198,6 +203,141 @@ export const machine = defineService({
     requireCapabilities(machineId, profile, ['exec'])
     refuseWhileReconnecting(machineId, ensureState(machineId))
     return await openTransportSession(profile, signal)
+  },
+
+  async beginSwitch(machineId: MachineId): Promise<CoreSwitchLease> {
+    const target = ensureState(machineId)
+    // 切换期间这台机器归切换任务独占：普通连接、安装和另一次切换都要让开，
+    // 否则它们可能在目录互换前连回旧核心，或让两次切换互相踩。
+    if (target.switchOwner !== undefined)
+      throw new RemoteError('machine-busy', machineId, 'machine is already switching the core')
+    if (target.connecting !== undefined || target.installing !== undefined)
+      throw new RemoteError('machine-busy', machineId, 'machine is already connecting or installing')
+    // 自动重连已经跑起来了就不能切：它可能在切换停机或互换目录期间把旧实例拉起来。
+    if (target.connectAttempting !== undefined)
+      throw new RemoteError('machine-busy', machineId, 'machine is reconnecting; wait for the automatic retry or disconnect first')
+    // 这台机器正在下载核心版本：下载任务占着版本槽位，不能与切换同时动目录。
+    if (hasCoreInstallTask(machineId))
+      throw new RemoteError('machine-busy', machineId, 'machine is downloading a core version; wait for it to finish')
+    target.generation += 1
+    // 代次要在这里就抓住：等资源关闭这段时间里用户可能断开并让另一次切换接手，
+    // 那时读到的代次已经不是本次的了。
+    const generation = target.generation
+    stopReconnect(target)
+    const entry = target.gateway
+    const tunnel = target.tunnel
+    const session = target.session
+    delete target.gateway
+    delete target.tunnel
+    delete target.session
+    delete target.link
+    delete target.progress
+    delete target.lastError
+    delete target.dshMissing
+    delete target.gatewayExhausted
+    target.phase = 'switching'
+    if (entry !== undefined)
+      entry.unsubscribe()
+    emit(machineId)
+    // 所有权先登记再等：等待资源关闭期间，连接、安装和另一次切换都要让开，
+    // 否则它们可能在目录互换前连回旧核心，或让两次切换互相踩。
+    const lease: CoreSwitchLease = { machineId, generation }
+    target.switchOwner = lease
+    try {
+      await Promise.all([
+        entry === undefined ? undefined : gateway.stop(entry.id).catch(() => undefined),
+        tunnel === undefined ? undefined : tunnel.close().catch(() => undefined),
+        session === undefined ? undefined : session.close().catch(() => undefined),
+      ])
+    }
+    catch (error) {
+      releaseSwitchOwnership(target, lease)
+      throw error
+    }
+    // 等的过程中状态被改过（用户断开、配置变更、另一次切换接手）：本次租约作废。
+    if (target.generation !== generation) {
+      releaseSwitchOwnership(target, lease)
+      throw new RemoteError('machine-busy', machineId, 'machine state changed while releasing the connection')
+    }
+    return lease
+  },
+
+  /** 切换任务结束后把机器交还给普通连接。 */
+  endSwitch(lease: CoreSwitchLease): void {
+    const target = machineStates.get(lease.machineId)
+    if (target === undefined || target.switchOwner?.generation !== lease.generation)
+      return
+    releaseSwitchOwnership(target, lease)
+    emit(lease.machineId)
+  },
+
+  /** 这台机器是否正在切换核心：切换期间不接别的写操作。 */
+  isSwitching(machineId: MachineId): boolean {
+    return machineStates.get(machineId)?.switchOwner !== undefined
+  },
+
+  /** 状态代次：断开、配置变更都会推进它，任务据此发现自己脚下的机器变了。 */
+  generation(machineId: MachineId): number {
+    return machineStates.get(machineId)?.generation ?? 0
+  },
+
+  /**
+   * 切换租约是否仍然有效：用户断开、配置变更或插件停用都会让它失效。
+   *
+   * 不看显示阶段：连通性测试会临时把阶段改成 `testing`，
+   * 拿阶段当依据会让切换在测试跑完的瞬间失效。
+   */
+  switchLeaseValid(lease: CoreSwitchLease): boolean {
+    const target = machineStates.get(lease.machineId)
+    return target !== undefined
+      && target.generation === lease.generation
+      && target.switchOwner?.generation === lease.generation
+  },
+
+  async reconnect(machineId: MachineId, options: { profileSync?: boolean, lease?: CoreSwitchLease, dshBin?: string } = {}): Promise<RemoteLink> {
+    const profile = requireProfile(machineId)
+    requireCapabilities(machineId, profile, ['exec', 'stream'])
+    const target = ensureState(machineId)
+    // 切换独占期间只有持有租约的切换任务能重建连接。
+    if (target.switchOwner !== undefined && target.switchOwner.generation !== options.lease?.generation)
+      throw new RemoteError('machine-busy', machineId, 'machine is switching the core')
+    if (target.link !== undefined)
+      return target.link
+    if (target.connecting !== undefined)
+      return await target.connecting
+    target.phase = 'connecting'
+    delete target.lastError
+    delete target.dshMissing
+    delete target.gatewayExhausted
+    target.progress = { phase: 'handshake' }
+    emit(machineId)
+    const generation = target.generation
+    // 切换后的重建连接只验证与启动现有的那份副本，不重新解析安装计划：
+    // 切换不能依赖发行源，也不能改写刚换过去的活动目录。
+    const attempt = performConnect(machineId, profile, undefined, {
+      ...options.profileSync === false ? { profileSync: false } : {},
+      skipInstall: true,
+      ...options.dshBin === undefined ? {} : { dshBin: options.dshBin },
+    })
+    const pending: Promise<RemoteLink> = attempt.finally(() => {
+      const current = machineStates.get(machineId)
+      if (current?.connecting === pending)
+        delete current.connecting
+    })
+    target.connecting = pending
+    void attempt.catch((error) => {
+      const current = machineStates.get(machineId)
+      // 旧尝试的失败不能盖掉用户随后发起的连接。
+      if (current === undefined || current.generation !== generation || current.connecting !== pending)
+        return
+      // 任务已经失败了，机器不能停在「连接中」：没有在飞的尝试，状态要落到终态。
+      current.phase = 'disconnected'
+      delete current.progress
+      current.lastError = redacted(machineId, messageOf(error))
+      emit(machineId)
+      events.append(machineId, 'auth', current.lastError)
+    })
+    return await pending
   },
 
   async disconnect(machineId: MachineId): Promise<void> {
@@ -237,16 +377,25 @@ export const machine = defineService({
     const profile = requireProfile(machineId)
     requireCapabilities(machineId, profile, ['exec'])
     const target = ensureState(machineId)
+    refuseWhileSwitching(machineId, target)
     refuseWhileReconnecting(machineId, target)
     if (target.installing === undefined) {
-      if (options.force === true && target.link !== undefined)
-        await machine.disconnect(machineId)
-      target.progress = { phase: 'installing' }
-      emit(machineId)
-      const attempt = performInstall(machineId, profile, options, signal)
-      target.installing = attempt.finally(() => {
-        delete machineStates.get(machineId)?.installing
+      // 安装 Promise 在第一次 await 之前就登记好：强装要先等断开，
+      // 这段等待里不能让核心切换插进来；后来的安装请求复用同一个，
+      // 不会各自去等断开，也不会把前一个的占位清掉。
+      const attempt = (async () => {
+        if (options.force === true && target.link !== undefined)
+          await machine.disconnect(machineId)
+        target.progress = { phase: 'installing' }
+        emit(machineId)
+        return await performInstall(machineId, profile, options, signal)
+      })()
+      const tracked: Promise<RemoteInstallResult> = attempt.finally(() => {
+        const current = machineStates.get(machineId)
+        if (current?.installing === tracked)
+          delete current.installing
       })
+      target.installing = tracked
     }
     return target.installing
   },
@@ -411,41 +560,46 @@ async function checkHostKey(machineId: MachineId, hostKey: Buffer): Promise<bool
 
 class AttemptCancelled extends Error {}
 
-async function performConnect(machineId: MachineId, profile: MachineProfile, signal?: AbortSignal): Promise<RemoteLink> {
+async function performConnect(machineId: MachineId, profile: MachineProfile, signal?: AbortSignal, options: { profileSync?: boolean, skipInstall?: boolean, dshBin?: string } = {}): Promise<RemoteLink> {
   const target = ensureState(machineId)
   const generation = target.generation
+  const withProfile = options.profileSync !== false
   let bootstrapSettled = false
   let portExhausted = false
   const onEvent = settlingEventSink(machineId, () => {
     bootstrapSettled = true
   })
   const session = await openSessionOrFail(machineId, profile, signal)
-  try {
-    await syncBundledPlugins(session, safeProfileName(profile.profileName), profile.remotePort, {
-      tree: machineRuntimeDeps().bundledPluginsTree,
-      onEvent: (stage, line) => {
-        if (generation === target.generation)
-          events.append(machineId, stage, line)
-      },
-    })
-  }
-  catch (error) {
-    events.append(machineId, 'install', `捆绑插件同步失败（降级原生 UI）: ${messageOf(error)}`)
-  }
-  try {
-    await session.exec(ensurePnpmCommand())
-    events.append(machineId, 'install', '远端 pnpm 垫片就绪（dsh plugin 依赖它）')
-  }
-  catch (error) {
-    events.append(machineId, 'install', `远端 pnpm 垫片写入失败: ${messageOf(error)}`)
-  }
-  try {
-    const added = await carryWorkspaceAllowlist(session, safeProfileName(profile.profileName), machine.localAllowlist())
-    if (added.length > 0)
-      events.append(machineId, 'install', `远端构建放行白名单已补齐 ${added.length} 项（git 插件 prepare 门禁）`)
-  }
-  catch (error) {
-    events.append(machineId, 'install', `构建放行白名单同步失败: ${messageOf(error)}`)
+  // 切换核心时只重建连接，不碰远端档案：常规连接的档案同步会改远端工作区白名单与插件链接，
+  // 切换失败回滚时这些改动撤不回来。
+  if (withProfile) {
+    try {
+      await syncBundledPlugins(session, safeProfileName(profile.profileName), profile.remotePort, {
+        tree: machineRuntimeDeps().bundledPluginsTree,
+        onEvent: (stage, line) => {
+          if (generation === target.generation)
+            events.append(machineId, stage, line)
+        },
+      })
+    }
+    catch (error) {
+      events.append(machineId, 'install', `捆绑插件同步失败（降级原生 UI）: ${messageOf(error)}`)
+    }
+    try {
+      await session.exec(ensurePnpmCommand())
+      events.append(machineId, 'install', '远端 pnpm 垫片就绪（dsh plugin 依赖它）')
+    }
+    catch (error) {
+      events.append(machineId, 'install', `远端 pnpm 垫片写入失败: ${messageOf(error)}`)
+    }
+    try {
+      const added = await carryWorkspaceAllowlist(session, safeProfileName(profile.profileName), machine.localAllowlist())
+      if (added.length > 0)
+        events.append(machineId, 'install', `远端构建放行白名单已补齐 ${added.length} 项（git 插件 prepare 门禁）`)
+    }
+    catch (error) {
+      events.append(machineId, 'install', `构建放行白名单同步失败: ${messageOf(error)}`)
+    }
   }
   try {
     await bootstrap.provision(
@@ -459,6 +613,10 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
           }
         },
         onEvent,
+      },
+      {
+        ...options.skipInstall === true ? { install: false } : {},
+        ...options.dshBin === undefined ? {} : { dshBin: options.dshBin },
       },
     )
     const tunnel = await session.stream(profile.remotePort, target.preferredTunnelPort)
@@ -741,8 +899,16 @@ async function attemptReconnect(machineId: MachineId, expected: ReconnectState):
   delete rec.nextRetryAt
   current.progress = { phase: 'handshake' }
   emit(machineId)
+  // 登记这次尝试：切换必须等它结束，不能与一次正在跑的自动重连并行。
+  const attempting = performConnect(machineId, profile)
+  // 记录挂在机器状态上，不挂在重连状态上：用户断开时重连状态会被清掉，
+  // 但这次尝试还在跑，切换不能因为看不见它就与它并行。
+  target.connectAttempting = attempting.then(() => undefined, () => undefined).finally(() => {
+    if (machineStates.get(machineId) === target)
+      delete target.connectAttempting
+  })
   try {
-    await performConnect(machineId, profile)
+    await attempting
   }
   catch (error) {
     if (error instanceof AttemptCancelled)
@@ -777,6 +943,23 @@ function stopReconnect(target: MachineState): void {
   if (target.reconnect?.timer !== undefined)
     clearTimeout(target.reconnect.timer)
   delete target.reconnect
+}
+
+/** 放弃切换所有权：只在本次租约仍然持有时才释放。 */
+function releaseSwitchOwnership(target: MachineState, lease: CoreSwitchLease): void {
+  if (target.switchOwner?.generation !== lease.generation)
+    return
+  delete target.switchOwner
+  // 切换结束却没有重建连接时，机器不能停在「切换中」：界面会一直挡着。
+  if (target.phase === 'switching')
+    target.phase = 'disconnected'
+}
+
+/** 切换独占期间拒绝普通连接与安装：它们会跟切换任务抢这台机器。 */
+function refuseWhileSwitching(machineId: MachineId, target: MachineState): void {
+  if (target.switchOwner === undefined)
+    return
+  throw new RemoteError('machine-busy', machineId, 'machine is switching the core; wait for the switch to finish')
 }
 
 function refuseWhileReconnecting(machineId: MachineId, target: MachineState): void {

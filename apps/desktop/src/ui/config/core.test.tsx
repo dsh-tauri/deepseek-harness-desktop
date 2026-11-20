@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getCoreVersions: vi.fn(),
   getCoreTasksEvents: vi.fn(),
   postCoreInstall: vi.fn(),
+  postCoreSwitch: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
@@ -36,6 +37,7 @@ vi.mock('@/apis/remote', () => ({
   getCoreVersions: mocks.getCoreVersions,
   getCoreTasksEvents: mocks.getCoreTasksEvents,
   postCoreInstall: mocks.postCoreInstall,
+  postCoreSwitch: mocks.postCoreSwitch,
 }))
 
 const localFixture: HarnessCore = {

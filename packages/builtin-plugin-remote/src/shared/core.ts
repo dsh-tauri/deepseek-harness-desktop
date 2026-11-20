@@ -143,7 +143,7 @@ export const LOCAL_CORE_CAPABILITIES: CoreCapability[] = [
   'bundledCore',
 ]
 
-export const REMOTE_CORE_CAPABILITIES: CoreCapability[] = ['listVersions', 'installVersion']
+export const REMOTE_CORE_CAPABILITIES: CoreCapability[] = ['listVersions', 'installVersion', 'activate']
 
 export const LOCAL_CORE_PLATFORMS: CorePlatform[] = [
   'windows-x64',

@@ -8,6 +8,7 @@ import accessTunnelPost from './routes/access.tunnel.post'
 import coreCurrentGet from './routes/core.current.get'
 import coreInstallPost from './routes/core.install.post'
 import coreProfilesGet from './routes/core.profiles.get'
+import coreSwitchPost from './routes/core.switch.post'
 import coreTasksEventsGet from './routes/core.tasks.events.get'
 import coreVersionsGet from './routes/core.versions.get'
 import machinesConnect from './routes/machines.connect.post'
@@ -42,6 +43,7 @@ export const server = defineWebServer((app) => {
   app.get('/api/tauri/remote/core/profiles', coreProfilesGet)
   app.get('/api/tauri/remote/core/versions', coreVersionsGet)
   app.post('/api/tauri/remote/core/install', coreInstallPost)
+  app.post('/api/tauri/remote/core/switch', coreSwitchPost)
   app.get('/api/tauri/remote/core/tasks/events', coreTasksEventsGet)
   app.get('/api/tauri/remote/sync/preview', syncPreview)
   app.post('/api/tauri/remote/sync/apply', syncApply)

@@ -40,6 +40,27 @@ function runLock(home: string, before: string[] = [], after: string[] = []): { c
   return { code: result.status, output: `${result.stdout}${result.stderr}` }
 }
 
+/** 用生产代码生成的活动槽位声明搭一段可执行脚本：重装与切换占的是同一个锁。 */
+function activeClaimScript(after: string[] = []): string {
+  return [
+    'set -eu',
+    'ROOT="$HOME/.dsh-desktop"',
+    'TMP="$ROOT/tmp/install.$$"',
+    'mkdir -p "$TMP"',
+    'log() { printf \'log %s %s\\n\' "$1" "$2"; }',
+    ...remoteSlotClaimShell('dsh', { busyText: '当前使用的核心槽位正在被其它操作占用', busyCode: 'active' }),
+    ...after,
+  ].join('\n')
+}
+
+function runActiveClaim(home: string): { code: number | null, output: string } {
+  const result = spawnSync('sh', ['-c', activeClaimScript(['echo claimed'])], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  })
+  return { code: result.status, output: `${result.stdout}${result.stderr}` }
+}
+
 async function failing(): Promise<never> {
   throw new Error('network unreachable')
 }
@@ -248,6 +269,30 @@ describe('指定版本下载脚本', () => {
     expect(script).toContain('cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }')
   })
 
+  it('占用声明能换一套变量名，同一段脚本里可以占住两个槽位', () => {
+    const script = [
+      ...remoteSlotClaimShell('dsh', {
+        lockVar: 'LOCKDIR_ACTIVE',
+        claimVar: 'CLAIM_ACTIVE',
+        claimName: 'claim-active-$$',
+        tmpClaim: 'claim-active.$$',
+      }),
+      ...remoteSlotClaimShell('dsh-0.2.3-43000000000', {
+        lockVar: 'LOCKDIR_TARGET',
+        claimVar: 'CLAIM_TARGET',
+        claimName: 'claim-target-$$',
+        tmpClaim: 'claim-target.$$',
+      }),
+    ].join('\n')
+
+    expect(script).toContain('LOCKDIR_ACTIVE="$ROOT/tmp/slot-dsh.lock"')
+    expect(script).toContain('CLAIM_ACTIVE="$LOCKDIR_ACTIVE/claim-active-$$"')
+    expect(script).toContain('LOCKDIR_TARGET="$ROOT/tmp/slot-dsh-0.2.3-43000000000.lock"')
+    expect(script).toContain('CLAIM_TARGET="$LOCKDIR_TARGET/claim-target-$$"')
+    // 两套声明各落各的锁目录，不能共用同一份声明名。
+    expect(script).not.toContain('CLAIM="$LOCKDIR/claim-$$"')
+  })
+
   it('发布时先换走旧槽位再 rename 就绪目录', () => {
     const script = buildCoreVersionInstallScript(plan, { slot: plan.tag })
     expect(script).toContain('if [ -e "$SLOT" ]; then')
@@ -339,6 +384,24 @@ describe('远端槽位锁的并发行为', () => {
       expect(contender.output).toContain('REMOTE_CORE_SLOT_BUSY')
       // 失败的一方不能把持有者的声明删掉。
       expect(claimsOf(home)).toHaveLength(1)
+    }
+    finally {
+      holder.kill()
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('切换占着活动槽位时，重装不能接管活动目录', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-active-slot-'))
+    const holder = spawn('sh', ['-c', activeClaimScript(['sleep 5'])], { env: { ...process.env, HOME: home }, stdio: 'ignore' })
+    try {
+      const dir = join(home, '.dsh-desktop', 'tmp', 'slot-dsh.lock')
+      expect(await waitFor(() => existsSync(dir) && readdirSync(dir).some(name => name.startsWith('claim-')))).toBe(true)
+      const contender = runActiveClaim(home)
+      expect(contender.code).toBe(17)
+      expect(contender.output).toContain('REMOTE_CORE_SLOT_BUSY:active')
+      // 失败的一方不能把持有者的声明删掉。
+      expect(readdirSync(dir).filter(name => name.startsWith('claim-'))).toHaveLength(1)
     }
     finally {
       holder.kill()
@@ -671,6 +734,28 @@ describe('install 脚本的重新安装短路', () => {
     const script = buildInstallScript(zipPlan(), { force: true })
     expect(script).toContain('if [ -x "$ROOT/runtime/bin/node" ]; then')
     expect(script).toContain('if [ -f "$ROOT/dependencies/pnpm/bin/pnpm.cjs" ]; then')
+  })
+
+  it('重装替换活动目录前先占住活动槽位，和核心切换占的是同一把锁', () => {
+    const script = buildInstallScript(zipPlan(), { force: true })
+    // 活动槽位只有一把锁：切换核心、强制重装、插件同步占的都是它。
+    expect(script).toContain('LOCKDIR="$ROOT/tmp/slot-dsh.lock"')
+    expect(script).toContain('CLAIM="$LOCKDIR/claim-$$"')
+    const claim = script.indexOf('CLAIM="$LOCKDIR/claim-$$"')
+    const replace = script.indexOf('flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"')
+    // 占槽要在换目录之前：换完再占就来不及了。
+    expect(claim).toBeGreaterThan(-1)
+    expect(replace).toBeGreaterThan(claim)
+    // 声明要一直持有到版本标识更新完成，否则清单会把新副本标成旧版本。
+    expect(script.indexOf('rm -f "$ROOT/dependencies/.active-tag"')).toBeGreaterThan(replace)
+  })
+
+  it('npm 布局的重装同样先占住活动槽位', () => {
+    const script = buildInstallScript(npmPlan(), { force: true })
+    const claim = script.indexOf('CLAIM="$LOCKDIR/claim-$$"')
+    const replace = script.indexOf('flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"')
+    expect(claim).toBeGreaterThan(-1)
+    expect(replace).toBeGreaterThan(claim)
   })
 
   it('bootstrap 的临时目录与版本安装的临时目录、槽位锁分开', () => {

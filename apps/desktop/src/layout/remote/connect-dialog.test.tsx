@@ -16,6 +16,7 @@ function remoteOf(overrides: Partial<Remote> = {}): Remote {
     activeId: null,
     pendingId: null,
     activeTunnelUrl: '',
+    switching: false,
     connectTrail: [],
     connectLog: [],
     connectFailed: null,

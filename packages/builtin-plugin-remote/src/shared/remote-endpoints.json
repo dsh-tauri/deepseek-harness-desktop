@@ -14,6 +14,7 @@
   "POST /api/tauri/remote/access",
   "POST /api/tauri/remote/access/tunnel",
   "POST /api/tauri/remote/core/install",
+  "POST /api/tauri/remote/core/switch",
   "POST /api/tauri/remote/machines",
   "POST /api/tauri/remote/machines/connect",
   "POST /api/tauri/remote/machines/disconnect",
