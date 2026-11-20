@@ -5,8 +5,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { remoteSlotClaimShell } from '../utils/instance'
 import { GithubHttpError } from '../utils/version'
-import { activeSlotClaimShell, assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, coreSlotClaimShell, coreSlotLockShell, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, startCommandFor } from './bootstrap.utils'
+import { assertRemoteDshVersion, buildCoreVersionInstallScript, buildInstallScript, planRemoteInstall, planRemoteVersionInstall, readRemoteDshVersion, remoteWebTokenCommand, startCommandFor } from './bootstrap.utils'
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v ln >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 
@@ -24,7 +25,8 @@ function lockScript(before: string[] = [], after: string[] = []): string {
     'mkdir -p "$ROOT/dependencies" "$TMP"',
     'log() { printf \'log %s %s\\n\' "$1" "$2"; }',
     ...before,
-    ...coreSlotLockShell(LOCK_TEST_SLOT),
+    ...remoteSlotClaimShell(LOCK_TEST_SLOT),
+    'cleanup() { rm -rf "$TMP"; rm -f "$CLAIM"; }',
     'trap cleanup EXIT',
     ...after,
   ].join('\n')
@@ -46,7 +48,7 @@ function activeClaimScript(after: string[] = []): string {
     'TMP="$ROOT/tmp/install.$$"',
     'mkdir -p "$TMP"',
     'log() { printf \'log %s %s\\n\' "$1" "$2"; }',
-    ...activeSlotClaimShell(),
+    ...remoteSlotClaimShell('dsh', { busyText: '当前使用的核心槽位正在被其它操作占用', busyCode: 'active' }),
     ...after,
   ].join('\n')
 }
@@ -77,6 +79,64 @@ function sessionOfResult(result: RemoteExecResult): RemoteSession {
     close: vi.fn(async () => {}),
   }
 }
+
+describe('远端实例启动令牌', () => {
+  function tokenOf(home: string, port: number): string {
+    const result = spawnSync('sh', ['-c', remoteWebTokenCommand(port)], { encoding: 'utf8', env: { ...process.env, HOME: home } })
+    return result.stdout.trim()
+  }
+
+  function homeWith(files: Record<string, string>): string {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-web-token-'))
+    mkdirSync(join(home, '.dsh'), { recursive: true })
+    for (const [name, content] of Object.entries(files))
+      writeFileSync(join(home, '.dsh', name), content)
+    return home
+  }
+
+  it('实例日志按端口分文件，取令牌只读这个端口那一份', () => {
+    const home = homeWith({
+      'dsh-remote-web-41990.log': 'dsh web: http://127.0.0.1:41990/?token=token-a\n',
+      'dsh-remote-web-41991.log': 'dsh web: http://127.0.0.1:41991/?token=token-b\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('token-a')
+    expect(tokenOf(home, 41991)).toBe('token-b')
+  })
+
+  it('旧版桌面写的整机日志按端口过滤，不取别的实例的令牌', () => {
+    const home = homeWith({
+      'dsh-remote-web.log': 'dsh web: http://127.0.0.1:41991/?token=token-b\ndsh web: http://127.0.0.1:41990/?token=token-a\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('token-a')
+    expect(tokenOf(home, 41992)).toBe('')
+  })
+
+  it('整机日志里只有一枚令牌时用它', () => {
+    const home = homeWith({
+      'dsh-remote-web.log': 'dsh web: https://dsh.example.com/?token=only-one\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('only-one')
+  })
+
+  it('整机日志里有多个实例的令牌时不去猜', () => {
+    const home = homeWith({
+      'dsh-remote-web.log': 'dsh web: https://a.example.com/?token=token-a\ndsh web: https://b.example.com/?token=token-b\n',
+    })
+
+    expect(tokenOf(home, 41990)).toBe('')
+  })
+
+  it('实例的日志与 pidfile 都按端口命名', () => {
+    const profile = { id: 'm1', name: '远端机器', host: '127.0.0.1', port: 22, user: 'tester', remotePort: 41990, profileName: 'remote' } as never
+    const script = startCommandFor(profile)
+
+    expect(script).toContain('dsh-remote-web-41990.log')
+    expect(script).toContain('.dsh/.dsh-remote-41990.pid')
+  })
+})
 
 describe('远端 DSH 包版本读取', () => {
   it('reads the installed package version', async () => {
@@ -211,13 +271,13 @@ describe('指定版本下载脚本', () => {
 
   it('占用声明能换一套变量名，同一段脚本里可以占住两个槽位', () => {
     const script = [
-      ...coreSlotClaimShell('dsh', {
+      ...remoteSlotClaimShell('dsh', {
         lockVar: 'LOCKDIR_ACTIVE',
         claimVar: 'CLAIM_ACTIVE',
         claimName: 'claim-active-$$',
         tmpClaim: 'claim-active.$$',
       }),
-      ...coreSlotClaimShell('dsh-0.2.3-43000000000', {
+      ...remoteSlotClaimShell('dsh-0.2.3-43000000000', {
         lockVar: 'LOCKDIR_TARGET',
         claimVar: 'CLAIM_TARGET',
         claimName: 'claim-target-$$',
@@ -678,9 +738,10 @@ describe('install 脚本的重新安装短路', () => {
 
   it('重装替换活动目录前先占住活动槽位，和核心切换占的是同一把锁', () => {
     const script = buildInstallScript(zipPlan(), { force: true })
-    expect(script).toContain('LOCKDIR_ACTIVE="$ROOT/tmp/slot-dsh.lock"')
-    expect(script).toContain('CLAIM_ACTIVE="$LOCKDIR_ACTIVE/claim-active-$$"')
-    const claim = script.indexOf('CLAIM_ACTIVE="$LOCKDIR_ACTIVE/claim-active-$$"')
+    // 活动槽位只有一把锁：切换核心、强制重装、插件同步占的都是它。
+    expect(script).toContain('LOCKDIR="$ROOT/tmp/slot-dsh.lock"')
+    expect(script).toContain('CLAIM="$LOCKDIR/claim-$$"')
+    const claim = script.indexOf('CLAIM="$LOCKDIR/claim-$$"')
     const replace = script.indexOf('flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"')
     // 占槽要在换目录之前：换完再占就来不及了。
     expect(claim).toBeGreaterThan(-1)
@@ -691,7 +752,7 @@ describe('install 脚本的重新安装短路', () => {
 
   it('npm 布局的重装同样先占住活动槽位', () => {
     const script = buildInstallScript(npmPlan(), { force: true })
-    const claim = script.indexOf('CLAIM_ACTIVE="$LOCKDIR_ACTIVE/claim-active-$$"')
+    const claim = script.indexOf('CLAIM="$LOCKDIR/claim-$$"')
     const replace = script.indexOf('flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"')
     expect(claim).toBeGreaterThan(-1)
     expect(replace).toBeGreaterThan(claim)
@@ -702,7 +763,34 @@ describe('install 脚本的重新安装短路', () => {
     // 退出清理只删自己的临时目录：不能扫掉版本安装的临时目录和槽位锁。
     expect(script).toContain('TMP="$ROOT/tmp/bootstrap.$$"')
     expect(script).not.toContain('TMP="$ROOT/tmp"')
-    expect(script).toContain('cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; rm -f "$CLAIM_ACTIVE"; }')
+    expect(script).toContain('cleanup() { rm -rf "$TMP"; if [ -f "$CLAIM" ]; then rm -rf "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; fi; rm -f "$CLAIM"; }')
+  })
+
+  it.skipIf(!SHELL_AVAILABLE)('拿不到占用声明时不得删别人正在写的暂存目录', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-bootstrap-staging-'))
+    const holder = spawn('sh', ['-c', 'sleep 30'], { stdio: 'ignore' })
+    try {
+      // 别人持有活动槽位，并且正在写固定名字的暂存目录。
+      const claim = join(home, '.dsh-desktop', 'tmp', 'slot-dsh.lock')
+      mkdirSync(claim, { recursive: true })
+      writeFileSync(join(claim, `claim-${holder.pid}`), `${holder.pid}\n`)
+      const staging = join(home, '.dsh-desktop', 'dependencies', 'dsh.new')
+      mkdirSync(staging, { recursive: true })
+      writeFileSync(join(staging, 'marker'), 'in progress')
+
+      const result = spawnSync('sh', ['-c', buildInstallScript(zipPlan())], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home },
+        timeout: 60_000,
+      })
+
+      expect(result.status, '槽位被占时装不上').not.toBe(0)
+      expect(existsSync(join(staging, 'marker')), '别人的暂存目录不能被退出清理删掉').toBe(true)
+    }
+    finally {
+      holder.kill('SIGKILL')
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it.skipIf(!SHELL_AVAILABLE)('bootstrap 退出清理不会删掉版本安装的临时目录和槽位锁', () => {

@@ -32,6 +32,7 @@ afterEach(async () => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 it('cancels the five-second watchdog when the current guest proves its document', async () => {
@@ -68,4 +69,41 @@ it('gives a replacement generation its own grace period when loaded stays true',
   expect(harness.webviewError).toBe(false)
   await vi.advanceTimersByTimeAsync(4000)
   expect(harness.webviewError).toBe(true)
+})
+
+it('reloads only the document generation and never stops the service', async () => {
+  harness.markWebviewLoaded()
+  harness.markWebviewAlive(0)
+
+  harness.reloadWebview()
+  expect(harness.webviewLoaded).toBe(false)
+  expect(harness.serviceRunning).toBe(true)
+  await vi.advanceTimersByTimeAsync(800)
+  expect(harness.webviewKey).toBe(1)
+})
+
+it('reloads the hosted document itself when the window carries the page', async () => {
+  vi.stubGlobal('__DSH_HOSTED__', true)
+  vi.stubGlobal('__DSH_BOOT__', { entries: [] })
+  const reload = vi.fn()
+  vi.stubGlobal('location', { reload })
+  harness.markWebviewLoaded()
+  harness.markWebviewAlive(0)
+
+  harness.reloadWebview()
+  await vi.advanceTimersByTimeAsync(1000)
+
+  expect(reload).toHaveBeenCalledOnce()
+  expect(harness.webviewKey).toBe(0)
+  expect(harness.serviceRunning).toBe(true)
+})
+
+it('ignores a reload request while the service is stopped', async () => {
+  harness.serviceRunning = false
+  const generation = harness.webviewKey
+
+  harness.reloadWebview()
+  await vi.advanceTimersByTimeAsync(1000)
+
+  expect(harness.webviewKey).toBe(generation)
 })

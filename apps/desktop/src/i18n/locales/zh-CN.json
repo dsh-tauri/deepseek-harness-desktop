@@ -6,6 +6,7 @@
   "messages.harness_restart_failed": "Harness 重启失败",
   "app.shutdown": "停止",
   "app.open_browser": "在浏览器中打开",
+  "app.reload_page": "刷新页面",
   "app.reveal_dir": "打开数据目录",
   "status.installing": "正在安装依赖...",
   "status.updating": "正在更新 DeepSeek Harness...",

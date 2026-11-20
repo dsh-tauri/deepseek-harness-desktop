@@ -1110,6 +1110,25 @@ export const harness = defineStore({
         this.busyAction = null
       }
     },
+
+    /**
+     * 只刷新承载文档的页面，不碰核心进程。
+     *
+     * 壳层注入形态（生产）下本窗口文档就是那个页面，没有可重挂的子视图：`webviewKey`
+     * 只驱动看门狗与壳层状态，推进它不会重新拉取页面，表现为「点了没反应」。这种形态
+     * 只能整页重载——注入脚本会在新文档上重新挂起壳层。
+     * 独立壳层页（dev）由页面内 `<webview>` 承载，推进重载代次让它重挂即可。
+     */
+    reloadWebview() {
+      if (!this.serviceRunning)
+        return
+      webviewReloadGate.reset()
+      if (isHostedDocument()) {
+        globalThis.location.reload()
+        return
+      }
+      this.refreshWebview()
+    },
   },
 })
 

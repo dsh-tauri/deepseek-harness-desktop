@@ -2,7 +2,7 @@ import type { Page, Request, Response } from 'playwright'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, diagnose, installErrorCollector, invoke, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, collectPageErrors, completePreinstall, CONFIG_DIALOG, CONFIG_RELOAD_PAGE, diagnose, HEAVY_E2E_ENABLED, installErrorCollector, invoke, MAIN_LABEL, NAVBAR_MENU_CONFIG, NAVBAR_MENU_POPOVER, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
 interface RuntimeInfo {
   app_version: string
@@ -204,7 +204,46 @@ describe('desktop boot and profile lifecycle', () => {
     expect(await pageErrors(main), '菜单开关不应产生壳层页面异常').toEqual([])
   })
 
-  it('reuses same-profile cores and isolates cloned-profile windows', async () => {
+  it('reloads the hosted page from the config panel without restarting the core service', async () => {
+    const shell = app.get()
+    const main = shell.window.page
+    await main.context().addInitScript(collectPageErrors)
+    const health = await waitHealthy(main)
+    const corePid = (await invoke<{ pid: number, kind: string }[]>(main, 'get_task_manager_processes')).find(process => process.kind === 'harness')?.pid
+    expect(corePid, '刷新前必须能读到本应用托管的核心进程').toBeTruthy()
+
+    if (process.platform === 'darwin') {
+      await invoke(main, 'plugin:event|emit_to', { target: { kind: 'Window', label: MAIN_LABEL }, event: 'macos-menu-action', payload: 'desktop-config' })
+    }
+    else {
+      await main.locator(NAVBAR_MENU_CONFIG).click({ timeout: WINDOW_TIMEOUT_MS })
+      await main.locator('[data-testid="dsh-navbar-item-application"]').click({ timeout: WINDOW_TIMEOUT_MS })
+    }
+    await main.locator(CONFIG_DIALOG).waitFor({ state: 'visible', timeout: WINDOW_TIMEOUT_MS })
+
+    await main.evaluate((value) => {
+      (window as Window & { __dshE2eReloadNonce?: string }).__dshE2eReloadNonce = value
+    }, randomUUID())
+    await main.locator(CONFIG_RELOAD_PAGE).click({ noWaitAfter: true, timeout: WINDOW_TIMEOUT_MS })
+
+    // 旧窗口文档被整个换掉时它的全局变量随之消失；只推进 webviewKey 的重挂不会走到这里。
+    await expect.poll(async () => {
+      try {
+        return await main.evaluate(() => Boolean((window as Window & { __dshE2eReloadNonce?: string }).__dshE2eReloadNonce))
+      }
+      catch {
+        return false
+      }
+    }, { timeout: WINDOW_TIMEOUT_MS, message: '刷新页面必须真正重新加载当前文档，而不是只切换壳层状态' }).toBe(false)
+
+    const reloaded = await waitHealthy(main)
+    expect(reloaded.service_url, '刷新页面不得更换核心服务地址').toBe(health.service_url)
+    expect((await invoke<{ pid: number, kind: string }[]>(main, 'get_task_manager_processes')).find(process => process.kind === 'harness')?.pid, '刷新页面不得重启核心进程').toBe(corePid)
+    expect(await pageErrors(main), '刷新页面不应产生页面异常').toEqual([])
+  })
+
+  // 三个窗口 + 克隆档案同时起多套核心，CI 上与 Rust lane 抢同一台 runner 时跑不出结果（见 HEAVY_E2E_ENABLED）。
+  it.runIf(HEAVY_E2E_ENABLED)('reuses same-profile cores and isolates cloned-profile windows', async () => {
     const shell = app.get()
     const main = shell.window.page
     await waitHealthy(main)

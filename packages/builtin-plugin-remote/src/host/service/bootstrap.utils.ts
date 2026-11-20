@@ -4,15 +4,24 @@ import type { BootstrapHooks, BootstrapLogLine, DshVersionInstallPlan, EnvCreden
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
 import { messageOf } from '../../shared/error'
-import { DEFAULT_REMOTE_PROFILE, REMOTE_ROOT, remotePidfile } from '../config/constants'
+import { BOOTSTRAP_LOG_PREFIX, DEFAULT_REMOTE_PROFILE, REMOTE_ROOT, remotePidfile } from '../config/constants'
 import { assetMatrixFor, dshNpmTarballUrls, dshZipDownloadUrls, NODE_SHASUMS256_SHA256, NODE_VERSION, nodeDownloadUrls, nodeShasumUrls, parsePlatform, PNPM_SHA256, PNPM_VERSION, pnpmDownloadUrls } from '../utils/assets'
 import { clientUrlsFromBootHtml, looksLikePluginBundle, releaseVersionFromBootHtml } from '../utils/boot-html'
+import { assertListenerProfile, listenerSnapshotCommand, parseListenerSnapshot, remoteInstanceStopCommand, remoteSlotClaimShell } from '../utils/instance'
 import { shQuote } from '../utils/shell'
 import { assertSupportedDshVersion, listGithubAssets, listGithubReleases, npmDistMetadata, parseGitHubRepo, parseVersionFromTag, pickReleaseTag, pkgRepoOf } from '../utils/version'
 
-export const REMOTE_WEB_LOG = '.dsh/dsh-remote-web.log'
+/**
+ * 旧版桌面拉起的实例写的是整机一份的日志：同一台机器上多个实例都往里追加，
+ * 拿最后一行就会拿到别的实例的令牌。读令牌时按端口过滤它，见 remoteWebTokenCommand。
+ * issue #1573。
+ */
+const LEGACY_REMOTE_WEB_LOG = '.dsh/dsh-remote-web.log'
 
-export const BOOTSTRAP_LOG_PREFIX = '::dsh '
+/** 远端实例的日志：按端口区分，一个端口上的实例写自己那份。 */
+function remoteWebLog(port: number): string {
+  return `.dsh/dsh-remote-web-${port}.log`
+}
 
 const DSH_ZIP_ENTRY = 'node_modules/@deepseek-ai/dsh/lib/bin.js'
 
@@ -375,10 +384,18 @@ const INSTALL_SHELL_HELPERS: string[] = [
   '}',
 ]
 
-export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: boolean } = {}): string {
+export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: boolean, profileName?: string, remotePort?: number } = {}): string {
   assertSupportedDshVersion(plan.dshVersion)
   assertSupportedDshVersion(plan.dsh.kind === 'pkg-zip' ? parseVersionFromTag(plan.dsh.tag) ?? '' : plan.dsh.version)
   const reinstallMarker = options.force === true ? ['REINSTALL=1'] : ['REINSTALL=']
+  // 强制重装要先停掉远端实例。停与装必须同属一次远端操作：分开执行，中间那一段
+  // 没有占用，别的操作（插件同步、切换核心）会插进来动同一个实例。issue #1572。
+  const stopSection = options.force === true && options.profileName !== undefined && options.remotePort !== undefined
+    ? [
+        'log install "重新安装: 停掉远端旧实例"',
+        ...remoteInstanceStopCommand(options.profileName, options.remotePort),
+      ]
+    : []
   const dshSection = plan.dsh.kind === 'pkg-zip'
     ? [
         `if [ -f "$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}" ] && [ -z "$REINSTALL" ]; then`,
@@ -388,7 +405,6 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  fetch_verified "$TMP/dsh-pkg.zip" "${plan.dsh.digest ?? ''}" "${plan.dsh.zipName}" ${quoteUrls(plan.dsh.urls)}`,
         `  extract_zip "$TMP/dsh-pkg.zip" "$ROOT/dependencies/dsh.new"`,
         // 换活动目录前先占住活动槽位：和核心切换互斥。
-        ...activeSlotClaimShell('  '),
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
         // 活动目录被换成了新的副本，它不再对应任何版本槽位：旧的版本标识要清掉，
         // 否则清单会把新副本标成旧版本。
@@ -416,7 +432,6 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
         `  mkdir -p "$ROOT/dependencies/dsh.new"`,
         `  tar -xzf "$TMP/dsh.tgz" -C "$ROOT/dependencies/dsh.new" --strip-components=1`,
         // 换活动目录前先占住活动槽位：和核心切换互斥。
-        ...activeSlotClaimShell('  '),
         `  flatten_move "$ROOT/dependencies/dsh.new" "$ROOT/dependencies/dsh"`,
         `  rm -f "$ROOT/dependencies/.active-tag"`,
         `  install_dsh_deps || exit 13`,
@@ -438,12 +453,16 @@ export function buildInstallScript(plan: RemoteInstallPlan, options: { force?: b
     '  kill -0 "$_pid" 2>/dev/null || rm -rf "$_d"',
     'done',
     'mkdir -p "$TMP"',
-    // 活动槽位的占用声明在拿到之前是空的：退出清理要能安全地引用它。
-    'CLAIM_ACTIVE=""',
-    'cleanup() { rm -rf "$TMP" "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; rm -f "$CLAIM_ACTIVE"; }',
+    // 占用声明的路径在拿到声明之前是空的：退出清理按它判断自己有没有占住槽位。
+    'CLAIM=""',
+    // 没拿到占用声明就退出时，不能删固定名字的暂存目录：那是拿到声明的那一次安装正在写的。
+    'cleanup() { rm -rf "$TMP"; if [ -f "$CLAIM" ]; then rm -rf "$ROOT/runtime.new" "$ROOT/dependencies/pnpm.new" "$ROOT/dependencies/dsh.new"; fi; rm -f "$CLAIM"; }',
     'trap cleanup EXIT',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
     ...INSTALL_SHELL_HELPERS,
+    // 活动槽位的占用声明：装的就是活动槽位，与切换核心、插件同步共用这一把锁。
+    ...remoteSlotClaimShell('dsh', { busyText: '远端实例正被其它操作改动（切换核心、强制重装或插件同步）' }),
+    ...stopSection,
     'if [ -x "$ROOT/runtime/bin/node" ]; then',
     '  log install "node 已就绪: $("$ROOT/runtime/bin/node" --version 2>/dev/null || echo installed)"',
     'else',
@@ -564,108 +583,6 @@ export async function planRemoteVersionInstall(
   }
 }
 
-export interface CoreSlotClaimOptions {
-  lockVar?: string
-  claimVar?: string
-  claimName?: string
-  tmpClaim?: string
-  busyText?: string
-  /** 槽位被占的稳定标记：调用方据此判断是哪个槽位被占，不用去匹配提示文案。 */
-  busyCode?: string
-}
-
-/**
- * 活动槽位（`dependencies/dsh`）的占用声明。
- *
- * 切换脚本占的是同一个槽位：两边互斥，才不会出现「切换还在跑，
- * 别处的重装把活动目录换掉了」这种两边都以为自己对的情况。
- */
-export function activeSlotClaimShell(indent = ''): string[] {
-  return coreSlotClaimShell('dsh', {
-    lockVar: 'LOCKDIR_ACTIVE',
-    claimVar: 'CLAIM_ACTIVE',
-    claimName: 'claim-active-$$',
-    tmpClaim: 'claim-active.$$',
-    busyText: '当前使用的核心槽位正在被其它操作占用',
-    busyCode: 'active',
-  }).map(line => `${indent}${line}`)
-}
-
-/**
- * 槽位锁的 shell 片段：同一槽位只允许一个操作在跑。
- *
- * 锁不是「一把锁」，而是槽位目录下的一组**占用声明**：每个操作脚本发布一条
- * `claim-<pid>` 声明，声明内容就是自己的进程号。
- *
- * - 声明与持有者 pid 一起原子发布（`ln` 一个已经写好 pid 的文件），
- *   不存在「声明已在但不知道是谁持有」的窗口。
- * - 同一时刻只允许一条存活的声明：别人的声明还活着就明确失败（`REMOTE_CORE_SLOT_BUSY`）。
- * - 回收陈旧声明时只删**进程已经不在**的那一条，活着的持有者的声明不会被碰。
- * - 锁目录本身从不被搬动或替换，因此不存在「按先前读到的 pid 搬走当前锁」的窗口——
- *   这正是单一锁路径方案里最容易被忽略的竞态。
- *
- * 变量名可以改：切换要同时占住「当前使用的那份」与「目标副本」两个槽位，
- * 同一段脚本里得用两套变量，声明与退出清理由调用方自己收。
- */
-export function coreSlotClaimShell(slot: string, options: CoreSlotClaimOptions = {}): string[] {
-  const lockVar = options.lockVar ?? 'LOCKDIR'
-  const claimVar = options.claimVar ?? 'CLAIM'
-  const claimName = options.claimName ?? 'claim-$$'
-  const tmpClaim = options.tmpClaim ?? 'claim.$$'
-  const busyText = options.busyText ?? '该版本槽位已有安装正在进行'
-  const busyCode = options.busyCode === undefined ? 'REMOTE_CORE_SLOT_BUSY' : `REMOTE_CORE_SLOT_BUSY:${options.busyCode}`
-  return [
-    `${lockVar}="$ROOT/tmp/slot-${slot}.lock"`,
-    `${claimVar}="$${lockVar}/${claimName}"`,
-    // 上一版用的是文件形态的锁，先按老规矩处理：持有者还在就明确失败，
-    // 持有者已经不在就把这份旧锁清掉，否则这个路径会挡住新的声明目录。
-    `if [ -f "$${lockVar}" ]; then`,
-    `  _old="$(cat "$${lockVar}" 2>/dev/null || true)"`,
-    '  if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then',
-    `    log failed "${busyCode}: ${busyText}（pid $_old），请等它结束后重试"`,
-    '    exit 17',
-    '  fi',
-    `  rm -f "$${lockVar}"`,
-    'fi',
-    `mkdir -p "$${lockVar}"`,
-    `printf '%s\\n' "$$" > "$TMP/${tmpClaim}"`,
-    // ln 是原子的：声明与持有者 pid 同时出现，不存在「声明已在但不知道是谁」的窗口。
-    `ln "$TMP/${tmpClaim}" "$${claimVar}" 2>/dev/null || true`,
-    `if [ ! -f "$${claimVar}" ]; then`,
-    '  rm -rf "$TMP"',
-    `  log failed "REMOTE_CORE_LOCK_FAILED: 无法在 $${lockVar} 下发布占用声明"`,
-    '  exit 18',
-    'fi',
-    // 同一时刻只允许一条存活的占用声明：别的声明还活着就明确失败。
-    `for _f in "$${lockVar}"/claim-*; do`,
-    '  [ -f "$_f" ] || continue',
-    `  if [ "$_f" = "$${claimVar}" ]; then continue; fi`,
-    '  _pid="$(cat "$_f" 2>/dev/null || true)"',
-    '  [ -n "$_pid" ] || continue',
-    '  if kill -0 "$_pid" 2>/dev/null; then',
-    // 退出清理还没挂上（trap 在拿锁之后才注册），这里要自己收尾：
-    // 删掉自己的声明与本次临时目录，别在远端留下垃圾。
-    `    rm -f "$${claimVar}"`,
-    '    rm -rf "$TMP"',
-    `    log failed "${busyCode}: ${busyText}（pid $_pid），请等它结束后重试"`,
-    '    exit 17',
-    '  fi',
-    // 持有者已经不在：清掉这条陈旧声明。这里只动已经死掉的进程留下的声明，
-    // 活着的持有者的声明不会被碰，锁目录也不会被整体搬走。
-    '  rm -f "$_f"',
-    'done',
-  ]
-}
-
-/** 槽位锁：占用声明 + 退出清理，安装脚本用这一份。 */
-export function coreSlotLockShell(slot: string): string[] {
-  return [
-    ...coreSlotClaimShell(slot),
-    // 退出清理只删自己的声明。
-    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }',
-  ]
-}
-
 export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, options: { slot: string, force?: boolean }): string {
   assertSupportedDshVersion(plan.version)
   if (!/^[\w.-]+$/u.test(options.slot))
@@ -700,7 +617,9 @@ export function buildCoreVersionInstallScript(plan: DshVersionInstallPlan, optio
     'mkdir -p "$ROOT/dependencies" "$TMP"',
     `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
     // 拿锁：原子发布持有者，后到的安装直接失败而不是和旧脚本互相覆盖。
-    ...coreSlotLockShell(options.slot),
+    ...remoteSlotClaimShell(options.slot),
+    // 退出清理只删自己的声明与暂存目录。
+    'cleanup() { rm -rf "$TMP" "$STAGE" "$READY"; rm -f "$CLAIM"; }',
     // 锁到手后才挂退出清理：拿锁失败时不能把别人的锁删掉。
     'trap cleanup EXIT',
     ...INSTALL_SHELL_HELPERS,
@@ -835,8 +754,23 @@ export function dshEntryProbeCommand(): string {
   ].join('\n')
 }
 
-export function remoteWebTokenCommand(): string {
-  return `grep -oE 'token=[A-Za-z0-9._~-]+' "$HOME/${REMOTE_WEB_LOG}" 2>/dev/null | tail -n 1 | cut -d= -f2`
+/**
+ * 取远端实例的启动令牌。
+ *
+ * 令牌属于实例，不属于机器：整机一份日志里取最后一行，拿到的是最后启动的那个实例的令牌。
+ * 现在每个实例写自己那份日志（旧版桌面起的实例仍写整机日志，按端口过滤回退），
+ * 取到的令牌就一定是这个端口上的实例的。issue #1573。
+ */
+export function remoteWebTokenCommand(port: number): string {
+  return [
+    `LOG="$HOME/${remoteWebLog(port)}"`,
+    `LEGACY="$HOME/${LEGACY_REMOTE_WEB_LOG}"`,
+    'TOKEN=""',
+    'if [ -f "$LOG" ]; then TOKEN="$(grep -oE \'token=[A-Za-z0-9._~-]+\' "$LOG" 2>/dev/null | tail -n 1 | cut -d= -f2)"; fi',
+    `if [ -z "$TOKEN" ] && [ -f "$LEGACY" ]; then TOKEN="$(grep -E ":${port}[/?]" "$LEGACY" 2>/dev/null | grep -oE 'token=[A-Za-z0-9._~-]+' | tail -n 1 | cut -d= -f2)"; fi`,
+    'if [ -z "$TOKEN" ] && [ -f "$LEGACY" ]; then COUNT="$(grep -c -oE \'token=[A-Za-z0-9._~-]+\' "$LEGACY" 2>/dev/null || true)"; if [ "$COUNT" = "1" ]; then TOKEN="$(grep -oE \'token=[A-Za-z0-9._~-]+\' "$LEGACY" 2>/dev/null | tail -n 1 | cut -d= -f2)"; fi; fi',
+    'printf \'%s\' "$TOKEN"',
+  ].join('\n')
 }
 
 export function safeProfileName(raw: string | undefined): string {
@@ -847,7 +781,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
   if (plan !== undefined)
     assertSupportedDshVersion(plan.dshVersion)
   if (profile.startCommand !== undefined)
-    return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${REMOTE_WEB_LOG}" 2>&1 < /dev/null & ) &`
+    return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${remoteWebLog(profile.remotePort)}" 2>&1 < /dev/null & ) &`
   const node = `$HOME/${REMOTE_ROOT}/runtime/bin/node`
   const dshBin = options.dshBin ?? layoutDshEntry(plan)
   const profileName = safeProfileName(profile.profileName)
@@ -856,7 +790,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
     `NODE=${node}`,
     `DSH_BIN=${dshBin}`,
     `LOG_DIR="$HOME/.dsh"`,
-    `LOG="$LOG_DIR/dsh-remote-web.log"`,
+    `LOG="$LOG_DIR/dsh-remote-web-${profile.remotePort}.log"`,
     `if [ ! -x "$NODE" ] || [ ! -f "$DSH_BIN" ]; then echo "REMOTE_NOT_INSTALLED: 远端三件套未安装完整"; exit 1; fi`,
     `mkdir -p "$LOG_DIR"`,
     `export PATH="$ROOT/runtime/bin:$PATH"`,
@@ -867,7 +801,7 @@ export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPla
     `if "$NODE" --use-system-ca -e 0 2>/dev/null; then export NODE_OPTIONS="\${NODE_OPTIONS:-} --use-system-ca"; fi`,
     `export DSH_TELEMETRY_DISABLED=1 NO_COLOR=1 DSH_WEB_PORT=${profile.remotePort}`,
     `export DSH_REMOTE_SESSION_ORIGIN=${shQuote(profile.name)}`,
-    `( sh -c 'echo $$ > "$1"; exec "$2" "$3" --profile "$5" --host 127.0.0.1 --port "$4" --no-open' dsh-remote "$HOME/${remotePidfile(profileName, profile.remotePort)}" "$NODE" "$DSH_BIN" ${profile.remotePort} ${profileName} </dev/null >>"$LOG" 2>&1 & )`,
+    `( sh -c 'echo $$ > "$1"; exec "$2" "$3" --profile "$5" --host 127.0.0.1 --port "$4" --no-open' dsh-remote "$HOME/${remotePidfile(profile.remotePort)}" "$NODE" "$DSH_BIN" ${profile.remotePort} ${profileName} </dev/null >>"$LOG" 2>&1 & )`,
     `echo "远端实例已拉起（档案: ${profileName}, 日志: $LOG）"`,
   ].join('\n')
 }
@@ -959,39 +893,17 @@ export function splitBundleProbeStdout(stdout: string): { body: string, status: 
   return Number.isNaN(status) ? { body: trimmed, status: 0 } : { body: trimmed.slice(0, index), status }
 }
 
-export function logTailCommand(): string {
-  return `tail -n 20 "$HOME/${REMOTE_WEB_LOG}" 2>/dev/null || true`
+export function logTailCommand(port: number): string {
+  return [
+    `LOG="$HOME/${remoteWebLog(port)}"`,
+    `LEGACY="$HOME/${LEGACY_REMOTE_WEB_LOG}"`,
+    'if [ -f "$LOG" ]; then tail -n 20 "$LOG"; elif [ -f "$LEGACY" ]; then tail -n 20 "$LEGACY"; fi',
+  ].join('\n')
 }
 
 export function describeExecFailure(code: number | null, stderr: string): string {
   const tail = stderr.trim().split('\n').slice(-3).join(' | ')
   return `exit ${code ?? '?'}${tail === '' ? '' : `: ${tail}`}`
-}
-
-function listenerSnapshotCommand(port: number): string {
-  return [
-    'fail() { echo "REMOTE_DSH_LISTENER_$1" >&2; exit 1; }',
-    'OS=$(uname -s) || fail PLATFORM',
-    'case "$OS" in Linux|Darwin) ;; *) fail PLATFORM ;; esac',
-    `if command -v lsof >/dev/null 2>&1; then PIDS=$(lsof -a -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | sort -u)`,
-    `elif [ "$OS" = Linux ] && command -v ss >/dev/null 2>&1; then PIDS=$(ss -H -lntp 'sport = :${port}' 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)`,
-    'else fail TOOLS_MISSING; fi',
-    'set -f; set -- $PIDS; [ "$#" -eq 1 ] || fail PID_MISSING_OR_MULTIPLE',
-    'REMOTE_DSH_LISTENER_PID=$1',
-    'case "$REMOTE_DSH_LISTENER_PID" in ""|*[!0-9]*) fail PID_INVALID ;; esac',
-    'if [ "$OS" = Linux ]; then',
-    '  CWD=$(readlink "/proc/$REMOTE_DSH_LISTENER_PID/cwd") || fail CWD_UNREADABLE',
-    '  STAMP=$(stat -Lc "%d:%i" "/proc/$REMOTE_DSH_LISTENER_PID") || fail PROCESS_UNREADABLE',
-    '  [ -r "/proc/$REMOTE_DSH_LISTENER_PID/cmdline" ] || fail COMMAND_UNREADABLE',
-    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP"',
-    '  cat "/proc/$REMOTE_DSH_LISTENER_PID/cmdline" || fail COMMAND_UNREADABLE',
-    'else',
-    '  CWD=$(lsof -a -p "$REMOTE_DSH_LISTENER_PID" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p") || fail CWD_UNREADABLE',
-    '  STAMP=$(ps -p "$REMOTE_DSH_LISTENER_PID" -o lstart=) || fail PROCESS_UNREADABLE',
-    '  ARGS=$(ps -ww -p "$REMOTE_DSH_LISTENER_PID" -o command=) || fail COMMAND_UNREADABLE',
-    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP" "$ARGS"',
-    'fi',
-  ].join('\n')
 }
 
 async function assertListenerDshVersion(session: RemoteSession, port: number): Promise<void> {
@@ -1002,10 +914,10 @@ async function assertListenerDshVersion(session: RemoteSession, port: number): P
   const snapshot = await session.exec(command)
   if (snapshot.code !== 0)
     return unverifiable(snapshot.stderr.trim() || 'listener identity unavailable')
-  const [os, pid, cwd, stamp, ...rest] = snapshot.stdout.split('\n')
-  if (!['Linux', 'Darwin'].includes(os ?? '') || !/^\d+$/u.test(pid ?? '') || !cwd?.startsWith('/') || !stamp?.trim())
+  const identity = parseListenerSnapshot(snapshot.stdout)
+  if (identity === undefined)
     return unverifiable('invalid listener identity')
-  const argv = os === 'Linux' ? rest.join('\n').split('\0') : rest.join('\n').trim().split(/\s+/u)
+  const { cwd, argv } = identity
   const entry = argv[1]
   if (!/(?:^|\/)node(?:js)?$/u.test(argv[0] ?? '') || entry === undefined || entry === '' || entry.startsWith('-'))
     return unverifiable('unknown DSH command entry')
@@ -1132,7 +1044,7 @@ export async function ensureRemoteInstance(
       return target
     }
   }
-  const tail = await logTail(session)
+  const tail = await logTail(session, profile.remotePort)
   return failBootstrap(
     onEvent,
     `remote dsh web did not become ready on "${target}" within ${config.healthPollAttempts} polls; `
@@ -1142,6 +1054,15 @@ export async function ensureRemoteInstance(
 }
 
 async function judgeReadiness(session: RemoteSession, profile: MachineProfile, config: Config): Promise<string | undefined> {
+  const verdict = await probeReadiness(session, profile, config)
+  if (verdict === undefined)
+    return undefined
+  // 端口上跑的是不是自己以为的那个档案：认得出且不是它就报错，不再静默复用别人的实例。
+  await assertListenerProfile(session, profile.remotePort, safeProfileName(profile.profileName))
+  return verdict
+}
+
+async function probeReadiness(session: RemoteSession, profile: MachineProfile, config: Config): Promise<string | undefined> {
   const root = await session.exec(rootProbeCommand(profile.remotePort, config.healthCheckTimeoutMs))
   if (root.code !== 0)
     return undefined
@@ -1189,9 +1110,10 @@ export async function runInstallScript(
   plan: RemoteInstallPlan,
   installTimeoutMs: number,
   hooks: BootstrapHooks,
-  failureLine = 'bootstrap 失败',
-  force = false,
+  options: { failureLine?: string, force?: boolean, profileName?: string, remotePort?: number } = {},
 ): Promise<string[]> {
+  const failureLine = options.failureLine ?? 'bootstrap 失败'
+  const force = options.force === true
   const { onEvent, onProgress } = hooks
   let log = ''
   const skips: string[] = []
@@ -1201,7 +1123,11 @@ export async function runInstallScript(
       skips.push(parsed.line)
     onEvent?.(parsed.stage, parsed.line)
   })
-  const result = await session.exec(buildInstallScript(plan, { force }), {
+  const result = await session.exec(buildInstallScript(plan, {
+    force,
+    ...(options.profileName === undefined ? {} : { profileName: options.profileName }),
+    ...(options.remotePort === undefined ? {} : { remotePort: options.remotePort }),
+  }), {
     timeoutMs: installTimeoutMs,
     onData: (chunk) => {
       log = `${log}${chunk}`.slice(-2000)
@@ -1237,9 +1163,9 @@ function failBootstrap(onEvent: BootstrapHooks['onEvent'], reason: string, line 
   throw new Error(reason)
 }
 
-async function logTail(session: RemoteSession): Promise<string> {
+async function logTail(session: RemoteSession, remotePort: number): Promise<string> {
   try {
-    const result = await session.exec(logTailCommand())
+    const result = await session.exec(logTailCommand(remotePort))
     const tail = result.stdout.trim()
     return tail === '' ? '(log is empty)' : tail.split('\n').slice(-5).join(' | ')
   }

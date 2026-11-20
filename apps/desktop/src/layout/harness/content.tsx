@@ -10,7 +10,7 @@ export interface HarnessContentProps {
 }
 
 export function HarnessContent({ srcOverride = null, borderTint = null }: HarnessContentProps) {
-  const { webviewSrc } = useStore(store.harness)
+  const { webviewSrc, webviewKey } = useStore(store.harness)
   const src = srcOverride ?? webviewSrc
 
   return (
@@ -24,7 +24,7 @@ export function HarnessContent({ srcOverride = null, borderTint = null }: Harnes
         >
           <If
             cond={src !== ''}
-            then={<webview src={src} className="h-full w-full" data-testid="dsh-harness-webview" />}
+            then={<webview key={webviewKey} src={src} className="h-full w-full" data-testid="dsh-harness-webview" />}
           />
         </div>
       )}

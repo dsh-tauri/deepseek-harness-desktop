@@ -7,5 +7,9 @@ export function formatBytes(bytes: number): string {
     return `${(bytes / kb).toFixed(1)} KB`
   if (bytes < kb * kb * kb)
     return `${(bytes / kb / kb).toFixed(1)} MB`
-  return `${(bytes / kb / kb / kb).toFixed(1)} GB`
+  if (bytes < kb * kb * kb * kb)
+    return `${(bytes / kb / kb / kb).toFixed(1)} GB`
+  if (bytes < kb * kb * kb * kb * kb)
+    return `${(bytes / kb / kb / kb / kb).toFixed(1)} TB`
+  return `${(bytes / kb / kb / kb / kb / kb).toFixed(1)} PB`
 }

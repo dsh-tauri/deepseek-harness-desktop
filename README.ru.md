@@ -78,7 +78,6 @@
 - [DSH Market](https://github.com/dsh-market/dsh-market) — магазин плагинов сообщества
 - [DSH Rewind](https://github.com/SiriLee/dsh-rewind) — откат диалога и резервные копии рабочей области
 - [DSH IM](https://github.com/xmanrui/dsh-im) — IM-каналы и управление ботами
-- [DSH OPS](https://github.com/T-Auto/dsh-ops) — инструменты низкоуровневых операций для сокращения расхода токенов и времени выполнения задач
 - [Billion Context](https://github.com/ranxianglei/billion-context) — сжатие контекста и восстановление истории
 
 Запросите новые или обновлённые пресеты через [Issues](https://github.com/dsh-tauri/deepseek-harness-desktop/issues). Доступные версии подчиняются правилам совместимости с ядром из манифеста.

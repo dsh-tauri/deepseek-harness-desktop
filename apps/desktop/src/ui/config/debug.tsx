@@ -1,5 +1,5 @@
 import type { RuntimeInfo } from '@/types'
-import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power, TriangleExclamation } from '@gravity-ui/icons'
+import { ArrowRotateRight, ArrowsRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power, TriangleExclamation } from '@gravity-ui/icons'
 import { Button, Chip, Description, Input, InputGroup, Link, ListBox, Select, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
@@ -301,6 +301,17 @@ export function ConfigDebug() {
               aria-label={t('app.open_browser')}
             >
               <If cond={busyAction === 'openBrowser'} then={<Spinner size="sm" color="current" />} else={<ArrowUpRightFromSquare className="size-3.5" />} />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              isIconOnly
+              data-testid="dsh-config-reload-page"
+              onPress={store.harness.reloadWebview}
+              isDisabled={busyAction !== null || !serviceRunning}
+              aria-label={t('app.reload_page')}
+            >
+              <ArrowsRotateRight className="size-3.5" />
             </Button>
           </div>
         </div>

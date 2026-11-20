@@ -1,7 +1,6 @@
-import { REMOTE_ROOT } from '../config/constants'
-import { remoteInstanceStopCommand } from '../utils/instance'
+import { BOOTSTRAP_LOG_PREFIX, REMOTE_ROOT } from '../config/constants'
+import { remoteInstanceStopCommand, remoteSlotClaimShell } from '../utils/instance'
 import { shQuote } from '../utils/shell'
-import { BOOTSTRAP_LOG_PREFIX, coreSlotClaimShell } from './bootstrap.utils'
 
 const COPY_MARKER = '__DSH_COPY__'
 const DIR_MARKER = '__DSH_DIR__'
@@ -398,7 +397,7 @@ export function buildCoreSwitchRestoreScript(options: CoreSwitchRestoreOptions):
  */
 function switchSlotClaims(targetTag: string, backupTag: string): string[] {
   return [
-    ...coreSlotClaimShell('dsh', {
+    ...remoteSlotClaimShell('dsh', {
       lockVar: 'LOCKDIR_ACTIVE',
       claimVar: 'CLAIM_ACTIVE',
       claimName: 'claim-active-$$',
@@ -406,7 +405,7 @@ function switchSlotClaims(targetTag: string, backupTag: string): string[] {
       busyText: '当前使用的核心槽位正在被其它操作占用',
       busyCode: 'active',
     }),
-    ...coreSlotClaimShell(targetTag, {
+    ...remoteSlotClaimShell(targetTag, {
       lockVar: 'LOCKDIR_TARGET',
       claimVar: 'CLAIM_TARGET',
       claimName: 'claim-target-$$',
@@ -414,7 +413,7 @@ function switchSlotClaims(targetTag: string, backupTag: string): string[] {
       busyText: '目标核心槽位正在被其它操作占用',
       busyCode: 'target',
     }),
-    ...coreSlotClaimShell(backupTag, {
+    ...remoteSlotClaimShell(backupTag, {
       lockVar: 'LOCKDIR_BACKUP',
       claimVar: 'CLAIM_BACKUP',
       claimName: 'claim-backup-$$',

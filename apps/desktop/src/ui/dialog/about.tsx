@@ -20,7 +20,7 @@ export interface DesktopAboutDialogProps extends PropsWithOverlays {}
  */
 export function DesktopAboutDialog(props: DesktopAboutDialogProps) {
   const disclosure = useDisclosure({ props })
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { about } = useStore(store.desktopUpdater)
 
   // 对话框可见即拉取「关于」信息（overlastic 命令式打开 → visible 由 false 翻 true）
@@ -47,7 +47,7 @@ export function DesktopAboutDialog(props: DesktopAboutDialogProps) {
               </div>
               <div className="space-y-1.5 border-t border-line/40 pt-3">
                 <Info term={t('ui.current_version')}>{about?.version ?? '-'}</Info>
-                <Info term={t('about.release_date')}>{about?.publishedAt ? formatDate(about.publishedAt) : '-'}</Info>
+                <Info term={t('about.release_date')}>{about?.publishedAt ? formatDate(about.publishedAt, i18n.language) : '-'}</Info>
                 <div className="flex items-center justify-between text-sm border-t border-line/40 pt-2 ">
                   <span className="text-muted">{t('about.source_code')}</span>
                   <Button
@@ -79,12 +79,12 @@ export function DesktopAboutDialog(props: DesktopAboutDialogProps) {
   )
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, locale: string): string {
   try {
     const d = new Date(iso)
     if (Number.isNaN(d.getTime()))
       return iso
-    return d.toLocaleDateString()
+    return d.toLocaleDateString(locale)
   }
   catch (e) {
     silence(e, 'about dialog: date parsing failed, falling back to raw ISO')
