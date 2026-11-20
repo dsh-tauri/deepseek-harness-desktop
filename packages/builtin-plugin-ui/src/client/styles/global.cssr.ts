@@ -149,9 +149,6 @@ export default c([
     paddingLeft: '24px',
     marginLeft: '-24px',
   }),
-  c('[data-chat-flow-key]:has(> [data-slot="conversation.chat.node"] > [data-dsh-tauri-ui-continue-notice])', {
-    display: 'none !important',
-  }),
 
   c('[class$="sidebarCol"]', {
     borderRight: 'none !important',
