@@ -20,7 +20,7 @@ const { desktopUpdater } = vi.hoisted(() => ({
 
 vi.mock('@/store', () => ({ store: { desktopUpdater } }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN' } }) }))
 
 function Launcher() {
   const open = useOverlay(DesktopAboutDialog)
@@ -51,10 +51,11 @@ describe('desktop about native payload', () => {
     expect((await screen.findByText('DSH Tauri')).textContent).toBe('DSH Tauri')
   })
 
-  it('renders the release date returned by the native command', async () => {
-    vi.spyOn(Date.prototype, 'toLocaleDateString').mockReturnValue('October 7, 2026')
+  it('renders the release date in the active app language', async () => {
+    const format = vi.spyOn(Date.prototype, 'toLocaleDateString').mockReturnValue('October 7, 2026')
     openDialog()
     expect((await screen.findByText('October 7, 2026')).textContent).toBe('October 7, 2026')
+    expect(format).toHaveBeenCalledWith('zh-CN')
   })
 
   it('keeps an unavailable release date as a placeholder', async () => {
