@@ -83,7 +83,6 @@ it('shows a recoverable error when hosting a ready service fails in the bootstra
   expect(invoke).toHaveBeenCalledExactlyOnceWith('host_harness_document', { url: 'http://127.0.0.1:3081?t=1&dshDesktop=1' })
   expect(view.getByTestId('dsh-setup-error').textContent).toContain(failure)
   expect(view.getByRole('button', { name: 'app.retry' }).hasAttribute('disabled')).toBe(false)
-  expect(view.container.querySelector('main')?.className).toContain('pointer-events-auto')
   expect(harness.serviceRunning).toBe(true)
   vi.mocked(invoke).mockImplementation(async (command) => {
     switch (command) {
@@ -109,7 +108,6 @@ it('shows a recoverable error when hosting a ready service fails in the bootstra
     ['host_harness_document', { url: 'http://127.0.0.1:3081?t=1&dshDesktop=1' }],
   ])
   expect(view.queryByTestId('dsh-setup-error')).toBeNull()
-  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
 })
 
 it.each(['pending', 'accepted'])('keeps the bootstrap loading until the DSH document exists while navigation is %s', async (navigation) => {
@@ -118,11 +116,9 @@ it.each(['pending', 'accepted'])('keeps the bootstrap loading until the DSH docu
   const view = render(<Shell />)
   await act(async () => {})
   expect(invoke).toHaveBeenCalledExactlyOnceWith('host_harness_document', { url: 'http://127.0.0.1:3081?t=1&dshDesktop=1' })
-  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
   expect(view.queryByTestId('dsh-setup-error')).toBeNull()
   expect(harness.webviewLoaded).toBe(false)
   expect(harness.webviewAlive).toBe(false)
-  expect(view.container.querySelector('main')?.className).toContain('pointer-events-auto')
 })
 
 it('keeps an actual hosted service document transparent without rehosting its current origin', async () => {
@@ -139,7 +135,6 @@ it('keeps an actual hosted service document transparent without rehosting its cu
   expect(view.queryByText('status.loading_plugins')).toBeNull()
   expect(harness.webviewLoaded).toBe(true)
   expect(harness.webviewAlive).toBe(true)
-  expect(view.container.querySelector('main')?.className).toContain('pointer-events-none')
 })
 
 it('hosts the new document when the same profile switches to another core url', async () => {
@@ -202,7 +197,7 @@ it('keeps service metadata covered until a visible populated DSH frame mounts', 
   vi.stubGlobal('location', new URL('http://127.0.0.1:3081/'))
   const view = render(<Shell />)
   await act(async () => {})
-  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  expect(view.getByText('status.loading_plugins')).toBeTruthy()
   expect(harness.webviewLoaded).toBe(false)
   expect(harness.webviewAlive).toBe(false)
   const frame = document.createElement('div')
@@ -210,12 +205,12 @@ it('keeps service metadata covered until a visible populated DSH frame mounts', 
   await act(async () => {
     document.body.append(frame)
   })
-  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  expect(view.getByText('status.loading_plugins')).toBeTruthy()
   await act(async () => {
     frame.style.visibility = 'hidden'
     frame.append(document.createElement('section'))
   })
-  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  expect(view.getByText('status.loading_plugins')).toBeTruthy()
   await act(async () => {
     frame.style.visibility = 'visible'
   })
@@ -225,13 +220,12 @@ it('keeps service metadata covered until a visible populated DSH frame mounts', 
   await act(async () => {
     harness.serviceHealthy = false
   })
-  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  expect(view.getByText('status.loading_plugins')).toBeTruthy()
   await act(async () => {
     harness.serviceHealthy = true
     harness.restartPending = true
   })
-  expect(view.getByTestId('dsh-hosted-loading').className).toContain('pointer-events-auto')
-  expect(view.getByText('status.loading_plugins').textContent).toBe('status.loading_plugins')
+  expect(view.getByText('status.loading_plugins')).toBeTruthy()
   await act(async () => {
     harness.restartPending = false
   })

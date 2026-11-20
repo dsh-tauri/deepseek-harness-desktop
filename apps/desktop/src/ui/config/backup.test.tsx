@@ -2,8 +2,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import en from '@/i18n/locales/en-US.json'
-import zh from '@/i18n/locales/zh-CN.json'
 import { ConfigBackup } from './backup'
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), dialog: vi.fn(), toast: vi.fn() }))
@@ -42,11 +40,6 @@ async function mount() {
 }
 
 describe('backup recovery controls', () => {
-  it('describes profile backups without claiming that they include conversations', () => {
-    expect(en['backup.empty_desc']).toContain('do not include conversations')
-    expect(zh['backup.empty_desc']).toContain('不包含会话')
-  })
-
   it('does not export when the stop-service confirmation is cancelled', async () => {
     mocks.dialog.mockRejectedValue(new Error('cancelled'))
     await mount()

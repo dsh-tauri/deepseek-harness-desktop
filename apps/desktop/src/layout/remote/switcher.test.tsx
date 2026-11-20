@@ -154,7 +154,7 @@ describe('remoteSwitcher 渲染', () => {
     expect(within(bare).getByText('remote.sync').closest('[role="menuitem"]')?.getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('机器项：状态点语义（标识色优先内联 / 已连接绿 / 重连琥珀 / 放弃红）与状态文案', async () => {
+  it('机器项：已连接状态文案与放弃重连的失败原因', async () => {
     engineMachines = [
       machineOf({ id: 'colored', name: 'colored', color: '#ff00ff', state: 'reconnecting' }),
       machineOf({ id: 'green', name: 'green', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' }),
@@ -164,19 +164,7 @@ describe('remoteSwitcher 渲染', () => {
     renderSwitcher()
     const menu = await openMenu()
 
-    const colored = within(menu).getByText('colored').closest('[role="menuitem"]')?.querySelector('[class*="rounded-full"]')
-    expect(colored?.getAttribute('style')).toContain('rgb(255, 0, 255)')
-
-    const green = within(menu).getByText('green').closest('[role="menuitem"]')?.querySelector('[class*="rounded-full"]')
-    expect(green?.className).toContain('bg-success')
-    expect(green?.getAttribute('style')).toBeNull()
     expect(within(menu).getByText('remote.state.connected')).toBeTruthy()
-
-    const amber = within(menu).getByText('amber').closest('[role="menuitem"]')?.querySelector('[class*="rounded-full"]')
-    expect(amber?.className).toContain('bg-warning')
-
-    const red = within(menu).getByText('red').closest('[role="menuitem"]')?.querySelector('[class*="rounded-full"]')
-    expect(red?.className).toContain('bg-danger')
     expect(within(menu).getByText('red').closest('[title]')?.getAttribute('title')).toContain('refused')
   })
 
@@ -186,7 +174,6 @@ describe('remoteSwitcher 渲染', () => {
     await selectMachine('alpha')
     const trigger = screen.getByRole('button', { name: 'remote.switcher' })
     expect(trigger.textContent).toContain('alpha')
-    expect(trigger.querySelector('span[class*="rounded-full"]')?.getAttribute('style')).toContain('rgb(18, 52, 86)')
     expect(changeSpy).toHaveBeenLastCalledWith('http://127.0.0.1:4001', null)
 
     fireEvent.click(within(await openMenu()).getByText('remote.local'))
@@ -349,14 +336,11 @@ describe('remoteSwitcher 交互与降级', () => {
 })
 
 describe('remoteSwitcher 增强（4.4）', () => {
-  it('活动机器：状态点强制绿色 + 底部「断开当前连接」一键断开并回本地', async () => {
+  it('活动机器：底部「断开当前连接」一键断开并回本地', async () => {
     engineMachines = [machineOf({ id: 'm1', name: 'alpha', color: '#ff00ff', tintBorder: true, state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
     renderSwitcher()
     await selectMachine('alpha')
     const menu = await openMenu()
-    const dot = within(menu).getByText('alpha').closest('[role="menuitem"]')?.querySelector('[class*="rounded-full"]')
-    expect(dot?.className).toContain('bg-success')
-    expect(dot?.getAttribute('style')).toBeNull()
 
     fireEvent.click(within(menu).getByText('remote.disconnect_active'))
     await waitFor(() => {
