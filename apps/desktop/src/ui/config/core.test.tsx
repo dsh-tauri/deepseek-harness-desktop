@@ -661,3 +661,14 @@ describe('核心目录（依赖根）迁移', () => {
     expect(screen.getByText(enUS['core.deps_root_locked'])).toBeTruthy()
   })
 })
+
+describe('面板头部控件顺序', () => {
+  it('高级选项开关排在管理范围（远端切换器）之前', async () => {
+    renderCore()
+
+    const advanced = await screen.findByRole('switch', { name: 'Advanced options' })
+    const scope = screen.getByTestId('dsh-config-core-target')
+
+    expect(advanced.compareDocumentPosition(scope) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})

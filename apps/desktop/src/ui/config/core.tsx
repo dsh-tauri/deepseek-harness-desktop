@@ -467,6 +467,21 @@ export function ConfigCore() {
         testId="dsh-config-panel-title"
         action={(
           <div className="flex shrink-0 items-center gap-3">
+            <If cond={isLocalTarget}>
+              <Switch
+                size="sm"
+                isSelected={advanced}
+                onChange={() => toggleAdvanced()}
+                aria-label={t('core.advanced_options')}
+              >
+                <Switch.Content className="gap-2">
+                  <Switch.Control>
+                    <Switch.Thumb />
+                  </Switch.Control>
+                  <span className="text-xs font-medium text-muted">{t('core.advanced_options')}</span>
+                </Switch.Content>
+              </Switch>
+            </If>
             <Select
               variant="secondary"
               className="w-44"
@@ -491,21 +506,6 @@ export function ConfigCore() {
                 </ListBox>
               </Select.Popover>
             </Select>
-            <If cond={isLocalTarget}>
-              <Switch
-                size="sm"
-                isSelected={advanced}
-                onChange={() => toggleAdvanced()}
-                aria-label={t('core.advanced_options')}
-              >
-                <Switch.Content className="gap-2">
-                  <Switch.Control>
-                    <Switch.Thumb />
-                  </Switch.Control>
-                  <span className="text-xs font-medium text-muted">{t('core.advanced_options')}</span>
-                </Switch.Content>
-              </Switch>
-            </If>
             <Button
               size="sm"
               variant="tertiary"
