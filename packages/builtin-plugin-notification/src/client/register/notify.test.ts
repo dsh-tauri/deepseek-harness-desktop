@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   openSession: vi.fn(() => ({ status: 'opened' })),
   emit: vi.fn(async () => {}),
   show: vi.fn(async () => true),
-  close: vi.fn(async () => {}),
+  close: vi.fn(async () => true),
   readTurnEnd: vi.fn(async () => ({ interrupted: false, turn: 42 })),
   play: vi.fn(),
 }))
@@ -42,8 +42,8 @@ function stubDocument(visibilityState: 'hidden' | 'visible') {
   return { document, listeners }
 }
 
-async function deliverTurnNotification(currentSessionId: string) {
-  const { document, listeners } = stubDocument('hidden')
+async function deliverTurnNotification(currentSessionId: string, visibilityState: 'hidden' | 'visible' = 'hidden') {
+  const { document, listeners } = stubDocument(visibilityState)
   Object.assign(notificationSettings.$state, { turnComplete: 'always', sound: 'default' })
   const observers = new Set<() => void>()
   let running = true
@@ -154,6 +154,32 @@ it('keeps the notification while the window stays in the background', async () =
   try {
     listeners.get('visibilitychange')!({} as Event)
     expect(mocks.close).not.toHaveBeenCalled()
+  }
+  finally {
+    controller.dispose()
+  }
+})
+
+it('closes a notification that arrives while the user is already viewing that session', async () => {
+  const { controller } = await deliverTurnNotification('session-1', 'visible')
+  try {
+    await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledWith(['dsh-notification-session-1-1']))
+  }
+  finally {
+    controller.dispose()
+  }
+})
+
+it('retries closing on the next return when the bridge rejects the close', async () => {
+  mocks.close.mockResolvedValueOnce(false)
+  const { controller, document, listeners } = await deliverTurnNotification('session-1')
+  try {
+    document.visibilityState = 'visible'
+    listeners.get('visibilitychange')!({} as Event)
+    await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledTimes(1))
+    listeners.get('visibilitychange')!({} as Event)
+    await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledTimes(2))
+    expect(mocks.close).toHaveBeenLastCalledWith(['dsh-notification-session-1-1'])
   }
   finally {
     controller.dispose()

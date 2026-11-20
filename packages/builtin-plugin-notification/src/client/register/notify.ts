@@ -24,8 +24,6 @@ const FOCUS_RETRY_MS = 200
 /** 等待 `uiSession` 服务注册的上限（20 × 250ms = 5s）。 */
 const UI_SESSION_WAIT_LIMIT = 20
 const UI_SESSION_WAIT_MS = 250
-/** 记住多少条「已投递、还没关」的通知，超出后按投递顺序丢掉最旧的。 */
-const DELIVERED_LIMIT = 64
 
 /** 单次观察到的会话状态（`uiSession` 缺席时退化为列表里的 running）。 */
 interface SessionObservation {
@@ -56,6 +54,8 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
   const timers = new Map<string, () => void>()
   // 已投递到系统通知中心的通知：tag → 发起它的会话。用户回到该会话时按这张表关掉。
   const delivered = new Map<string, string>()
+  // 正在关闭的 tag：同一批通知不并发重复提交。
+  const closing = new Set<string>()
   let sequence = 0
 
   const readSessions = (): SessionsFace | undefined => ctx.get('sessions') as SessionsFace | undefined
@@ -110,27 +110,24 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
     await emit('dsh://notification-ready', { sourceOrigin: location.origin })
   })().catch(error => console.error(`[${PLUGIN_ID}] notification listener failed`, error))
 
-  const rememberDelivered = (tag: string, sessionId: string): void => {
-    delivered.delete(tag)
-    delivered.set(tag, sessionId)
-    while (delivered.size > DELIVERED_LIMIT) {
-      const oldest = delivered.keys().next().value
-      if (oldest === undefined)
-        break
-      delivered.delete(oldest)
-    }
-  }
-
   /** 用户回到某个会话即视为已读：把这个会话还挂在系统通知中心里的通知关掉。 */
   const dismissSession = (sessionId: string): void => {
     if (delivered.size === 0)
       return
-    const tags = [...delivered].filter(([, owner]) => owner === sessionId).map(([tag]) => tag)
+    const tags = [...delivered].filter(([tag, owner]) => owner === sessionId && !closing.has(tag)).map(([tag]) => tag)
     if (tags.length === 0)
       return
     for (const tag of tags)
-      delivered.delete(tag)
-    void closeNativeNotifications(tags)
+      closing.add(tag)
+    void closeNativeNotifications(tags).then((closed) => {
+      for (const tag of tags)
+        closing.delete(tag)
+      // 桥拒绝了就留着记录，用户下次回到这个会话时再试。
+      if (!closed)
+        return
+      for (const tag of tags)
+        delivered.delete(tag)
+    })
   }
 
   /** 窗口回到前台时，用户正停在的那个会话的通知就算已读。 */
@@ -166,8 +163,10 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
     }).then((accepted) => {
       if (!accepted || controller.isDisposed())
         return
-      rememberDelivered(tag, sessionId)
+      delivered.set(tag, sessionId)
       sound.play(settings.sound, settings.customSound)
+      // 等待投递期间用户可能已经回到这个会话：补一次已读检查。
+      dismissViewed()
     })
   }
 
