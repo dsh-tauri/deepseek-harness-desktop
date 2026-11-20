@@ -1,7 +1,7 @@
 import type { IconComponent } from './loadable'
 import type { PluginProcess } from '@/store/modules/plugins'
 import type { PreinstallPlugin } from '@/store/modules/preinstall'
-import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, BranchesRightArrowRight, Comments, Copy, Cubes3Overlap, FileText, Gear, Layers, LayoutSideContentLeft, PlugConnection, ShoppingCart, Sparkles, Xmark } from '@gravity-ui/icons'
+import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, BranchesRightArrowRight, Comments, Copy, Cubes3Overlap, FileText, Layers, LayoutSideContentLeft, PlugConnection, ShoppingCart, Sparkles, Xmark } from '@gravity-ui/icons'
 import { Button, Card, Checkbox, Chip, ScrollShadow, Spinner, Switch, Typography } from '@heroui/react'
 import { useMount } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
@@ -57,7 +57,6 @@ const PLUGIN_ICONS: Record<string, IconComponent | undefined> = {
   'dsh-rewind-plugin': ArrowUturnCcwLeft,
   'billion-context': Cubes3Overlap,
   'dsh-office-kit': FileText,
-  'dsh-ops': Gear,
   'dsh-third-kernel': BranchesRightArrowRight,
   '@xmanrui/dsh-im': Comments,
   '@changfenhuang/dsh-genui': Sparkles,
