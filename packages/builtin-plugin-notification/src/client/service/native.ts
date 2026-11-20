@@ -68,6 +68,27 @@ function notificationId(tag: string): number {
   return (Math.abs(hash) % 0x7FFFFFFF) || 1
 }
 
+/**
+ * 关掉已经躺在系统通知中心里的通知。
+ *
+ * 通知 id 与 {@link showNativeNotification} 用的是同一个哈希，所以拿当初的 tag 就能关掉那一条；
+ * 关掉之后同时丢弃它的点击/按钮回调，免得用户点到一条已经不存在的通知。
+ */
+export async function closeNativeNotifications(tags: readonly string[]): Promise<void> {
+  if (tags.length === 0 || !isNativeNotificationAvailable())
+    return
+  try {
+    await invoke('plugin:notifications|remove_active', {
+      notifications: tags.map(tag => ({ id: notificationId(`${location.origin}:${tag}`) })),
+    })
+    for (const tag of tags)
+      handlers.delete(tag)
+  }
+  catch (error) {
+    console.warn(`[${PLUGIN_ID}] removeActive failed`, error)
+  }
+}
+
 async function ensurePermission(): Promise<boolean> {
   if (await invoke<boolean>('plugin:notifications|is_permission_granted'))
     return true
