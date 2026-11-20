@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -21,11 +21,30 @@ pub struct TaskManagerProcess {
     can_end: bool,
 }
 
+type SampleKey = (u32, u64);
+
 #[derive(Default)]
 struct Monitor {
     system: System,
     sampled_at: Option<Instant>,
-    cpu_ready: HashSet<(u32, u64)>,
+    samples: HashMap<SampleKey, (u64, Instant)>,
+    cpu: HashMap<SampleKey, f32>,
+}
+
+fn cores() -> f32 {
+    static CORES: OnceLock<f32> = OnceLock::new();
+    *CORES
+        .get_or_init(|| std::thread::available_parallelism().map_or(1, |count| count.get()) as f32)
+}
+
+/// sysinfo 的 `cpu_usage` 以单核 100% 计，且进程首次采样会把累计 CPU 时间当成一次采样。
+/// 这里按累计 CPU 毫秒自己算差值并除以逻辑核数，与系统任务管理器的整机利用率同口径。
+fn cpu_percent(previous_ms: u64, current_ms: u64, elapsed_ms: u128, cores: f32) -> Option<f32> {
+    if elapsed_ms == 0 || cores <= 0.0 {
+        return None;
+    }
+    let used = current_ms.saturating_sub(previous_ms) as f32;
+    Some(used / elapsed_ms as f32 * 100.0 / cores)
 }
 
 fn monitor() -> &'static Mutex<Monitor> {
@@ -85,15 +104,6 @@ impl Monitor {
         {
             return;
         }
-        let warm = self
-            .sampled_at
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(10));
-        let previous: HashSet<_> = self
-            .system
-            .processes()
-            .values()
-            .map(|process| (process.pid().as_u32(), process.start_time()))
-            .collect();
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
@@ -102,8 +112,28 @@ impl Monitor {
                 .with_cpu()
                 .with_memory(),
         );
-        self.cpu_ready = if warm { previous } else { HashSet::new() };
-        self.sampled_at = Some(Instant::now());
+        let now = Instant::now();
+        let cores = cores();
+        let mut samples = HashMap::with_capacity(self.system.processes().len());
+        let mut cpu = HashMap::with_capacity(self.system.processes().len());
+        for process in self.system.processes().values() {
+            let key = (process.pid().as_u32(), process.start_time());
+            let total = process.accumulated_cpu_time();
+            if let Some((previous, at)) = self.samples.get(&key) {
+                if let Some(value) = cpu_percent(*previous, total, at.elapsed().as_millis(), cores)
+                {
+                    cpu.insert(key, value);
+                }
+            }
+            samples.insert(key, (total, now));
+        }
+        self.samples = samples;
+        self.cpu = cpu;
+        self.sampled_at = Some(now);
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
     }
 
     fn rows(&self, desktop: u32, harness: Option<u32>) -> Vec<TaskManagerProcess> {
@@ -125,16 +155,12 @@ impl Monitor {
             .filter_map(|process| {
                 let pid = process.pid().as_u32();
                 let (kind, can_end) = process_kind(pid, desktop, harness, &parents)?;
-                let cpu_percent = self
-                    .cpu_ready
-                    .contains(&(pid, process.start_time()))
-                    .then_some(process.cpu_usage());
                 Some(TaskManagerProcess {
                     pid,
                     parent_pid: process.parent().map(Pid::as_u32),
                     name: process.name().to_string_lossy().into_owned(),
                     kind,
-                    cpu_percent,
+                    cpu_percent: self.cpu.get(&(pid, process.start_time())).copied(),
                     memory_bytes: process.memory(),
                     run_time: process.run_time(),
                     start_time: process.start_time(),
@@ -197,7 +223,7 @@ pub async fn end_task_manager_process(
         if !process.kill() {
             return Err("TASK_MANAGER_END: could not end the process; it may have exited or access was denied".into());
         }
-        monitor().lock().unwrap_or_else(|error| error.into_inner()).sampled_at = None;
+        monitor().lock().unwrap_or_else(|error| error.into_inner()).reset();
         Ok(())
     })).await.map_err(|error| format!("TASK_MANAGER_END: {error}"))?
 }
@@ -278,6 +304,16 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_cpu_to_the_whole_machine() {
+        assert_eq!(cpu_percent(1_000, 1_500, 1_000, 8.0), Some(6.25));
+        assert_eq!(cpu_percent(1_000, 1_000, 1_000, 8.0), Some(0.0));
+        assert_eq!(cpu_percent(1_500, 1_000, 1_000, 8.0), Some(0.0));
+        assert_eq!(cpu_percent(0, 800, 1_000, 1.0), Some(80.0));
+        assert_eq!(cpu_percent(0, 500, 0, 8.0), None);
+        assert_eq!(cpu_percent(0, 500, 1_000, 0.0), None);
+    }
+
+    #[test]
     fn reads_real_current_process_without_exposing_other_processes() {
         let mut monitor = Monitor::default();
         monitor.refresh();
@@ -291,5 +327,20 @@ mod tests {
         assert!(desktop.start_time > 0);
         assert_eq!(desktop.cpu_percent, None);
         assert!(rows.iter().all(|process| !process.can_end));
+    }
+
+    #[test]
+    fn second_sample_reports_machine_wide_cpu() {
+        let mut monitor = Monitor::default();
+        monitor.refresh();
+        std::thread::sleep(Duration::from_millis(1_100));
+        monitor.refresh();
+        let rows = monitor.rows(std::process::id(), None);
+        let desktop = rows
+            .iter()
+            .find(|process| process.pid == std::process::id())
+            .unwrap();
+        let usage = desktop.cpu_percent.unwrap();
+        assert!((0.0..=100.0).contains(&usage), "unexpected cpu: {usage}");
     }
 }

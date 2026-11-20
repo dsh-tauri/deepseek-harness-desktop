@@ -1,5 +1,5 @@
 import type { PropsWithOverlays } from '@overlastic/react'
-import { ArrowRotateRight } from '@gravity-ui/icons'
+import { ArrowRotateRight, ChevronRight } from '@gravity-ui/icons'
 import { AlertDialog, Button, Input, Modal, Spinner } from '@heroui/react'
 import { useDisclosure } from '@overlastic/react'
 import { useToggle } from '@reause/core'
@@ -26,7 +26,21 @@ interface TaskProcess {
   can_end: boolean
 }
 
+interface TaskRow {
+  process: TaskProcess
+  count: number
+  cpu: number
+  memory: number
+  ready: boolean
+  group: boolean
+}
+
 type SortKey = 'name' | 'pid' | 'cpu_percent' | 'memory_bytes' | 'run_time'
+
+interface Sort {
+  key: SortKey
+  ascending: boolean
+}
 
 const columns: { key: SortKey, label: string }[] = [
   { key: 'name', label: 'task_manager.process' },
@@ -42,6 +56,42 @@ function duration(seconds: number) {
   return `${hours}:${minutes}:${(seconds % 60).toString().padStart(2, '0')}`
 }
 
+function identity(process: TaskProcess) {
+  return `${process.pid}-${process.start_time}`
+}
+
+function sortValue(process: TaskProcess, key: SortKey): number | string {
+  switch (key) {
+    case 'name': return process.name
+    case 'pid': return process.pid
+    case 'cpu_percent': return process.cpu_percent ?? 0
+    case 'memory_bytes': return process.memory_bytes
+    case 'run_time': return process.run_time
+  }
+}
+
+function sortProcesses(processes: TaskProcess[], sort: Sort, locale: string) {
+  return [...processes].sort((left, right) => {
+    const a = sortValue(left, sort.key)
+    const b = sortValue(right, sort.key)
+    const order = typeof a === 'string' && typeof b === 'string'
+      ? a.localeCompare(b, locale)
+      : Number(a) - Number(b)
+    return (sort.ascending ? order : -order) || left.pid - right.pid
+  })
+}
+
+function leafRow(process: TaskProcess): TaskRow {
+  return {
+    process,
+    count: 1,
+    cpu: process.cpu_percent ?? 0,
+    memory: process.memory_bytes,
+    ready: process.cpu_percent !== null,
+    group: false,
+  }
+}
+
 export function TaskManagerDialog(props: PropsWithOverlays) {
   const disclosure = useDisclosure({ props })
   const { t, i18n } = useTranslation()
@@ -49,9 +99,10 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
   const [action, setAction] = useState<{ type: 'end', process: TaskProcess } | { type: 'restart' } | null>(null)
   const [autoRefresh, toggleAutoRefresh] = useToggle<boolean>(true)
   const [showLogs, toggleLogs] = useToggle()
+  const [expanded, toggleExpanded] = useToggle<boolean>(false)
   const [search, setSearch] = useState('')
   const [selection, setSelection] = useState<{ pid: number, start_time: number } | null>(null)
-  const [sort, setSort] = useState<{ key: SortKey, ascending: boolean }>({ key: 'memory_bytes', ascending: false })
+  const [sort, setSort] = useState<Sort>({ key: 'memory_bytes', ascending: false })
   const processes = useQuery({
     queryKey: queryKeys.taskManager,
     queryFn: () => invoke<TaskProcess[]>('get_task_manager_processes'),
@@ -68,21 +119,21 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
   })
   const all = processes.data ?? []
   const number = new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 })
-  const rows = all.filter((process) => {
-    const label = t(`task_manager.kind.${process.kind}`)
-    return `${process.name} ${process.pid} ${label}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
-  }).sort((a, b) => {
-    const left = a[sort.key]
-    const right = b[sort.key]
-    const order = typeof left === 'string' && typeof right === 'string'
-      ? left.localeCompare(right, i18n.language)
-      : Number(left ?? -1) - Number(right ?? -1)
-    return (sort.ascending ? order : -order) || a.pid - b.pid
-  })
-  const selected = rows.find(process => process.pid === selection?.pid && process.start_time === selection.start_time)
+  const query = search.trim().toLocaleLowerCase()
+  const label = (process: TaskProcess) => `${process.name} ${process.pid} ${t(`task_manager.kind.${process.kind}`)}`.toLocaleLowerCase()
+  const root = all.find(process => process.kind === 'desktop') ?? all.find(process => process.parent_pid === null) ?? all[0]
+  const children = sortProcesses(all.filter(process => process !== root), sort, i18n.language)
+  const visible = query === '' ? children : children.filter(process => label(process).includes(query))
   const totalMemory = all.reduce((sum, process) => sum + process.memory_bytes, 0)
   const totalCpu = all.reduce((sum, process) => sum + (process.cpu_percent ?? 0), 0)
   const cpuReady = all.length > 0 && all.every(process => process.cpu_percent !== null)
+  const open = query !== '' || expanded
+  const rows: TaskRow[] = []
+  if (root && (query === '' || label(root).includes(query) || visible.length > 0))
+    rows.push({ process: root, count: all.length, cpu: totalCpu, memory: totalMemory, ready: cpuReady, group: true })
+  if (open)
+    rows.push(...visible.map(leafRow))
+  const selected = rows.find(row => row.process.pid === selection?.pid && row.process.start_time === selection.start_time)?.process
   const endProcess = useMutation({
     mutationFn: (process: TaskProcess) => invoke('end_task_manager_process', { pid: process.pid, startTime: process.start_time }),
     onSuccess: async () => {
@@ -144,7 +195,7 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
               <If cond={processes.isError}>
                 <p role="alert" className="text-sm text-danger">{t('task_manager.load_failed', { error: String(processes.error) })}</p>
               </If>
-              <div className="max-h-80 overflow-auto rounded-lg border border-line" aria-busy={processes.isFetching}>
+              <div className="max-h-96 overflow-auto rounded-lg border border-line" aria-busy={processes.isFetching}>
                 <table data-testid="dsh-task-manager-processes" className="w-full min-w-[620px] text-sm" aria-label={t('menu.task_manager')}>
                   <thead className="sticky top-0 z-10 bg-panel2">
                     <tr>
@@ -159,22 +210,42 @@ export function TaskManagerDialog(props: PropsWithOverlays) {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(process => (
-                      <tr key={`${process.pid}-${process.start_time}`} className="border-t border-line data-[selected=true]:bg-accent/10" data-selected={selected === process}>
-                        <td className="px-3 py-2">
-                          <Button variant="ghost" className="h-auto w-full justify-start px-2 py-1 text-left" aria-pressed={selected === process} onPress={() => setSelection({ pid: process.pid, start_time: process.start_time })}>
-                            <span className="max-w-56 truncate">
-                              <span className="block truncate">{process.name}</span>
-                              <span className="block text-xs text-muted">{t(`task_manager.kind.${process.kind}`)}</span>
-                            </span>
-                          </Button>
-                        </td>
-                        <td className="px-5 py-2 tabular-nums">{process.pid}</td>
-                        <td className="px-5 py-2 tabular-nums"><If cond={process.cpu_percent !== null} else="—">{`${number.format(process.cpu_percent ?? 0)}%`}</If></td>
-                        <td className="px-5 py-2 whitespace-nowrap tabular-nums">{`${number.format(process.memory_bytes / 1024 / 1024)} MB`}</td>
-                        <td className="px-5 py-2 tabular-nums">{duration(process.run_time)}</td>
-                      </tr>
-                    ))}
+                    {rows.map((row) => {
+                      const process = row.process
+                      return (
+                        <tr key={identity(process)} className="border-t border-line data-[selected=true]:bg-accent/10" data-selected={selected === process}>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1" style={{ paddingLeft: row.group ? 0 : 24 }}>
+                              <If cond={row.group} else={<span className="size-5 shrink-0" aria-hidden="true" />}>
+                                <button
+                                  type="button"
+                                  className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:text-foreground"
+                                  data-testid={`dsh-task-manager-toggle-${process.pid}`}
+                                  aria-label={t(open ? 'task_manager.collapse' : 'task_manager.expand', { name: process.name })}
+                                  aria-expanded={open}
+                                  onClick={() => toggleExpanded()}
+                                >
+                                  <ChevronRight className={open ? 'size-3.5 rotate-90' : 'size-3.5'} />
+                                </button>
+                              </If>
+                              <Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start px-2 py-1 text-left" aria-pressed={selected === process} onPress={() => setSelection({ pid: process.pid, start_time: process.start_time })}>
+                                <span className="max-w-56 truncate">
+                                  <span className="block truncate">
+                                    {process.name}
+                                    <If cond={row.count > 1}><span aria-hidden="true">{` (${row.count})`}</span></If>
+                                  </span>
+                                  <span className="block text-xs text-muted">{t(`task_manager.kind.${process.kind}`)}</span>
+                                </span>
+                              </Button>
+                            </div>
+                          </td>
+                          <td className="px-5 py-2 tabular-nums">{process.pid}</td>
+                          <td className="px-5 py-2 tabular-nums"><If cond={row.ready} else="—">{`${number.format(row.cpu)}%`}</If></td>
+                          <td className="px-5 py-2 whitespace-nowrap tabular-nums">{`${number.format(row.memory / 1024 / 1024)} MB`}</td>
+                          <td className="px-5 py-2 tabular-nums">{duration(process.run_time)}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
                 <If cond={processes.isPending} else={<If cond={rows.length === 0}><p className="p-8 text-center text-sm text-muted">{t('task_manager.empty')}</p></If>}>
