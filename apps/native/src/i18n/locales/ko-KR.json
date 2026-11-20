@@ -61,5 +61,11 @@
   "scan.scanInstead": "QR 코드 스캔으로 전환",
   "scan.invalidAddress": "유효한 HTTP/HTTPS 연결 주소를 입력하세요.",
   "notification.channel": "연결 및 작업 알림",
-  "notification.channelSilent": "연결 및 작업 알림 · 무음"
+  "notification.channelSilent": "연결 및 작업 알림 · 무음",
+  "update.title": "새 버전이 있습니다",
+  "update.description": "DSH Mobile {{version}}이 출시되었습니다. 브라우저에서 설치 파일을 내려받으세요.",
+  "update.now": "업데이트",
+  "update.later": "나중에",
+  "update.version": "버전 {{version}}",
+  "update.new_version": "새 버전 있음"
 }

@@ -15,6 +15,7 @@ import { useStore } from 'valtio-define'
 import { BreathingLight } from '@/components/breathing-light'
 import { Dot } from '@/components/dot'
 import { Logo, Wordmark } from '@/components/icons'
+import { appUpdate } from '@/store/modules/app-update'
 import { connection } from '@/store/modules/connection'
 import { cancelAutoScan, connectAddress, disconnectAndScan, refreshHealth, startAutoScan, stopConnectionRuntime } from '@/store/modules/connection/runtime'
 import { AddressDialog } from '@/ui/address-dialog'
@@ -37,6 +38,7 @@ function openConnections() {
 function ConnectionDrawer() {
   const { t } = useTranslation()
   const state = useStore(connection)
+  const update = useStore(appUpdate)
   const [background, foreground, muted] = useThemeColor(['surface', 'foreground', 'muted'])
   const [editing, setEditing] = useState<BridgeAddress | null>(null)
   const [dialogMode, setDialogMode] = useState<'actions' | 'rename' | 'delete'>('actions')
@@ -219,6 +221,20 @@ function ConnectionDrawer() {
           <X size={18} color={muted} />
           <Button.Label>{t('connection.closeDrawer')}</Button.Label>
         </Button>
+        <If cond={update.currentVersion}>
+          <Then>
+            <View className="items-center gap-1">
+              <Text className="text-xs text-muted">{t('update.version', { version: update.currentVersion })}</Text>
+              <If cond={update.hasUpdate}>
+                <Then>
+                  <Text accessibilityRole="link" className="text-xs font-medium text-accent underline" onPress={() => { void appUpdate.openDownload() }}>
+                    {t('update.new_version')}
+                  </Text>
+                </Then>
+              </If>
+            </View>
+          </Then>
+        </If>
       </View>
     </SafeAreaView>
   )

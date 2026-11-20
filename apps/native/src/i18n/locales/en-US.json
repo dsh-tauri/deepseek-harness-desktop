@@ -61,5 +61,11 @@
   "scan.scanInstead": "Scan QR code instead",
   "scan.invalidAddress": "Enter a valid HTTP/HTTPS connection address.",
   "notification.channel": "Connection and task notifications",
-  "notification.channelSilent": "Connection and task notifications · silent"
+  "notification.channelSilent": "Connection and task notifications · silent",
+  "update.title": "Update available",
+  "update.description": "DSH Mobile {{version}} is out. Open your browser to download the installer.",
+  "update.now": "Update",
+  "update.later": "Not now",
+  "update.version": "Version {{version}}",
+  "update.new_version": "New version available"
 }

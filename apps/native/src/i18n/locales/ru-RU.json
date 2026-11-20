@@ -61,5 +61,11 @@
   "scan.scanInstead": "Сканировать QR-код",
   "scan.invalidAddress": "Введите допустимый адрес подключения HTTP/HTTPS.",
   "notification.channel": "Уведомления о подключении и задачах",
-  "notification.channelSilent": "Уведомления о подключении и задачах · без звука"
+  "notification.channelSilent": "Уведомления о подключении и задачах · без звука",
+  "update.title": "Доступно обновление",
+  "update.description": "Вышла DSH Mobile {{version}}. Откройте браузер, чтобы скачать установочный файл.",
+  "update.now": "Обновить",
+  "update.later": "Не сейчас",
+  "update.version": "Версия {{version}}",
+  "update.new_version": "Есть новая версия"
 }

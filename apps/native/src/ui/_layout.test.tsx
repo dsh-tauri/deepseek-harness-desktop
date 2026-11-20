@@ -1,6 +1,7 @@
 import type { NotificationResponse } from 'expo-notifications'
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType, ReactElement, ReactNode } from 'react'
 import type { ReactTestInstance, ReactTestRenderer } from 'react-test-renderer'
+import type { AppRelease } from '@/apis/index.types'
 import { act, createElement } from 'react'
 import { create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -40,7 +41,16 @@ const native = vi.hoisted(() => ({
   setNotificationChannelAsync: vi.fn<(...args: unknown[]) => Promise<null>>(),
   scheduleNotificationAsync: vi.fn<(...args: unknown[]) => Promise<string>>(),
   cancelAnimation: vi.fn(),
+  getLatestAppRelease: vi.fn<() => Promise<AppRelease | null>>(),
+  openURL: vi.fn<(url: string) => Promise<void>>(),
+  toastShow: vi.fn<(options: { component: (props: ToastControlProps) => ReactElement }) => string>(),
+  toastHide: vi.fn<(ids?: string | string[] | 'all') => void>(),
 }))
+
+interface ToastControlProps {
+  id: string
+  hide: (ids?: string | string[] | 'all') => void
+}
 
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: { getItem: native.read, setItem: native.write } }))
 vi.mock('expo-secure-store', () => ({ getItemAsync: native.readToken, setItemAsync: native.writeToken, deleteItemAsync: native.deleteToken }))
@@ -93,6 +103,22 @@ vi.mock('expo-router', async () => {
 vi.mock('uniwind', () => ({ Uniwind: { setTheme: vi.fn() } }))
 // 文案与 store 现在都经过 i18n；node 环境无法真正加载 expo-localization（缺 __DEV__），设备区域固定为 zh-CN。
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'zh-CN' }] }))
+vi.mock('expo-constants', () => ({ default: { expoConfig: { version: '0.32.0' } } }))
+// 更新检查走 GitHub API，测试只关心 store 的消费逻辑，因此只替换这一个导出，getManifest 保持真实实现。
+vi.mock('@/apis', async () => {
+  const actual = await vi.importActual<typeof import('@/apis')>('@/apis')
+  return { ...actual, getLatestAppRelease: native.getLatestAppRelease }
+})
+vi.mock('heroui-native/toast', async () => {
+  const { createElement } = await import('react')
+  function Toast({ children, ...props }: { children?: ReactNode }) {
+    return createElement('Toast', props, children)
+  }
+  return {
+    Toast: Object.assign(Toast, { Title: 'ToastTitle', Description: 'ToastDescription', Action: 'ToastAction' }),
+    useToast: () => ({ toast: { show: native.toastShow, hide: native.toastHide }, isToastVisible: false }),
+  }
+})
 vi.mock('expo-status-bar', () => ({ StatusBar: 'StatusBar' }))
 vi.mock('expo-camera', () => ({
   CameraView: 'CameraView',
@@ -135,7 +161,7 @@ vi.mock('react-native', () => ({
   ScrollView: 'ScrollView',
   Pressable: 'Pressable',
   Platform: { OS: 'android' },
-  Linking: { openURL: vi.fn(async () => {}), openSettings: vi.fn(async () => {}) },
+  Linking: { openURL: native.openURL, openSettings: vi.fn(async () => {}) },
   useWindowDimensions: () => ({ width: 440, height: 900 }),
   Dimensions: { get: () => ({ width: 440, height: 900 }) },
   Keyboard: {
@@ -208,6 +234,8 @@ let screen: ReactTestRenderer | undefined
 let store: typeof import('@/store/modules/connection')
 let connection: typeof import('@/store/modules/connection').connection
 let runtime: typeof import('@/store/modules/connection/runtime')
+let updateStore: typeof import('@/store/modules/app-update')
+let appUpdate: typeof import('@/store/modules/app-update').appUpdate
 let RootLayout: typeof import('@/app/_layout').default
 
 /**
@@ -414,12 +442,17 @@ beforeEach(async () => {
   native.requestPermissionsAsync.mockResolvedValue({ granted: true })
   native.setNotificationChannelAsync.mockResolvedValue(null)
   native.scheduleNotificationAsync.mockResolvedValue('notification-id')
+  native.getLatestAppRelease.mockResolvedValue(null)
+  native.openURL.mockResolvedValue(undefined)
   vi.stubGlobal('fetch', native.fetch)
   screen = undefined
   store = await import('@/store/modules/connection')
   connection = store.connection
   runtime = await import('@/store/modules/connection/runtime')
   resetConnection()
+  updateStore = await import('@/store/modules/app-update')
+  appUpdate = updateStore.appUpdate
+  appUpdate.$patch(updateStore.createAppUpdateState())
   native.routes.home = (await import('@/app/index')).default
   native.routes.scan = (await import('@/app/scan')).default
   ;({ default: RootLayout } = await import('@/app/_layout'))
@@ -908,5 +941,59 @@ describe('rendered root lifecycle resources', () => {
     expect(native.writeToken).not.toHaveBeenCalled()
     expect(native.fetch).not.toHaveBeenCalled()
     expect(native.dismissTo).not.toHaveBeenCalled()
+  })
+})
+
+describe('rendered root app update', () => {
+  const apkUrl = 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/download/v0.33.0/Deepseek.Harness.Android_0.33.0.apk'
+  const release = {
+    version: '0.33.0',
+    pageUrl: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/v0.33.0',
+    assets: [{ name: 'Deepseek.Harness.Android_0.33.0.apk', url: apkUrl }],
+  }
+
+  async function renderToast() {
+    const options = native.toastShow.mock.calls[0]![0]
+    const hide = vi.fn<(ids?: string | string[] | 'all') => void>()
+    let toast: ReactTestRenderer | undefined
+    await act(async () => {
+      toast = create(options.component({ id: 'app-update', hide }))
+    })
+    return { actions: toast!.root.findAll(node => String(node.type) === 'ToastAction'), description: toast!.root.findAll(node => String(node.type) === 'ToastDescription').map(text), hide }
+  }
+
+  it('does not prompt when the running version is already the latest release', async () => {
+    await mount()
+
+    expect(native.getLatestAppRelease).toHaveBeenCalledTimes(1)
+    expect(native.toastShow).not.toHaveBeenCalled()
+  })
+
+  it('prompts once per session with the new version and routes both controls', async () => {
+    native.getLatestAppRelease.mockResolvedValue(release)
+    await mount()
+
+    expect(native.toastShow).toHaveBeenCalledTimes(1)
+    const { actions, description, hide } = await renderToast()
+    expect(description).toEqual(['DSH Mobile 0.33.0 已发布，前往浏览器下载安装包。'])
+    expect(actions.map(text)).toEqual(['更新', '暂不更新'])
+
+    await act(async () => {
+      actions[0]!.props.onPress()
+    })
+    expect(native.openURL).toHaveBeenCalledExactlyOnceWith(apkUrl)
+    expect(hide).toHaveBeenCalledExactlyOnceWith('app-update')
+
+    await act(async () => {
+      actions[1]!.props.onPress()
+    })
+    expect(appUpdate.ignoredVersion).toBe('0.33.0')
+    expect(hide).toHaveBeenCalledTimes(2)
+    expect(native.openURL).toHaveBeenCalledTimes(1)
+
+    await changeAppState('background')
+    await changeAppState('active')
+    expect(native.getLatestAppRelease).toHaveBeenCalledTimes(2)
+    expect(native.toastShow).toHaveBeenCalledTimes(1)
   })
 })
