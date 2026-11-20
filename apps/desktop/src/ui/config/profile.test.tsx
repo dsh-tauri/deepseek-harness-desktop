@@ -261,3 +261,14 @@ describe('档案作用域', () => {
     expect(screen.queryByTestId('dsh-profile-remote-section')).toBeNull()
   })
 })
+
+describe('面板头部控件顺序', () => {
+  it('高级选项开关排在管理范围（远端切换器）之前', async () => {
+    await mount()
+
+    const advanced = screen.getByRole('switch', { name: 'profiles.advanced_options' })
+    const scope = screen.getByTestId('dsh-config-profile-target')
+
+    expect(advanced.compareDocumentPosition(scope) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
