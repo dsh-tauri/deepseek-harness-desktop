@@ -164,21 +164,12 @@
         "version": "latest"
       },
       {
-        "id": "dsh-third-kernel",
-        "spec": "dsh-third-kernel@0.1.0",
-        "name": "DSH Third Kernel",
-        "description": "接入本机已登录的 Codex 与 Claude Code，切换第三方内核会话、模型与推理强度，沿用 DSH 会话权限。 ｜ Use local Codex and Claude Code kernels with native model selection, reasoning controls, and DSH session permissions.",
-        "repo": "https://github.com/hairyf/dsh-third-kernel",
-        "recommended": true,
-        "checked": false
-      },
-      {
         "id": "dshmarket",
         "spec": "dshmarket",
         "name": "DSH Market",
         "repo": "https://github.com/dsh-market/dsh-market",
         "description": "The plugin market inside DeepSeek Harness — browse, search, one-click install · DSH 可视化插件市场",
-        "recommended": false,
+        "recommended": true,
         "checked": false,
         "version": "latest"
       },
@@ -201,6 +192,15 @@
         "recommended": false,
         "checked": false,
         "version": "latest"
+      },
+      {
+        "id": "dsh-third-kernel",
+        "spec": "dsh-third-kernel@0.1.0",
+        "name": "DSH Third Kernel",
+        "description": "接入本机已登录的 Codex 与 Claude Code，切换第三方内核会话、模型与推理强度，沿用 DSH 会话权限。 ｜ Use local Codex and Claude Code kernels with native model selection, reasoning controls, and DSH session permissions.",
+        "repo": "https://github.com/hairyf/dsh-third-kernel",
+        "recommended": false,
+        "checked": false
       },
       {
         "id": "@changfenhuang/dsh-genui",
