@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const calls: Array<{ machineId?: string, reinstall?: boolean }> = []
+const calls: Array<{ machineId?: string, reinstall?: boolean, ackProfileMismatch?: boolean }> = []
+const instanceStatus = { current: {} as Record<string, unknown> }
 
 vi.mock('../apis/index', () => ({
-  postMachinesInstall: async (body: { machineId?: string, reinstall?: boolean }) => {
+  postMachinesInstall: async (body: { machineId?: string, reinstall?: boolean, ackProfileMismatch?: boolean }) => {
     calls.push(body)
     return { dshPath: '/home/u/.dsh-desktop/dependencies/dsh/lib/bin.js', credentialsCopied: false }
   },
+  getCoreInstance: async () => instanceStatus.current,
   getMachines: async () => ({ items: [], discovered: [] }),
   getSessionRole: async () => ({ role: 'local', remote: false }),
 }))
@@ -39,5 +41,33 @@ describe('远程安装请求', () => {
     await pending
 
     expect(store.machines.busy.m1).toBeUndefined()
+  })
+
+  it('确认后重装携带 ackProfileMismatch，让后端放行三态不符', async () => {
+    await service.install({ machineId: 'm1', reinstall: true, ackProfileMismatch: true })
+
+    expect(calls).toEqual([{ machineId: 'm1', reinstall: true, ackProfileMismatch: true }])
+  })
+})
+
+describe('强制重装前的档案预检', () => {
+  it('档案不符时返回 actual 与 expected，供 UI 弹确认框', async () => {
+    instanceStatus.current = { item: { verdict: 'mismatch', actual: 'other', expected: 'remote', port: 4001 } }
+
+    await expect(service.profileMismatchOf('m1')).resolves.toEqual({ actual: 'other', expected: 'remote' })
+  })
+
+  it('档案相符或认不出时不要求确认', async () => {
+    instanceStatus.current = { item: { verdict: 'match', actual: 'remote', expected: 'remote', port: 4001 } }
+    await expect(service.profileMismatchOf('m1')).resolves.toBeUndefined()
+
+    instanceStatus.current = { item: { verdict: 'unknown', expected: 'remote', port: 4001 } }
+    await expect(service.profileMismatchOf('m1')).resolves.toBeUndefined()
+  })
+
+  it('预检端点报错时不阻断重装', async () => {
+    instanceStatus.current = { error: 'REMOTE_DSH_STATE_UNKNOWN' }
+
+    await expect(service.profileMismatchOf('m1')).resolves.toBeUndefined()
   })
 })

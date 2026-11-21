@@ -159,3 +159,20 @@ export const REMOTE_CORE_PLATFORMS: CorePlatform[] = ['linux-x64', 'linux-arm64'
 export function remoteCoreTargetId(machineId: string, remoteProfile: string): string {
   return `remote:${machineId}:${remoteProfile}`
 }
+
+/**
+ * 端口上实例的只读状态（P3-0，issue #1600）。
+ *
+ * verdict 是三态：档案相符 / 不符 / 认不出。actual 是实例 argv 自报的事实，
+ * 认不出时为 undefined、不猜测；expected 只是机器条目的配置值，不覆盖展示。
+ */
+export interface RemoteInstanceStatus {
+  verdict: 'match' | 'mismatch' | 'unknown'
+  actual?: string
+  expected: string
+  port: number
+  pid?: string
+  createdByDesktop?: boolean
+  /** 客户端数依赖连接租约（#1576），未落地前留空。 */
+  clientCount?: number
+}

@@ -16,6 +16,7 @@ const REMOTE_ENDPOINTS: &[&str] = &[
     "POST /api/tauri/remote/machines/install",
     "POST /api/tauri/remote/machines/test",
     "GET /api/tauri/remote/core/current",
+    "GET /api/tauri/remote/core/instance",
     "GET /api/tauri/remote/core/profiles",
     "GET /api/tauri/remote/core/tasks/events",
     "GET /api/tauri/remote/core/versions",
@@ -49,6 +50,7 @@ fn remote_timeout(method: &reqwest::Method, path: &str) -> Duration {
         && matches!(
             path,
             "/api/tauri/remote/core/current" | "/api/tauri/remote/core/versions"
+            | "/api/tauri/remote/core/instance"
         )
     {
         Duration::from_secs(REMOTE_CORE_READ_TIMEOUT_SECS)

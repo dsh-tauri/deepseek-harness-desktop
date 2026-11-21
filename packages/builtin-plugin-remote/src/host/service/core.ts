@@ -1,4 +1,4 @@
-import type { CoreProfileItem, CoreSlotState, CoreTarget, CoreTaskAccepted, CoreVersionItem } from '../../shared/core'
+import type { CoreProfileItem, CoreSlotState, CoreTarget, CoreTaskAccepted, CoreVersionItem, RemoteInstanceStatus } from '../../shared/core'
 import type { MachineId, RemoteSession } from '../types/index'
 import type { RemoteCoreCopy } from './core.utils'
 import { defineService } from 'dsh-tauri'
@@ -6,8 +6,9 @@ import semver from 'semver'
 import { REMOTE_CORE_CAPABILITIES, REMOTE_CORE_PLATFORMS, remoteCoreTargetId } from '../../shared/core'
 import { messageOf } from '../../shared/error'
 import { clearCoreInstallTask, coreInstallTask, hostConfig, hostRuntimeGeneration, registerCoreInstallTask } from '../config/runtime'
+import { readListenerState } from '../utils/instance'
 import { assertSupportedDshVersion, isPreviewTag, listGithubReleases, MINIMUM_DSH_VERSION, parseVersionFromTag, pkgRepoOf } from '../utils/version'
-import { buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall } from './bootstrap.utils'
+import { buildCoreVersionInstallScript, createBootstrapLineDispatcher, describeExecFailure, parseBootstrapLine, planRemoteVersionInstall, safeProfileName } from './bootstrap.utils'
 import { parseRemoteCopies, remoteCopiesProbeCommand } from './core.utils'
 import { machine } from './machine'
 import { tasks } from './tasks'
@@ -41,6 +42,33 @@ export const core = defineService({
       return [...new Set([configured, ...names])]
         .sort((left, right) => left.localeCompare(right))
         .map(name => ({ name, configured: name === configured }))
+    }
+    finally {
+      await session.close().catch(() => undefined)
+    }
+  },
+
+  /**
+   * 只读发现某台机器端口上的实例状态（P3-0，issue #1600）。
+   *
+   * 期望值取机器条目配置的档案，仅用于 verdict 比对，不覆盖实例自报的 actual。
+   * 不写远端；SSH / 快照失败收敛为 unknown，不向 UI 抛错。
+   */
+  async instanceStatus(machineId: MachineId): Promise<RemoteInstanceStatus> {
+    const profile = machine.profile(machineId)
+    const expected = safeProfileName(profile.profileName)
+    const unknown = (): RemoteInstanceStatus => ({ verdict: 'unknown', expected, port: profile.remotePort })
+    let session: Awaited<ReturnType<typeof machine.openSession>>
+    try {
+      session = await machine.openSession(machineId)
+    }
+    catch {
+      // 只读发现：SSH 建连失败与快照读取失败一样收敛为 unknown，不向 UI 抛错。
+      // 机器配置不存在（machine.profile 抛错）仍照常报错。
+      return unknown()
+    }
+    try {
+      return await readListenerState(session, profile.remotePort, expected)
     }
     finally {
       await session.close().catch(() => undefined)

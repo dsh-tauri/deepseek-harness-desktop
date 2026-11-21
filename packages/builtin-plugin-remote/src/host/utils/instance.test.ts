@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { describe, expect, it, vi } from 'vitest'
 import { remotePidfile } from '../config/constants'
-import { assertListenerProfile, parseListenerSnapshot, profileOfArgv, readListenerProfile, remoteInstanceStopCommand } from './instance'
+import { assertListenerProfile, parseListenerSnapshot, profileOfArgv, readListenerProfile, readListenerState, remoteInstanceStopCommand } from './instance'
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v curl >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 const LISTENER_PORT = 41987
@@ -20,8 +20,8 @@ function sessionOfResult(result: RemoteExecResult): RemoteSession {
   }
 }
 
-function linuxSnapshot(pid: string, argv: readonly string[]): string {
-  return `Linux\n${pid}\n/home/tester\n123:456\n${argv.join('\0')}\0`
+function linuxSnapshot(pid: string, argv: readonly string[], createdByDesktop = true): string {
+  return `Linux\n${pid}\n/home/tester\n123:456\n${createdByDesktop ? 'yes' : 'no'}\n${argv.join('\0')}\0`
 }
 
 describe('远端实例身份', () => {
@@ -37,15 +37,17 @@ describe('远端实例身份', () => {
     expect(profileOfArgv(['node', '/opt/dsh/lib/bin.js', '--profile', '--port'])).toBeUndefined()
   })
 
-  it('监听快照按 Linux 的 NUL 分隔还原 argv', () => {
+  it('监听快照按 Linux 的 NUL 分隔还原 argv，并读出是否桌面创建', () => {
     const identity = parseListenerSnapshot(linuxSnapshot('4321', ['node', '/opt/dsh/lib/bin.js', '--profile', 'remote']))
 
     expect(identity?.pid).toBe('4321')
+    expect(identity?.createdByDesktop).toBe(true)
     expect(identity?.argv).toEqual(['node', '/opt/dsh/lib/bin.js', '--profile', 'remote', ''])
+    expect(parseListenerSnapshot(linuxSnapshot('4321', ['node', '--profile', 'remote'], false))?.createdByDesktop).toBe(false)
   })
 
   it('快照缺关键字段时认不出身份', () => {
-    expect(parseListenerSnapshot('Linux\nnot-a-pid\n/home/tester\n123:456\nnode\0')).toBeUndefined()
+    expect(parseListenerSnapshot('Linux\nnot-a-pid\n/home/tester\n123:456\nyes\nnode\0')).toBeUndefined()
   })
 
   it('端口上的实例是自己配的档案时放行', async () => {
@@ -65,6 +67,63 @@ describe('远端实例身份', () => {
 
     await expect(readListenerProfile(session, LISTENER_PORT)).resolves.toBeUndefined()
     await expect(assertListenerProfile(session, LISTENER_PORT, 'remote')).resolves.toBeUndefined()
+  })
+})
+
+describe('三态发现实例状态', () => {
+  it('档案相符时返回 match，并带上 pid 与桌面创建标记', async () => {
+    const session = sessionOfResult({ code: 0, stdout: linuxSnapshot('4321', ['node', '/opt/dsh/lib/bin.js', '--profile', 'remote']), stderr: '' })
+
+    await expect(readListenerState(session, LISTENER_PORT, 'remote')).resolves.toEqual({
+      verdict: 'match',
+      actual: 'remote',
+      expected: 'remote',
+      port: LISTENER_PORT,
+      pid: '4321',
+      createdByDesktop: true,
+    })
+  })
+
+  it('档案不符时返回 mismatch 且报告实际档案，但不抛错', async () => {
+    const session = sessionOfResult({ code: 0, stdout: linuxSnapshot('4321', ['node', '/opt/dsh/lib/bin.js', '--profile', 'other']), stderr: '' })
+
+    await expect(readListenerState(session, LISTENER_PORT, 'remote')).resolves.toEqual({
+      verdict: 'mismatch',
+      actual: 'other',
+      expected: 'remote',
+      port: LISTENER_PORT,
+      pid: '4321',
+      createdByDesktop: true,
+    })
+  })
+
+  it('认不出档案时返回 unknown，不猜测 actual', async () => {
+    const noProfile = sessionOfResult({ code: 0, stdout: linuxSnapshot('4321', ['node', '/opt/dsh/lib/bin.js', '--port', '8080']), stderr: '' })
+    const noListener = sessionOfResult({ code: 1, stdout: '', stderr: 'REMOTE_DSH_LISTENER_TOOLS_MISSING' })
+
+    const noProfileState = await readListenerState(noProfile, LISTENER_PORT, 'remote')
+    expect(noProfileState.verdict).toBe('unknown')
+    expect(noProfileState.actual).toBeUndefined()
+    expect(await readListenerState(noListener, LISTENER_PORT, 'remote')).toEqual({
+      verdict: 'unknown',
+      expected: 'remote',
+      port: LISTENER_PORT,
+    })
+  })
+
+  it('exec 抛异常时收敛为 unknown，不向外泄漏', async () => {
+    const session: RemoteSession = {
+      exec: vi.fn(async () => { throw new Error('ssh closed') }),
+      stream: vi.fn(),
+      onClosed: vi.fn(),
+      close: vi.fn(async () => {}),
+    }
+
+    await expect(readListenerState(session, LISTENER_PORT, 'remote')).resolves.toEqual({
+      verdict: 'unknown',
+      expected: 'remote',
+      port: LISTENER_PORT,
+    })
   })
 })
 
