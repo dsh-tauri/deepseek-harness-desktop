@@ -15,7 +15,7 @@ import { DEFAULT_MACHINE_TRANSPORT, REMOTE_ROOT } from '../config/constants'
 import { harnessHome, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
 import { MachineId, RemoteError } from '../types/index'
 import { carryWorkspaceAllowlist } from '../utils/allowlist'
-import { assertListenerProfile } from '../utils/instance'
+import { readListenerState } from '../utils/instance'
 import { syncBundledPlugins } from '../utils/plugins-sync'
 import { discoverableHosts, loadSshConfigBlocks, lookupSshConfig, resolveSshAuth } from '../utils/ssh-config'
 import { bootstrap } from './bootstrap'
@@ -87,6 +87,10 @@ export const machine = defineService({
 
   profileName(machineId: MachineId): string {
     return safeProfileName(machineProfiles.get(machineId)?.profileName)
+  },
+
+  profile(machineId: MachineId): MachineProfile {
+    return requireProfile(machineId)
   },
 
   setProgress(machineId: MachineId, progress?: RemoteProgress): void {
@@ -233,7 +237,7 @@ export const machine = defineService({
     await Promise.all([...machineStates.keys()].map(id => machine.disconnect(id)))
   },
 
-  async install(machineId: MachineId, options: { force?: boolean } = {}, signal?: AbortSignal): Promise<RemoteInstallResult> {
+  async install(machineId: MachineId, options: { force?: boolean, ackProfileMismatch?: boolean } = {}, signal?: AbortSignal): Promise<RemoteInstallResult> {
     const profile = requireProfile(machineId)
     requireCapabilities(machineId, profile, ['exec'])
     const target = ensureState(machineId)
@@ -801,7 +805,7 @@ function redacted(machineId: MachineId, text: string): string {
   return out
 }
 
-async function performInstall(machineId: MachineId, profile: MachineProfile, options: { force?: boolean }, signal?: AbortSignal): Promise<RemoteInstallResult> {
+async function performInstall(machineId: MachineId, profile: MachineProfile, options: { force?: boolean, ackProfileMismatch?: boolean }, signal?: AbortSignal): Promise<RemoteInstallResult> {
   const force = options.force === true
   const config = hostConfig()
   const target = ensureState(machineId)
@@ -823,8 +827,14 @@ async function performInstall(machineId: MachineId, profile: MachineProfile, opt
     await assertRemoteDshVersion(session, true)
     const profileName = safeProfileName(profile.profileName)
     if (force) {
-      // 端口上跑的不是自己以为的那个档案时不能动手：那是别人的实例。
-      await assertListenerProfile(session, profile.remotePort, profileName)
+      // 强装会打断端口上的实例。三态发现：认得出且不符时，先要求显式确认（issue #1600 C 策略），
+      // 不再是「错误的档案就硬拦」。确认后放行并记录警告；认不出仍不误判（#1574 口径）。
+      const state = await readListenerState(session, profile.remotePort, profileName)
+      if (state.verdict === 'mismatch' && options.ackProfileMismatch !== true) {
+        throw new Error(`REMOTE_PROFILE_MISMATCH_CONFIRM_REQUIRED: 端口 ${profile.remotePort} 上跑的是远端档案「${state.actual}」，本机这条远端机器配的是「${profileName}」。强制重装会中断该实例，确认后重试。`)
+      }
+      if (state.verdict === 'mismatch')
+        onEvent('probe', `已确认：端口 ${profile.remotePort} 上的实例用的是档案「${state.actual}」，与配置的「${profileName}」不符，继续强制重装`)
     }
     const missing = missingComponentsOf((await session.exec(checkMissingCommand())).stdout)
     const skips: string[] = []

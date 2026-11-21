@@ -39,6 +39,10 @@ export function reinstallOf(value: { reinstall?: unknown }): boolean {
   return value.reinstall === true
 }
 
+export function ackProfileMismatchOf(value: { ackProfileMismatch?: unknown }): boolean {
+  return value.ackProfileMismatch === true
+}
+
 export function enabledOf(value: { enabled?: unknown }): boolean {
   if (typeof value.enabled !== 'boolean')
     throw new Error('missing enabled')

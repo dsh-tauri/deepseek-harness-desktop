@@ -3,6 +3,7 @@
   "DELETE /api/tauri/remote/machines",
   "GET /api/tauri/remote/access",
   "GET /api/tauri/remote/core/current",
+  "GET /api/tauri/remote/core/instance",
   "GET /api/tauri/remote/core/profiles",
   "GET /api/tauri/remote/core/tasks/events",
   "GET /api/tauri/remote/core/versions",

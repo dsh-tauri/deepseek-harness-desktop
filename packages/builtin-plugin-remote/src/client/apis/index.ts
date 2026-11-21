@@ -69,6 +69,11 @@ export function getCoreCurrent(params: Types.GetApiTauriRemoteCoreCurrentQuery, 
 }
 
 /** @method get */
+export function getCoreInstance(params: Types.GetApiTauriRemoteCoreInstanceQuery, options?: FetchOptions) {
+  return ofetch<Types.GetApiTauriRemoteCoreInstanceResponse>('/api/tauri/remote/core/instance', { method: 'get', ...params === undefined ? {} : { params }, ...options })
+}
+
+/** @method get */
 export function getCoreProfiles(params: Types.GetApiTauriRemoteCoreProfilesQuery, options?: FetchOptions) {
   return ofetch<Types.GetApiTauriRemoteCoreProfilesResponse>('/api/tauri/remote/core/profiles', { method: 'get', ...params === undefined ? {} : { params }, ...options })
 }
