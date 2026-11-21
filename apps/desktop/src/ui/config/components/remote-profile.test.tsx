@@ -89,14 +89,16 @@ describe('远端 Profile 只读列表', () => {
     expect(screen.queryByTestId('dsh-profile-remote-build-remote')).toBeNull()
   })
 
-  it('re-reads the remote profiles when the refresh button is pressed', async () => {
+  it('re-reads the remote profiles and the instance status when the refresh button is pressed', async () => {
     renderRemoteProfiles()
 
     await screen.findByTestId('dsh-profile-remote-build-remote')
     expect(mocks.getCoreProfiles).toHaveBeenCalledTimes(1)
+    expect(mocks.getCoreInstance).toHaveBeenCalledTimes(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh remote profiles' }))
     await waitFor(() => expect(mocks.getCoreProfiles).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.getCoreInstance).toHaveBeenCalledTimes(2))
   })
 
   it('reports a failed read instead of showing an empty list', async () => {

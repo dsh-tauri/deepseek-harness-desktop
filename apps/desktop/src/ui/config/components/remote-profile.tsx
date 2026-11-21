@@ -60,7 +60,10 @@ export function RemoteProfileSection({ machine }: { machine: RemoteMachineRow })
           variant="tertiary"
           isDisabled={refreshing}
           aria-label={t('profiles.remote_refresh')}
-          onPress={() => void profilesQuery.refetch()}
+          onPress={() => {
+            void profilesQuery.refetch()
+            void instanceQuery.refetch()
+          }}
         >
           <If cond={refreshing} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
           {t('profiles.remote_refresh')}

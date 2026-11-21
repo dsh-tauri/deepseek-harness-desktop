@@ -177,6 +177,16 @@ describe('remote instance status (P3-0)', () => {
       port: 3089,
     })
   })
+
+  it('reports unknown without throwing when the SSH session cannot be opened', async () => {
+    vi.mocked(machine.openSession).mockRejectedValue(new Error('REMOTE_UNREACHABLE'))
+
+    await expect(core.instanceStatus(machineId)).resolves.toEqual({
+      verdict: 'unknown',
+      expected: 'remote',
+      port: 3089,
+    })
+  })
 })
 
 describe('remote core contract', () => {

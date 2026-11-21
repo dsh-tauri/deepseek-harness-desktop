@@ -57,7 +57,16 @@ export const core = defineService({
   async instanceStatus(machineId: MachineId): Promise<RemoteInstanceStatus> {
     const profile = machine.profile(machineId)
     const expected = safeProfileName(profile.profileName)
-    const session = await machine.openSession(machineId)
+    const unknown = (): RemoteInstanceStatus => ({ verdict: 'unknown', expected, port: profile.remotePort })
+    let session: Awaited<ReturnType<typeof machine.openSession>>
+    try {
+      session = await machine.openSession(machineId)
+    }
+    catch {
+      // 只读发现：SSH 建连失败与快照读取失败一样收敛为 unknown，不向 UI 抛错。
+      // 机器配置不存在（machine.profile 抛错）仍照常报错。
+      return unknown()
+    }
     try {
       return await readListenerState(session, profile.remotePort, expected)
     }
