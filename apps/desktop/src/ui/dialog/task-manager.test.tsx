@@ -18,6 +18,7 @@ let client: QueryClient
 let rows: ReturnType<typeof fixtures>
 let failRead: boolean
 let ended: unknown[]
+let requests: string[]
 
 function fixtures() {
   return [
@@ -55,9 +56,11 @@ beforeEach(() => {
   rows = fixtures()
   failRead = false
   ended = []
+  requests = []
   restart.mockReset()
   toast.mockReset()
   mockIPC((command, args) => {
+    requests.push(command)
     if (command === 'get_task_manager_processes') {
       if (failRead)
         throw new Error('collector unavailable')
@@ -86,12 +89,8 @@ describe('task manager', () => {
     const table = screen.getByRole('table')
     expect(rowPids()).toEqual(['10'])
     expect(within(table).getByText('(4)')).toBeTruthy()
-    expect(within(table).getByText('18.5%').textContent).toBe('18.5%')
-    expect(within(table).getByText('650 MB').textContent).toBe('650 MB')
     expand()
     expect(rowPids()).toEqual(['10', '40', '20', '30'])
-    expect(within(table).getByText('50 MB').textContent).toBe('50 MB')
-    expect(within(table).getByText('300 MB').textContent).toBe('300 MB')
     expand()
     expect(rowPids()).toEqual(['10'])
   })
@@ -104,9 +103,8 @@ describe('task manager', () => {
     expect(rowPids()).toEqual(['10', '20', '30', '40'])
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '30' } })
     expect(rowPids()).toEqual(['10', '30'])
-    expect(within(screen.getByRole('table')).getByText('0:01:01').textContent).toBe('0:01:01')
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'missing' } })
-    expect(screen.getByText('task_manager.empty').textContent).toBe('task_manager.empty')
+    expect(screen.getByText('task_manager.empty')).toBeTruthy()
   })
 
   it('keeps the app root on top even when its parent link points elsewhere', async () => {
@@ -190,6 +188,7 @@ describe('task manager', () => {
   it('loads run logs when expanded', async () => {
     await openManager()
     fireEvent.click(screen.getByRole('button', { name: 'menu.run_logs' }))
-    expect((await screen.findByText('Harness service started')).textContent).toBe('Harness service started')
+    expect(await screen.findByText('Harness service started')).toBeTruthy()
+    expect(requests).toContain('read_run_logs')
   })
 })

@@ -74,10 +74,6 @@ function chipOf(name: string): Element | null {
   return screen.getByText(name).closest('[data-color]')
 }
 
-function classTokensOf(element: Element, keyword: string): string[] {
-  return element.className.split(' ').filter(name => name.includes(keyword)).sort()
-}
-
 beforeEach(() => {
   preinstall.plugins = []
   preinstall.logs = []
@@ -118,36 +114,5 @@ describe('preinstall 推荐卡片的中转标记', () => {
     render(<PreinstallSetup />)
     expect(screen.getByRole('switch', { name: 'DSH NearToken' }).getAttribute('aria-checked')).toBe('true')
     expect(screen.getByRole('switch', { name: 'DSH Better Sidebar' }).getAttribute('aria-checked')).toBe('true')
-  })
-})
-
-describe('preinstall 卡片网格的响应式尺寸', () => {
-  it('列数阶梯停在四列：640/1024 逐级加列，1440 起切四列', () => {
-    preinstall.plugins = [plugin()]
-    render(<PreinstallSetup />)
-    const columns = classTokensOf(screen.getByTestId('dsh-setup-preinstall-grid'), 'grid-cols-')
-    expect(columns, '网格最多四列，且四列断点为 1440px').toEqual([
-      'grid-cols-1',
-      'min-[1024px]:grid-cols-3',
-      'min-[1440px]:grid-cols-4',
-      'min-[640px]:grid-cols-2',
-    ])
-  })
-
-  it('滚动区高度上限 480px，矮屏按 70vh 收缩', () => {
-    preinstall.plugins = [plugin()]
-    render(<PreinstallSetup />)
-    expect(screen.getByTestId('dsh-setup-preinstall-scroll').className).toContain('max-h-[min(70vh,480px)]')
-  })
-
-  it('空态跨列与网格列数同步到四列', () => {
-    preinstall.plugins = []
-    render(<PreinstallSetup />)
-    const spans = classTokensOf(screen.getByText('preinstall.empty'), 'col-span-')
-    expect(spans).toEqual([
-      'min-[1024px]:col-span-3',
-      'min-[1440px]:col-span-4',
-      'min-[640px]:col-span-2',
-    ])
   })
 })

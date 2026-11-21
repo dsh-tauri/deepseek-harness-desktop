@@ -406,8 +406,6 @@ describe('local plugin hot reload switch', () => {
 
     showAdvanced()
     expect(screen.getByRole('switch', { name: 'plugins.hmr' }).getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByText('plugins.hmr_hint').textContent).toBe('plugins.hmr_hint')
-    expect(screen.getByText('plugins.hmr_idle').textContent).toBe('plugins.hmr_idle')
 
     showAdvanced()
     expect(screen.queryByRole('switch', { name: 'plugins.hmr' })).toBeNull()

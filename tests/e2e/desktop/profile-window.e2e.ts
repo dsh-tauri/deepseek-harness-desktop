@@ -2,41 +2,39 @@ import type { ShellWindow } from '../setup/shell'
 import { describe, expect, it } from 'vitest'
 import { collectPageErrors, installErrorCollector, invoke, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
-describe.each(['', 'http://127.0.0.1:4001'])('desktop remote window lifecycle (url=%s)', (url) => {
+describe('desktop window lifecycle', () => {
   const app = shellAppScope()
 
   it('opens a remote shell with its machine target', async () => {
     const shell = app.get()
     const main = shell.window.page
     await main.context().addInitScript(collectPageErrors)
-    const before = await shell.windows()
     const machineId = 'e2e-machine " &/?#\\target'
-    let opened: ShellWindow | undefined
-    try {
-      await invoke(main, 'remote_open_window', { machineId, url })
-      await expect.poll(async () => {
-        opened = (await shell.windows()).find(candidate => !before.some(window => window.label === candidate.label))
-        return Boolean(opened)
-      }, { timeout: WINDOW_TIMEOUT_MS, message: '远端命令必须创建独立 Electron 壳层' }).toBe(true)
-      const remote = opened!
-      await expect.poll(() => remote.page.locator(SHELL_ROOT).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '远端壳层必须完成首屏渲染' }).toBe(true)
-      expect(new URL(remote.page.url()).pathname).toBe('/index.html')
-      expect(new URLSearchParams(new URL(remote.page.url()).hash.slice(1)).get('remoteMachineId')).toBe(machineId)
-      expect(await remote.page.evaluate(() => window.__TAURI_INTERNALS__.metadata?.currentWindow?.label)).toBe(remote.label)
-      expect(await invoke(remote.page, 'remote_bridge_ping')).toBe('ok')
-      await invoke(main, 'remote_open_window', { machineId, url })
-      expect((await shell.windows()).map(window => window.label).sort()).toEqual([...before.map(window => window.label), remote.label].sort())
-      expect(await pageErrors(remote.page)).toEqual([])
-    }
-    finally {
-      if (opened)
-        await shell.closeWindow(opened.label)
+    for (const url of ['', 'http://127.0.0.1:4001']) {
+      const before = await shell.windows()
+      let opened: ShellWindow | undefined
+      try {
+        await invoke(main, 'remote_open_window', { machineId, url })
+        await expect.poll(async () => {
+          opened = (await shell.windows()).find(candidate => !before.some(window => window.label === candidate.label))
+          return Boolean(opened)
+        }, { timeout: WINDOW_TIMEOUT_MS, message: `远端命令必须创建独立 Electron 壳层（url=${url}）` }).toBe(true)
+        const remote = opened!
+        await expect.poll(() => remote.page.locator(SHELL_ROOT).isVisible(), { timeout: WINDOW_TIMEOUT_MS, message: '远端壳层必须完成首屏渲染' }).toBe(true)
+        expect(new URL(remote.page.url()).pathname).toBe('/index.html')
+        expect(new URLSearchParams(new URL(remote.page.url()).hash.slice(1)).get('remoteMachineId')).toBe(machineId)
+        expect(await remote.page.evaluate(() => window.__TAURI_INTERNALS__.metadata?.currentWindow?.label)).toBe(remote.label)
+        expect(await invoke(remote.page, 'remote_bridge_ping')).toBe('ok')
+        await invoke(main, 'remote_open_window', { machineId, url })
+        expect((await shell.windows()).map(window => window.label).sort()).toEqual([...before.map(window => window.label), remote.label].sort())
+        expect(await pageErrors(remote.page)).toEqual([])
+      }
+      finally {
+        if (opened)
+          await shell.closeWindow(opened.label)
+      }
     }
   })
-})
-
-describe('desktop window lifecycle', () => {
-  const app = shellAppScope()
 
   it('creates and destroys a real secondary Electron window through Tauri IPC', async () => {
     const shell = app.get()

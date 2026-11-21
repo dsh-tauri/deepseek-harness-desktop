@@ -16,6 +16,20 @@ const version = JSON.parse(readFileSync(path.join(repo, 'package.json'), 'utf8')
 const files = ['package.json', 'apps/desktop/package.json', 'apps/native/package.json', 'apps/native/app.json', 'apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/tauri.conf.json']
 const original = files.map(file => readFileSync(path.join(repo, file), 'utf8'))
 const json = file => JSON.parse(readFileSync(path.join(root, file), 'utf8'))
+
+const app = JSON.parse(readFileSync(path.join(repo, 'apps/native/app.json'), 'utf8')).expo
+const eas = JSON.parse(readFileSync(path.join(repo, 'apps/native/eas.json'), 'utf8'))
+assert.equal(app.android?.package, 'com.dshtauri.dshbridge', 'android package')
+assert.equal(app.ios?.bundleIdentifier, 'com.dshtauri.dshbridge', 'ios bundle identifier')
+assert.equal(app.scheme, 'dshbridge', 'url scheme')
+assert.equal(app.ios?.config?.usesNonExemptEncryption, false, 'ios export compliance')
+assert.equal(eas.cli?.appVersionSource, 'remote', 'eas appVersionSource')
+assert.equal(eas.build?.production?.autoIncrement, true, 'eas production autoIncrement')
+for (const [name, key] of [['expo-camera', 'cameraPermission'], ['expo-secure-store', 'faceIDPermission'], ['expo-notifications', 'mode']]) {
+  const entry = app.plugins?.find(plugin => Array.isArray(plugin) && plugin[0] === name)
+  assert.ok(entry, `${name} plugin`)
+  assert.ok(key in (entry[1] ?? {}), `${name} ${key}`)
+}
 function run(command, args, env = {}) {
   const result = spawnSync(command, args, { cwd: root, env: { ...process.env, ...env }, encoding: 'utf8', timeout: 30000 })
   assert.ifError(result.error)

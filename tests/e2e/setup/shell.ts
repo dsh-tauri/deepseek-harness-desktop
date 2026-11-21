@@ -66,16 +66,6 @@ export const ASSEMBLY_TIMEOUT_MS = 900_000
 export const WINDOW_TIMEOUT_MS = 120_000
 export const SETTLE_MS = 3_000
 
-/**
- * 需要同时拉起多套核心（多窗口 + 克隆档案）的用例，在 CI 上与 Rust lane 抢同一台
- * runner 时跑不出结果：即使把等待加到 120s，第三个窗口仍等不到首帧，日志里是
- * ECONNRESET / Failed to fetch，属于资源不够而不是产品坏了。
- *
- * 这类用例留给资源充足的机器跑，CI 上跳过，避免把资源瓶颈算成产品回归。
- * 本地跑全部（未设置 CI）；要复现 CI 行为可显式设置 DSH_E2E_SKIP_HEAVY=1。
- */
-export const HEAVY_E2E_ENABLED = !process.env.CI || process.env.DSH_E2E_SKIP_HEAVY === '0'
-
 export interface ShellWindow {
   label: string
   page: Page
@@ -330,6 +320,10 @@ export async function startShellApp(options: { downloadCacheDir?: string, prepar
         expect(controller, `关闭 ${label} 的命令必须由另一个存活窗口发出`).toBeTruthy()
         await controller!.page.evaluate(label => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), label)
         await expect.poll(() => target!.page.isClosed(), { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 的 CDP 页面必须销毁` }).toBe(true)
+        await expect.poll(
+          async () => (await invoke<string[]>(controller!.page, 'plugin:window|get_all_windows')).includes(label),
+          { timeout: WINDOW_TIMEOUT_MS, message: `原生窗口 ${label} 必须从原生窗口管理器注销` },
+        ).toBe(false)
       },
       output: () => output,
       stop,

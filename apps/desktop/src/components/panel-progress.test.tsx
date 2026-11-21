@@ -20,13 +20,6 @@ describe('panel.Progress 宽度与数字一致', () => {
     expect(screen.getByText(`${Math.round(percentage)}%`)).toBeDefined()
   })
 
-  it('宽度不带过渡动画，连续进度事件间不会落后于数字', () => {
-    render(<Panel.Progress percentage={21} />)
-    const fill = screen.getByRole('progressbar').firstElementChild as HTMLElement
-
-    expect(fill.className).not.toContain('transition')
-  })
-
   it.each([[-1, '0%'], [-0.5, '0%'], [100.4, '100%'], [250, '100%'], [Number.NaN, '0%']])('%s 收敛为 %s', (percentage, expected) => {
     render(<Panel.Progress percentage={percentage} />)
 

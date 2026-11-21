@@ -25,6 +25,7 @@
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:e2e:desktop": "vitest run --project desktop",
+    "test:e2e:desktop:heavy": "vitest run --project desktop-heavy",
     "test:native": "pnpm --filter dsh-native test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

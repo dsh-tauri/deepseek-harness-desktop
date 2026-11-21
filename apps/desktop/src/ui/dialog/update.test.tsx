@@ -80,14 +80,15 @@ describe('desktop update dialog', () => {
 
   it('offers the download action once no download is in flight', async () => {
     openDialog()
-    expect((await screen.findByRole('button', { name: 'update.now' })).textContent).toBe('update.now')
+    expect(await screen.findByRole('button', { name: 'update.now' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'update.later' })).not.toBeNull()
   })
 
   it('offers the installer action once the package is downloaded', async () => {
     desktopUpdater.updateInfo!.downloaded = true
     openDialog()
-    expect((await screen.findByRole('button', { name: 'update.open_installer' })).textContent).toBe('update.open_installer')
+    expect(await screen.findByRole('button', { name: 'update.open_installer' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'update.now' })).toBeNull()
   })
 
   it('closes after an existing installer is opened successfully', async () => {

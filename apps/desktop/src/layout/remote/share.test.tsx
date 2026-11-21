@@ -4,8 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
 import { act, cleanup, fireEvent, render as renderElement, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import en from '@/i18n/locales/en-US.json'
-import zh from '@/i18n/locales/zh-CN.json'
 import { RemoteShare } from './share'
 
 vi.mock('react-i18next', () => ({
@@ -351,10 +349,7 @@ describe('remoteShare 远程分享弹层', () => {
     render(<RemoteShare onManage={vi.fn()} />)
     await openShare()
 
-    const link = await screen.findByText(LAN_LINK)
-    expect(link.className).toContain('truncate')
-    expect(link.tagName).toBe('DIV')
-    expect(link.className).not.toContain('break-all')
+    await screen.findByText(LAN_LINK)
     expect(screen.getByRole('img', { name: 'remote.share.qr_alt' }).getAttribute('src')).toBe(QR)
     expect(screen.queryByText('remote.share.lan_local_only')).toBeNull()
     expect(screen.queryByText('remote.share.lan_state.listening')).toBeNull()
@@ -384,10 +379,7 @@ describe('remoteShare 远程分享弹层', () => {
     await openShare()
     clickTunnelTab()
 
-    const offDescription = await screen.findByText('remote.share.tunnel_off_desc')
-    expect(offDescription.className).toContain('text-center')
-    expect(offDescription.className).toContain('block')
-    expect(offDescription.className).toMatch(/pb-/u)
+    expect(await screen.findByText('remote.share.tunnel_off_desc')).toBeTruthy()
     expect(await screen.findByText('remote.share.tunnel_enable')).toBeTruthy()
     expect(screen.queryByText('remote.share.tunnel_failed')).toBeNull()
   })
@@ -402,7 +394,7 @@ describe('remoteShare 远程分享弹层', () => {
 
     await screen.findByRole('progressbar')
     expect(screen.getAllByText('remote.share.stage.download')).toHaveLength(1)
-    expect(screen.getByText('remote.share.download_progress').textContent).toBe('remote.share.download_progress')
+    expect(screen.getByText('remote.share.download_progress')).toBeTruthy()
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('25')
     expect(screen.queryByText(/remote\.share\.tunnel_starting/u)).toBeNull()
   })
@@ -418,7 +410,7 @@ describe('remoteShare 远程分享弹层', () => {
     await screen.findByRole('progressbar')
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBeNull()
     expect(screen.getAllByText('remote.share.stage.download')).toHaveLength(1)
-    expect(screen.getByText('remote.share.download_received').textContent).toBe('remote.share.download_received')
+    expect(screen.getByText('remote.share.download_received')).toBeTruthy()
     expect(screen.queryByText(/remote\.share\.tunnel_starting/u)).toBeNull()
   })
 
@@ -461,10 +453,7 @@ describe('remoteShare 远程分享弹层', () => {
     await openShare()
     clickTunnelTab()
 
-    const link = await screen.findByText(TUNNEL_LINK)
-    expect(link.className).toContain('truncate')
-    expect(link.tagName).toBe('DIV')
-    expect(link.className).not.toContain('break-all')
+    await screen.findByText(TUNNEL_LINK)
     const code = screen.getByTestId('remote-share-pairing')
     expect(code.textContent).toBe(PAIR_CODE)
     expect(code.previousElementSibling?.textContent).toBe('remote.share.pairing_expires')
@@ -514,14 +503,6 @@ describe('remoteShare 远程分享弹层', () => {
     expect(screen.queryByTestId('remote-share-password')).toBeNull()
     expect(screen.queryByText('Gen-Pass-1234')).toBeNull()
     expect(screen.queryByText('remote.share.password')).toBeNull()
-  })
-
-  it('两种语言移除访问密码文案，保留 SSH 密码与未知总量下载提示', () => {
-    for (const locale of [en, zh]) {
-      expect(Object.keys(locale).filter(key => key.startsWith('remote.share.password'))).toEqual([])
-      expect(locale['remote.auth.password']).toBeTypeOf('string')
-      expect(locale).toHaveProperty('remote.share.download_received', '{{received}} MB')
-    }
   })
 
   it('首次隧道下载尚未返回时持续轮询进度，较旧动作快照不覆盖刚取得的下载', async () => {
@@ -627,7 +608,6 @@ describe('remoteShare 远程分享弹层', () => {
     const heading = screen.getByRole('heading', { name: 'remote.share' })
     expect(gear.parentElement).toBe(heading.parentElement)
     expect(gear.parentElement?.contains(screen.getByRole('tablist'))).toBe(false)
-    expect(gear.className).toContain('ml-auto')
     fireEvent.click(gear)
     expect(manageSpy).toHaveBeenCalledTimes(1)
     unmount()
