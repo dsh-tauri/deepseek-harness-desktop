@@ -143,6 +143,10 @@ export default c([
       background: 'var(--dsw-alias-label-primary)',
     }),
   ]),
+  c(':where([data-chat-flow] > [data-chat-anchor-key]:not([hidden]))', {
+    contentVisibility: 'auto',
+    containIntrinsicSize: 'auto 320px',
+  }),
   c('[data-chat-flow] > [data-chat-anchor-key]:not([hidden])', {
     paddingLeft: '24px',
     marginLeft: '-24px',
