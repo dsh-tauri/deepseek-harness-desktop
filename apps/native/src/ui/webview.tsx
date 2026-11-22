@@ -56,7 +56,7 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
   if (Platform.OS !== 'ios')
     edges.push('bottom')
   const shim = createNotificationShim(address.id, nonce, edges)
-  // keep:effect Neither platform shrinks the WebView under its keyboard — iOS keeps the frame and Android runs edge-to-edge, where `adjustResize` no longer resizes the window — so the page has to reserve the covered height itself. iOS derives the overlap from the frame event so docked, resized and floating keyboards all report their real top; Android only exposes the keyboard height, which is already in DIP and therefore comparable with CSS px.
+  // keep:effect Neither platform shrinks the WebView under its keyboard — iOS keeps the frame and Android runs edge-to-edge, where `adjustResize` no longer resizes the window — so the injected script reserves the covered height by shrinking the page root. iOS derives the overlap from the frame event so docked, resized and floating keyboards all report their real top; Android only exposes the keyboard height, which is already in DIP and therefore comparable with CSS px.
   useEffect(() => {
     if (Platform.OS === 'ios') {
       const subscription = Keyboard.addListener('keyboardWillChangeFrame', (event) => {

@@ -419,7 +419,10 @@ export function nativeMessageScript(origin: string, nonce: string, payload: Reco
   return `if (window.top === window && location.origin === ${JSON.stringify(origin)} && window.__dshBridgeNonce === ${JSON.stringify(nonce)}) { window.__dshBridgeReceive && window.__dshBridgeReceive(${JSON.stringify({ ...payload, nonce })}); } true;`
 }
 
+// keep: The web shell pins `html` to the viewport (`height: 100%`), so shrinking the root by the covered height is what lifts the composer above an overlaid keyboard.
 export function keyboardHeightScript(origin: string, height: number): string {
-  const detail = { detail: { height: Math.max(0, Math.round(height)) } }
-  return `if (window.top === window && location.origin === ${JSON.stringify(origin)}) window.dispatchEvent(new CustomEvent('dsh-mobile-keyboard', ${JSON.stringify(detail)})); true;`
+  const rounded = Math.max(0, Math.round(height))
+  const detail = { detail: { height: rounded } }
+  const fitted = JSON.stringify(rounded > 0 ? `calc(100% - ${String(rounded)}px)` : '')
+  return `if (window.top === window && location.origin === ${JSON.stringify(origin)}) { var root = document.documentElement; if (root) root.style.height = ${fitted}; window.dispatchEvent(new CustomEvent('dsh-mobile-keyboard', ${JSON.stringify(detail)})); } true;`
 }
