@@ -34,7 +34,7 @@ Derived (upstream → this package):
 - Repository: <https://github.com/hongweifei/dsh-chat-content-visibility-auto>
 - Version: `1.0.0`
 - License: MIT — Copyright (c) 2026 dsh-chat-content-visibility-auto contributors
-- Not vendored, not installed: the external client plugin stays out of this repo's manifests. Its converged windowing rule — `content-visibility: auto` + `contain-intrinsic-size: auto 320px` on `[data-chat-flow] > [data-chat-anchor-key]` — is reimplemented on this repo's own `css-render` stack in `src/client/styles/global.cssr.ts`, keyed off the official chat DOM contract (`ChatView` column `[data-chat-flow]` → node rows `[data-chat-anchor-key]`).
+- Not vendored, not installed: the external client plugin stays out of this repo's manifests. Its converged windowing rule — `content-visibility: auto` + `contain-intrinsic-size: auto 320px` on `[data-chat-flow] > [data-chat-anchor-key]` — is reimplemented on this repo's own `css-render` stack in `src/client/styles/global.cssr.ts`, keyed off the official chat DOM contract (`ChatView` column `[data-chat-flow]` → node rows `[data-chat-anchor-key]`). The rule is emitted inside `:where()` so it stays a zero-specificity default and any plugin that manages its own row sizing wins.
 
 ## lobehub/lobe-icons
 
