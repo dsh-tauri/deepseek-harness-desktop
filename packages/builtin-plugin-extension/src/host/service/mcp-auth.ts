@@ -6,8 +6,20 @@ import { defineService } from 'dsh-tauri'
 import { mcpAuthRuntime } from '../config/runtime'
 import { server } from '../server'
 import { createMcpAuthBackend } from './mcp-auth.backend'
+import { onceAsync } from './mcp-auth.utils'
 
 type CredentialKey = Parameters<HostContext['credentials']['readRecord']>[0]
+
+async function loadBackend(): Promise<McpAuthBackend> {
+  const host = getServerContext<HostContext>(server)
+  const sdk = await host.loader.import('@modelcontextprotocol/client')
+  return mcpAuthRuntime.backend = createMcpAuthBackend(
+    host.loader.unwrapExports(sdk) as McpOAuthSdk,
+    credentialStore(host.credentials),
+  )
+}
+
+const resolveBackend = onceAsync(loadBackend)
 
 export const mcpAuth = defineService({
   async check(row: McpRow, timeoutMs: number): Promise<McpCheckResult> {
@@ -25,18 +37,6 @@ export const mcpAuth = defineService({
     return mcpAuthRuntime.backend?.lookup(attemptId)
   },
 })
-
-async function resolveBackend(): Promise<McpAuthBackend> {
-  const cached = mcpAuthRuntime.backend
-  if (cached !== undefined)
-    return cached
-  const host = getServerContext<HostContext>(server)
-  const sdk = await host.loader.import('@modelcontextprotocol/client')
-  return mcpAuthRuntime.backend = createMcpAuthBackend(
-    host.loader.unwrapExports(sdk) as McpOAuthSdk,
-    credentialStore(host.credentials),
-  )
-}
 
 function credentialStore(credentials: HostContext['credentials']): McpAuthCredentialStore {
   return {
