@@ -101,7 +101,7 @@ function createBrowser(options: { locationOrigin?: string, topFrame?: boolean, h
   const appendChild = vi.fn((style: BrowserStyle) => {
     styles.set(style.id, style)
   })
-  const documentElement = { ...browserElement(), appendChild }
+  const documentElement = { ...browserElement(), appendChild, style: { height: '' } }
   const body = browserElement()
   const mutations: Array<{ callback: () => void, observe: ReturnType<typeof vi.fn>, disconnect: ReturnType<typeof vi.fn> }> = []
   class BrowserMutationObserver {
@@ -1184,12 +1184,39 @@ describe('keyboardHeightScript', () => {
     expect(seen.map(event => event.detail)).toEqual([{ height: 401 }])
   })
 
+  it('shrinks the page root by the reported keyboard height', () => {
+    const { browser } = keyboardEvents()
+
+    browser.run(keyboardHeightScript(origin, 400.7))
+
+    expect(browser.documentElement.style.height).toBe('calc(100% - 401px)')
+  })
+
+  it('restores the page root height once the keyboard is dismissed', () => {
+    const { browser } = keyboardEvents()
+    browser.run(keyboardHeightScript(origin, 400))
+
+    browser.run(keyboardHeightScript(origin, 0))
+
+    expect(browser.documentElement.style.height).toBe('')
+  })
+
   it('clamps a dismissed keyboard to zero', () => {
     const { browser, seen } = keyboardEvents()
 
     browser.run(keyboardHeightScript(origin, -1))
 
     expect(seen.map(event => event.detail)).toEqual([{ height: 0 }])
+    expect(browser.documentElement.style.height).toBe('')
+  })
+
+  it('reports without a document root', () => {
+    const browser = createBrowser({ rootAvailable: false })
+    const seen: CustomEvent<{ height: number }>[] = []
+    browser.window.addEventListener('dsh-mobile-keyboard', event => void seen.push(event as CustomEvent<{ height: number }>))
+
+    expect(browser.run(keyboardHeightScript(origin, 400))).toBe(true)
+    expect(seen.map(event => event.detail)).toEqual([{ height: 400 }])
   })
 
   it.each([{ locationOrigin: 'https://evil.test:3080' }, { topFrame: false }])('ignores untrusted documents or subframes %j', (options) => {
@@ -1199,6 +1226,7 @@ describe('keyboardHeightScript', () => {
 
     expect(browser.run(keyboardHeightScript(origin, 400))).toBe(true)
     expect(seen).toHaveLength(0)
+    expect(browser.documentElement.style.height).toBe('')
   })
 })
 
