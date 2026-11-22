@@ -4,7 +4,8 @@
 //! - Unix（macOS/Linux）：进程以独立进程组启动（`process_group(0)`，见
 //!   `process.rs`），此处对注册的 PID 强制结束整组（含 pnpm / git 等子进程）；
 //! - Windows：对创建时记录的精确 PID 执行 `taskkill /T /F`，不再按命令行模糊
-//!   枚举，避免误杀其它插件操作或用户进程。
+//!   枚举，避免误杀其它插件操作或用户进程。`taskkill` 报「目标已不存在」时按清理
+//!   成功处理——进程抢在强杀前自行退出是正常竞态，不是终止未确认（issue #1604）。
 
 use crate::{AppHandle};
 use serde::Serialize;
@@ -120,6 +121,10 @@ pub(crate) async fn terminate_owned_install(owner: ProcessOwner) -> bool {
     })
 }
 
+/// `taskkill` 找不到目标进程时的退出码（`ERROR: The process "..." not found.`）。
+#[cfg(windows)]
+const TASKKILL_TARGET_MISSING: i32 = 128;
+
 #[cfg(windows)]
 pub(crate) fn terminate_pid_tree(pid: u32) -> bool {
     use std::os::windows::process::CommandExt;
@@ -127,12 +132,33 @@ pub(crate) fn terminate_pid_tree(pid: u32) -> bool {
     command
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .creation_flags(0x08000000);
-    let ok = command
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
-    log::warn!("plugin install cancel: taskkill pid {pid} success={ok}");
+    let code = command.status().ok().and_then(|status| status.code());
+    let ok = taskkill_confirms_cleanup(code, || super::process::plugin_process_has_exited(pid));
+    if ok && code != Some(0) {
+        log::info!(
+            "plugin install cancel: taskkill pid {pid} found no such process, process tree already gone"
+        );
+    } else {
+        log::warn!("plugin install cancel: taskkill pid {pid} success={ok}");
+    }
     ok
+}
+
+/// `taskkill` 的结论是否等于「进程树已终止」。
+///
+/// 探测进程打印完版本号就自行退出，与随后的 `taskkill /T` 抢同一个窗口：`/T` 按
+/// 快照找目标，进程若在快照前退出就只剩 `not found`（退出码 128）。这属于「没有
+/// 可终止的进程树」，不是「终止未确认」——判成失败会让
+/// `PNPM_PROBE_TREE_CLEANUP_FAILED` 永久 fail-closed，之后每次插件安装与启动都被
+/// 挡死，壳直接打不开（issue #1604）。退出码 128 仍要用进程存活复核一次，避免把
+/// 真正的失败当成已终止。
+#[cfg(windows)]
+fn taskkill_confirms_cleanup(code: Option<i32>, target_exited: impl FnOnce() -> bool) -> bool {
+    match code {
+        Some(0) => true,
+        Some(TASKKILL_TARGET_MISSING) => target_exited(),
+        _ => false,
+    }
 }
 
 #[cfg(not(windows))]
@@ -299,5 +325,57 @@ mod tests {
 
         drop(guard);
         assert_eq!(super::super::process::active_plugin_pid(owner), None);
+    }
+
+    /// issue #1604 回归：`taskkill /T` 找不到目标（退出码 128）且进程确实已退出，
+    /// 必须算「清理已确认」。判成失败会让 `PNPM_PROBE_TREE_CLEANUP_FAILED` 永久
+    /// fail-closed，之后每次插件安装与启动都被挡死。
+    #[cfg(windows)]
+    #[test]
+    fn taskkill_not_found_for_an_exited_target_confirms_cleanup() {
+        assert!(taskkill_confirms_cleanup(
+            Some(TASKKILL_TARGET_MISSING),
+            || true
+        ));
+    }
+
+    /// 退出码 128 仍要进程存活复核：目标还在、或 `taskkill` 根本没跑起来时保持
+    /// fail-closed，不能把真正的失败当成已终止。
+    #[cfg(windows)]
+    #[test]
+    fn taskkill_failures_stay_unconfirmed() {
+        assert!(taskkill_confirms_cleanup(Some(0), || false));
+        assert!(!taskkill_confirms_cleanup(
+            Some(TASKKILL_TARGET_MISSING),
+            || false
+        ));
+        assert!(!taskkill_confirms_cleanup(Some(1), || true));
+        assert!(!taskkill_confirms_cleanup(None, || true));
+    }
+
+    /// 真实 `taskkill` 的回归：探测进程自行退出、句柄还没回收时强杀只剩
+    /// `not found`（实测退出码 128），必须判成清理已确认。
+    #[cfg(windows)]
+    #[test]
+    fn terminate_pid_tree_confirms_a_target_that_already_exited() {
+        use std::os::windows::process::CommandExt;
+        let mut child = std::process::Command::new("cmd.exe")
+            .creation_flags(0x08000000)
+            .args(["/D", "/C", "exit 0"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let started = std::time::Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(10),
+                "test child did not exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            terminate_pid_tree(pid),
+            "a probe that exited on its own must count as confirmed cleanup"
+        );
     }
 }
