@@ -71,6 +71,11 @@ export function RemoteProfileSection({ machine }: { machine: RemoteMachineRow })
       </div>
 
       <Panel.Loadable loading={profilesQuery.isPending} error={error}>
+        <If cond={instanceQuery.error != null}>
+          <div className="px-1 pb-1" data-testid={`dsh-profile-remote-instance-error-${machine.id}`}>
+            <Description className="text-[10px] text-warning">{t('profiles.remote_instance_error')}</Description>
+          </div>
+        </If>
         <If cond={instance != null}>
           <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1" data-testid={`dsh-profile-remote-instance-${machine.id}`}>
             <span className="text-xs text-muted">{t('profiles.remote_instance_profile')}</span>

@@ -109,6 +109,14 @@ describe('远端 Profile 只读列表', () => {
     expect(screen.queryByText('No profiles on this machine')).toBeNull()
   })
 
+  it('shows an instance query failure without hiding the profile list', async () => {
+    mocks.getCoreInstance.mockRejectedValue(new Error('discovery failed'))
+    renderRemoteProfiles()
+
+    expect(await screen.findByTestId('dsh-profile-remote-instance-error-build')).toBeTruthy()
+    expect(screen.getByTestId('dsh-profile-remote-build-remote')).toBeTruthy()
+  })
+
   it('shows the instance actual profile instead of the configured one when they differ', async () => {
     mocks.getCoreInstance.mockResolvedValue({
       item: { verdict: 'mismatch', actual: 'build-alt', expected: 'remote', port: 3089, pid: '4321', createdByDesktop: true },
