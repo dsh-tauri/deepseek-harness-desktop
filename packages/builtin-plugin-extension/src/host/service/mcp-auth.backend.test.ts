@@ -1,5 +1,5 @@
 import type { IncomingMessage, Server } from 'node:http'
-import type { McpAuthCredentialStore, McpOAuthGrant, McpOAuthSdk } from './mcp-auth.types'
+import type { McpAuthBackend, McpAuthCredentialStore, McpOAuthGrant, McpOAuthSdk } from './mcp-auth.types'
 import type { McpRow } from './mcp.types'
 import { Buffer } from 'node:buffer'
 import { createServer } from 'node:http'
@@ -14,6 +14,7 @@ const ACCESS_TOKEN = 'access-1'
 interface FakeServer {
   url: string
   requests: string[]
+  rotate: () => void
   close: () => Promise<void>
 }
 
@@ -29,6 +30,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 async function startServer(options: { requireAuth: boolean, metadata?: boolean }): Promise<FakeServer> {
   const requests: string[] = []
+  let access = ACCESS_TOKEN
   let base = ''
   const server: Server = createServer(async (req, res) => {
     const body = await readBody(req)
@@ -39,7 +41,7 @@ async function startServer(options: { requireAuth: boolean, metadata?: boolean }
         res.writeHead(405).end()
         return
       }
-      if (options.requireAuth && req.headers.authorization !== `Bearer ${ACCESS_TOKEN}`) {
+      if (options.requireAuth && req.headers.authorization !== `Bearer ${access}`) {
         res.writeHead(401, { 'www-authenticate': `Bearer resource_metadata="${base}.well-known/oauth-protected-resource"` }).end()
         return
       }
@@ -93,7 +95,7 @@ async function startServer(options: { requireAuth: boolean, metadata?: boolean }
     }
     if (url.pathname === '/token') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ access_token: ACCESS_TOKEN, token_type: 'Bearer', expires_in: 3600, refresh_token: 'refresh-1' }))
+      res.end(JSON.stringify({ access_token: access, token_type: 'Bearer', expires_in: 3600, refresh_token: 'refresh-1' }))
       return
     }
     res.writeHead(404).end('not found')
@@ -106,6 +108,9 @@ async function startServer(options: { requireAuth: boolean, metadata?: boolean }
   const fake: FakeServer = {
     url: `${base}mcp`,
     requests,
+    rotate: () => {
+      access = `${access}-rotated`
+    },
     close: () => new Promise<void>((resolve) => {
       server.closeAllConnections()
       server.close(() => resolve())
@@ -128,6 +133,14 @@ function memoryStore(): McpAuthCredentialStore & { grants: Map<string, McpOAuthG
       return next
     },
   }
+}
+
+async function completeAuthorization(backend: McpAuthBackend, authorizationUrl: string, attemptId: string): Promise<void> {
+  const authorize = await fetch(authorizationUrl, { redirect: 'manual' })
+  expect(authorize.status).toBe(302)
+  const callback = await fetch(authorize.headers.get('location') ?? '', { headers: { host: new URL(authorizationUrl).host } })
+  expect(await callback.text()).toBe('MCP authorized. You can close this window.')
+  await expect.poll(() => backend.lookup(attemptId)?.status, { timeout: 10_000 }).toBe('authorized')
 }
 
 function rowOf(url: string, headers?: Record<string, string>): McpRow {
@@ -180,14 +193,22 @@ describe('createMcpAuthBackend start', () => {
     expect(new URL(started.authorizationUrl).searchParams.get('code_challenge_method')).toBe('S256')
     expect(backend.lookup(started.attemptId)).toEqual({ status: 'pending' })
 
-    const authorize = await fetch(started.authorizationUrl, { redirect: 'manual' })
-    expect(authorize.status).toBe(302)
-    const callback = await fetch(authorize.headers.get('location') ?? '', { headers: { host: new URL(started.authorizationUrl).host } })
-    expect(await callback.text()).toBe('MCP authorized. You can close this window.')
-
-    await expect.poll(() => backend.lookup(started.attemptId)?.status, { timeout: 10_000 }).toBe('authorized')
+    await completeAuthorization(backend, started.authorizationUrl, started.attemptId)
     expect(store.grants.size).toBe(1)
     await expect(backend.check(row, 5000)).resolves.toEqual({ ok: true })
+  })
+
+  it('refreshes an expired access token instead of asking for a new authorization', async () => {
+    const fake = await startServer({ requireAuth: true, metadata: true })
+    const store = memoryStore()
+    const backend = createMcpAuthBackend(sdk, store)
+    const row = rowOf(fake.url)
+    const started = await backend.start(row)
+    await completeAuthorization(backend, started.authorizationUrl, started.attemptId)
+
+    fake.rotate()
+    await expect(backend.check(row, 5000)).resolves.toEqual({ ok: true })
+    expect(fake.requests.filter(request => request === 'POST /token').length).toBe(2)
   })
 
   it('rejects a callback whose state does not match the attempt', async () => {
