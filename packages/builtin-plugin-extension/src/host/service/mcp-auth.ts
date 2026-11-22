@@ -1,10 +1,25 @@
 import type { HostContext } from 'dsh-tauri'
-import type { McpAuthBackend, McpAuthModule } from './mcp-auth.types'
+import type { McpAuthBackend, McpAuthCredentialStore, McpOAuthSdk } from './mcp-auth.types'
 import type { McpCheckResult, McpRow } from './mcp.types'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
 import { mcpAuthRuntime } from '../config/runtime'
 import { server } from '../server'
+import { createMcpAuthBackend } from './mcp-auth.backend'
+import { onceAsync } from './mcp-auth.utils'
+
+type CredentialKey = Parameters<HostContext['credentials']['readRecord']>[0]
+
+async function loadBackend(): Promise<McpAuthBackend> {
+  const host = getServerContext<HostContext>(server)
+  const sdk = await host.loader.import('@modelcontextprotocol/client')
+  return mcpAuthRuntime.backend = createMcpAuthBackend(
+    host.loader.unwrapExports(sdk) as McpOAuthSdk,
+    credentialStore(host.credentials),
+  )
+}
+
+const resolveBackend = onceAsync(loadBackend)
 
 export const mcpAuth = defineService({
   async check(row: McpRow, timeoutMs: number): Promise<McpCheckResult> {
@@ -23,12 +38,9 @@ export const mcpAuth = defineService({
   },
 })
 
-async function resolveBackend(): Promise<McpAuthBackend> {
-  const host = getServerContext<HostContext>(server)
-  const core = await host.loader.import('@deepseek-ai/dsh-mcp-client')
-  const module = host.loader.unwrapExports(core) as McpAuthModule
-  if (typeof module.desktopMcpOAuth !== 'function')
-    throw new Error('MCP OAuth requires the current DSH core; update the core in DSH Desktop and restart')
-  const sdk = await host.loader.import('@modelcontextprotocol/client')
-  return mcpAuthRuntime.backend = module.desktopMcpOAuth(host.loader.unwrapExports(sdk), host.credentials)
+function credentialStore(credentials: HostContext['credentials']): McpAuthCredentialStore {
+  return {
+    readRecord: key => credentials.readRecord(key as CredentialKey),
+    modifyRecord: (key, mutate) => credentials.modifyRecord(key as CredentialKey, async current => mutate(current)),
+  }
 }
