@@ -29,13 +29,6 @@ Derived (upstream → this package):
 - Date/calendar trigger uses the existing shared `Calendar` glyph because the installed official primitives do not export its calendar glyph; clock and chevrons use the public official exports. Recurring local tasks add minute-only clock precision to preserve the existing `HH:mm` host contract.
 - Existing `Checkbox` default geometry remains unchanged; `size="xs"` is a local compact extension for weekday options.
 
-## hongweifei/dsh-chat-content-visibility-auto
-
-- Repository: <https://github.com/hongweifei/dsh-chat-content-visibility-auto>
-- Version: `1.0.0`
-- License: MIT — Copyright (c) 2026 dsh-chat-content-visibility-auto contributors
-- Not vendored, not installed: the external client plugin stays out of this repo's manifests. Its converged windowing rule — `content-visibility: auto` + `contain-intrinsic-size: auto 320px` on `[data-chat-flow] > [data-chat-anchor-key]` — is reimplemented on this repo's own `css-render` stack in `src/client/styles/global.cssr.ts`, keyed off the official chat DOM contract (`ChatView` column `[data-chat-flow]` → node rows `[data-chat-anchor-key]`).
-
 ## lobehub/lobe-icons
 
 - Repository: <https://github.com/lobehub/lobe-icons>

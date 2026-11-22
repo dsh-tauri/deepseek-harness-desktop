@@ -144,8 +144,6 @@ export default c([
     }),
   ]),
   c('[data-chat-flow] > [data-chat-anchor-key]:not([hidden])', {
-    contentVisibility: 'auto',
-    containIntrinsicSize: 'auto 320px',
     paddingLeft: '24px',
     marginLeft: '-24px',
   }),
