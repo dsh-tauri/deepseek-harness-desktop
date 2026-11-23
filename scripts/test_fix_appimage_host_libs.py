@@ -80,7 +80,7 @@ class AppImageTest(unittest.TestCase):
             env=env, capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout
+        return result.stdout.strip()
 
     def test_electron_contract(self):
         with tempfile.TemporaryDirectory() as work:
