@@ -76,7 +76,7 @@ function freeIdOf(base: string, taken: ReadonlySet<string>): string {
 function RowShell({ id, name, tag, tintColor, tintBorder, status, trail, actions, t, children }: {
   id: string
   name: string
-  tag: string
+  tag?: string | undefined
   tintColor: string | undefined
   tintBorder: boolean
   status: MachineStatus | undefined
@@ -101,7 +101,9 @@ function RowShell({ id, name, tag, tintColor, tintBorder, status, trail, actions
             ? <span className="inline-block h-[10px] w-[10px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(0,0,0,0.12)]" style={{ background: tintColor }} aria-hidden="true" />
             : null}
           <span className="truncate text-[14px] leading-[22px] font-medium text-primary">{name}</span>
-          <span className="hidden shrink-0 truncate text-[11px] leading-[16px] text-tertiary group-hover:inline" data-testid={`host-${id}`}>{tag}</span>
+          {tag === undefined
+            ? null
+            : <span className="shrink-0 rounded-full border-0 bg-module-platform px-[8px] py-[2px] text-[11px] leading-[16px] text-secondary" data-testid={`tag-${id}`}>{tag}</span>}
           {detail === undefined
             ? null
             : <span className="min-w-0 truncate text-[12px] leading-[18px] text-tertiary" data-testid={`status-${id}`}>{detail}</span>}
@@ -131,9 +133,6 @@ function EditPanel({ draft, t, hasPassword, hasPassphrase, dirty, saving, onChan
   return (
     <div className="mx-0 mb-[4px] mt-[2px] flex flex-col gap-[12px] border-t border-t-border-l2 pt-[12px]" data-testid={`editor-${row.id}`}>
       <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
-        <Field label={t('field.id')} span={3}>
-          <Input className="box-border w-full" value={row.id} disabled />
-        </Field>
         <Field label={t('field.name')} span={4}>
           <Input className="box-border w-full" value={row.name} disabled={saving} onChange={event => onChange(draft.key, { name: event.target.value })} />
         </Field>
@@ -482,7 +481,7 @@ function StepRail({ trail, t }: { trail: readonly ProgressPhase[], t: (key: Remo
     return null
   const current = trail[trail.length - 1]
   return (
-    <ol className="m-0 ml-[8px] inline-flex shrink-0 list-none gap-[4px] p-0 align-middle" data-testid="step-rail">
+    <ol className="m-0 inline-flex shrink-0 list-none gap-[4px] p-0 align-middle" data-testid="step-rail">
       {trail.map(phase => (
         <li
           key={phase}
@@ -893,7 +892,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                 key={row.id}
                 id={row.id}
                 name={row.name === '' ? row.id : row.name}
-                tag={row.host}
+                tag={undefined}
                 tintColor={colorOf(row)}
                 tintBorder={row.tintBorder === true}
                 status={state.statuses[row.id]}
