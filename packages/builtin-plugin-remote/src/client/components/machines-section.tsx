@@ -1,10 +1,10 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { ComponentType, CSSProperties, ReactNode } from 'react'
 import type { RemoteKey } from '../locales/index'
 import type { MachinesNotice } from '../store/modules/machines.types'
 import type { InstallResult, MachineLifecycleState, MachineRow, MachineStatus, ProgressPhase, RemoteBridge, SecretValues } from '../types/index'
-import { Button, Input, Modal, StateDot, Switch } from 'dsh-tauri-ui/client'
+import { Action, Button, CirclePlay, EllipsisVertical, Icon, Input, Menu, Modal, PersonPencil, PlugConnection, StateDot, Switch, TrashBin } from 'dsh-tauri-ui/client'
 import { cn, useStore } from 'dsh-tauri/client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { messageOf } from '../../shared/error'
 import { desktopBridge } from '../service/bridge'
@@ -177,6 +177,7 @@ function EditPanel({ draft, t, hasPassword, hasPassphrase, dirty, saving, onChan
 interface RowMenuItem {
   key: string
   label: string
+  icon: ComponentType
   danger?: boolean
   disabled?: boolean
   onSelect: () => void
@@ -184,45 +185,36 @@ interface RowMenuItem {
 
 function RowMenu({ t, items }: { t: (key: RemoteKey) => string, items: readonly RowMenuItem[] }): ReactNode {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLSpanElement>(null)
-  useEffect(() => {
-    if (!open)
-      return
-    const onPointerDown = (event: PointerEvent): void => {
-      if (ref.current !== null && !ref.current.contains(event.target as Node))
-        setOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [open])
   if (items.length === 0)
     return null
   return (
-    <span ref={ref} className="relative inline-flex">
-      <Button variant="ghost" size="sm" aria-label={t('more')} aria-expanded={open} onClick={() => setOpen(previous => !previous)}>
-        <span aria-hidden="true" className="text-[14px] leading-[18px]">⋯</span>
-      </Button>
-      {open
-        ? (
-            <span className="absolute right-0 top-[calc(100%+4px)] z-30 flex min-w-[128px] flex-col gap-[2px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] p-[4px] shadow-[var(--dsw-elevation-prominent)]">
-              {items.map(item => (
-                <button
-                  key={item.key}
-                  type="button"
-                  disabled={item.disabled === true}
-                  className={cn('cursor-pointer rounded-[6px] border-none bg-transparent px-[8px] py-[6px] text-left text-[12px] leading-[18px] hover:not-disabled:bg-hover disabled:cursor-not-allowed disabled:opacity-50', item.danger === true ? 'text-error' : 'text-primary')}
-                  onClick={() => {
-                    setOpen(false)
-                    item.onSelect()
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </span>
-          )
-        : null}
-    </span>
+    <Menu
+      open={open}
+      onClose={() => setOpen(false)}
+      onSelect={(id) => {
+        setOpen(false)
+        items.find(item => item.key === id)?.onSelect()
+      }}
+      items={items.map(item => ({
+        id: item.key,
+        label: item.label,
+        icon: <Icon size={14} as={item.icon} />,
+        danger: item.danger === true,
+        disabled: item.disabled === true,
+      }))}
+      portal
+      align="end"
+      anchor={(
+        <Action
+          variant="action"
+          icon={<Icon size={12} as={EllipsisVertical} />}
+          aria-label={t('more')}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen(previous => !previous)}
+        />
+      )}
+    />
   )
 }
 
@@ -243,9 +235,9 @@ function RowActions({ id, t, status, busy, bridgeOpen, bridgePending, opening, o
   const connected = status?.state === 'connected'
   const held = status?.state === 'connecting' || status?.state === 'testing' || status?.state === 'reconnecting'
   const secondary: readonly RowMenuItem[] = [
-    { key: 'test', label: t('test'), disabled: busy !== undefined || held, onSelect: () => onTest(id) },
+    { key: 'test', label: t('test'), icon: CirclePlay, disabled: busy !== undefined || held, onSelect: () => onTest(id) },
     ...connected
-      ? [{ key: 'disconnect', label: t('disconnect'), disabled: busy !== undefined, onSelect: () => onDisconnect(id) }]
+      ? [{ key: 'disconnect', label: t('disconnect'), icon: PlugConnection, disabled: busy !== undefined, onSelect: () => onDisconnect(id) }]
       : [],
     ...menuItems ?? [],
   ]
@@ -917,8 +909,8 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                     onDisconnect={id => void service.disconnect({ machineId: id })}
                     onOpen={openRemoteWindow}
                     menuItems={[
-                      { key: 'edit', label: t('edit'), disabled: editingId !== null && editingId !== row.id, onSelect: () => editingId === row.id ? closeEditor(row.id) : openEditor(row) },
-                      { key: 'remove', label: t('remove'), danger: true, disabled: state.busy[row.id] !== undefined, onSelect: () => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name }) },
+                      { key: 'edit', label: t('edit'), icon: PersonPencil, disabled: editingId !== null && editingId !== row.id, onSelect: () => editingId === row.id ? closeEditor(row.id) : openEditor(row) },
+                      { key: 'remove', label: t('remove'), icon: TrashBin, danger: true, disabled: state.busy[row.id] !== undefined, onSelect: () => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name }) },
                     ]}
                   />
                 )}
