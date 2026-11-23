@@ -1,9 +1,9 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { ComponentType, CSSProperties, ReactNode } from 'react'
 import type { RemoteKey } from '../locales/index'
 import type { MachinesNotice } from '../store/modules/machines.types'
 import type { InstallResult, MachineLifecycleState, MachineRow, MachineStatus, ProgressPhase, RemoteBridge, SecretValues } from '../types/index'
-import { Button, Input, Modal, StateDot, Switch } from 'dsh-tauri-ui/client'
-import { cn, If, useStore } from 'dsh-tauri/client'
+import { Action, ArrowRotateRight, Button, CirclePlay, EllipsisVertical, Icon, Input, Menu, Modal, PersonPencil, PlugConnection, StateDot, Switch, TrashBin } from 'dsh-tauri-ui/client'
+import { cn, useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { messageOf } from '../../shared/error'
@@ -76,7 +76,7 @@ function freeIdOf(base: string, taken: ReadonlySet<string>): string {
 function RowShell({ id, name, tag, tintColor, tintBorder, status, trail, actions, t, children }: {
   id: string
   name: string
-  tag: string
+  tag?: string | undefined
   tintColor: string | undefined
   tintBorder: boolean
   status: MachineStatus | undefined
@@ -85,24 +85,31 @@ function RowShell({ id, name, tag, tintColor, tintBorder, status, trail, actions
   t: (key: RemoteKey) => string
   children?: ReactNode
 }): ReactNode {
+  const detail = status?.progress !== undefined || status?.state === 'reconnecting' || status?.state === 'given-up'
+    ? statusTextOf(status, t)
+    : undefined
   return (
     <li
-      className="flex flex-col gap-[8px] border-l-2 border-l-transparent px-[14px] py-[10px] [&+&]:border-t [&+&]:border-t-border-l2"
+      className="group flex flex-col gap-[8px] border-l-2 border-l-transparent px-[14px] py-[10px] [&+&]:border-t [&+&]:border-t-border-l2"
       data-testid={`machine-${id}`}
       style={tintBorder && tintColor !== undefined ? { borderLeftColor: tintColor } : undefined}
     >
       <div className="flex items-center gap-[10px]">
-        <span className="inline-flex min-w-0 items-center gap-[6px]">
+        <span className="inline-flex min-w-0 flex-1 items-center gap-[6px]">
           <StateDotOf status={status} />
           {tintColor !== undefined
             ? <span className="inline-block h-[10px] w-[10px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(0,0,0,0.12)]" style={{ background: tintColor }} aria-hidden="true" />
             : null}
-          <span className="text-[14px] leading-[22px] font-medium text-primary">{name}</span>
-          <span className="shrink-0 rounded-full border-0 bg-module-platform px-[8px] py-[2px] text-[11px] leading-[16px] text-secondary">{tag}</span>
-          <span className="text-[12px] leading-[18px] text-tertiary" data-testid={`status-${id}`}>{statusTextOf(status, t)}</span>
+          <span className="truncate text-[14px] leading-[22px] font-medium text-primary">{name}</span>
+          {tag === undefined
+            ? null
+            : <span className="shrink-0 rounded-full border-0 bg-module-platform px-[8px] py-[2px] text-[11px] leading-[16px] text-secondary" data-testid={`tag-${id}`}>{tag}</span>}
+          {detail === undefined
+            ? null
+            : <span className="min-w-0 truncate text-[12px] leading-[18px] text-tertiary" data-testid={`status-${id}`}>{detail}</span>}
           <StepRail trail={trail} t={t} />
         </span>
-        <span className="ml-auto inline-flex items-center gap-[4px]">{actions}</span>
+        <span className="ml-auto inline-flex shrink-0 items-center gap-[4px] whitespace-nowrap">{actions}</span>
       </div>
       {children}
     </li>
@@ -126,9 +133,6 @@ function EditPanel({ draft, t, hasPassword, hasPassphrase, dirty, saving, onChan
   return (
     <div className="mx-0 mb-[4px] mt-[2px] flex flex-col gap-[12px] border-t border-t-border-l2 pt-[12px]" data-testid={`editor-${row.id}`}>
       <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
-        <Field label={t('field.id')} span={3}>
-          <Input className="box-border w-full" value={row.id} disabled />
-        </Field>
         <Field label={t('field.name')} span={4}>
           <Input className="box-border w-full" value={row.name} disabled={saving} onChange={event => onChange(draft.key, { name: event.target.value })} />
         </Field>
@@ -169,7 +173,53 @@ function EditPanel({ draft, t, hasPassword, hasPassphrase, dirty, saving, onChan
   )
 }
 
-function RowActions({ id, t, status, busy, bridgeOpen, bridgePending, opening, onTest, onConnect, onDisconnect, onOpen, extras }: {
+interface RowMenuItem {
+  key: string
+  label: string
+  icon: ComponentType
+  title?: string
+  danger?: boolean
+  disabled?: boolean
+  onSelect: () => void
+}
+
+function RowMenu({ t, items }: { t: (key: RemoteKey) => string, items: readonly RowMenuItem[] }): ReactNode {
+  const [open, setOpen] = useState(false)
+  if (items.length === 0)
+    return null
+  return (
+    <Menu
+      open={open}
+      onClose={() => setOpen(false)}
+      onSelect={(id) => {
+        setOpen(false)
+        items.find(item => item.key === id)?.onSelect()
+      }}
+      items={items.map(item => ({
+        id: item.key,
+        label: item.label,
+        icon: <Icon size={14} as={item.icon} />,
+        title: item.title,
+        danger: item.danger === true,
+        disabled: item.disabled === true,
+      }))}
+      portal
+      align="end"
+      anchor={(
+        <Action
+          variant="action"
+          icon={<Icon size={12} as={EllipsisVertical} />}
+          aria-label={t('more')}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen(previous => !previous)}
+        />
+      )}
+    />
+  )
+}
+
+function RowActions({ id, t, status, busy, bridgeOpen, bridgePending, opening, onTest, onConnect, onDisconnect, onOpen, menuItems }: {
   id: string
   t: (key: RemoteKey) => string
   status: MachineStatus | undefined
@@ -181,42 +231,41 @@ function RowActions({ id, t, status, busy, bridgeOpen, bridgePending, opening, o
   onConnect: (id: string) => void
   onDisconnect: (id: string) => void
   onOpen: (id: string) => void
-  extras?: ReactNode
+  menuItems?: readonly RowMenuItem[]
 }): ReactNode {
   const connected = status?.state === 'connected'
   const held = status?.state === 'connecting' || status?.state === 'testing' || status?.state === 'reconnecting'
+  const secondary: readonly RowMenuItem[] = [
+    { key: 'test', label: t('test'), icon: CirclePlay, disabled: busy !== undefined || held, onSelect: () => onTest(id) },
+    ...connected
+      ? [{ key: 'disconnect', label: t('disconnect'), icon: PlugConnection, disabled: busy !== undefined, onSelect: () => onDisconnect(id) }]
+      : [],
+    ...menuItems ?? [],
+  ]
   return (
     <>
-      <Button variant="outline" size="sm" disabled={busy !== undefined || held} onClick={() => onTest(id)}>
-        {t('test')}
-      </Button>
       {connected
         ? (
-            <>
-              {bridgeOpen
+            bridgeOpen
+              ? (
+                  <Button variant="primary" size="sm" disabled={busy !== undefined || opening === true} title={t('open.tip')} onClick={() => onOpen(id)}>
+                    {opening === true ? t('open.opening') : t('open')}
+                  </Button>
+                )
+              : bridgePending === true
                 ? (
-                    <Button variant="primary" size="sm" disabled={busy !== undefined || opening === true} title={t('open.tip')} onClick={() => onOpen(id)}>
-                      {opening === true ? t('open.opening') : t('open')}
+                    <Button variant="primary" size="sm" disabled title={t('open.probing')}>
+                      {t('open')}
                     </Button>
                   )
-                : bridgePending === true
-                  ? (
-                      <Button variant="primary" size="sm" disabled title={t('open.probing')}>
-                        {t('open')}
-                      </Button>
-                    )
-                  : null}
-              <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => onDisconnect(id)}>
-                {t('disconnect')}
-              </Button>
-            </>
+                : null
           )
         : (
             <Button variant="primary" size="sm" disabled={busy !== undefined || held} onClick={() => onConnect(id)}>
               {t('connect')}
             </Button>
           )}
-      {extras}
+      <RowMenu t={t} items={secondary} />
     </>
   )
 }
@@ -233,9 +282,9 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
 }): ReactNode {
   return (
     <>
-      {status === undefined
-        ? null
-        : <InstallPanel status={status} busy={busy} t={t} onInstall={reinstall => onInstall(id, reinstall)} />}
+      {status?.dshMissing === true
+        ? <InstallPanel status={status} busy={busy} t={t} onInstall={reinstall => onInstall(id, reinstall)} />
+        : null}
       {status?.lastError !== undefined ? <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">{status.lastError}</p> : null}
       {bridgeError !== undefined
         ? (
@@ -245,8 +294,7 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
             </p>
           )
         : null}
-      {status?.tunnelBaseUrl !== undefined ? <p className="m-0 font-mono text-[12px] leading-[18px] text-tertiary [overflow-wrap:anywhere]">{status.tunnelBaseUrl}</p> : null}
-      <LogStream id={id} lines={logLines} fallback={status?.progress?.log} />
+      <LogStream id={id} lines={logLines} fallback={status?.progress?.log} t={t} />
       {installResult !== undefined
         ? <p className="m-0 text-[12px] leading-[18px] text-secondary" data-testid={`install-note-${id}`}>{installNoteOf(installResult, t)}</p>
         : null}
@@ -261,16 +309,36 @@ function StateDotOf({ status }: { status: MachineStatus | undefined }): ReactNod
   return <StateDot state={state} size={8} />
 }
 
-function LogStream({ id, lines, fallback }: { id: string, lines: readonly string[], fallback: string | undefined }): ReactNode {
+function LogStream({ id, lines, fallback, t }: { id: string, lines: readonly string[], fallback: string | undefined, t: (key: RemoteKey) => string }): ReactNode {
+  const [open, setOpen] = useState(false)
   const output = lines.length > 0
     ? lines.join('\n')
     : (fallback ?? '')
   if (output === '')
     return null
   return (
-    <pre className="m-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]" data-testid={`machine-log-${id}`}>
-      {output}
-    </pre>
+    <div className="flex flex-col gap-[4px]">
+      <div className="flex items-center gap-[8px]">
+        <span className="h-px flex-1 bg-border-l2" aria-hidden="true" />
+        <button
+          type="button"
+          className="cursor-pointer border-none bg-transparent p-0 text-[11px] leading-[16px] text-tertiary hover:text-secondary"
+          aria-expanded={open}
+          data-testid={`machine-log-toggle-${id}`}
+          onClick={() => setOpen(previous => !previous)}
+        >
+          {open ? t('log.hide') : t('log.show')}
+        </button>
+        <span className="h-px flex-1 bg-border-l2" aria-hidden="true" />
+      </div>
+      {open
+        ? (
+            <pre className="m-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]" data-testid={`machine-log-${id}`}>
+              {output}
+            </pre>
+          )
+        : null}
+    </div>
   )
 }
 
@@ -286,20 +354,17 @@ function InstallPanel({ status, busy, t, onInstall }: {
   t: (key: RemoteKey) => string
   onInstall: (reinstall: boolean) => void
 }): ReactNode {
-  const installing = busy === 'install' || status.progress?.phase === 'installing'
   // 后端在重连/握手期拒绝新的 install 请求，按钮同步禁用，避免点了才报错。
   const held = status.state === 'connecting' || status.state === 'testing' || status.state === 'reconnecting'
   const view = status.dshMissing === true ? INSTALL_VIEW_OF.missing : INSTALL_VIEW_OF.ready
   return (
     <div className="flex items-center gap-[12px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]" data-testid={`install-panel-${status.dshMissing === true ? 'missing' : 'ready'}`}>
       <p className="m-0 min-w-0 flex-1 text-[12px] leading-[18px] text-secondary">
-        {t(installing ? 'progress.installing' : view.hint)}
+        {t(view.hint)}
       </p>
-      <If cond={!installing}>
-        <Button variant={view.variant} size="sm" disabled={busy !== undefined || held} onClick={() => onInstall(view.reinstall)}>
-          {t(view.action)}
-        </Button>
-      </If>
+      <Button variant={view.variant} size="sm" className="shrink-0 whitespace-nowrap" disabled={busy !== undefined || held} onClick={() => onInstall(view.reinstall)}>
+        {t(view.action)}
+      </Button>
     </div>
   )
 }
@@ -416,7 +481,7 @@ function StepRail({ trail, t }: { trail: readonly ProgressPhase[], t: (key: Remo
     return null
   const current = trail[trail.length - 1]
   return (
-    <ol className="m-0 ml-[8px] inline-flex list-none gap-[4px] p-0 align-middle" data-testid="step-rail">
+    <ol className="m-0 inline-flex shrink-0 list-none gap-[4px] p-0 align-middle" data-testid="step-rail">
       {trail.map(phase => (
         <li
           key={phase}
@@ -489,15 +554,12 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
 }): ReactNode {
   const [host, setHost] = useState('')
   const [name, setName] = useState('')
-  const [id, setId] = useState('')
-  const [idTouched, setIdTouched] = useState(false)
   const [port, setPort] = useState(String(DEFAULT_SSH_PORT))
   const [user, setUser] = useState('')
   const [remotePort, setRemotePort] = useState(String(DEFAULT_REMOTE_PORT))
-  const [profileName, setProfileName] = useState('')
 
   const slug = slugOf(host)
-  const effectiveId = idTouched ? id.trim() : (slug === '' ? '' : freeIdOf(slug, takenIds))
+  const effectiveId = slug === '' ? '' : freeIdOf(slug, takenIds)
   const trimmedHost = host.trim()
   const errorKey: RemoteKey | null
     = trimmedHost === ''
@@ -520,7 +582,6 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
       hasPassword: false,
       hasPassphrase: false,
       remotePort: numberOf(remotePort, DEFAULT_REMOTE_PORT),
-      ...(profileName.trim() === '' ? {} : { profileName: profileName.trim() }),
     })
   }
 
@@ -537,7 +598,7 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
         </>
       )}
     >
-      <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
+      <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[520px]:grid-cols-[repeat(6,minmax(0,1fr))]">
         <Field label={t('field.host')} span={8}>
           <Input
             className="box-border w-full"
@@ -551,33 +612,18 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
           <Input className="box-border w-full" value={port} disabled={saving} onChange={event => setPort(event.target.value)} />
         </Field>
         <Field label={t('field.name')} span={4}>
-          <Input className="box-border w-full" value={name} disabled={saving} onChange={event => setName(event.target.value)} />
-        </Field>
-        <Field label={t('field.id')} span={4}>
-          <Input
-            className="box-border w-full"
-            value={idTouched ? id : effectiveId}
-            placeholder={t('add.id_auto')}
-            disabled={saving}
-            onChange={(event) => {
-              setIdTouched(true)
-              setId(event.target.value)
-            }}
-          />
+          <Input className="box-border w-full" value={name} placeholder={effectiveId} disabled={saving} onChange={event => setName(event.target.value)} />
         </Field>
         <Field label={t('field.user')} span={4}>
           <Input className="box-border w-full" value={user} disabled={saving} onChange={event => setUser(event.target.value)} />
         </Field>
-        <Field label={t('field.remotePort')} span={6}>
+        <Field label={t('field.remotePort')} span={4}>
           <Input className="box-border w-full" value={remotePort} disabled={saving} onChange={event => setRemotePort(event.target.value)} />
-        </Field>
-        <Field label={t('field.profileName')} span={6}>
-          <Input className="box-border w-full" value={profileName} placeholder="remote" disabled={saving} onChange={event => setProfileName(event.target.value)} />
         </Field>
       </div>
       {errorKey === null
-        ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('add.id_auto')}</p>
-        : <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">{errorKey === null ? '' : t(errorKey)}</p>}
+        ? null
+        : <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">{t(errorKey)}</p>}
     </Modal>
   )
 }
@@ -770,7 +816,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
   }
 
   const enableRow = (
-    <div className="flex items-center justify-between gap-[24px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[16px] py-[16px]">
+    <div className="flex items-center justify-between gap-[24px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[16px] py-[10px]">
       <div className="flex min-w-0 flex-col">
         <span className="text-[14px] leading-[20px] text-primary">{t('hero.title')}</span>
         <span className="mt-[4px] text-[12px] leading-[18px] text-secondary">{t('enable.hint')}</span>
@@ -846,36 +892,40 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                 key={row.id}
                 id={row.id}
                 name={row.name === '' ? row.id : row.name}
-                tag={row.host}
+                tag={undefined}
                 tintColor={colorOf(row)}
                 tintBorder={row.tintBorder === true}
                 status={state.statuses[row.id]}
                 trail={state.trails[row.id] ?? []}
                 t={t}
                 actions={(
-                  <RowActions
-                    id={row.id}
-                    t={t}
-                    status={state.statuses[row.id]}
-                    busy={state.busy[row.id]}
-                    bridgeOpen={bridgeOpen}
-                    bridgePending={bridgePending}
-                    opening={openingId === row.id}
-                    onTest={id => void service.test({ machineId: id })}
-                    onConnect={id => void service.connect({ machineId: id })}
-                    onDisconnect={id => void service.disconnect({ machineId: id })}
-                    onOpen={openRemoteWindow}
-                    extras={(
-                      <>
-                        <Button variant="outline" size="sm" disabled={editingId !== null && editingId !== row.id} onClick={() => editingId === row.id ? closeEditor(row.id) : openEditor(row)}>
-                          {t('edit')}
-                        </Button>
-                        <Button variant="ghost" size="sm" className="text-error" disabled={state.busy[row.id] !== undefined} onClick={() => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name })}>
-                          {t('remove')}
-                        </Button>
-                      </>
-                    )}
-                  />
+                  <>
+                    {state.statuses[row.id]?.tunnelBaseUrl !== undefined
+                      ? (
+                          <span className="max-w-[240px] truncate font-mono text-[11px] leading-[16px] text-tertiary" data-testid={`tunnel-${row.id}`}>
+                            {state.statuses[row.id]?.tunnelBaseUrl}
+                          </span>
+                        )
+                      : null}
+                    <RowActions
+                      id={row.id}
+                      t={t}
+                      status={state.statuses[row.id]}
+                      busy={state.busy[row.id]}
+                      bridgeOpen={bridgeOpen}
+                      bridgePending={bridgePending}
+                      opening={openingId === row.id}
+                      onTest={id => void service.test({ machineId: id })}
+                      onConnect={id => void service.connect({ machineId: id })}
+                      onDisconnect={id => void service.disconnect({ machineId: id })}
+                      onOpen={openRemoteWindow}
+                      menuItems={[
+                        { key: 'reinstall', label: t('install.reinstall'), icon: ArrowRotateRight, title: t('install.reinstall_hint'), disabled: state.busy[row.id] !== undefined, onSelect: () => requestInstall(row.id, true) },
+                        { key: 'edit', label: t('edit'), icon: PersonPencil, disabled: editingId !== null && editingId !== row.id, onSelect: () => editingId === row.id ? closeEditor(row.id) : openEditor(row) },
+                        { key: 'remove', label: t('remove'), icon: TrashBin, danger: true, disabled: state.busy[row.id] !== undefined, onSelect: () => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name }) },
+                      ]}
+                    />
+                  </>
                 )}
               >
                 {editingId === row.id

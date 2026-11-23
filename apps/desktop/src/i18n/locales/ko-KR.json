@@ -641,6 +641,8 @@
   "remote.current": "현재",
   "remote.open_new_window": "새 창에서 열기",
   "remote.open_window_failed": "새 창을 열지 못했습니다",
+  "remote.connect_failed": "연결에 실패해 새 창을 열지 않았습니다",
+  "remote.unsupported": "원격 SSH는 아직 지원되지 않습니다",
   "remote.step.handshake": "핸드셰이크",
   "remote.step.installing": "설치",
   "remote.step.starting": "시작",

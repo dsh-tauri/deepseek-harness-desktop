@@ -154,7 +154,7 @@ describe('remoteSwitcher 渲染', () => {
     expect(within(bare).getByText('remote.sync').closest('[role="menuitem"]')?.getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('机器项：已连接状态文案与放弃重连的失败原因', async () => {
+  it('机器项：不再缀连接状态文案，失败原因留在 title 里', async () => {
     engineMachines = [
       machineOf({ id: 'colored', name: 'colored', color: '#ff00ff', state: 'reconnecting' }),
       machineOf({ id: 'green', name: 'green', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' }),
@@ -164,7 +164,7 @@ describe('remoteSwitcher 渲染', () => {
     renderSwitcher()
     const menu = await openMenu()
 
-    expect(within(menu).getByText('remote.state.connected')).toBeTruthy()
+    expect(within(menu).queryByText('remote.state.connected')).toBeNull()
     expect(within(menu).getByText('red').closest('[title]')?.getAttribute('title')).toContain('refused')
   })
 
@@ -207,7 +207,7 @@ describe('remoteSwitcher 交互与降级', () => {
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('alpha')
     expect(screen.queryByRole('dialog')).toBeNull()
     const menu = await openMenu()
-    expect(within(menu).getByText('alpha').closest('[role="menuitem"]')?.textContent).toContain('remote.state.connected')
+    expect(within(menu).getByText('alpha').closest('[role="menuitem"]')?.textContent).toContain('remote.current')
     expect(within(menu).getByText('remote.disconnect_active')).toBeTruthy()
     expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(0)
   })
@@ -358,17 +358,16 @@ describe('remoteSwitcher 增强（4.4）', () => {
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
   })
 
-  it('重连机器显示重试倒计时；已知凭据类型缀在状态后', async () => {
+  it('机器行不再显示重试倒计时与凭据类型', async () => {
     engineMachines = [
       machineOf({ id: 'm1', name: 'alpha', state: 'reconnecting', nextRetryAt: Date.now() + 42_000 }),
       machineOf({ id: 'm2', name: 'beta', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4002', authMethod: 'key' }),
     ]
     renderSwitcher()
     const menu = await openMenu()
-    const alpha = within(menu).getByText('alpha').closest('[role="menuitem"]')
-    expect(alpha?.textContent).toContain('remote.retry_in')
-    const beta = within(menu).getByText('beta').closest('[role="menuitem"]')
-    expect(beta?.textContent).toContain('remote.auth.key')
+    expect(within(menu).queryByText('remote.retry_in')).toBeNull()
+    expect(within(menu).queryByText('remote.state.reconnecting')).toBeNull()
+    expect(within(menu).queryByText('remote.auth.key')).toBeNull()
   })
 })
 
@@ -393,24 +392,25 @@ describe('remoteSwitcher 行内双动作（当前窗口 vs 新窗口）', () => 
     expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(0)
   })
 
-  it('未连接机器的新窗口按钮：url 置空（窗口内启动连接流程）', async () => {
+  it('未连接机器的新窗口按钮：先等连接成功再开新窗口', async () => {
     engineMachines = [machineOf({ id: 'm2', name: 'beta', state: 'disconnected' })]
     renderSwitcher()
     const menu = await openMenu()
     fireEvent.click(within(menu).getByRole('button', { name: 'remote.open_new_window' }))
+    await waitFor(() => expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(1))
     await waitFor(() => expect(invokeSpy).toHaveBeenCalledWith('remote_open_window', { machineId: 'm2' }))
     fireEvent.keyDown(menu, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
     expect(changeSpy).toHaveBeenLastCalledWith('', null)
     expect(screen.getByRole('button', { name: 'remote.switcher' }).textContent).toContain('remote.local')
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(requests('POST /api/tauri/remote/machines/connect')).toHaveLength(0)
   })
 
-  it('机器行显示 user@host:port 副标题', async () => {
+  it('机器行把 user@host:port 收进 hover 才显示的 title', async () => {
     engineMachines = [machineOf({ id: 'm1', name: 'alpha', host: '10.1.1.1', port: 22, user: 'root', state: 'disconnected' })]
     renderSwitcher()
     const menu = await openMenu()
-    expect(within(menu).getByText('root@10.1.1.1:22')).toBeTruthy()
+    expect(within(menu).queryByText('root@10.1.1.1:22')).toBeNull()
+    expect(within(menu).getByText('alpha').closest('[title]')?.getAttribute('title')).toBe('root@10.1.1.1:22')
   })
 })

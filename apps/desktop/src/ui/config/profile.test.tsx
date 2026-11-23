@@ -3,7 +3,6 @@ import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { queryKeys } from '@/config/query-keys'
 import { ConfigProfile } from './profile'
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), getCoreProfiles: vi.fn(), loadRemoteMachines: vi.fn(), toast: vi.fn() }))
@@ -204,71 +203,14 @@ describe('profile row actions', () => {
 })
 
 describe('档案作用域', () => {
-  const REMOTE_MACHINE = { id: 'build', name: 'Build box', state: 'connected' }
-
-  it('keeps the full desktop shell on the local scope', async () => {
-    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [REMOTE_MACHINE] })
+  it('不再提供远端机器选择器，档案页只管理本机', async () => {
+    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [{ id: 'build', name: 'Build box', state: 'connected' }] })
     await mount()
 
     expect(screen.getByText('Web 1')).toBeTruthy()
     expect(screen.getByRole('switch', { name: 'profiles.advanced_options' })).toBeTruthy()
     expect(screen.getByTestId('dsh-profile-migrate-open')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-config-profile-target')).toBeNull()
     expect(screen.queryByTestId('dsh-profile-remote-section')).toBeNull()
-  })
-
-  it('shows the selected remote machine as a read-only view', async () => {
-    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [REMOTE_MACHINE] })
-    await mount()
-    await screen.findByTestId('dsh-config-profile-target')
-    await screen.findByRole('option', { name: 'Build box' })
-
-    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'remote:build' } })
-
-    expect(await screen.findByTestId('dsh-profile-remote-build-remote')).toBeTruthy()
-    expect(mocks.getCoreProfiles).toHaveBeenCalledWith({ machineId: 'build' })
-    expect(screen.queryByText('Web 1')).toBeNull()
-    expect(screen.queryByRole('switch', { name: 'profiles.advanced_options' })).toBeNull()
-    expect(screen.queryByTestId('dsh-profile-migrate-open')).toBeNull()
-  })
-
-  it('keeps a remote machine named local apart from the local scope', async () => {
-    const localNamedMachine = { id: 'local', name: 'Local box', state: 'connected' }
-    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [localNamedMachine] })
-    mocks.getCoreProfiles.mockResolvedValue({ items: [{ name: 'remote', configured: true }] })
-    await mount()
-    await screen.findByTestId('dsh-config-profile-target')
-    await screen.findByRole('option', { name: 'Local box' })
-
-    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'remote:local' } })
-
-    expect(await screen.findByTestId('dsh-profile-remote-local-remote')).toBeTruthy()
-    expect(mocks.getCoreProfiles).toHaveBeenCalledWith({ machineId: 'local' })
-    expect(screen.queryByText('Web 1')).toBeNull()
-  })
-
-  it('falls back to the local scope when the selected remote machine disappears', async () => {
-    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [REMOTE_MACHINE] })
-    await mount()
-    await screen.findByTestId('dsh-config-profile-target')
-    await screen.findByRole('option', { name: 'Build box' })
-    fireEvent.change(screen.getByLabelText('core.scope'), { target: { value: 'remote:build' } })
-    await screen.findByTestId('dsh-profile-remote-build-remote')
-
-    mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [] })
-    await client.invalidateQueries({ queryKey: queryKeys.remoteMachines })
-
-    expect(await screen.findByText('Web 1')).toBeTruthy()
-    expect(screen.queryByTestId('dsh-profile-remote-section')).toBeNull()
-  })
-})
-
-describe('面板头部控件顺序', () => {
-  it('高级选项开关排在管理范围（远端切换器）之前', async () => {
-    await mount()
-
-    const advanced = screen.getByRole('switch', { name: 'profiles.advanced_options' })
-    const scope = screen.getByTestId('dsh-config-profile-target')
-
-    expect(advanced.compareDocumentPosition(scope) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

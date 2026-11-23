@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react'
 import type { RemoteKey } from '../locales/index'
 import type { SyncItemResult, SyncPluginItem, SyncSkillItem } from '../types/index'
-import { Button, Pill, StateDot } from 'dsh-tauri-ui/client'
+import { Button, Pill, SegmentedControl, StateDot } from 'dsh-tauri-ui/client'
 import { cn, useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import * as machinesService from '../service/machines'
@@ -29,6 +29,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
   const syncState = useStore(store.sync)
   const [touched, setTouched] = useState<ReadonlySet<string> | null>(null)
   const [targetId, setTargetId] = useState<string | null>(null)
+  const [tab, setTab] = useState<'plugins' | 'skills'>('plugins')
 
   useEffect(() => {
     if (syncState.status === 'idle')
@@ -106,7 +107,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
           ? <p className="m-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary" data-testid="sync-empty">{t('sync.notConnectedHint')}</p>
           : (
               <>
-                <div className="flex flex-wrap items-center gap-[6px]">
+                <div className="flex flex-wrap items-center gap-[8px]">
                   <span className="text-[12px] leading-[18px] font-medium text-secondary">{t('sync.target')}</span>
                   {connected.map(machine => (
                     <Pill
@@ -123,50 +124,22 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
                       </span>
                     </Pill>
                   ))}
-                </div>
-                {preview === null || syncState.status === 'loading'
-                  ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('loading')}</p>
-                  : (syncState.status === 'ready'
-                      ? (
-                          <>
-                            <div className="flex flex-wrap items-center gap-[8px] pt-[2px]">
-                              <span className="text-[12px] leading-[18px] text-secondary" data-testid="sync-selected">
-                                {t('sync.selected')
-                                  .replace('{plugins}', String(plugins.length))
-                                  .replace('{skills}', String(skills.length))}
-                              </span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={applying || selected.size === selectableKeys.length}
-                                onClick={() => setTouched(new Set(selectableKeys))}
-                              >
-                                {t('sync.selectAll')}
-                              </Button>
-                              <Button variant="ghost" size="sm" disabled={applying || selected.size === 0} onClick={() => setTouched(new Set())}>
-                                {t('sync.clear')}
-                              </Button>
-                            </div>
-                            <SyncGroup
-                              empty={t('sync.noPlugins')}
-                              label={t('sync.plugins')}
-                              rows={pluginRows}
-                              selected={selected}
-                              t={t}
-                              onToggle={key => setTouched(toggleSelection(selected, key))}
-                            />
-                            <SyncGroup
-                              empty={t('sync.noSkills')}
-                              label={t('sync.skills')}
-                              rows={skillRows}
-                              selected={selected}
-                              t={t}
-                              onToggle={key => setTouched(toggleSelection(selected, key))}
-                            />
-                          </>
-                        )
-                      : null)}
-                <div className="flex flex-wrap items-center gap-[10px] pt-[2px]">
+                  <span className="ml-auto text-[12px] leading-[18px] text-secondary" data-testid="sync-selected">
+                    {t('sync.selected')
+                      .replace('{plugins}', String(plugins.length))
+                      .replace('{skills}', String(skills.length))}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={applying || selected.size === selectableKeys.length}
+                    onClick={() => setTouched(new Set(selectableKeys))}
+                  >
+                    {t('sync.selectAll')}
+                  </Button>
+                  <Button variant="ghost" size="sm" disabled={applying || selected.size === 0} onClick={() => setTouched(new Set())}>
+                    {t('sync.clear')}
+                  </Button>
                   <Button variant="primary" size="sm" disabled={!canApply} data-testid="sync-apply" onClick={apply}>
                     {applying
                       ? t('sync.applying')
@@ -174,25 +147,50 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
                         ? t('sync.apply')
                         : t('sync.applyTo').replace('{name}', target.name)}
                   </Button>
-                  {syncing !== undefined
-                    ? (
-                        <div className="flex min-w-[220px] flex-1 items-center gap-[8px]" data-testid="sync-progress">
-                          <span className="block h-[4px] flex-1 overflow-hidden rounded-[2px] bg-border-l2" aria-hidden="true">
-                            <span
-                              className="block h-full rounded-[2px] bg-brand [transition:width_200ms_ease]"
-                              style={{ width: `${barPercentOf(syncing.attempt, syncing.total)}%` }}
-                            />
-                          </span>
-                          <span className="shrink-0 text-[12px] leading-[18px] text-secondary">
-                            {t('sync.progress')
-                              .replace('{done}', String(syncing.attempt ?? 0))
-                              .replace('{total}', String(syncing.total ?? 0))
-                              .replace('{item}', syncing.item ?? '')}
-                          </span>
-                        </div>
-                      )
-                    : null}
                 </div>
+                {syncing !== undefined
+                  ? (
+                      <div className="flex items-center gap-[8px]" data-testid="sync-progress">
+                        <span className="block h-[4px] min-w-[120px] flex-1 overflow-hidden rounded-[2px] bg-border-l2" aria-hidden="true">
+                          <span
+                            className="block h-full rounded-[2px] bg-brand [transition:width_200ms_ease]"
+                            style={{ width: `${barPercentOf(syncing.attempt, syncing.total)}%` }}
+                          />
+                        </span>
+                        <span className="shrink-0 text-[12px] leading-[18px] text-secondary">
+                          {t('sync.progress')
+                            .replace('{done}', String(syncing.attempt ?? 0))
+                            .replace('{total}', String(syncing.total ?? 0))
+                            .replace('{item}', syncing.item ?? '')}
+                        </span>
+                      </div>
+                    )
+                  : null}
+                {preview === null || syncState.status === 'loading'
+                  ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('loading')}</p>
+                  : (syncState.status === 'ready'
+                      ? (
+                          <>
+                            <SegmentedControl
+                              label={t('sync.title')}
+                              variant="underline"
+                              value={tab}
+                              options={[
+                                { value: 'plugins', label: `${t('sync.plugins')} ${selectionCountOf(pluginRows, selected)}` },
+                                { value: 'skills', label: `${t('sync.skills')} ${selectionCountOf(skillRows, selected)}` },
+                              ]}
+                              onChange={next => setTab(next === 'skills' ? 'skills' : 'plugins')}
+                            />
+                            <SyncGroup
+                              empty={tab === 'plugins' ? t('sync.noPlugins') : t('sync.noSkills')}
+                              rows={tab === 'plugins' ? pluginRows : skillRows}
+                              selected={selected}
+                              t={t}
+                              onToggle={key => setTouched(toggleSelection(selected, key))}
+                            />
+                          </>
+                        )
+                      : null)}
               </>
             )}
       {syncState.status === 'error'
@@ -218,24 +216,15 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
   )
 }
 
-function SyncGroup({ label, empty, rows, selected, t, onToggle }: {
-  label: string
+function SyncGroup({ empty, rows, selected, t, onToggle }: {
   empty: string
   rows: readonly SelectableRow[]
   selected: ReadonlySet<string>
   t: (key: RemoteKey) => string
   onToggle: (key: string) => void
 }): ReactNode {
-  const syncable = rows.filter(row => row.syncable)
-  const checked = syncable.filter(row => selected.has(row.key)).length
   return (
     <div className="flex flex-col gap-[6px]">
-      <div className="flex items-center gap-[6px]">
-        <span className="text-[12px] leading-[18px] font-medium text-secondary">{label}</span>
-        {rows.length === 0
-          ? null
-          : <span className="text-[12px] leading-[18px] text-secondary">{t('sync.groupCount').replace('{checked}', String(checked)).replace('{total}', String(syncable.length))}</span>}
-      </div>
       {rows.length === 0
         ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{empty}</p>
         : (
@@ -276,6 +265,11 @@ function SyncGroup({ label, empty, rows, selected, t, onToggle }: {
           )}
     </div>
   )
+}
+
+function selectionCountOf(rows: readonly SelectableRow[], selected: ReadonlySet<string>): string {
+  const syncable = rows.filter(row => row.syncable)
+  return `${syncable.filter(row => selected.has(row.key)).length}/${syncable.length}`
 }
 
 function SyncResults({ results, applying, t, onRetry }: {

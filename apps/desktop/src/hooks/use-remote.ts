@@ -221,6 +221,37 @@ export function useRemote() {
     disconnect.mutate(machineId)
   }
 
+  /**
+   * 等这台机器连上再继续：未连接时先发连接请求，再轮询到 connected / given-up。
+   *
+   * 新窗口打开前用它兜底——否则新窗口自己发起连接、成功后整页刷新一次，
+   * 用户会看到「先跳转再刷新」的两次闪动。
+   */
+  async function ensureConnected(machineId: string, timeoutMs = 180_000): Promise<boolean> {
+    const current = machines.find(machine => machine.id === machineId)
+    if (current?.state === 'connected' && current.tunnelBaseUrl !== undefined)
+      return true
+    try {
+      await postMachinesConnect({ machineId })
+    }
+    catch {
+      // 已在连接中时后端会拒绝重复请求，继续等现有连接的结果
+    }
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const rows = machineRowsOf(await getMachines()).machines
+      const row = rows.find(machine => machine.id === machineId)
+      if (row?.state === 'connected' && row.tunnelBaseUrl !== undefined) {
+        void invalidate()
+        return true
+      }
+      if (row?.state === 'given-up')
+        return false
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    return false
+  }
+
   return {
     machines,
     enabled,
@@ -235,6 +266,7 @@ export function useRemote() {
     disconnect: disconnectMachine,
     dismissConnect,
     refresh,
+    ensureConnected,
   }
 }
 
