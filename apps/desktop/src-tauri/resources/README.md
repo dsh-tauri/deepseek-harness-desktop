@@ -2,7 +2,7 @@
 
 This directory is bundled into the installer as `resources/**`.
 
-The desktop supports the 0.2.2 core series, starting at `0.2.2-rc.1`.
+The desktop supports the 0.2 core series, starting at `0.2.2-rc.1`.
 Offline bundles select the newest compatible, non-draft, non-preview release
 with uploaded, SHA-256-verifiable asar assets for all supported desktop targets.
 RC tags are accepted unless GitHub marks the release as a prerelease.
@@ -79,7 +79,7 @@ relative path).
 
 | Section | Purpose |
 | ------- | ------- |
-| `engines.dsh.minimum` | Lowest supported core (`0.2.2-rc.1`); only the 0.2.2 series is supported |
+| `engines.dsh.minimum` | Lowest supported core (`0.2.2-rc.1`); only the 0.2 series is supported |
 | `dependencies` | Dependency mapping spec: entry path per platform, default managed root, whether arbitrary overrides are allowed |
 | `plugins.preset` | Community preset list shown by the first-run wizard / sidebar |
 | `plugins.built-in` | Plugins shipped *with* the installer (auto-installed and auto-healed at startup) |

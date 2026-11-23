@@ -432,7 +432,7 @@ pub(crate) async fn fetch_dsh_pkg_asset<R: tauri::Runtime>(
 ) -> Result<LatestDshPkg, String> {
     if !supported_release_tag(tag) {
         return Err(format!(
-            "CORE_APP_UNSUPPORTED: release {tag} is outside the supported 0.2.2 core series (minimum 0.2.2-rc.1)"
+            "CORE_APP_UNSUPPORTED: release {tag} is outside the supported 0.2 core series (minimum 0.2.2-rc.1)"
         ));
     }
     let client = github_client(app_handle)?;
@@ -849,7 +849,7 @@ mod tests {
     fn atom_rejects_out_of_series_releases() {
         let feed = concat!(
             "<feed>",
-            r#"<entry><link href="/x/releases/tag/dsh-0.2.3-123"/></entry>"#,
+            r#"<entry><link href="/x/releases/tag/dsh-0.3.0-123"/></entry>"#,
             r#"<entry><link href="/x/releases/tag/dsh-0.2.2-rc.0-123"/></entry>"#,
             r#"<entry><link href="/x/releases/tag/dsh-0.2.1-123"/></entry>"#,
             r#"<entry><link href="/x/releases/tag/dsh-0.2.2-rc.1-41838008646"/></entry>"#,
@@ -880,12 +880,15 @@ mod tests {
     }
 
     #[test]
-    fn supported_release_tags_stay_within_022_from_rc1() {
+    fn supported_release_tags_stay_within_the_02_series_from_rc1() {
         for tag in [
             "dsh-0.2.2-rc.1-123",
             "dsh-0.2.2-rc.10-123",
             "dsh-0.2.2-123",
             "src-0.2.2+build.1",
+            "dsh-0.2.3-rc.1-123",
+            "dsh-0.2.3-123",
+            "dsh-0.2.3-alpha.2-45029022450",
         ] {
             assert!(supported_release_tag(tag), "{tag}");
         }
@@ -893,7 +896,6 @@ mod tests {
             "dsh-0.2.1-123",
             "dsh-0.2.2-alpha.1-123",
             "dsh-0.2.2-rc.0-123",
-            "dsh-0.2.3-123",
             "dsh-0.3.0-123",
             "dsh-1.0.0-123",
             "invalid",
@@ -910,7 +912,7 @@ mod tests {
         for tag in [
             "dsh-0.2.1-123",
             "dsh-0.2.2-rc.0-123",
-            "dsh-0.2.3-123",
+            "dsh-0.3.0-123",
             "invalid",
         ] {
             let error = fetch_dsh_pkg_asset(app.handle(), tag, None).await.unwrap_err();
@@ -1088,24 +1090,28 @@ mod tests {
     #[test]
     fn release_page_parser_filters_series_preserves_labels_and_deduplicates_links() {
         let html = concat!(
-            r#"<a href="/x/releases/tag/dsh-0.2.3-1">Release</a>"#,
+            r#"<a href="/x/releases/tag/dsh-0.3.0-1">Release</a>"#,
+            r#"<a href="/x/releases/tag/dsh-0.2.3-alpha.2-1">Pre-release</a>"#,
             r#"<a href="/x/releases/tag/dsh-0.2.2-rc.0-1">Release</a>"#,
             r#"<a href="/x/releases/tag/dsh-0.2.2-rc.2-1">Pre-release</a>"#,
             r#"<a href="/x/releases/tag/dsh-0.2.2-rc.2-1">same release</a>"#,
             r#"<a href="/x/releases/tag/dsh-0.2.2-rc.1-2">Release</a>"#,
         );
         let releases = parse_release_list_from_html(html);
-        assert_eq!(releases.len(), 2);
-        assert_eq!(releases[0].tag, "dsh-0.2.2-rc.2-1");
+        assert_eq!(releases.len(), 3);
+        assert_eq!(releases[0].tag, "dsh-0.2.3-alpha.2-1");
         assert!(releases[0].prerelease);
-        assert_eq!(releases[1].tag, "dsh-0.2.2-rc.1-2");
-        assert!(!releases[1].prerelease);
+        assert_eq!(releases[1].tag, "dsh-0.2.2-rc.2-1");
+        assert!(releases[1].prerelease);
+        assert_eq!(releases[2].tag, "dsh-0.2.2-rc.1-2");
+        assert!(!releases[2].prerelease);
     }
 
     #[test]
     fn non_preview_selection_skips_unsupported_tags_and_preview_labels() {
         let releases = [
-            ("dsh-0.2.3-123", false),
+            ("dsh-0.3.0-123", false),
+            ("dsh-0.2.3-alpha.2-45029022450", false),
             ("dsh-0.2.2-rc.0-123", false),
             ("dsh-0.2.2-alpha.3-123", false),
             ("dsh-0.2.2-rc.2-123", true),
@@ -1119,8 +1125,11 @@ mod tests {
             latest_supported_non_preview_tag(&releases),
             Some("dsh-0.2.2-rc.1-41838008646")
         );
-        assert_eq!(latest_supported_non_preview_tag(&releases[..4]), None);
+        assert_eq!(latest_supported_non_preview_tag(&releases[..5]), None);
         assert_eq!(latest_supported_non_preview_tag(&[]), None);
+        // issue #1611：0.2.3 候选版进核心列表，但不参与更新推送
+        assert!(supported_release_tag("dsh-0.2.3-alpha.2-45029022450"));
+        assert_eq!(latest_supported_non_preview_tag(&releases[1..2]), None);
     }
 
     #[test]
