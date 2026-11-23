@@ -72,11 +72,11 @@ class AppImageTest(unittest.TestCase):
     def validate(self, root):
         return subprocess.run([sys.executable, '-c', VALIDATOR, str(root)], capture_output=True, text=True)
 
-    def hook_immodules_cache(self, appdir, overrides=None):
+    def hook_immodules_cache(self, appdir, overrides=None, hook=None):
         env = {'PATH': os.environ['PATH'], 'APPDIR': str(appdir)}
         env.update(overrides or {})
         result = subprocess.run(
-            ['bash', '-euo', 'pipefail', '-c', 'source "$1" >/dev/null 2>&1; env | sed -n \'s/^GTK_IM_MODULE_FILE=//p\'', '_', str(Path(appdir) / GTK_HOOK)],
+            ['bash', '-euo', 'pipefail', '-c', 'source "$1" >/dev/null 2>&1; env | sed -n \'s/^GTK_IM_MODULE_FILE=//p\'', '_', str(hook or (Path(appdir) / GTK_HOOK))],
             env=env, capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -192,11 +192,21 @@ class AppImageTest(unittest.TestCase):
             extracted = work / 'extracted'
             subprocess.run(['unsquashfs', '-o', str(len(runtime)), '-d', str(extracted), str(image)], check=True, stdout=subprocess.DEVNULL)
             host_caches = host_immodules_caches()
-            cache = self.hook_immodules_cache(extracted)
             if host_caches:
-                self.assertIn(cache, host_caches, '宿主自带 immodules.cache 时应优先使用它')
-            else:
-                self.assertEqual(cache, str(extracted / BUNDLED_IMMODULES), '宿主没有 immodules.cache 时应回退内置的')
+                self.assertIn(self.hook_immodules_cache(extracted), host_caches, '宿主自带 immodules.cache 时应优先使用它')
+            # runner 上通常有宿主 cache，回退分支靠把查找路径改到空目录来确定性命中。
+            isolated = work / 'isolated-hook'
+            isolated.write_text(
+                (extracted / GTK_HOOK).read_text(encoding='utf-8')
+                .replace('/usr/lib*/', f'{work}/absent/lib*/')
+                .replace('/usr/lib/*-linux-gnu*/', f'{work}/absent/lib/*-linux-gnu*/'),
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                self.hook_immodules_cache(extracted, hook=isolated),
+                str(extracted / BUNDLED_IMMODULES),
+                '宿主没有 immodules.cache 时应回退内置的',
+            )
             self.assertEqual(
                 self.hook_immodules_cache(extracted, {'GTK_IM_MODULE_FILE': '/opt/custom/immodules.cache'}),
                 '/opt/custom/immodules.cache',
