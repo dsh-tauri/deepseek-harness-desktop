@@ -73,7 +73,7 @@ pub fn fix_recursive_permissions(path: &Path) -> io::Result<()> {
 /// 跳过；这里额外保护目录形态的核心产物（历史目录核心与手动解包的归档）。
 const PRESERVE_DIRS: &[&str] = &["node_modules", ".git"];
 
-pub fn flatten_directory(dest: &PathBuf) -> Result<(), String> {
+pub fn flatten_directory(dest: &Path) -> Result<(), String> {
     // 1. 寻找唯一合法的子目录
     let sub_dirs: Vec<PathBuf> = fs::read_dir(dest)
         .map_err(|e| e.to_string())?
