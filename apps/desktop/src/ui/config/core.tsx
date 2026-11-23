@@ -1,8 +1,8 @@
 import type { DependenciesRootPreview, DependenciesRootProgress, DependenciesRootStatus, HarnessCore } from '@/types'
 import { ArrowRotateRight, ChevronRight, CircleArrowDown as DownloadIcon, FolderOpen } from '@gravity-ui/icons'
-import { Button, Checkbox, Chip, Description, Label, ListBox, Select, Spinner, Switch } from '@heroui/react'
+import { Button, Checkbox, Chip, Description, Label, Spinner, Switch } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
-import { useToggle, useWatch } from '@reause/core'
+import { useToggle } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { Fragment, useState } from 'react'
@@ -15,19 +15,14 @@ import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { useInvalidateOnSettingUpdated } from '@/hooks/use-invalidate-on-setting-updated'
 import { useListen } from '@/hooks/use-listen'
-import { loadRemoteMachines } from '@/hooks/use-remote'
 import { store } from '@/store'
 import { compareVersions, isCoreUnsupported, MIN_SUPPORTED_CORE_VERSION } from '@/utils/core-version'
 import { formatBytes } from '@/utils/format-bytes'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
-import { RemoteCoreList } from './components/remote-core'
 
 /** 迁移进度面板保留的日志行数 */
 const PROGRESS_LOG_LIMIT = 8
-
-const LOCAL_TARGET_ID = 'local'
-const REMOTE_TARGET_PREFIX = 'remote:'
 
 export function ConfigCore() {
   const openDialog = useOverlay(Modal)
@@ -96,18 +91,7 @@ export function ConfigCore() {
   const [advanced, toggleAdvanced] = useToggle()
   /** 依赖根迁移进度（事件推送；迁移结束由 onSuccess/onError 清空） */
   const [depsProgress, setDepsProgress] = useState<DependenciesRootProgress | null>(null)
-  /** 面板一次只管理一个目标：本机，或某台远端机器 */
-  const [targetId, setTargetId] = useState(LOCAL_TARGET_ID)
-  const remoteMachinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines })
-  const remoteMachines = remoteMachinesQuery.data?.machines ?? []
-  const selectedMachineId = targetId.startsWith(REMOTE_TARGET_PREFIX) ? targetId.slice(REMOTE_TARGET_PREFIX.length) : undefined
-  const isLocalTarget = selectedMachineId === undefined
   const [depsLogs, setDepsLogs] = useState<string[]>([])
-
-  useWatch([remoteMachines, targetId], () => {
-    if (selectedMachineId !== undefined && !remoteMachines.some(machine => machine.id === selectedMachineId))
-      setTargetId(LOCAL_TARGET_ID)
-  })
 
   // 本地核心未检测到时不渲染 local 行（保留 local_missing_hint 提示）
   // 后端列表在部分缓存/旧版本返回路径中可能仍保持远程顺序，前端统一按版本从高到低排序。
@@ -357,16 +341,7 @@ export function ConfigCore() {
       return
     toggleRefreshing(true)
     try {
-      if (selectedMachineId === undefined) {
-        await refetch()
-      }
-      else {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(selectedMachineId) }),
-          queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreProfiles(selectedMachineId) }),
-          queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreVersions }),
-        ])
-      }
+      await refetch()
       toast(t('core.refreshed_toast'), {})
     }
     catch (err) {
@@ -463,49 +438,23 @@ export function ConfigCore() {
     <div className="space-y-3">
       <Panel.Header
         title={t('core.title')}
-        description={isLocalTarget ? t('core.tooltip') : t('core.remote_tooltip')}
+        description={t('core.tooltip')}
         testId="dsh-config-panel-title"
         action={(
           <div className="flex shrink-0 items-center gap-3">
-            <If cond={isLocalTarget}>
-              <Switch
-                size="sm"
-                isSelected={advanced}
-                onChange={() => toggleAdvanced()}
-                aria-label={t('core.advanced_options')}
-              >
-                <Switch.Content className="gap-2">
-                  <Switch.Control>
-                    <Switch.Thumb />
-                  </Switch.Control>
-                  <span className="text-xs font-medium text-muted">{t('core.advanced_options')}</span>
-                </Switch.Content>
-              </Switch>
-            </If>
-            <Select
-              variant="secondary"
-              className="w-44"
-              selectedKey={targetId}
-              onSelectionChange={key => setTargetId(String(key))}
-              aria-label={t('core.scope')}
+            <Switch
+              size="sm"
+              isSelected={advanced}
+              onChange={() => toggleAdvanced()}
+              aria-label={t('core.advanced_options')}
             >
-              <Select.Trigger data-testid="dsh-config-core-target">
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover>
-                <ListBox>
-                  <ListBox.Item id={LOCAL_TARGET_ID} textValue={t('core.local')}>
-                    {t('core.local')}
-                  </ListBox.Item>
-                  {remoteMachines.map(machine => (
-                    <ListBox.Item id={`${REMOTE_TARGET_PREFIX}${machine.id}`} key={machine.id} textValue={machine.name}>
-                      {machine.name}
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </Select.Popover>
-            </Select>
+              <Switch.Content className="gap-2">
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+                <span className="text-xs font-medium text-muted">{t('core.advanced_options')}</span>
+              </Switch.Content>
+            </Switch>
             <Button
               size="sm"
               variant="tertiary"
@@ -519,222 +468,215 @@ export function ConfigCore() {
           </div>
         )}
       />
-      <If cond={isLocalTarget}>
-        <>
-          {/* 加载 / 失败 / 列表 */}
-          <Panel.Loadable loading={loading} error={error}>
-            <div className="flex flex-col gap-4">
-              {/* 高级选项：核心引擎的发行格式。关闭 asar 会重下目录版核心并重启 */}
-              <If cond={advanced}>
-                <div className="flex flex-col gap-1 px-1">
+      {/* 加载 / 失败 / 列表 */}
+      <Panel.Loadable loading={loading} error={error}>
+        <div className="flex flex-col gap-4">
+          {/* 高级选项：核心引擎的发行格式。关闭 asar 会重下目录版核心并重启 */}
+          <If cond={advanced}>
+            <div className="flex flex-col gap-1 px-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-ink">{t('core.asar')}</span>
+                <Switch
+                  size="sm"
+                  isSelected={coreAsar ?? true}
+                  isDisabled={asarLoading || busy || bundledBuild || localCoreActive}
+                  onChange={enabled => void onCoreAsarChange(enabled)}
+                  aria-label={t('core.asar')}
+                >
+                  <Switch.Content>
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                  </Switch.Content>
+                </Switch>
+              </div>
+              <Description className="text-[10px] text-muted/70">{t('core.asar_hint')}</Description>
+              {/* 核心目录：与 ASAR 同一布局的一条设置，用分隔线断开 */}
+              <If cond={depsRoot !== undefined}>
+                <div className="mt-2 flex flex-col gap-1 border-t border-line/30 pt-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-ink">{t('core.asar')}</span>
-                    <Switch
+                    <span className="text-xs font-medium text-ink">{t('core.deps_root')}</span>
+                    <Button
                       size="sm"
-                      isSelected={coreAsar ?? true}
-                      isDisabled={asarLoading || busy || bundledBuild || localCoreActive}
-                      onChange={enabled => void onCoreAsarChange(enabled)}
-                      aria-label={t('core.asar')}
+                      variant="tertiary"
+                      className="h-7 text-xs"
+                      isDisabled={busy || migrateDepsRoot.isPending || !depsRootMovable}
+                      aria-label={t('core.deps_root_change')}
+                      onPress={onDepsRootChange}
                     >
-                      <Switch.Content>
-                        <Switch.Control>
-                          <Switch.Thumb />
-                        </Switch.Control>
-                      </Switch.Content>
-                    </Switch>
+                      <If cond={migrateDepsRoot.isPending} then={<Spinner size="sm" color="current" />} />
+                      {t('core.deps_root_change')}
+                    </Button>
                   </div>
-                  <Description className="text-[10px] text-muted/70">{t('core.asar_hint')}</Description>
-                  {/* 核心目录：与 ASAR 同一布局的一条设置，用分隔线断开 */}
-                  <If cond={depsRoot !== undefined}>
-                    <div className="mt-2 flex flex-col gap-1 border-t border-line/30 pt-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-ink">{t('core.deps_root')}</span>
-                        <Button
-                          size="sm"
-                          variant="tertiary"
-                          className="h-7 text-xs"
-                          isDisabled={busy || migrateDepsRoot.isPending || !depsRootMovable}
-                          aria-label={t('core.deps_root_change')}
-                          onPress={onDepsRootChange}
-                        >
-                          <If cond={migrateDepsRoot.isPending} then={<Spinner size="sm" color="current" />} />
-                          {t('core.deps_root_change')}
-                        </Button>
-                      </div>
-                      <Description className="truncate font-mono text-[10px] text-muted/70">{depsRootPath}</Description>
-                      <If cond={!depsRootMovable}>
-                        <Description className="text-[10px] text-muted/70">{t('core.deps_root_locked')}</Description>
-                      </If>
-                    </div>
-                  </If>
-                  <If cond={depsProgress !== null}>
-                    <div className="mt-2">
-                      <Panel.Progress percentage={depsProgressPercentage} logs={depsLogs} />
-                    </div>
+                  <Description className="truncate font-mono text-[10px] text-muted/70">{depsRootPath}</Description>
+                  <If cond={!depsRootMovable}>
+                    <Description className="text-[10px] text-muted/70">{t('core.deps_root_locked')}</Description>
                   </If>
                 </div>
               </If>
-              {/* 本地核心提示：未检测到时说明如何安装。放在列表首位，先解释「为什么没有本地行」 */}
-              <If cond={!localCore?.present}>
-                <Empty>{t('core.local_missing_hint')}</Empty>
+              <If cond={depsProgress !== null}>
+                <div className="mt-2">
+                  <Panel.Progress percentage={depsProgressPercentage} logs={depsLogs} />
+                </div>
               </If>
-              {displayRows.map(core => (
-                <Fragment key={core.id}>
-                  {/* 「不兼容版本」分组头：默认折叠，点标题展开/收起 */}
-                  <If cond={core === incompatibleRows[0]}>
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 px-1 pt-2 text-left text-xs font-medium text-muted"
-                      aria-expanded={showIncompatible}
-                      onClick={() => setShowIncompatible(value => !value)}
-                    >
-                      <ChevronRight className={showIncompatible ? 'size-3.5 rotate-90' : 'size-3.5'} />
-                      {t('core.incompatible_title', { count: incompatibleRows.length })}
-                    </button>
-                  </If>
-                  <If cond={core.orphaned && (core === firstOrphanRow)}>
-                    <div className="px-1 pt-2 text-xs font-medium text-muted">
-                      {t('core.orphaned_title')}
-                    </div>
-                  </If>
-                  <Item
-                    className={!showIncompatible && isUnsupportedCore(core) ? 'hidden' : undefined}
-                    onClick={core.present && !core.active && !isUnavailableApp(core) ? () => onActivate(core) : undefined}
-                    footer={(
-                      <If cond={core.source === 'app' && !!core.error}>
-                        <Description className="text-xs text-danger">
-                          {t(core.error === 'CORE_VERSION_LEGACY_DIRECTORY' || core.error?.startsWith('CORE_VERSION_LEGACY_DIRECTORY:') ? 'core.legacy_directory_hint' : 'core.unavailable_hint')}
-                        </Description>
-                      </If>
-                    )}
-                    left={(
-                      <>
-                        <Label className="min-w-0 truncate font-mono text-sm font-medium text-ink">
-                          {displayVersion(core)}
-                        </Label>
-                        {/* 随包内核（离线包）与用户 CLI 安装的本地核心都标记「本地」 */}
-                        <If cond={core.source === 'local' || core.bundled}>
-                          <Chip size="sm" variant="soft" color="accent" className="shrink-0 font-medium">
-                            {t('core.local')}
-                          </Chip>
-                        </If>
-                        <If cond={core.orphaned}>
-                          <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">
-                            {t('core.orphaned')}
-                          </Chip>
-                        </If>
-                        {/* 预览版标记：Pre-release label 或 tag 命名判定的预览版，可下载安装但不参与更新提示 */}
-                        <If cond={core.preview}>
-                          <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">
-                            {t('core.preview')}
-                          </Chip>
-                        </If>
-                        <If cond={isUnsupportedLocal(core)}>
-                          <Chip size="sm" variant="soft" color="danger" className="shrink-0 font-medium">
-                            {t('core.local_unsupported')}
-                          </Chip>
-                        </If>
-                        {/* 已下载：Chip 右侧的文件夹图标，点击打开所在目录 */}
-                        <If cond={core.present}>
-                          <Button
-                            size="sm"
-                            variant="tertiary"
-                            className="h-6 w-6 shrink-0 p-0"
-                            isDisabled={busy}
-                            aria-label={t('core.open_dir')}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              openCoreDir(core)
-                            }}
-                          >
-                            <FolderOpen className="size-3.5" />
-                          </Button>
-                        </If>
-                        <If cond={!core.present}>
-                          <Description className="min-w-0 text-xs text-muted">
-                            {t('core.not_downloaded')}
-                          </Description>
-                        </If>
-                      </>
-                    )}
-                    right={(
-                      <>
-                        {/* 已下载：切换（选中当前使用版本） */}
-                        <If cond={core.present}>
-                          <Checkbox
-                            isSelected={core.active}
-                            isDisabled={busy || isUnavailableApp(core)}
-                            onChange={() => onActivate(core)}
-                            aria-label={core.version || core.id}
-                            className="shrink-0"
-                          >
-                            <Checkbox.Content>
-                              <Checkbox.Control>
-                                <Checkbox.Indicator />
-                              </Checkbox.Control>
-                            </Checkbox.Content>
-                          </Checkbox>
-                        </If>
-                        {/* 未下载（app 版本）：下载入口（进度与日志在右下角浮窗展示） */}
-                        <If cond={!core.present && core.source === 'app'}>
-                          <Button
-                            size="sm"
-                            variant="tertiary"
-                            className="h-7 text-xs"
-                            isDisabled={busy}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onDownload(core)
-                            }}
-                          >
-                            <DownloadIcon className="size-3.5" />
-                            {t('core.download')}
-                          </Button>
-                        </If>
-                        {/* 已下载且非激活（app 版本）：卸载入口。随包内核随应用分发，就地安装的副本没有槽位目录，都不可卸载 */}
-                        <If cond={core.present && !core.active && core.removable}>
-                          <Button
-                            size="sm"
-                            variant="tertiary"
-                            className="h-7 text-xs"
-                            isDisabled={busy}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onRemove(core)
-                            }}
-                          >
-                            <If cond={busyId === core.id && busy} then={<Spinner size="sm" color="current" />} />
-                            {t('core.uninstall')}
-                          </Button>
-                        </If>
-                        {/* 本地核心：已是最新时不显示；有新版时提供更新入口（与预打包行同栏，统一布局） */}
-                        <If cond={core.source === 'local' && core.present && hasLocalUpdate}>
-                          <Button
-                            size="sm"
-                            variant="tertiary"
-                            className="h-7 text-xs"
-                            isDisabled={busy}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onUpdateLocal()
-                            }}
-                          >
-                            <If cond={busyId === core.id && busy} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
-                            {t('core.update_local')}
-                          </Button>
-                        </If>
-                      </>
-                    )}
-                  />
-                </Fragment>
-              ))}
             </div>
-          </Panel.Loadable>
-        </>
-      </If>
-      <If cond={selectedMachineId !== undefined}>
-        <RemoteCoreList machineId={selectedMachineId!} />
-      </If>
+          </If>
+          {/* 本地核心提示：未检测到时说明如何安装。放在列表首位，先解释「为什么没有本地行」 */}
+          <If cond={!localCore?.present}>
+            <Empty>{t('core.local_missing_hint')}</Empty>
+          </If>
+          {displayRows.map(core => (
+            <Fragment key={core.id}>
+              {/* 「不兼容版本」分组头：默认折叠，点标题展开/收起 */}
+              <If cond={core === incompatibleRows[0]}>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 px-1 pt-2 text-left text-xs font-medium text-muted"
+                  aria-expanded={showIncompatible}
+                  onClick={() => setShowIncompatible(value => !value)}
+                >
+                  <ChevronRight className={showIncompatible ? 'size-3.5 rotate-90' : 'size-3.5'} />
+                  {t('core.incompatible_title', { count: incompatibleRows.length })}
+                </button>
+              </If>
+              <If cond={core.orphaned && (core === firstOrphanRow)}>
+                <div className="px-1 pt-2 text-xs font-medium text-muted">
+                  {t('core.orphaned_title')}
+                </div>
+              </If>
+              <Item
+                className={!showIncompatible && isUnsupportedCore(core) ? 'hidden' : undefined}
+                onClick={core.present && !core.active && !isUnavailableApp(core) ? () => onActivate(core) : undefined}
+                footer={(
+                  <If cond={core.source === 'app' && !!core.error}>
+                    <Description className="text-xs text-danger">
+                      {t(core.error === 'CORE_VERSION_LEGACY_DIRECTORY' || core.error?.startsWith('CORE_VERSION_LEGACY_DIRECTORY:') ? 'core.legacy_directory_hint' : 'core.unavailable_hint')}
+                    </Description>
+                  </If>
+                )}
+                left={(
+                  <>
+                    <Label className="min-w-0 truncate font-mono text-sm font-medium text-ink">
+                      {displayVersion(core)}
+                    </Label>
+                    {/* 随包内核（离线包）与用户 CLI 安装的本地核心都标记「本地」 */}
+                    <If cond={core.source === 'local' || core.bundled}>
+                      <Chip size="sm" variant="soft" color="accent" className="shrink-0 font-medium">
+                        {t('core.local')}
+                      </Chip>
+                    </If>
+                    <If cond={core.orphaned}>
+                      <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">
+                        {t('core.orphaned')}
+                      </Chip>
+                    </If>
+                    {/* 预览版标记：Pre-release label 或 tag 命名判定的预览版，可下载安装但不参与更新提示 */}
+                    <If cond={core.preview}>
+                      <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">
+                        {t('core.preview')}
+                      </Chip>
+                    </If>
+                    <If cond={isUnsupportedLocal(core)}>
+                      <Chip size="sm" variant="soft" color="danger" className="shrink-0 font-medium">
+                        {t('core.local_unsupported')}
+                      </Chip>
+                    </If>
+                    {/* 已下载：Chip 右侧的文件夹图标，点击打开所在目录 */}
+                    <If cond={core.present}>
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        className="h-6 w-6 shrink-0 p-0"
+                        isDisabled={busy}
+                        aria-label={t('core.open_dir')}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          openCoreDir(core)
+                        }}
+                      >
+                        <FolderOpen className="size-3.5" />
+                      </Button>
+                    </If>
+                    <If cond={!core.present}>
+                      <Description className="min-w-0 text-xs text-muted">
+                        {t('core.not_downloaded')}
+                      </Description>
+                    </If>
+                  </>
+                )}
+                right={(
+                  <>
+                    {/* 已下载：切换（选中当前使用版本） */}
+                    <If cond={core.present}>
+                      <Checkbox
+                        isSelected={core.active}
+                        isDisabled={busy || isUnavailableApp(core)}
+                        onChange={() => onActivate(core)}
+                        aria-label={core.version || core.id}
+                        className="shrink-0"
+                      >
+                        <Checkbox.Content>
+                          <Checkbox.Control>
+                            <Checkbox.Indicator />
+                          </Checkbox.Control>
+                        </Checkbox.Content>
+                      </Checkbox>
+                    </If>
+                    {/* 未下载（app 版本）：下载入口（进度与日志在右下角浮窗展示） */}
+                    <If cond={!core.present && core.source === 'app'}>
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        className="h-7 text-xs"
+                        isDisabled={busy}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onDownload(core)
+                        }}
+                      >
+                        <DownloadIcon className="size-3.5" />
+                        {t('core.download')}
+                      </Button>
+                    </If>
+                    {/* 已下载且非激活（app 版本）：卸载入口。随包内核随应用分发，就地安装的副本没有槽位目录，都不可卸载 */}
+                    <If cond={core.present && !core.active && core.removable}>
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        className="h-7 text-xs"
+                        isDisabled={busy}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onRemove(core)
+                        }}
+                      >
+                        <If cond={busyId === core.id && busy} then={<Spinner size="sm" color="current" />} />
+                        {t('core.uninstall')}
+                      </Button>
+                    </If>
+                    {/* 本地核心：已是最新时不显示；有新版时提供更新入口（与预打包行同栏，统一布局） */}
+                    <If cond={core.source === 'local' && core.present && hasLocalUpdate}>
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        className="h-7 text-xs"
+                        isDisabled={busy}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onUpdateLocal()
+                        }}
+                      >
+                        <If cond={busyId === core.id && busy} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
+                        {t('core.update_local')}
+                      </Button>
+                    </If>
+                  </>
+                )}
+              />
+            </Fragment>
+          ))}
+        </div>
+      </Panel.Loadable>
     </div>
   )
 }

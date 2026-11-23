@@ -772,7 +772,7 @@ function giveUp(machineId: MachineId, target: MachineState): void {
   const last = rec?.reasons[rec.reasons.length - 1] ?? target.lastError ?? 'connection failed'
   target.lastError = rec === undefined
     ? redacted(machineId, last)
-    : redacted(machineId, `connect failed after ${rec.reasons.length} attempt(s): ${last}`)
+    : redacted(machineId, `connect failed after ${rec.reasons.length} tries: ${last}`)
   emit(machineId)
   events.append(machineId, 'reconnect', target.lastError, { terminal: 'failed', reason: target.lastError })
 }

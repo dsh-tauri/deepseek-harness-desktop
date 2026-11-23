@@ -641,6 +641,8 @@
   "remote.current": "当前",
   "remote.open_new_window": "在新窗口中打开",
   "remote.open_window_failed": "打开新窗口失败",
+  "remote.connect_failed": "连接失败，未打开新窗口",
+  "remote.unsupported": "暂不支持远程 SSH",
   "remote.step.handshake": "握手",
   "remote.step.installing": "安装",
   "remote.step.starting": "启动",

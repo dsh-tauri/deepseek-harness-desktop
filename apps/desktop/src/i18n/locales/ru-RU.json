@@ -641,6 +641,8 @@
   "remote.current": "Текущий",
   "remote.open_new_window": "Открыть в новом окне",
   "remote.open_window_failed": "Не удалось открыть новое окно",
+  "remote.connect_failed": "Не удалось подключиться; новое окно не открыто",
+  "remote.unsupported": "Удалённый SSH здесь пока не поддерживается",
   "remote.step.handshake": "Рукопожатие",
   "remote.step.installing": "Установка",
   "remote.step.starting": "Запуск",

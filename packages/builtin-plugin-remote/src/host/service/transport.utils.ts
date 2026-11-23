@@ -31,9 +31,9 @@ export function describeConnectFailure(kind: RemoteConnectFailureKind, error: un
   const message = error instanceof Error ? error.message : String(error)
   switch (kind) {
     case 'key-rejected':
-      return 'authentication failed: no key or ssh-agent was accepted — check your keys or store a password for this machine'
+      return 'auth failed: no key or agent accepted — check keys or set a password'
     case 'password-rejected':
-      return 'authentication failed: the stored password was rejected — update the stored password'
+      return 'auth failed: stored password rejected — update it'
     case 'unreachable':
       return `host unreachable: ${message === '' ? 'SSH connection failed' : message}`
     default:

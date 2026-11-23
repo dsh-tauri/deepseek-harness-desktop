@@ -25,6 +25,7 @@ function remoteOf(overrides: Partial<Remote> = {}): Remote {
     disconnect: vi.fn(),
     dismissConnect: vi.fn(),
     refresh: vi.fn<Remote['refresh']>(),
+    ensureConnected: vi.fn<Remote['ensureConnected']>(async () => true),
     ...overrides,
   }
 }

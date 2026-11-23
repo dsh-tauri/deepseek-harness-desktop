@@ -641,6 +641,8 @@
   "remote.current": "Current",
   "remote.open_new_window": "Open in new window",
   "remote.open_window_failed": "Failed to open the new window",
+  "remote.connect_failed": "Connection failed; the new window was not opened",
+  "remote.unsupported": "Remote SSH is not supported here yet",
   "remote.step.handshake": "Handshake",
   "remote.step.installing": "Install",
   "remote.step.starting": "Start",

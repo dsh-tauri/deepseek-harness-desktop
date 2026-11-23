@@ -1,8 +1,8 @@
 import type { Profile } from '@/types'
 import { CopyArrowRight, Plus } from '@gravity-ui/icons'
-import { AlertDialog, Button, Checkbox, Chip, Description, Input, Label, ListBox, Select, Switch } from '@heroui/react'
+import { AlertDialog, Button, Checkbox, Chip, Description, Input, Label, Switch } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
-import { useToggle, useWatch } from '@reause/core'
+import { useToggle } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
@@ -15,7 +15,6 @@ import { Modal } from '@/components/modal'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { useInvalidateOnSettingUpdated } from '@/hooks/use-invalidate-on-setting-updated'
-import { loadRemoteMachines } from '@/hooks/use-remote'
 import { store } from '@/store'
 import { waitForHarnessStopped } from '@/store/modules/harness'
 import { ConfigBackup } from '@/ui/config/backup'
@@ -23,20 +22,8 @@ import { ProfileMigrateDialog } from '@/ui/dialog/profile-migrate'
 import { normalizeProfileId } from '@/utils/profile-id'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
-import { RemoteProfileSection } from './components/remote-profile'
 
 type ProfileView = 'list' | { profile: string }
-
-/** 档案作用域：本机，或某台远端机器 */
-const LOCAL_TARGET_ID = 'local'
-/**
- * 远端机器在选择器里的前缀。
- *
- * 远端机器的 id 来自 SSH 配置里的 Host 名，用户完全可以把一台机器叫 `local`。
- * 选择值里带上前缀，本机与远端就落在两个命名空间里；查询时再把前缀去掉，
- * 还原成机器自身的 id。
- */
-const REMOTE_TARGET_PREFIX = 'remote:'
 
 /** 宿主档案错误的 `CODE` → 提示 key（错误串是 `CODE: 详情`，详见 `service::profile`） */
 const PROFILE_ERROR_KEYS: Record<string, string> = {
@@ -127,22 +114,6 @@ export function ConfigProfile() {
   const [advanced, toggleAdvanced] = useToggle()
   const [name, setName] = useState('')
   const [activeView, setActiveView] = useState<ProfileView>('list')
-
-  // —— 档案作用域 ——
-  // 档案页一次只展示一个作用域：本机（桌面壳提供完整功能），或某台远端机器（只读视图）。
-  const [targetId, setTargetId] = useState(LOCAL_TARGET_ID)
-  const remoteMachinesQuery = useQuery({ queryKey: queryKeys.remoteMachines, queryFn: loadRemoteMachines })
-  const remoteMachines = remoteMachinesQuery.data?.machines
-  /** 选择值里的远端前缀只用于界面区分，查询时还原成机器自身的 id */
-  const selectedMachineId = targetId.startsWith(REMOTE_TARGET_PREFIX) ? targetId.slice(REMOTE_TARGET_PREFIX.length) : undefined
-  const isLocalTarget = selectedMachineId === undefined
-  const selectedMachine = remoteMachines?.find(machine => machine.id === selectedMachineId)
-
-  // 选中的远端机器消失（被移除或远端功能关闭）时回到本机作用域，避免停在空视图上。
-  useWatch([remoteMachines, targetId], () => {
-    if (selectedMachineId !== undefined && !remoteMachines?.some(machine => machine.id === selectedMachineId))
-      setTargetId(LOCAL_TARGET_ID)
-  })
 
   // 克隆档案：命名对话框状态
   const [cloning, setCloning] = useState<{ sourceId: string, sourceName: string } | null>(null)
@@ -395,67 +366,39 @@ export function ConfigProfile() {
     <div className="space-y-3">
       <Panel.Header
         title={t('profiles.title')}
-        description={isLocalTarget ? t('profiles.tooltip') : t('profiles.remote_tooltip')}
+        description={t('profiles.tooltip')}
         testId="dsh-config-panel-title"
         action={(
           <div className="flex shrink-0 items-center gap-3">
-            <If cond={isLocalTarget}>
-              <Switch
-                size="sm"
-                isSelected={advanced}
-                onChange={() => toggleAdvanced()}
-                aria-label={t('profiles.advanced_options')}
-              >
-                <Switch.Content className="gap-2">
-                  <Switch.Control>
-                    <Switch.Thumb />
-                  </Switch.Control>
-                  <span className="text-xs font-medium text-muted">{t('profiles.advanced_options')}</span>
-                </Switch.Content>
-              </Switch>
-            </If>
-            <Select
-              variant="secondary"
-              className="w-44"
-              selectedKey={targetId}
-              onSelectionChange={key => setTargetId(String(key))}
-              aria-label={t('core.scope')}
+            <Switch
+              size="sm"
+              isSelected={advanced}
+              onChange={() => toggleAdvanced()}
+              aria-label={t('profiles.advanced_options')}
             >
-              <Select.Trigger data-testid="dsh-config-profile-target">
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover>
-                <ListBox>
-                  <ListBox.Item id={LOCAL_TARGET_ID} textValue={t('core.local')}>
-                    {t('core.local')}
-                  </ListBox.Item>
-                  {remoteMachines?.map(machine => (
-                    <ListBox.Item id={`${REMOTE_TARGET_PREFIX}${machine.id}`} key={machine.id} textValue={machine.name}>
-                      {machine.name}
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </Select.Popover>
-            </Select>
-            <If cond={isLocalTarget}>
-              <Button
-                data-testid="dsh-profile-migrate-open"
-                size="sm"
-                variant="primary"
-                isDisabled={migrateBlocked}
-                onPress={() => void openMigrateDialog()}
-              >
-                <CopyArrowRight className="size-3.5" />
-                {t('profiles.migrate')}
-              </Button>
-            </If>
+              <Switch.Content className="gap-2">
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+                <span className="text-xs font-medium text-muted">{t('profiles.advanced_options')}</span>
+              </Switch.Content>
+            </Switch>
+            <Button
+              data-testid="dsh-profile-migrate-open"
+              size="sm"
+              variant="primary"
+              isDisabled={migrateBlocked}
+              onPress={() => void openMigrateDialog()}
+            >
+              <CopyArrowRight className="size-3.5" />
+              {t('profiles.migrate')}
+            </Button>
           </div>
         )}
       />
 
       {/* 本机作用域：桌面壳提供完整功能（新建、克隆、切换、删除、迁移） */}
-      <If cond={isLocalTarget}>
+      <>
         {/* 加载 / 失败 / 列表 */}
         <Panel.Loadable loading={loading} error={error}>
           <div className="flex flex-col gap-4">
@@ -599,10 +542,7 @@ export function ConfigProfile() {
             </If>
           </div>
         </Panel.Loadable>
-      </If>
-
-      {/* 远端作用域：只读展示所选机器上的档案 */}
-      {!isLocalTarget && selectedMachine && <RemoteProfileSection machine={selectedMachine} />}
+      </>
 
       {/* 克隆档案：命名对话框（创建型，accent；可编辑建议名称） */}
       <AlertDialog
