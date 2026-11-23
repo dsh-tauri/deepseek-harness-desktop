@@ -3,9 +3,6 @@
 //! 归档格式：`tar::Builder` + `zstd::stream::Encoder` 创建 `.tar.zst` 单文件，
 //! `zstd::stream::Decoder` + `tar::Archive` 解压。zstd 多线程压缩比 gzip 快
 //! 3-5 倍、压缩率更优。解压前逐条目校验路径不跳出目标目录（防路径穿越）。
-//!
-//! 除 zstd 外，也提供 `extract_archive_gzip`（复用同一条目安全校验逻辑）供
-//! 插件快照等使用 gzip 压缩的 tar.tgz 解码（见 `service::plugin::snapshot`）。
 
 use std::fs;
 use std::io::{Read, Write};
@@ -26,7 +23,7 @@ fn create_symlink(target: &Path, dst: &Path) -> std::io::Result<()> {
         .or_else(|_| std::os::windows::fs::symlink_file(target, dst))
 }
 
-const EXCLUDED_NAMES: &[&str] = &[".backups", ".plugin-backups", "node_modules"];
+const EXCLUDED_NAMES: &[&str] = &[".backups", "node_modules"];
 
 /// 凭据文件名。
 const CREDENTIALS_FILE: &str = ".credentials.yaml";
@@ -135,8 +132,8 @@ fn append_dir_filtered(
 /// 创建 tar.zst 归档。
 ///
 /// 把 `source` 目录打包到 `dest` 文件。`include_credentials` 控制是否包含
-/// `.credentials.yaml`。始终排除 `.backups/`、`.plugin-backups/`、`.harness.pid`、
-/// `node_modules/`。使用 zstd 多线程压缩（级别 0 = 默认 3，
+/// `.credentials.yaml`。始终排除 `.backups/`、`.harness.pid`、`node_modules/`。
+/// 使用 zstd 多线程压缩（级别 0 = 默认 3，
 /// 启用 multithread 加速）。
 pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> Result<(), String> {
     create_archive_impl(source, dest, include_credentials, false)
@@ -191,18 +188,6 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     // 注意：zstd 解码不支持多线程（每帧必须顺序解码），保持单线程
     let dec =
         zstd::stream::Decoder::new(file).map_err(|e| format!("BACKUP_EXTRACT_DECODER: {e}"))?;
-    let mut archive = tar::Archive::new(dec);
-    extract_tar_entries(&mut archive, dest)
-}
-
-/// 解压 gzip 压缩的 tar.tgz 归档到 `dest` 目录（复用与 `extract_archive` 相同的
-/// 逐条目路径逃逸防护与符号链接拒绝逻辑）。
-///
-/// 供插件快照（`service::plugin::snapshot`，快照归档使用 gzip）暂存/还原时解压。
-pub fn extract_archive_gzip(archive: &Path, dest: &Path) -> Result<(), String> {
-    fs::create_dir_all(dest).map_err(|e| format!("BACKUP_EXTRACT_MKDIR: {e}"))?;
-    let file = fs::File::open(archive).map_err(|e| format!("BACKUP_EXTRACT_OPEN: {e}"))?;
-    let dec = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(dec);
     extract_tar_entries(&mut archive, dest)
 }
@@ -644,7 +629,6 @@ mod tests {
             ("hello.txt", "world"),
             (".backups/old.tar.zst", "junk"),
             (".backups/.manifest.json", "{}"),
-            (".plugin-backups/dsh-market.tgz", "snapshot"),
         ]);
         let dest = archive_dest(&source);
         create_archive(&source, &dest, false).unwrap();
@@ -652,10 +636,6 @@ mod tests {
         assert!(
             entries.iter().all(|e| !e.contains(".backups")),
             ".backups 应被排除，实际条目: {entries:?}"
-        );
-        assert!(
-            entries.iter().all(|e| !e.contains(".plugin-backups")),
-            ".plugin-backups 应被排除（防单插件快照被整库备份递归包含），实际条目: {entries:?}"
         );
         assert!(
             entries.iter().any(|e| e.contains("hello.txt")),

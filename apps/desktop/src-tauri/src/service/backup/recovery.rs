@@ -7,7 +7,7 @@ use super::{archive, BackupInfo};
 
 const RECOVERY_README: &str = "DSH recovery export\n\n\
 data.tar.zst contains DSH_HOME data, including sessions, storages and all profiles.\n\
-Excluded: node_modules, .backups, .plugin-backups and .harness.pid.\n\
+Excluded: node_modules, .backups and .harness.pid.\n\
 .credentials.yaml is included only when requested. Other files are not redacted\n\
 and may contain secrets. Keep this directory private.\n\n\
 Recovery: stop every desktop, CLI and web client using this DSH_HOME.\n\
@@ -128,7 +128,6 @@ mod tests {
                 ("profiles/web/.credentials.yaml", "profile secret"),
                 ("profiles/web/node_modules/plugin/index.js", "dependency"),
                 (".backups/old.tar.zst", "existing backup"),
-                (".plugin-backups/plugin.tgz", "existing snapshot"),
                 (".harness.pid", "123"),
             ] {
                 let path = fixture.home.join(name);
@@ -170,7 +169,7 @@ mod tests {
         ] {
             assert_eq!(fs::read_to_string(restored.join(name)).unwrap(), expected);
         }
-        for excluded in [".credentials.yaml", "profiles/web/.credentials.yaml", "profiles/web/node_modules", ".backups", ".plugin-backups", ".harness.pid"] {
+        for excluded in [".credentials.yaml", "profiles/web/.credentials.yaml", "profiles/web/node_modules", ".backups", ".harness.pid"] {
             assert!(!restored.join(excluded).exists(), "should exclude {excluded}");
         }
         let directory = Path::new(&info.path).parent().unwrap();

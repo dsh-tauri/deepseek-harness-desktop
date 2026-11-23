@@ -18,6 +18,9 @@ use std::path::Path;
 /// 旧版独立 Node 运行时在依赖映射表里的键名。
 const LEGACY_NODE_MAPPING_KEY: &str = "node";
 
+/// 已移除的单插件快照目录名（issue #1615 之后仅剩清理职责）。
+const RETIRED_PLUGIN_SNAPSHOT_DIR: &str = ".plugin-backups";
+
 /// 清除 `root` 下携带过来的 pnpm 安装元数据（`node_modules/.modules.yaml`）。
 ///
 /// 该文件是纯元数据，记录的绝对路径来自旧位置；删除后 pnpm 跳过兼容性校验，
@@ -138,6 +141,25 @@ fn purge_if_stale_modules_metadata(node_modules: &Path, dsh_home: &Path) {
     }
 }
 
+/// 启动自愈：删除已废弃的单插件快照目录（`$DSH_HOME/.plugin-backups`）。
+///
+/// 单插件快照功能已整体移除（issue #1615）：目录不再有任何读写方，但老用户的
+/// 归档会一直占着磁盘。整目录删一次即可，幂等、best-effort，只记日志不弹窗。
+pub fn remove_plugin_snapshots(dsh_home: &Path) -> Result<(), String> {
+    let dir = dsh_home.join(RETIRED_PLUGIN_SNAPSHOT_DIR);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&dir).map_err(|error| {
+        format!(
+            "PLUGIN_SNAPSHOT_CLEANUP_FAILED: {}: {error}",
+            dir.display()
+        )
+    })?;
+    log::info!("removed retired plugin snapshot dir: {}", dir.display());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +257,22 @@ mod tests {
         heal_stale_pnpm_metadata(&home).unwrap();
         // 无 profiles 目录 → 无异常、不产生任何文件
         assert!(!home.join("profiles").exists());
+    }
+
+    // ------------------------------------------------------------------
+    // 启动自愈：删除已移除的单插件快照目录（issue #1615）
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn removes_retired_plugin_snapshot_dir() {
+        let home = temp_dir("snapshot-cleanup");
+        let dir = home.join(".plugin-backups");
+        write(&dir.join("dsh-market.tgz"), "snapshot");
+
+        remove_plugin_snapshots(&home).unwrap();
+
+        assert!(!dir.exists(), "retired plugin snapshot dir must be removed");
+        // 幂等：目录已不存在时再跑一次不报错
+        remove_plugin_snapshots(&home).unwrap();
     }
 }

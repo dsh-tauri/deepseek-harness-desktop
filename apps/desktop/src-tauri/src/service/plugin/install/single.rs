@@ -532,12 +532,6 @@ pub async fn remove_many(app_handle: &AppHandle, ids: &[String]) -> Result<(), S
                 );
             }
         }
-        // 卸载级联清理单插件快照（best-effort）：只有插件确实离开 profile 才删。
-        // 离线兜底失败或受保护包残留时插件仍在，快照是用户唯一的回滚手段，必须保留
-        // （issue #303：插件已移除则快照随之失效，避免残留孤儿快照占用存储）。
-        if !is_installed(app_handle, id) {
-            super::super::snapshot::delete_best_effort(app_handle, id);
-        }
     }
     // 与单插件卸载的原语义一致：以「条目是否真的离开 profile」为准。命令以非 0
     // 退出但插件已被移走时不报错（卸载已达成），只有仍残留且兜底也失败才算失败。
@@ -606,16 +600,6 @@ async fn run_plugin_command(
     // 与批量安装保持一致：旧档案也必须具备精确的 release-age 例外，
     // 否则升级/卸载触发 pnpm lockfile 校验时同样会被 issue #222 的问题阻断。
     super::ensure_profile_pnpm_policy(app_handle)?;
-    // 升级前自动快照当前版本（覆盖式），失败仅告警不阻断升级
-    // （issue #303：自动快照失败不阻塞主流程；还原入口在插件面板）。
-    // 与批量安装一致，这里**不再**停掉运行中的服务：插件包只会被随后的 pnpm 改写，
-    // 先停服对快照一致性没有帮助，反而让用户在升级中途失去服务。
-    if action == "update" {
-        for id in ids {
-            super::super::snapshot::create_best_effort(app_handle, id);
-        }
-    }
-
     let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm)?;
 
     let profile = active_profile(app_handle);
