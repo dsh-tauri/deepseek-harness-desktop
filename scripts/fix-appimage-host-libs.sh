@@ -21,6 +21,7 @@ readonly GTK_HOOK=apprun-hooks/linuxdeploy-plugin-gtk.sh
 readonly GDK_OVERRIDE_PATTERN='^[[:space:]]*export[[:space:]]+GDK_BACKEND=x11([[:space:]]+#.*)?[[:space:]]*$'
 readonly IMMODULES_OVERRIDE_PATTERN='^[[:space:]]*export[[:space:]]+GTK_IM_MODULE_FILE='
 readonly IMMODULES_FORCED_PATTERN='^export[[:space:]]+GTK_IM_MODULE_FILE='
+readonly IMMODULES_MARKER=dsh_immodules_cache
 # #1616：内置 immodules.cache 由 Ubuntu 22.04 的 gtk-query-immodules 生成，模块路径指向 Debian
 # 多架构目录且不含 fcitx/ibus 条目；Arch/Fedora/openSUSE 上 GTK 因此拿不到任何输入法模块，
 # 按键绕过输入法直接上屏。改为优先用宿主自带 cache，宿主没有才回退内置的。
@@ -244,7 +245,8 @@ if [ -f "$tree/$GTK_HOOK" ] && grep -Eq "$GDK_OVERRIDE_PATTERN" "$tree/$GTK_HOOK
 fi
 
 immodules_changed=0
-if [ -f "$tree/$GTK_HOOK" ] && grep -Eq "$IMMODULES_OVERRIDE_PATTERN" "$tree/$GTK_HOOK"; then
+# 标记即幂等键：块里自己的 export 也带缩进，光靠 pattern 会在第二次运行时再打一遍。
+if [ -f "$tree/$GTK_HOOK" ] && ! grep -Fq "$IMMODULES_MARKER" "$tree/$GTK_HOOK" && grep -Eq "$IMMODULES_OVERRIDE_PATTERN" "$tree/$GTK_HOOK"; then
   DSH_IMMODULES_BLOCK="$IMMODULES_BLOCK" awk -v pattern="$IMMODULES_OVERRIDE_PATTERN" '
     $0 ~ pattern { print ENVIRON["DSH_IMMODULES_BLOCK"]; next }
     { print }
@@ -345,7 +347,7 @@ if [ -f "$verified/$GTK_HOOK" ] && grep -Eq "$IMMODULES_FORCED_PATTERN" "$verifi
   echo "fix-appimage-host-libs: verification failed, GTK hook still forces GTK_IM_MODULE_FILE (#1616)" >&2
   verdict=1
 fi
-if [ -f "$verified/$GTK_HOOK" ] && [ "$immodules_changed" -eq 1 ] && ! grep -Fq 'dsh_immodules_cache' "$verified/$GTK_HOOK"; then
+if [ -f "$verified/$GTK_HOOK" ] && [ "$immodules_changed" -eq 1 ] && ! grep -Fq "$IMMODULES_MARKER" "$verified/$GTK_HOOK"; then
   echo "fix-appimage-host-libs: verification failed, GTK hook lost the host immodules cache lookup (#1616)" >&2
   verdict=1
 fi
