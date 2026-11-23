@@ -8,7 +8,7 @@ import { createRecovery } from './utils'
 
 /**
  * 插件异常修复模块：启动崩溃或运行期异常时定位问题插件，并提供
- * 「从快照还原 / 卸除此插件并继续检测 / 重启 / 暂不处理」。
+ * 「卸除此插件并继续检测 / 重启 / 暂不处理」。
  *
  * 与 harness 模块的分工：harness 负责服务生命周期，本模块只负责
  * 「哪个插件坏了、怎么修」——修复动作完成后统一回调 harness 重启。
@@ -96,33 +96,6 @@ export const recovery = defineStore({
       }
       catch (err) {
         console.error('[Harness] recover_plugin failed:', err)
-        this.recovery = { ...this.recovery, busy: false, attempts: this.recovery.attempts + 1 }
-      }
-    },
-
-    /**
-     * 从快照还原并继续检测：优先用单插件快照还原问题插件（优先级高于卸载）；
-     * 仅对传入的（确有快照的）插件还原，单项失败不阻断其它项。还原成功后重启并重新检测。
-     */
-    async restoreAndRedetect(ids: readonly string[]) {
-      if (this.recovery.busy || ids.length === 0)
-        return
-      this.recovery = { ...this.recovery, busy: true }
-      try {
-        // 逐项还原，单项失败仅记录告警、不中断整体流程（无快照项由调用方过滤）
-        for (const id of ids) {
-          try {
-            await invoke('restore_plugin', { id })
-          }
-          catch (err) {
-            console.error(`[Harness] restore_plugin failed for ${id}:`, err)
-          }
-        }
-        this.clear()
-        await harness.restart()
-      }
-      catch (err) {
-        console.error('[Harness] restoreAndRedetect failed:', err)
         this.recovery = { ...this.recovery, busy: false, attempts: this.recovery.attempts + 1 }
       }
     },

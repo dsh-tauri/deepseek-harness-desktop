@@ -33,8 +33,6 @@ export interface DshPlugin {
   updateAvailable: boolean
   /** 判定得到的「最新版本」（registry latest / git HEAD SHA）；未判定时缺省 */
   latestVersion?: string
-  /** 是否有单插件快照（$DSH_HOME/.plugin-backups/<id>.tgz），决定还原/删除快照入口 */
-  hasSnapshot: boolean
   /** 异常信息（安装/升级/卸载失败或页面运行期上报）；undefined = 正常 */
   error?: PluginErrorInfo | null
 }

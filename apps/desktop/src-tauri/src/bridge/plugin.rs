@@ -326,63 +326,6 @@ async fn run_plugin_toggle(
 }
 
 #[tauri::command]
-pub async fn snapshot_plugin(
-    app_handle: AppHandle,
-    window: Window,
-    id: String,
-) -> Result<plugin::snapshot::SnapshotInfo, String> {
-    let profile = instances::window_profile(&app_handle, window.label());
-    let operation = plugin::acquire_operation_lock().await?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let _operation = operation;
-        instances::scope_sync(profile, || plugin::snapshot::create(&app_handle, &id))
-    })
-    .await
-    .map_err(|e| format!("SNAPSHOT_CREATE_TASK: {e}"))?
-}
-
-#[tauri::command]
-pub async fn snapshot_plugins(
-    app_handle: AppHandle,
-    window: Window,
-    ids: Vec<String>,
-) -> Result<Vec<plugin::snapshot::SnapshotResult>, String> {
-    let profile = instances::window_profile(&app_handle, window.label());
-    let operation = plugin::acquire_operation_lock().await?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let _operation = operation;
-        instances::scope_sync(profile, || plugin::snapshot::create_many(&app_handle, &ids))
-    })
-    .await
-    .map_err(|e| format!("SNAPSHOT_CREATE_TASK: {e}"))
-}
-
-#[tauri::command]
-pub fn get_plugin_backup(
-    app_handle: AppHandle,
-    window: Window,
-    id: String,
-) -> plugin::snapshot::PluginBackupInfo {
-    let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope_sync(profile, || plugin::snapshot::get(&app_handle, &id))
-}
-
-#[tauri::command]
-pub async fn restore_plugin(
-    app_handle: AppHandle,
-    window: Window,
-    id: String,
-) -> Result<(), String> {
-    let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope(profile, async {
-        plugin::snapshot::restore(&app_handle, &id).await?;
-        plugin::watch::force_emit(&app_handle);
-        Ok(())
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<String>, String> {
     #[cfg(windows)]
     {
@@ -416,22 +359,6 @@ pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<Strin
             .await;
         Ok(picked.map(|handle| plugin::local_spec_from_path(handle.path())))
     }
-}
-
-#[tauri::command]
-pub async fn delete_plugin_backup(
-    app_handle: AppHandle,
-    window: Window,
-    id: String,
-) -> Result<(), String> {
-    let profile = instances::window_profile(&app_handle, window.label());
-    let operation = plugin::acquire_operation_lock().await?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let _operation = operation;
-        instances::scope_sync(profile, || plugin::snapshot::delete(&app_handle, &id))
-    })
-    .await
-    .map_err(|e| format!("SNAPSHOT_DELETE_TASK: {e}"))?
 }
 
 #[cfg(test)]

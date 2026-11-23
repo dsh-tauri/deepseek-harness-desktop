@@ -404,16 +404,6 @@ async fn install_with_guard(
     // 旧档案可能由早期版本创建，没有同步 Harness 的最小发布时间例外；补齐
     // 精确的已审查 zod 版本，避免 registry 元数据瞬时失败阻断插件安装（issue #222）。
     super::ensure_profile_pnpm_policy(app_handle)?;
-    // 安装/升级前自动快照已安装的插件（覆盖式），失败仅告警不阻断安装
-    // （issue #303：自动快照失败不阻塞主流程，避免升级被陈旧快照问题拖垮）。
-    // 这里**不再**为了快照停掉运行中的服务：插件包只会被随后的 pnpm 改写，先停服对
-    // 快照一致性没有帮助，却让用户看到一次「服务被重启」；是否重启交给结算后的提示。
-    for target in targets {
-        if is_installed(app_handle, &target.id) {
-            super::snapshot::create_best_effort(app_handle, &target.id);
-        }
-    }
-
     let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm)?;
 
     // 拼装命令行参数

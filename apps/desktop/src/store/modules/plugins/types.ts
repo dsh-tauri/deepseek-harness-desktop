@@ -21,7 +21,6 @@ export interface Plugin {
   recommended: boolean
   fix: boolean
   internal: boolean
-  hasSnapshot: boolean
   error: PluginErrorInfo | null
   latest: string | null
   updateAvailable: boolean

@@ -86,7 +86,6 @@ function plugin(overrides: Partial<Plugin> = {}): Plugin {
     bundled: true,
     recommended: false,
     fix: false,
-    hasSnapshot: false,
     error: null,
     latest: null,
     updateAvailable: false,

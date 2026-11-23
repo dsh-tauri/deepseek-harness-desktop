@@ -48,7 +48,6 @@ mod preset;
 mod process;
 pub mod recovery;
 mod retire;
-pub mod snapshot;
 pub mod update;
 pub mod verify;
 pub mod watch;

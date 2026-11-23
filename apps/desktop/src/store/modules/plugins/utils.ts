@@ -178,7 +178,6 @@ export function enrichInstalled(list: DshPlugin[]): Plugin[] {
       recommended: item.recommended,
       fix: item.fix,
       internal: item.internal,
-      hasSnapshot: item.hasSnapshot,
       error,
       latest: item.latestVersion ?? null,
       updateAvailable: item.updateAvailable,

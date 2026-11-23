@@ -72,6 +72,9 @@ pub fn setup(app_handle: crate::AppHandle) {
     if let Err(e) = crate::service::migrate::heal_stale_pnpm_metadata(&dsh_home) {
         log::warn!("pnpm modules metadata self-heal skipped: {e}");
     }
+    if let Err(e) = crate::service::migrate::remove_plugin_snapshots(&dsh_home) {
+        log::warn!("plugin snapshot cleanup skipped: {e}");
+    }
 
     if let Err(e) = crate::service::core::retire_directory_core(&app_handle) {
         log::warn!("legacy directory core retirement skipped: {e}");
@@ -1399,11 +1402,6 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::remove_dsh_plugins,
         crate::bridge::disable_dsh_plugin,
         crate::bridge::enable_dsh_plugin,
-        crate::bridge::snapshot_plugin,
-        crate::bridge::snapshot_plugins,
-        crate::bridge::get_plugin_backup,
-        crate::bridge::restore_plugin,
-        crate::bridge::delete_plugin_backup,
         crate::bridge::report_plugin_error,
         crate::bridge::detect_plugin_recovery,
         crate::bridge::recover_plugin,

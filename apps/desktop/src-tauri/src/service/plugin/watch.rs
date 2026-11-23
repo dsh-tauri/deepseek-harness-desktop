@@ -63,9 +63,6 @@ pub struct DshPlugin {
     /// 判定得到的「最新版本」（registry latest / git HEAD SHA）；未判定或不可判定时缺省
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_version: Option<String>,
-    /// 是否有单插件快照（`$DSH_HOME/.plugin-backups/<id>.tgz`），前端据此展示
-    /// 还原 / 删除快照入口
-    pub has_snapshot: bool,
     /// 异常信息（安装/升级/卸载失败或页面运行期上报）；`None` = 正常
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<PluginError>,
@@ -211,7 +208,6 @@ pub(crate) fn parse_plugins(profile: &Path, presets: &[PreinstallPluginInfo]) ->
                 internal: internal_names.contains(id.as_str()),
                 update_available: false,
                 latest_version: None,
-                has_snapshot: false,
                 error: None,
             }
         })
@@ -240,10 +236,6 @@ pub fn list(app_handle: &AppHandle) -> Vec<DshPlugin> {
     // 已恢复的安装错误会被过滤，避免持久化历史状态污染当前健康状态。
     let registry = errors::load(app_handle);
     merge_current_errors(&mut plugins, &registry);
-    // 单插件快照存在性（快照不在 profile 文件指纹里，须单独探测）
-    for plugin in &mut plugins {
-        plugin.has_snapshot = super::snapshot::has_snapshot(app_handle, &plugin.id);
-    }
     plugins
 }
 
@@ -542,7 +534,6 @@ mod tests {
             internal: false,
             update_available: false,
             latest_version: None,
-            has_snapshot: false,
             error: None,
         }];
         let registry = HashMap::from([(
@@ -574,7 +565,6 @@ mod tests {
             internal: false,
             update_available: false,
             latest_version: None,
-            has_snapshot: false,
             error: None,
         };
         let install_error = PluginError {
