@@ -173,6 +173,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
                           <>
                             <SegmentedControl
                               label={t('sync.title')}
+                              variant="underline"
                               value={tab}
                               options={[
                                 { value: 'plugins', label: `${t('sync.plugins')} ${selectionCountOf(pluginRows, selected)}` },

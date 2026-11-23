@@ -2,7 +2,7 @@ import type { ComponentType, CSSProperties, ReactNode } from 'react'
 import type { RemoteKey } from '../locales/index'
 import type { MachinesNotice } from '../store/modules/machines.types'
 import type { InstallResult, MachineLifecycleState, MachineRow, MachineStatus, ProgressPhase, RemoteBridge, SecretValues } from '../types/index'
-import { Action, Button, CirclePlay, EllipsisVertical, Icon, Input, Menu, Modal, PersonPencil, PlugConnection, StateDot, Switch, TrashBin } from 'dsh-tauri-ui/client'
+import { Action, ArrowRotateRight, Button, CirclePlay, EllipsisVertical, Icon, Input, Menu, Modal, PersonPencil, PlugConnection, StateDot, Switch, TrashBin } from 'dsh-tauri-ui/client'
 import { cn, useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
@@ -178,6 +178,7 @@ interface RowMenuItem {
   key: string
   label: string
   icon: ComponentType
+  title?: string
   danger?: boolean
   disabled?: boolean
   onSelect: () => void
@@ -199,6 +200,7 @@ function RowMenu({ t, items }: { t: (key: RemoteKey) => string, items: readonly 
         id: item.key,
         label: item.label,
         icon: <Icon size={14} as={item.icon} />,
+        title: item.title,
         danger: item.danger === true,
         disabled: item.disabled === true,
       }))}
@@ -279,12 +281,11 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
   t: (key: RemoteKey) => string
   onInstall: (id: string, reinstall: boolean) => void
 }): ReactNode {
-  const installing = busy === 'install' || status?.progress?.phase === 'installing'
   return (
     <>
-      {status === undefined || installing
-        ? null
-        : <InstallPanel status={status} busy={busy} t={t} onInstall={reinstall => onInstall(id, reinstall)} />}
+      {status?.dshMissing === true
+        ? <InstallPanel status={status} busy={busy} t={t} onInstall={reinstall => onInstall(id, reinstall)} />
+        : null}
       {status?.lastError !== undefined ? <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">{status.lastError}</p> : null}
       {bridgeError !== undefined
         ? (
@@ -294,7 +295,6 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
             </p>
           )
         : null}
-      {status?.tunnelBaseUrl !== undefined ? <p className="m-0 font-mono text-[12px] leading-[18px] text-tertiary [overflow-wrap:anywhere]">{status.tunnelBaseUrl}</p> : null}
       <LogStream id={id} lines={logLines} fallback={status?.progress?.log} t={t} />
       {installResult !== undefined
         ? <p className="m-0 text-[12px] leading-[18px] text-secondary" data-testid={`install-note-${id}`}>{installNoteOf(installResult, t)}</p>
@@ -319,15 +319,19 @@ function LogStream({ id, lines, fallback, t }: { id: string, lines: readonly str
     return null
   return (
     <div className="flex flex-col gap-[4px]">
-      <button
-        type="button"
-        className="cursor-pointer self-start border-none bg-transparent p-0 text-[11px] leading-[16px] text-tertiary hover:text-secondary"
-        aria-expanded={open}
-        data-testid={`machine-log-toggle-${id}`}
-        onClick={() => setOpen(previous => !previous)}
-      >
-        {open ? t('log.hide') : t('log.show')}
-      </button>
+      <div className="flex items-center gap-[8px]">
+        <span className="h-px flex-1 bg-border-l2" aria-hidden="true" />
+        <button
+          type="button"
+          className="cursor-pointer border-none bg-transparent p-0 text-[11px] leading-[16px] text-tertiary hover:text-secondary"
+          aria-expanded={open}
+          data-testid={`machine-log-toggle-${id}`}
+          onClick={() => setOpen(previous => !previous)}
+        >
+          {open ? t('log.hide') : t('log.show')}
+        </button>
+        <span className="h-px flex-1 bg-border-l2" aria-hidden="true" />
+      </div>
       {open
         ? (
             <pre className="m-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]" data-testid={`machine-log-${id}`}>
@@ -813,7 +817,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
   }
 
   const enableRow = (
-    <div className="flex items-center justify-between gap-[24px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[16px] py-[16px]">
+    <div className="flex items-center justify-between gap-[24px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[16px] py-[10px]">
       <div className="flex min-w-0 flex-col">
         <span className="text-[14px] leading-[20px] text-primary">{t('hero.title')}</span>
         <span className="mt-[4px] text-[12px] leading-[18px] text-secondary">{t('enable.hint')}</span>
@@ -896,23 +900,33 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                 trail={state.trails[row.id] ?? []}
                 t={t}
                 actions={(
-                  <RowActions
-                    id={row.id}
-                    t={t}
-                    status={state.statuses[row.id]}
-                    busy={state.busy[row.id]}
-                    bridgeOpen={bridgeOpen}
-                    bridgePending={bridgePending}
-                    opening={openingId === row.id}
-                    onTest={id => void service.test({ machineId: id })}
-                    onConnect={id => void service.connect({ machineId: id })}
-                    onDisconnect={id => void service.disconnect({ machineId: id })}
-                    onOpen={openRemoteWindow}
-                    menuItems={[
-                      { key: 'edit', label: t('edit'), icon: PersonPencil, disabled: editingId !== null && editingId !== row.id, onSelect: () => editingId === row.id ? closeEditor(row.id) : openEditor(row) },
-                      { key: 'remove', label: t('remove'), icon: TrashBin, danger: true, disabled: state.busy[row.id] !== undefined, onSelect: () => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name }) },
-                    ]}
-                  />
+                  <>
+                    {state.statuses[row.id]?.tunnelBaseUrl !== undefined
+                      ? (
+                          <span className="max-w-[240px] truncate font-mono text-[11px] leading-[16px] text-tertiary" data-testid={`tunnel-${row.id}`}>
+                            {state.statuses[row.id]?.tunnelBaseUrl}
+                          </span>
+                        )
+                      : null}
+                    <RowActions
+                      id={row.id}
+                      t={t}
+                      status={state.statuses[row.id]}
+                      busy={state.busy[row.id]}
+                      bridgeOpen={bridgeOpen}
+                      bridgePending={bridgePending}
+                      opening={openingId === row.id}
+                      onTest={id => void service.test({ machineId: id })}
+                      onConnect={id => void service.connect({ machineId: id })}
+                      onDisconnect={id => void service.disconnect({ machineId: id })}
+                      onOpen={openRemoteWindow}
+                      menuItems={[
+                        { key: 'reinstall', label: t('install.reinstall'), icon: ArrowRotateRight, title: t('install.reinstall_hint'), disabled: state.busy[row.id] !== undefined, onSelect: () => requestInstall(row.id, true) },
+                        { key: 'edit', label: t('edit'), icon: PersonPencil, disabled: editingId !== null && editingId !== row.id, onSelect: () => editingId === row.id ? closeEditor(row.id) : openEditor(row) },
+                        { key: 'remove', label: t('remove'), icon: TrashBin, danger: true, disabled: state.busy[row.id] !== undefined, onSelect: () => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name }) },
+                      ]}
+                    />
+                  </>
                 )}
               >
                 {editingId === row.id
