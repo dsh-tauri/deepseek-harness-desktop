@@ -430,7 +430,7 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         let baseline = config::manifest::minimum_dsh_version(app_handle);
         if !core_supports_bundled_plugins(&core.version, baseline.as_deref()) {
             return Err(format!(
-                "CORE_LOCAL_UNSUPPORTED: local dsh {} is outside the supported 0.2.2 series; install a supported version with npm or select an asar core in Settings > Core",
+                "CORE_LOCAL_UNSUPPORTED: local dsh {} is outside the supported 0.2 series; install a supported version with npm or select an asar core in Settings > Core",
                 core.version,
             ));
         }

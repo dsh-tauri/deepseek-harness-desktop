@@ -122,7 +122,7 @@ function expectManagedWarning() {
 beforeEach(async () => {
   vi.clearAllMocks()
   cores = [{ ...localFixture }, { ...managedFixture }]
-  updateVersion = '0.2.3-rc.1'
+  updateVersion = '0.3.0-rc.1'
   updateError = null
   coreAsar = true
   coreAsarError = null
@@ -228,7 +228,7 @@ describe('核心激活兼容性', () => {
     expect((screen.getByRole('button', { name: 'Open folder' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it.each(['0.2.1', '0.2.3-rc.1', '0.2.3'])('范围外的 app 版本不能激活：%s', async (version) => {
+  it.each(['0.2.1', '0.2.2-rc.0', '0.3.0'])('范围外的 app 版本不能激活：%s', async (version) => {
     cores = [{ ...managedFixture, version, active: false }]
     renderCore()
     fireEvent.click(await screen.findByRole('button', { name: 'Incompatible versions (1)' }))
@@ -240,6 +240,21 @@ describe('核心激活兼容性', () => {
 
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expectNoCoreOrProfileSwitch()
+  })
+
+  it('0.2.3 系列的 app 版本按受支持版本激活', async () => {
+    cores = [{ ...managedFixture, id: 'app-dsh-0.2.3-1', version: '0.2.3', tag: 'dsh-0.2.3-1', active: false }]
+    renderCore()
+
+    const checkbox = await screen.findByRole('checkbox', { name: '0.2.3' })
+    expect((checkbox as HTMLInputElement).disabled).toBe(false)
+    fireEvent.click(checkbox)
+
+    const dialog = await findDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('set_active_core', { id: 'app-dsh-0.2.3-1' }))
+    await waitFor(() => expect(mocks.restart).toHaveBeenCalledTimes(1))
   })
 
   it.each(['row', 'checkbox'])('远程已移除但无错误的 orphaned asar 核心仍可通过 %s 激活', async (target) => {
@@ -384,7 +399,7 @@ describe('本地核心更新档案安全', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Update Local Core' }))
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.2.3-rc.1', {
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.3.0-rc.1', {
       variant: 'success',
       description: 'The desktop will keep using the current managed core. Switch back to the local core manually.',
       timeout: 10_000,
@@ -392,13 +407,13 @@ describe('本地核心更新档案安全', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('update_local_core')
     expect((screen.getByRole('checkbox', { name: '0.2.2-rc.2' }) as HTMLInputElement).checked).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Incompatible versions (1)' }))
-    const updatedLocal = screen.getByRole('checkbox', { name: '0.2.3-rc.1' })
+    const updatedLocal = screen.getByRole('checkbox', { name: '0.3.0-rc.1' })
     expect((updatedLocal as HTMLInputElement).checked).toBe(false)
     fireEvent.click(updatedLocal)
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(mocks.toast).toHaveBeenLastCalledWith('Local core version is unsupported', {
       variant: 'warning',
-      description: 'This desktop supports only dsh 0.2.2, starting from 0.2.2-rc.1. Install a supported local version before switching back.',
+      description: 'This desktop supports only dsh 0.2, starting from 0.2.2-rc.1. Install a supported local version before switching back.',
       timeout: 10_000,
     })
     expectNoCoreOrProfileSwitch()
@@ -411,7 +426,7 @@ describe('本地核心更新档案安全', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Update Local Core' }))
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.2.3-rc.1', {
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Local core updated: 0.3.0-rc.1', {
       variant: 'success',
       description: 'The desktop will keep using the current managed core. Switch back to the local core manually.',
       timeout: 10_000,

@@ -22,6 +22,6 @@ export function compareVersions(a: string, b: string): number {
 
 export function isCoreUnsupported(version: string): boolean {
   const parsed = semver.parse(normalizeVersion(version))
-  return !parsed || parsed.major !== 0 || parsed.minor !== 2 || parsed.patch !== 2
+  return !parsed || parsed.major !== 0 || parsed.minor !== 2
     || semver.lt(parsed, MIN_SUPPORTED_CORE_VERSION)
 }

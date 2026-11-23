@@ -515,7 +515,7 @@
   "core.local_missing_hint": "로컬 코어가 감지되지 않았습니다. npm/pnpm으로 @deepseek-ai/dsh를 전역 설치하면 데스크톱 앱이 자동으로 우선 사용합니다.",
   "core.local_unsupported": "지원되지 않음",
   "core.local_unsupported_toast": "지원하지 않는 로컬 코어 버전입니다",
-  "core.local_unsupported_hint": "이 데스크톱 앱은 {{version}}부터 dsh 0.2.2 계열만 지원합니다. 지원되는 로컬 버전을 설치한 후 다시 전환하세요.",
+  "core.local_unsupported_hint": "이 데스크톱 앱은 {{version}}부터 dsh 0.2 계열만 지원합니다. 지원되는 로컬 버전을 설치한 후 다시 전환하세요.",
   "app.dev_env": "개발 환경",
   "app.config": "실행 중",
   "config.application": "애플리케이션",

@@ -78,13 +78,16 @@ pub struct HarnessCore {
 /// 基线告警只发一次：`active_source` 在启动、核心列表与插件操作中反复调用。
 static UNSUPPORTED_LOCAL_WARNED: OnceLock<()> = OnceLock::new();
 
+/// 随包插件支持的核心系列：0.2.x，下限 0.2.2-rc.1。
+///
+/// 只认系列（major.minor）与下限，不钉 patch：原先的 `patch == 2` 会在 0.2.3
+/// 发布后把最新正式版整段挡在核心列表之外（issue #1611）。
 pub(crate) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str>) -> bool {
     let Ok(actual) = semver::Version::parse(version) else {
         return false;
     };
     actual.major == 0
         && actual.minor == 2
-        && actual.patch == 2
         && semver::Version::parse("0.2.2-rc.1").is_ok_and(|minimum| actual >= minimum)
         && baseline
             .and_then(|baseline| semver::Version::parse(baseline).ok())
@@ -111,7 +114,7 @@ pub(crate) fn ensure_app_core_supported(
     let version = app_core_version(core_dir, tag);
     if !core_supports_bundled_plugins(version.as_deref().unwrap_or_default(), baseline) {
         return Err(format!(
-            "CORE_APP_UNSUPPORTED: app dsh {} is outside the supported 0.2.2 core series (minimum {}); {}",
+            "CORE_APP_UNSUPPORTED: app dsh {} is outside the supported 0.2 core series (minimum {}); {}",
             version.as_deref().unwrap_or_default(),
             baseline.unwrap_or_default(),
             repair_hint(core_dir, version.as_deref(), baseline),
@@ -139,7 +142,7 @@ fn warn_unsupported_local_core(version: &str, baseline: Option<&str>) {
         return;
     }
     log::warn!(
-        "CORE_LOCAL_UNSUPPORTED: local dsh {} is outside the supported 0.2.2 core series (minimum {}); using the bundled core instead (issue #596)",
+        "CORE_LOCAL_UNSUPPORTED: local dsh {} is outside the supported 0.2 core series (minimum {}); using the bundled core instead (issue #596)",
         version,
         baseline.unwrap_or("<unset>"),
     );
@@ -264,8 +267,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_core_series_starts_at_022_rc1() {
-        for version in ["0.2.2-rc.1", "0.2.2-rc.2", "0.2.2", "0.2.2+build.1"] {
+    fn supported_core_series_covers_every_02_patch_from_022_rc1() {
+        for version in [
+            "0.2.2-rc.1",
+            "0.2.2-rc.2",
+            "0.2.2",
+            "0.2.2+build.1",
+            "0.2.3-alpha.2",
+            "0.2.3-rc.1",
+            "0.2.3",
+            "0.2.4",
+        ] {
             assert!(core_supports_bundled_plugins(version, None), "{version}");
         }
         for version in [
@@ -274,7 +286,6 @@ mod tests {
             "0.2.1",
             "0.2.2-beta.1",
             "0.2.2-rc.0",
-            "0.2.3-rc.1",
             "0.3.0",
             "1.0.0",
         ] {
@@ -284,6 +295,7 @@ mod tests {
             "0.2.2-rc.1",
             Some("0.2.2-rc.2")
         ));
+        assert!(core_supports_bundled_plugins("0.2.3", Some("0.2.2-rc.1")));
     }
 
     #[test]
