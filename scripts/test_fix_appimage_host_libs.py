@@ -76,7 +76,7 @@ class AppImageTest(unittest.TestCase):
         env = {'PATH': os.environ['PATH'], 'APPDIR': str(appdir)}
         env.update(overrides or {})
         result = subprocess.run(
-            ['bash', '-euo', 'pipefail', '-c', 'source "$1" >/dev/null 2>&1; printf %s "${GTK_IM_MODULE_FILE:-}"', '_', str(Path(appdir) / GTK_HOOK)],
+            ['bash', '-euo', 'pipefail', '-c', 'source "$1" >/dev/null 2>&1; env | sed -n \'s/^GTK_IM_MODULE_FILE=//p\'', '_', str(Path(appdir) / GTK_HOOK)],
             env=env, capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -27,7 +27,7 @@ readonly IMMODULES_MARKER=dsh_immodules_cache
 # 按键绕过输入法直接上屏。改为优先用宿主自带 cache，宿主没有才回退内置的。
 readonly IMMODULES_BLOCK='if [ -z "${GTK_IM_MODULE_FILE:-}" ]; then
   for dsh_immodules_cache in /usr/lib*/gtk-3.0/3.0.0/immodules.cache /usr/lib/*-linux-gnu*/gtk-3.0/3.0.0/immodules.cache; do
-    if [ -f "$dsh_immodules_cache" ]; then GTK_IM_MODULE_FILE="$dsh_immodules_cache"; break; fi
+    if [ -f "$dsh_immodules_cache" ]; then export GTK_IM_MODULE_FILE="$dsh_immodules_cache"; break; fi
   done
 fi
 if [ -z "${GTK_IM_MODULE_FILE:-}" ] && [ -f "$APPDIR/usr/lib/gtk-3.0/3.0.0/immodules.cache" ]; then
