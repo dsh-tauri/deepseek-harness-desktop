@@ -3,8 +3,11 @@
 
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::service::download::ProgressTracker;
@@ -434,6 +437,67 @@ pub(crate) async fn commit_staged_install(
     Ok(())
 }
 
+/// 同一 dest 的安装锁。
+///
+/// 暂存目录与备份目录都按 dest 的叶子名派生，同进程内并发安装同一个核心时，
+/// 后一次开头的清理会删掉前一次已写好的文件，前一次随后把残缺树 rename 进
+/// 正式槽位（issue #1610）。锁按 dest 路径收敛，不同核心之间互不阻塞。
+fn slot_lock(dest: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    Arc::clone(locks.entry(dest.to_path_buf()).or_default())
+}
+
+/// 每次安装唯一的编号：暂存目录名只带 pid 只能区分进程，同进程内的两次安装
+/// 仍会撞在同一个目录上（issue #1610）。
+fn install_seq() -> u64 {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    SEQ.fetch_add(1, Ordering::Relaxed)
+}
+
+fn staging_path(parent: &Path, leaf: &str) -> PathBuf {
+    parent.join(format!(
+        ".{leaf}.installing-{}-{}",
+        std::process::id(),
+        install_seq()
+    ))
+}
+
+/// 清掉同一 dest 上次崩溃遗留的暂存目录。
+///
+/// 暂存目录名每次安装都不同，崩溃后不会再有下一次安装顺手复用并清理它，
+/// 不扫一遍就会一直占着几百 MB。调用方持有该 dest 的安装锁，不会误删正在
+/// 写入的目录。清理失败只留告警：本次安装用的是新目录，旧目录删不掉不该
+/// 让整次安装失败。
+async fn remove_stale_staging(parent: &Path, leaf: &str) {
+    let prefix = format!(".{leaf}.installing-");
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            log::warn!(
+                "Failed to scan {} for stale staging directories: {error}",
+                parent.display()
+            );
+            return;
+        }
+    };
+    for entry in entries {
+        match entry {
+            Ok(entry) if entry.file_name().to_string_lossy().starts_with(&prefix) => {
+                if let Err(error) = remove_path_if_exists(&entry.path()).await {
+                    log::warn!("Failed to clean stale staging directory: {error}");
+                }
+            }
+            Ok(_) => {}
+            Err(error) => log::warn!("Failed to read a directory entry: {error}"),
+        }
+    }
+}
+
 /// 确保解压文件到指定目录
 ///
 /// # 参数
@@ -451,21 +515,45 @@ pub async fn ensure_extract<'a, R: Runtime>(
     dest: PathBuf,
 ) -> Result<(), String> {
     log::info!("Starting file extraction: {} -> {:?}", name, dest);
-    use super::extractor::{extract_tgz, extract_zip};
-    use super::utils::flatten_directory;
-
     // 始终先落到同盘临时路径，全部成功后再原子切换，避免更新失败破坏旧版本。
-    let parent = dest.parent().unwrap_or(Path::new("."));
+    let lock = slot_lock(&dest);
+    let _slot = lock.lock().await;
+
+    let parent = dest.parent().unwrap_or(Path::new(".")).to_path_buf();
     let leaf = dest
         .file_name()
         .and_then(|value| value.to_str())
-        .unwrap_or("package");
-    let staging = parent.join(format!(".{leaf}.installing-{}", std::process::id()));
+        .unwrap_or("package")
+        .to_string();
+    let staging = staging_path(&parent, &leaf);
     let backup = parent.join(format!(".{leaf}.backup"));
-    remove_path_if_exists(&staging).await?;
+    remove_stale_staging(&parent, &leaf).await;
+
+    let result = stage_and_publish(tracker, &name, &buffer, &staging, &dest, &backup).await;
+    if result.is_err()
+        && let Err(error) = remove_path_if_exists(&staging).await
+    {
+        // 暂存目录名唯一，失败后不会有下一次安装顺手清掉它，必须自己收尾。
+        log::warn!("Failed to clean staging directory after a failed install: {error}");
+    }
+    result
+}
+
+/// 把归档解压到 `staging`，全部成功后才切换到 `dest`：任何一步失败都直接返回
+/// 错误，绝不进入 publish 分支（issue #1610）。
+async fn stage_and_publish<'a, R: Runtime>(
+    tracker: &'a ProgressTracker<'a, R>,
+    name: &str,
+    buffer: &[u8],
+    staging: &Path,
+    dest: &Path,
+    backup: &Path,
+) -> Result<(), String> {
+    use super::extractor::{extract_tgz, extract_zip};
+    use super::utils::flatten_directory;
 
     // 判断文件类型
-    let pure_name = name.split('?').next().unwrap_or(&name).to_lowercase();
+    let pure_name = name.split('?').next().unwrap_or(name).to_lowercase();
     let is_tgz = pure_name.ends_with(".tar.gz") || pure_name.ends_with(".tgz");
     let is_zip = pure_name.ends_with(".zip");
     log::debug!("File type: tgz={}, zip={}", is_tgz, is_zip);
@@ -479,7 +567,7 @@ pub async fn ensure_extract<'a, R: Runtime>(
                 e.to_string()
             })?;
         }
-        fs::write(&staging, &buffer).map_err(|e| {
+        fs::write(staging, buffer).map_err(|e| {
             log::error!("Failed to write file: {}", e);
             e.to_string()
         })?;
@@ -488,28 +576,34 @@ pub async fn ensure_extract<'a, R: Runtime>(
             format!("已写入: {}", "100%"),
             format!("File written: {}", staging.display()),
         );
-        commit_staged_install(&staging, &dest, &backup).await?;
+        commit_staged_install(staging, dest, backup).await?;
         log::info!("File write completed: {}", dest.display());
         return Ok(());
     }
 
-    fs::create_dir_all(&staging).map_err(|e| {
+    fs::create_dir_all(staging).map_err(|e| {
         log::error!("Failed to create destination directory: {}", e);
         e.to_string()
     })?;
 
     // 根据文件类型解压
-    if is_tgz {
+    let extracted = if is_tgz {
         log::debug!("Using tgz extractor");
-        extract_tgz(tracker, &buffer, &staging)?;
+        extract_tgz(tracker, buffer, staging)?
     } else {
         log::debug!("Using zip extractor");
-        extract_zip(tracker, &buffer, &staging)?;
-    }
+        extract_zip(tracker, buffer, staging)?
+    };
+    log::debug!(
+        "Extracted {} entries ({} files, {} directories)",
+        extracted.total(),
+        extracted.files,
+        extracted.dirs
+    );
 
     // 处理解压后的"套娃"文件夹
     log::debug!("Flattening directory structure");
-    flatten_directory(&staging).map_err(|e| {
+    flatten_directory(staging).map_err(|e| {
         log::error!("Failed to flatten directory: {}", e);
         e.to_string()
     })?;
@@ -520,7 +614,7 @@ pub async fn ensure_extract<'a, R: Runtime>(
         use super::utils::fix_recursive_permissions;
         // 递归赋予可执行权限 (755)
         log::debug!("Fixing file permissions");
-        fix_recursive_permissions(&staging).map_err(|e| {
+        fix_recursive_permissions(staging).map_err(|e| {
             log::error!("Failed to fix permissions: {}", e);
             format!("Failed to fix permissions: {}", e)
         })?;
@@ -536,7 +630,7 @@ pub async fn ensure_extract<'a, R: Runtime>(
         }
     }
 
-    commit_staged_install(&staging, &dest, &backup).await?;
+    commit_staged_install(staging, dest, backup).await?;
     Ok(())
 }
 
@@ -652,5 +746,59 @@ mod tests {
         );
         assert!(!backup.exists());
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn staging_directories_are_unique_per_install() {
+        let parent = Path::new("deps");
+        let first = staging_path(parent, "dsh-0.2.3");
+        let second = staging_path(parent, "dsh-0.2.3");
+
+        assert_ne!(first, second);
+        let prefix = format!(".dsh-0.2.3.installing-{}-", std::process::id());
+        for path in [&first, &second] {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(name.starts_with(&prefix), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn installs_of_the_same_dest_serialize_but_other_dests_do_not() {
+        let dest = PathBuf::from("deps").join("dsh-0.2.3");
+        let guard = slot_lock(&dest).lock_owned().await;
+
+        assert!(slot_lock(&dest).try_lock_owned().is_err());
+        assert!(
+            slot_lock(&PathBuf::from("deps").join("dsh-0.2.4"))
+                .try_lock_owned()
+                .is_ok()
+        );
+
+        drop(guard);
+        assert!(slot_lock(&dest).try_lock_owned().is_ok());
+    }
+
+    #[tokio::test]
+    async fn stale_staging_directories_are_swept_before_install() {
+        let root = tempfile::tempdir().unwrap();
+        let stale = root.path().join(".dsh.installing-1-1");
+        let other = root.path().join(".dsh-0.2.3.installing-1-1");
+        let installed = root.path().join("dsh");
+        for dir in [&stale, &other, &installed] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(stale.join("partial"), b"x").unwrap();
+
+        remove_stale_staging(root.path(), "dsh").await;
+
+        assert!(!stale.exists());
+        assert!(other.exists());
+        assert!(installed.exists());
+    }
+
+    #[tokio::test]
+    async fn missing_parent_directory_is_not_an_error_for_staging_sweep() {
+        let root = tempfile::tempdir().unwrap();
+        remove_stale_staging(&root.path().join("absent"), "dsh").await;
     }
 }

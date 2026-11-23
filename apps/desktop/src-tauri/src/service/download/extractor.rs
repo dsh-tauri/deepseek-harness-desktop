@@ -1,11 +1,73 @@
 use std::fs;
 use std::io::copy;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use crate::service::download::ProgressTracker;
 use tauri::Runtime;
+
+/// 解压产物条目统计：发布前用它核对归档是否完整落盘。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExtractedEntries {
+    pub files: usize,
+    pub dirs: usize,
+}
+
+impl ExtractedEntries {
+    pub fn total(&self) -> usize {
+        self.files + self.dirs
+    }
+}
+
+/// 递归统计目录下的文件与子目录数量（不跟随符号链接）。
+///
+/// 只数「处理过多少条目」发现不了解压期间被外部删掉的文件，必须回到磁盘上数
+/// 实际落盘的东西（issue #1610）。
+fn count_tree(root: &Path) -> Result<ExtractedEntries, String> {
+    let mut counts = ExtractedEntries::default();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|e| format!("EXTRACT_VERIFY_FAILED: cannot read {}: {e}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("EXTRACT_VERIFY_FAILED: {e}"))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|e| format!("EXTRACT_VERIFY_FAILED: {}: {e}", path.display()))?;
+            if file_type.is_dir() {
+                counts.dirs += 1;
+                pending.push(path);
+            } else {
+                counts.files += 1;
+            }
+        }
+    }
+    Ok(counts)
+}
+
+/// 核对解压产物与归档声明的条目数：文件数必须严格相等，目录数只做下界比较。
+///
+/// 文件条目会顺带建出归档里没显式记录的父目录，落盘目录数因此可能多于归档的
+/// 目录条目数；文件数则一一对应，少一个就说明树被挖空了（issue #1610）。
+/// 路径穿越条目一律不写盘，出现即视为归档不可信。
+fn verify_extracted(
+    root: &Path,
+    declared: ExtractedEntries,
+    skipped: usize,
+) -> Result<ExtractedEntries, String> {
+    let written = count_tree(root)?;
+    if skipped == 0 && written.files == declared.files && written.dirs >= declared.dirs {
+        return Ok(written);
+    }
+    let message = format!(
+        "EXTRACT_INCOMPLETE: archive declares {} files and {} directories, {} files and {} directories landed on disk, {} entries skipped",
+        declared.files, declared.dirs, written.files, written.dirs, skipped
+    );
+    log::error!("{message}");
+    Err(message)
+}
 
 /// 创建文件，Windows 上文件被其他进程短暂占用（杀软扫描、残留进程）时自动重试
 ///
@@ -40,8 +102,8 @@ fn create_file_with_retry(outpath: &Path) -> Result<fs::File, String> {
 pub fn extract_zip<'a, R: Runtime>(
     tracker: &ProgressTracker<'a, R>,
     buffer: &[u8],
-    dest: &PathBuf,
-) -> Result<(), String> {
+    dest: &Path,
+) -> Result<ExtractedEntries, String> {
     log::debug!("Starting ZIP extraction to: {:?}", dest);
     let mut archive = zip::ZipArchive::new(Cursor::new(buffer)).map_err(|e| {
         log::error!("Invalid ZIP format: {}", e);
@@ -51,6 +113,9 @@ pub fn extract_zip<'a, R: Runtime>(
     let total_files = archive.len();
     log::debug!("ZIP file contains {} files", total_files);
 
+    let mut declared = ExtractedEntries::default();
+    let mut skipped = 0usize;
+
     for i in 0..total_files {
         // 1. 获取当前文件
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
@@ -58,8 +123,16 @@ pub fn extract_zip<'a, R: Runtime>(
         // 2. 获取并清理输出路径（防止路径穿越漏洞）
         let outpath = match file.enclosed_name() {
             Some(path) => dest.join(path),
-            None => continue,
+            None => {
+                skipped += 1;
+                continue;
+            }
         };
+        if file.is_dir() {
+            declared.dirs += 1;
+        } else {
+            declared.files += 1;
+        }
 
         // 3. 打印进度和当前文件名（格式：Extract 路径/文件）
         let relative_path = outpath
@@ -123,16 +196,23 @@ pub fn extract_zip<'a, R: Runtime>(
             }
         }
     }
-    log::info!("ZIP extraction completed, {} files total", total_files);
-    Ok(())
+
+    let written = verify_extracted(dest, declared, skipped)?;
+    log::info!(
+        "ZIP extraction completed, {} files total ({} files, {} directories on disk)",
+        total_files,
+        written.files,
+        written.dirs
+    );
+    Ok(written)
 }
 
 /// 解压 TGZ 文件到指定目录
 pub fn extract_tgz<'a, R: Runtime>(
     tracker: &ProgressTracker<'a, R>,
     buffer: &[u8],
-    dest: &PathBuf,
-) -> Result<(), String> {
+    dest: &Path,
+) -> Result<ExtractedEntries, String> {
     log::debug!("Starting TGZ extraction to: {:?}", dest);
     use flate2::read::GzDecoder;
     use tar::Archive;
@@ -176,6 +256,66 @@ pub fn extract_tgz<'a, R: Runtime>(
         file_count += 1;
     }
 
-    log::info!("TGZ extraction completed, {} files total", file_count);
-    Ok(())
+    // tar 流没有可核对的条目总数（同一路径可能出现多次），只统计落盘结果。
+    let written = count_tree(dest)?;
+    log::info!(
+        "TGZ extraction completed, {} files total ({} files, {} directories on disk)",
+        file_count,
+        written.files,
+        written.dirs
+    );
+    Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_extracted_accepts_a_complete_tree() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("a/b")).unwrap();
+        std::fs::write(root.path().join("a/b/one.txt"), b"1").unwrap();
+        std::fs::write(root.path().join("two.txt"), b"2").unwrap();
+
+        let written =
+            verify_extracted(root.path(), ExtractedEntries { files: 2, dirs: 2 }, 0).unwrap();
+        assert_eq!(written, ExtractedEntries { files: 2, dirs: 2 });
+        assert_eq!(written.total(), 4);
+    }
+
+    #[test]
+    fn verify_extracted_rejects_a_tree_missing_files() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("a/b")).unwrap();
+        std::fs::write(root.path().join("a/b/one.txt"), b"1").unwrap();
+
+        let error =
+            verify_extracted(root.path(), ExtractedEntries { files: 2, dirs: 2 }, 0).unwrap_err();
+        assert!(error.starts_with("EXTRACT_INCOMPLETE:"), "{error}");
+    }
+
+    #[test]
+    fn verify_extracted_rejects_skipped_entries() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("one.txt"), b"1").unwrap();
+
+        let error =
+            verify_extracted(root.path(), ExtractedEntries { files: 1, dirs: 0 }, 1).unwrap_err();
+        assert!(error.starts_with("EXTRACT_INCOMPLETE:"), "{error}");
+        assert!(error.contains("1 entries skipped"), "{error}");
+    }
+
+    #[test]
+    fn verify_extracted_tolerates_implicit_parent_directories() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("a/b")).unwrap();
+        std::fs::write(root.path().join("a/b/one.txt"), b"1").unwrap();
+
+        // 归档只声明 1 个文件、0 个目录条目：a 与 a/b 是 create_dir_all 顺带建的
+        let written =
+            verify_extracted(root.path(), ExtractedEntries { files: 1, dirs: 0 }, 0).unwrap();
+        assert_eq!(written.files, 1);
+        assert_eq!(written.dirs, 2);
+    }
 }
