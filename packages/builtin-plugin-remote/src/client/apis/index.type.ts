@@ -24,6 +24,8 @@ export interface GetApiTauriRemoteCoreCurrentResponse {
   error?: string
 }
 export type GetApiTauriRemoteCoreCurrentQueryMachineId = string
+export interface GetApiTauriRemoteCoreInstanceResponse { item?: { verdict: 'match' | 'mismatch' | 'unknown', actual?: string, expected: string, port: number, pid?: string, createdByDesktop?: false | true, clientCount?: number }, error?: string }
+export type GetApiTauriRemoteCoreInstanceQueryMachineId = string
 export interface GetApiTauriRemoteCoreProfilesResponse { items?: { name: string, configured: false | true }[], error?: string }
 export type GetApiTauriRemoteCoreProfilesQueryMachineId = string
 export interface GetApiTauriRemoteCoreVersionsResponse { items?: { version: string, tag: string, preview: false | true }[], error?: string }
@@ -148,6 +150,7 @@ export interface PostApiTauriRemoteMachinesDisconnectBody {
 export interface PostApiTauriRemoteMachinesInstallBody {
   machineId?: string
   reinstall?: false | true
+  ackProfileMismatch?: false | true
 }
 export interface PostApiTauriRemoteCoreInstallBody {
   machineId?: string
@@ -177,6 +180,9 @@ export interface GetApiTauriRemoteMachinesEventsQuery {
 }
 export interface GetApiTauriRemoteCoreCurrentQuery {
   machineId: GetApiTauriRemoteCoreCurrentQueryMachineId
+}
+export interface GetApiTauriRemoteCoreInstanceQuery {
+  machineId: GetApiTauriRemoteCoreInstanceQueryMachineId
 }
 export interface GetApiTauriRemoteCoreProfilesQuery {
   machineId: GetApiTauriRemoteCoreProfilesQueryMachineId

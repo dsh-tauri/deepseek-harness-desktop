@@ -46,6 +46,12 @@ interface RemoveTarget {
   name: string
 }
 
+interface ReinstallTarget {
+  id: string
+  actual?: string
+  expected: string
+}
+
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/u
 
 function slugOf(host: string): string {
@@ -588,6 +594,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
   const [bridgeErrors, setBridgeErrors] = useState<Record<string, string>>({})
   const [openingId, setOpeningId] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null)
+  const [reinstallTarget, setReinstallTarget] = useState<ReinstallTarget | null>(null)
 
   useEffect(() => {
     void service.load()
@@ -664,6 +671,32 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
     if (!result.ok)
       return
     setAddOpen(false)
+  }
+
+  const requestInstall = (id: string, reinstall: boolean): void => {
+    if (!reinstall) {
+      void service.install({ machineId: id, reinstall: false })
+      return
+    }
+    // 强制重装会打断端口上的实例：先用只读发现预检档案，不符则弹确认框（issue #1600）。
+    void service.profileMismatchOf(id).then((mismatch) => {
+      if (mismatch !== undefined) {
+        setReinstallTarget({ id, actual: mismatch.actual, expected: mismatch.expected })
+        return
+      }
+      void service.install({ machineId: id, reinstall: true })
+    }).catch(() => {
+      // 预检失败（如远端暂不可达）不阻断重装；host 端三态断言仍是最终护栏。
+      void service.install({ machineId: id, reinstall: true })
+    })
+  }
+
+  const confirmReinstall = (): void => {
+    if (reinstallTarget === null)
+      return
+    const { id } = reinstallTarget
+    setReinstallTarget(null)
+    void service.install({ machineId: id, reinstall: true, ackProfileMismatch: true })
   }
 
   const confirmRemove = (): void => {
@@ -869,7 +902,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                   bridgeError={bridgeErrors[row.id]}
                   installResult={state.installResults[row.id]}
                   t={t}
-                  onInstall={(id, reinstall) => void service.install({ machineId: id, reinstall })}
+                  onInstall={requestInstall}
                 />
               </RowShell>
             )
@@ -918,7 +951,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                         bridgeError={bridgeErrors[row.id]}
                         installResult={state.installResults[row.id]}
                         t={t}
-                        onInstall={(id, reinstall) => void service.install({ machineId: id, reinstall })}
+                        onInstall={requestInstall}
                       />
                     </RowShell>
                   ))}
@@ -951,6 +984,25 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
           <>
             <Button variant="ghost" onClick={() => setRemoveTarget(null)}>{t('remove.confirm.cancel')}</Button>
             <Button variant="primary" className="text-error" onClick={confirmRemove}>{t('remove.confirm.ok')}</Button>
+          </>
+        )}
+      />
+      <Modal
+        open={reinstallTarget !== null}
+        onClose={() => setReinstallTarget(null)}
+        title={t('reinstall.profile_mismatch.title')}
+        closeLabel={t('reinstall.profile_mismatch.cancel')}
+        description={reinstallTarget === null
+          ? ''
+          : reinstallTarget.actual === undefined
+            ? t('reinstall.profile_mismatch.unknown')
+            : t('reinstall.profile_mismatch.description')
+                .replace('{actual}', reinstallTarget.actual)
+                .replace('{expected}', reinstallTarget.expected)}
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setReinstallTarget(null)}>{t('reinstall.profile_mismatch.cancel')}</Button>
+            <Button variant="primary" className="text-error" onClick={confirmReinstall}>{t('reinstall.profile_mismatch.ok')}</Button>
           </>
         )}
       />

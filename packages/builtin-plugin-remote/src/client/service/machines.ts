@@ -145,14 +145,26 @@ export async function disconnect(input: { machineId: string }): Promise<ServiceR
   })
 }
 
-export async function install(input: { machineId: string, reinstall?: boolean }): Promise<ServiceResult> {
+export async function install(input: { machineId: string, reinstall?: boolean, ackProfileMismatch?: boolean }): Promise<ServiceResult> {
   return withBusy(input.machineId, 'install', async () => {
     store.machines.commitInstallResult(input.machineId, installResultOf(await api.postMachinesInstall({
       machineId: input.machineId,
       ...input.reinstall === true ? { reinstall: true } : {},
+      ...input.ackProfileMismatch === true ? { ackProfileMismatch: true } : {},
     })))
     await load()
   })
+}
+
+/**
+ * 强制重装前的只读预检：端口上的实例档案与机器配置不符时返回档案名，供 UI 弹确认框（issue #1600 C 策略）。
+ * 只读端点的三态发现认不出时返回 undefined，不阻断重装。
+ */
+export async function profileMismatchOf(machineId: string): Promise<{ actual?: string, expected: string } | undefined> {
+  const status = await api.getCoreInstance({ machineId })
+  if (status.error !== undefined || status.item?.verdict !== 'mismatch')
+    return undefined
+  return { actual: status.item.actual, expected: status.item.expected }
 }
 
 async function withBusy(machineId: string, op: MachineBusyOp, action: () => Promise<void>): Promise<ServiceResult> {

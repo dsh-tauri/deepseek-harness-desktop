@@ -55,6 +55,7 @@ vi.mock('./machine', () => ({
   machine: {
     openSession: vi.fn(),
     profileName: vi.fn(),
+    profile: vi.fn(),
   },
 }))
 
@@ -131,6 +132,7 @@ async function expectProfileDirectoryUnreadable(mode: number): Promise<void> {
 
 beforeEach(() => {
   vi.mocked(machine.profileName).mockReturnValue('remote')
+  vi.mocked(machine.profile).mockReturnValue({ id: machineId, remotePort: 3089, profileName: 'remote' } as ReturnType<typeof machine.profile>)
   runtimeGeneration.value = 1
   installAborts.clear()
   installTasks.clear()
@@ -141,6 +143,50 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllMocks()
   vi.restoreAllMocks()
+})
+
+describe('remote instance status (P3-0)', () => {
+  function snapshotOf(pid: string, profile: string): string {
+    return `Linux\n${pid}\n/home/tester\n123:456\nyes\nnode\0/opt/dsh/lib/bin.js\0--profile\0${profile}\0`
+  }
+
+  it('reports the actual profile from argv, not the configured one', async () => {
+    const session = sessionWithRemote([], { code: 0, stdout: '', stderr: '' }, command =>
+      command.includes('REMOTE_DSH_LISTENER') ? { code: 0, stdout: snapshotOf('4321', 'other'), stderr: '' } : undefined)
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    await expect(core.instanceStatus(machineId)).resolves.toEqual({
+      verdict: 'mismatch',
+      actual: 'other',
+      expected: 'remote',
+      port: 3089,
+      pid: '4321',
+      createdByDesktop: true,
+    })
+    expect(session.close).toHaveBeenCalledOnce()
+  })
+
+  it('reports unknown without throwing when the listener cannot be read', async () => {
+    const session = sessionWithRemote([], { code: 0, stdout: '', stderr: '' }, command =>
+      command.includes('REMOTE_DSH_LISTENER') ? { code: 1, stdout: '', stderr: 'REMOTE_DSH_LISTENER_TOOLS_MISSING' } : undefined)
+    vi.mocked(machine.openSession).mockResolvedValue(session)
+
+    await expect(core.instanceStatus(machineId)).resolves.toEqual({
+      verdict: 'unknown',
+      expected: 'remote',
+      port: 3089,
+    })
+  })
+
+  it('reports unknown without throwing when the SSH session cannot be opened', async () => {
+    vi.mocked(machine.openSession).mockRejectedValue(new Error('REMOTE_UNREACHABLE'))
+
+    await expect(core.instanceStatus(machineId)).resolves.toEqual({
+      verdict: 'unknown',
+      expected: 'remote',
+      port: 3089,
+    })
+  })
 })
 
 describe('remote core contract', () => {

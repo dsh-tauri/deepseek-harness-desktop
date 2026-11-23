@@ -1,4 +1,4 @@
-import type { CoreProfileItem, CoreTarget, CoreTaskEvent, CoreVersionItem } from '../../../shared/core'
+import type { CoreProfileItem, CoreTarget, CoreTaskEvent, CoreVersionItem, RemoteInstanceStatus } from '../../../shared/core'
 import type { RemoteAuthMethod, RemoteConnectionState, RemoteProgress, RemoteTunnelMode } from '../../types/index'
 
 export interface RemoteMachineListItem {
@@ -76,6 +76,8 @@ export interface RemoteMachineIdBody {
 export interface RemoteInstallRequestBody {
   machineId?: string
   reinstall?: boolean
+  /** 用户已确认端口上实例档案不符、仍要强制重装（issue #1600 C 策略）。 */
+  ackProfileMismatch?: boolean
 }
 
 export interface RemoteAccessTunnelBody {
@@ -101,6 +103,10 @@ export interface GetCoreProfilesQuery {
   machineId: string
 }
 
+export interface GetCoreInstanceQuery {
+  machineId: string
+}
+
 export interface RemoteCoreCurrentResponse {
   item?: CoreTarget
   error?: string
@@ -108,6 +114,11 @@ export interface RemoteCoreCurrentResponse {
 
 export interface RemoteCoreProfilesResponse {
   items?: CoreProfileItem[]
+  error?: string
+}
+
+export interface RemoteCoreInstanceResponse {
+  item?: RemoteInstanceStatus
   error?: string
 }
 

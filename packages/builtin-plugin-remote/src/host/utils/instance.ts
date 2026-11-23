@@ -18,17 +18,26 @@ export function listenerSnapshotCommand(port: number): string {
     'set -f; set -- $PIDS; [ "$#" -eq 1 ] || fail PID_MISSING_OR_MULTIPLE',
     'REMOTE_DSH_LISTENER_PID=$1',
     'case "$REMOTE_DSH_LISTENER_PID" in ""|*[!0-9]*) fail PID_INVALID ;; esac',
+    'DESKTOP=no',
+    `PIDFILE="$HOME/${remotePidfile(port)}"`,
+    'if [ -f "$PIDFILE" ]; then',
+    '  FILEPID=$(cat "$PIDFILE" 2>/dev/null || true)',
+    '  case "$FILEPID" in',
+    '    *[!0-9]*) ;;',
+    '    *) [ "$FILEPID" = "$REMOTE_DSH_LISTENER_PID" ] && DESKTOP=yes ;;',
+    '  esac',
+    'fi',
     'if [ "$OS" = Linux ]; then',
     '  CWD=$(readlink "/proc/$REMOTE_DSH_LISTENER_PID/cwd") || fail CWD_UNREADABLE',
     '  STAMP=$(stat -Lc "%d:%i" "/proc/$REMOTE_DSH_LISTENER_PID") || fail PROCESS_UNREADABLE',
     '  [ -r "/proc/$REMOTE_DSH_LISTENER_PID/cmdline" ] || fail COMMAND_UNREADABLE',
-    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP"',
+    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP" "$DESKTOP"',
     '  cat "/proc/$REMOTE_DSH_LISTENER_PID/cmdline" || fail COMMAND_UNREADABLE',
     'else',
     '  CWD=$(lsof -a -p "$REMOTE_DSH_LISTENER_PID" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p") || fail CWD_UNREADABLE',
     '  STAMP=$(ps -p "$REMOTE_DSH_LISTENER_PID" -o lstart=) || fail PROCESS_UNREADABLE',
     '  ARGS=$(ps -ww -p "$REMOTE_DSH_LISTENER_PID" -o command=) || fail COMMAND_UNREADABLE',
-    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP" "$ARGS"',
+    '  printf "%s\\n" "$OS" "$REMOTE_DSH_LISTENER_PID" "$CWD" "$STAMP" "$DESKTOP" "$ARGS"',
     'fi',
   ].join('\n')
 }
@@ -38,15 +47,16 @@ export interface ListenerIdentity {
   pid: string
   cwd: string
   stamp: string
+  createdByDesktop: boolean
   argv: string[]
 }
 
 export function parseListenerSnapshot(stdout: string): ListenerIdentity | undefined {
-  const [os, pid, cwd, stamp, ...rest] = stdout.split('\n')
+  const [os, pid, cwd, stamp, desktop, ...rest] = stdout.split('\n')
   if (!['Linux', 'Darwin'].includes(os ?? '') || !/^\d+$/u.test(pid ?? '') || !cwd?.startsWith('/') || !stamp?.trim())
     return undefined
   const argv = os === 'Linux' ? rest.join('\n').split('\0') : rest.join('\n').trim().split(/\s+/u)
-  return { os: os ?? '', pid: pid ?? '', cwd: cwd ?? '', stamp: stamp ?? '', argv }
+  return { os: os ?? '', pid: pid ?? '', cwd: cwd ?? '', stamp: stamp ?? '', createdByDesktop: desktop === 'yes', argv }
 }
 
 /** 启动参数里的远端档案名：认不出就是 undefined（不是「档案不对」）。 */
@@ -63,15 +73,54 @@ export function profileOfArgv(argv: readonly string[]): string | undefined {
  * 都属于「认不出」。只有读出另一个档案名才算「认得出且不是它」。issue #1574。
  */
 export async function readListenerProfile(session: RemoteSession, port: number): Promise<string | undefined> {
+  return (await readListenerState(session, port)).actual
+}
+
+/** 档案核对的三态结果：相符 / 不符 / 认不出，替代原来「抛错或不抛」的二值语义。issue #1600。 */
+export type ProfileVerdict = 'match' | 'mismatch' | 'unknown'
+
+/** 端口上实例的可只读发现状态，供契约层暴露与三处写操作按场景决策共用。issue #1600。 */
+export interface ListenerState {
+  verdict: ProfileVerdict
+  /** 实例 argv 自报的档案；认不出为 undefined，不猜。 */
+  actual?: string
+  /** 机器条目配置的期望档案；仅用于比对，不覆盖 actual 的展示。 */
+  expected: string
+  port: number
+  pid?: string
+  createdByDesktop?: boolean
+}
+
+/**
+ * 只读发现端口上的实例状态，一次 exec 拿全身份，避免二次探测的竞态。
+ *
+ * - match：认得出档案且与期望一致；
+ * - mismatch：认得出档案但与期望不符（调用点据此按场景决定报错还是确认）；
+ * - unknown：认不出（缺 lsof/ss、非桌面拉起、argv 无 --profile）——不算错，也不猜测档案。
+ *
+ * 判定权留给调用点：本函数只报告事实，不抛异常。issue #1600。
+ */
+export async function readListenerState(session: RemoteSession, port: number, expectedProfile = ''): Promise<ListenerState> {
+  const base: ListenerState = { verdict: 'unknown', expected: expectedProfile, port }
   try {
     const snapshot = await session.exec(listenerSnapshotCommand(port))
     if (snapshot.code !== 0)
-      return undefined
+      return base
     const identity = parseListenerSnapshot(snapshot.stdout)
-    return identity === undefined ? undefined : profileOfArgv(identity.argv)
+    if (identity === undefined)
+      return base
+    const withIdentity: ListenerState = {
+      ...base,
+      pid: identity.pid,
+      createdByDesktop: identity.createdByDesktop,
+    }
+    const actual = profileOfArgv(identity.argv)
+    if (actual === undefined)
+      return withIdentity
+    return { ...withIdentity, actual, verdict: actual === expectedProfile ? 'match' : 'mismatch' }
   }
   catch {
-    return undefined
+    return base
   }
 }
 
@@ -82,10 +131,10 @@ export async function readListenerProfile(session: RemoteSession, port: number):
  * 端口上跑的是别人的实例。认得出且不是它，就必须报错而不是静默复用。issue #1574。
  */
 export async function assertListenerProfile(session: RemoteSession, port: number, expectedProfile: string): Promise<void> {
-  const actual = await readListenerProfile(session, port)
-  if (actual === undefined || actual === expectedProfile)
+  const state = await readListenerState(session, port, expectedProfile)
+  if (state.verdict !== 'mismatch')
     return
-  throw new Error(`REMOTE_INSTANCE_PROFILE_MISMATCH: 端口 ${port} 上跑的是远端档案「${actual}」，本机这条远端机器配的是「${expectedProfile}」`)
+  throw new Error(`REMOTE_INSTANCE_PROFILE_MISMATCH: 端口 ${port} 上跑的是远端档案「${state.actual}」，本机这条远端机器配的是「${expectedProfile}」`)
 }
 
 export interface RemoteSlotClaimOptions {

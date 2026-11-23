@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import enUS from '@/i18n/locales/en-US.json'
 import { RemoteProfileSection } from './remote-profile'
 
-const mocks = vi.hoisted(() => ({ getCoreProfiles: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getCoreProfiles: vi.fn(), getCoreInstance: vi.fn() }))
 
-vi.mock('@/apis/remote', () => ({ getCoreProfiles: mocks.getCoreProfiles }))
+vi.mock('@/apis/remote', () => ({ getCoreProfiles: mocks.getCoreProfiles, getCoreInstance: mocks.getCoreInstance }))
 
 const clients = new Set<QueryClient>()
 let translations = createInstance()
@@ -45,6 +45,7 @@ beforeEach(async () => {
       { name: 'build-alt', configured: false },
     ],
   })
+  mocks.getCoreInstance.mockResolvedValue({ item: undefined })
 })
 
 afterEach(() => {
@@ -88,14 +89,16 @@ describe('远端 Profile 只读列表', () => {
     expect(screen.queryByTestId('dsh-profile-remote-build-remote')).toBeNull()
   })
 
-  it('re-reads the remote profiles when the refresh button is pressed', async () => {
+  it('re-reads the remote profiles and the instance status when the refresh button is pressed', async () => {
     renderRemoteProfiles()
 
     await screen.findByTestId('dsh-profile-remote-build-remote')
     expect(mocks.getCoreProfiles).toHaveBeenCalledTimes(1)
+    expect(mocks.getCoreInstance).toHaveBeenCalledTimes(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh remote profiles' }))
     await waitFor(() => expect(mocks.getCoreProfiles).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.getCoreInstance).toHaveBeenCalledTimes(2))
   })
 
   it('reports a failed read instead of showing an empty list', async () => {
@@ -104,5 +107,37 @@ describe('远端 Profile 只读列表', () => {
 
     expect(await screen.findByText(/REMOTE_UNREACHABLE/)).toBeTruthy()
     expect(screen.queryByText('No profiles on this machine')).toBeNull()
+  })
+
+  it('shows an instance query failure without hiding the profile list', async () => {
+    mocks.getCoreInstance.mockRejectedValue(new Error('discovery failed'))
+    renderRemoteProfiles()
+
+    expect(await screen.findByTestId('dsh-profile-remote-instance-error-build')).toBeTruthy()
+    expect(screen.getByTestId('dsh-profile-remote-build-remote')).toBeTruthy()
+  })
+
+  it('shows the instance actual profile instead of the configured one when they differ', async () => {
+    mocks.getCoreInstance.mockResolvedValue({
+      item: { verdict: 'mismatch', actual: 'build-alt', expected: 'remote', port: 3089, pid: '4321', createdByDesktop: true },
+    })
+    renderRemoteProfiles()
+
+    const chip = await screen.findByTestId('dsh-profile-remote-instance-profile-build')
+    expect(chip.textContent).toContain('build-alt')
+    expect(screen.getByText(/Differs from configured/)).toBeTruthy()
+    expect(screen.getByText(/PID 4321/)).toBeTruthy()
+    expect(mocks.getCoreInstance).toHaveBeenCalledWith({ machineId: 'build' })
+  })
+
+  it('marks an unreadable profile as unknown without claiming a mismatch', async () => {
+    mocks.getCoreInstance.mockResolvedValue({
+      item: { verdict: 'unknown', expected: 'remote', port: 3089 },
+    })
+    renderRemoteProfiles()
+
+    const chip = await screen.findByTestId('dsh-profile-remote-instance-profile-build')
+    expect(chip.textContent).toContain('Unknown')
+    expect(screen.queryByText(/Differs from configured/)).toBeNull()
   })
 })

@@ -5,7 +5,7 @@ import { Button, Chip, Description, Label, Spinner } from '@heroui/react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
-import { getCoreProfiles } from '@/apis/remote'
+import { getCoreInstance, getCoreProfiles } from '@/apis/remote'
 import { Empty } from '@/components/empty'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
@@ -31,7 +31,19 @@ export function RemoteProfileSection({ machine }: { machine: RemoteMachineRow })
     },
   })
 
-  const refreshing = profilesQuery.isFetching
+  // 端口上实例的实际档案（P3-0，issue #1600）：按实例自报展示，不用机器配置的档案覆盖。
+  const instanceQuery = useQuery({
+    queryKey: queryKeys.remoteCoreInstance(machine.id),
+    queryFn: async () => {
+      const response = await getCoreInstance({ machineId: machine.id })
+      if (response.error !== undefined)
+        throw new Error(response.error)
+      return response.item ?? null
+    },
+  })
+  const instance = instanceQuery.data
+
+  const refreshing = profilesQuery.isFetching || instanceQuery.isFetching
   const error = profilesQuery.error === null ? '' : String(profilesQuery.error)
   const items = profilesQuery.data ?? []
 
@@ -48,7 +60,10 @@ export function RemoteProfileSection({ machine }: { machine: RemoteMachineRow })
           variant="tertiary"
           isDisabled={refreshing}
           aria-label={t('profiles.remote_refresh')}
-          onPress={() => void profilesQuery.refetch()}
+          onPress={() => {
+            void profilesQuery.refetch()
+            void instanceQuery.refetch()
+          }}
         >
           <If cond={refreshing} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
           {t('profiles.remote_refresh')}
@@ -56,6 +71,32 @@ export function RemoteProfileSection({ machine }: { machine: RemoteMachineRow })
       </div>
 
       <Panel.Loadable loading={profilesQuery.isPending} error={error}>
+        <If cond={instanceQuery.error != null}>
+          <div className="px-1 pb-1" data-testid={`dsh-profile-remote-instance-error-${machine.id}`}>
+            <Description className="text-[10px] text-warning">{t('profiles.remote_instance_error')}</Description>
+          </div>
+        </If>
+        <If cond={instance != null}>
+          <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1" data-testid={`dsh-profile-remote-instance-${machine.id}`}>
+            <span className="text-xs text-muted">{t('profiles.remote_instance_profile')}</span>
+            <Chip
+              size="sm"
+              variant="soft"
+              color={instance?.verdict === 'mismatch' ? 'warning' : instance?.verdict === 'match' ? 'success' : 'default'}
+              data-testid={`dsh-profile-remote-instance-profile-${machine.id}`}
+            >
+              {instance?.actual ?? t('profiles.remote_instance_unknown')}
+            </Chip>
+            <If cond={instance?.verdict === 'mismatch'}>
+              <Description className="text-[10px] text-warning">
+                {t('profiles.remote_instance_mismatch', { configured: instance?.expected ?? '' })}
+              </Description>
+            </If>
+            <If cond={instance?.pid !== undefined}>
+              <Description className="text-[10px] text-muted">{t('profiles.remote_instance_pid', { pid: instance?.pid ?? '' })}</Description>
+            </If>
+          </div>
+        </If>
         <If cond={items.length === 0}>
           <Empty>{t('profiles.remote_empty')}</Empty>
         </If>
