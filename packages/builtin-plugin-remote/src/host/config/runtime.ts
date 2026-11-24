@@ -177,11 +177,12 @@ export function migrateLegacyState(): string | undefined {
     migrationWarning = messageOf(error)
     return migrationWarning
   }
-  adoptPreviousStateDir(reasons)
+  const stranded = adoptPreviousStateDir(reasons)
   // 两份文档各自迁移：其中一份损坏或写不进去，不影响另一份被带过来。
-  if (current.statePath === undefined)
+  // 上一版目录里没能搬走的文档不能再由更旧的 ssh 备份顶上，否则旧状态会长期生效。
+  if (current.statePath === undefined && !stranded.has(STATE_DOCUMENT))
     migrateInto(join(legacyStateDir(), STATE_DOCUMENT), stateDocumentPath(), reasons)
-  if (current.knownHostsPath === undefined)
+  if (current.knownHostsPath === undefined && !stranded.has(KNOWN_HOSTS_DOCUMENT))
     migrateInto(join(legacyStateDir(), KNOWN_HOSTS_DOCUMENT), knownHostsFilePath(), reasons)
   migrationWarning = reasons.length === 0 ? undefined : reasons.join('; ')
   return migrationWarning
@@ -209,11 +210,14 @@ function migrateInto(source: string, target: string, reasons: string[]): void {
  * 把上一版现役目录里属于本插件的条目搬到各自的有效目标位置，并删掉腾空的目录。
  * 该目录要完整让给 ds-harness-remote 的旧版迁移，留下任何一个文件都会让它报 STORAGE_CONFLICT（#1624）；
  * 只搬自己写过的条目，`servers/` 之类他人数据原地不动。
+ *
+ * @returns 留在原处没搬走的条目名，调用方据此不再拿更旧的备份顶替它们。
  */
-function adoptPreviousStateDir(reasons: string[]): void {
+function adoptPreviousStateDir(reasons: string[]): Set<string> {
+  const stranded = new Set<string>()
   const source = previousStateDir()
   if (!existsSync(source))
-    return
+    return stranded
   const moves: [string, string][] = [
     [STATE_DOCUMENT, stateDocumentPath()],
     [KNOWN_HOSTS_DOCUMENT, knownHostsFilePath()],
@@ -225,6 +229,7 @@ function adoptPreviousStateDir(reasons: string[]): void {
     if (!existsSync(from))
       continue
     if (existsSync(target)) {
+      stranded.add(entry)
       reasons.push(`旧状态目录的 ${entry} 未迁移：目标位置已有同名条目`)
       continue
     }
@@ -233,10 +238,12 @@ function adoptPreviousStateDir(reasons: string[]): void {
       renameSync(from, target)
     }
     catch (error) {
+      stranded.add(entry)
       reasons.push(`旧状态目录的 ${entry} 未迁移：${failureCode(error)}`)
     }
   }
   pruneEmptyDir(source)
+  return stranded
 }
 
 function pruneEmptyDir(dir: string): void {
