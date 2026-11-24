@@ -1,6 +1,6 @@
 import type { RuntimeInfo } from '@/types'
 import { ArrowRotateRight, ArrowsRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power, TriangleExclamation } from '@gravity-ui/icons'
-import { Button, Chip, Description, Input, InputGroup, Link, ListBox, Select, Spinner, Switch, Tooltip } from '@heroui/react'
+import { Button, Chip, Description, Input, InputGroup, Link, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
@@ -11,12 +11,11 @@ import { Info } from '@/components/info'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
 import { useListen } from '@/hooks/use-listen'
-import { changeLanguage } from '@/i18n'
+import { useRemoteShellMachine } from '@/hooks/use-remote-shell'
 import { store } from '@/store'
 import { HARNESS_HEAP_MAX_MB, HARNESS_HEAP_MIN_MB } from '@/store/modules/setting'
-import { ConfigAutoUpdate } from '@/ui/config/components/auto-update'
-import { ConfigCloseAction } from '@/ui/config/components/close-action'
-import { ConfigLaunchOnLogin } from '@/ui/config/components/launch-on-login'
+import { ApplicationPreferences } from '@/ui/config/components/application-preferences'
+import { RemoteApplication } from '@/ui/config/components/remote-application'
 import { writeClipboardText } from '@/utils/clipboard'
 import { isSocksProxy } from '@/utils/proxy'
 import { toast } from '@/utils/toast'
@@ -43,8 +42,23 @@ const PROXY_TEST_MESSAGE: Record<string, string> = {
   status: 'network.test_status',
 }
 
+/**
+ * 「应用」面板：本机窗口描述本机核心，远端窗口描述那台机器上的实例。
+ *
+ * 两块内容互不相通——远端窗口里点本机的重启/停止动的是发起端的核心，正是
+ * issue #1630 报的问题，所以这里按窗口归属分叉，不做「同一套按钮两处生效」。
+ */
 export function ConfigDebug() {
-  const { t, i18n } = useTranslation()
+  const machineId = useRemoteShellMachine()
+  // 窗口归属还没落地时先不渲染：按「本机」渲染会先闪一帧本机面板，
+  // 并把 get_runtime_info / get_cli_link_status 真的发到发起端去。
+  if (machineId === undefined)
+    return null
+  return machineId === null ? <LocalApplication /> : <RemoteApplication machineId={machineId} />
+}
+
+function LocalApplication() {
+  const { t } = useTranslation()
   const { serviceRunning, busyAction } = useStore(store.harness)
   const { updateInfo } = useStore(store.harnessUpdater)
 
@@ -204,14 +218,6 @@ export function ConfigDebug() {
     },
   })
 
-  const { mutate: onChangeLanguage } = useMutation({
-    mutationFn: (language: string) => changeLanguage(language),
-    onError: (err: unknown) => {
-      console.error('[ConfigDebug] save language failed:', err)
-      toast(t('messages.language_save_failed'), { variant: 'danger' })
-    },
-  })
-
   const { mutate: onSaveHeap } = useMutation({
     mutationFn: async (mb: number | null) => {
       // 空输入 = 交回自动值；Rust 侧把 0 归一化为 None（物理内存一半，见 workflow/heap.rs）
@@ -362,33 +368,7 @@ export function ConfigDebug() {
       </div>
       <div className="border-t border-line/30" />
       <div className="space-y-1.5">
-        <ConfigAutoUpdate />
-        <ConfigLaunchOnLogin />
-        <ConfigCloseAction />
-
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-ink">{t('ui.language')}</span>
-          <Select
-            variant="secondary"
-            selectedKey={i18n.language}
-            onSelectionChange={key => onChangeLanguage(String(key))}
-            className="w-[80px]"
-            aria-label={t('ui.language')}
-          >
-            <Select.Trigger data-testid="dsh-config-language-select" className="min-h-8! h-8 py-0 items-center">
-              <Select.Value />
-              <Select.Indicator />
-            </Select.Trigger>
-            <Select.Popover>
-              <ListBox>
-                <ListBox.Item data-testid="dsh-config-language-option-zh" className="min-h-8!" id="zh-CN" textValue={t('ui.languages.zh')}>{t('ui.languages.zh')}</ListBox.Item>
-                <ListBox.Item data-testid="dsh-config-language-option-en" className="min-h-8!" id="en-US" textValue={t('ui.languages.en')}>{t('ui.languages.en')}</ListBox.Item>
-                <ListBox.Item data-testid="dsh-config-language-option-ko" className="min-h-8!" id="ko-KR" textValue={t('ui.languages.ko')}>{t('ui.languages.ko')}</ListBox.Item>
-                <ListBox.Item data-testid="dsh-config-language-option-ru" className="min-h-8!" id="ru-RU" textValue={t('ui.languages.ru')}>{t('ui.languages.ru')}</ListBox.Item>
-              </ListBox>
-            </Select.Popover>
-          </Select>
-        </div>
+        <ApplicationPreferences />
         <div className="border-t border-line/30" />
 
         <div className="flex items-center justify-between gap-2">

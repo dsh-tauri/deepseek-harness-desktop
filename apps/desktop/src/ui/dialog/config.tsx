@@ -50,7 +50,8 @@ export function ConfigDialog(props: ConfigDialogProps) {
 
   const [activeTab, setActiveTab] = useState<ConfigTab>(props.tab ?? 'application')
   /** 当前窗口挂在远端机器上时，档案/插件/核心/数据只给提示，不给本机作用域选择器 */
-  const remoteBlocked = useRemoteShellMachine() !== null
+  const remoteMachine = useRemoteShellMachine()
+  const remoteBlocked = remoteMachine !== null && remoteMachine !== undefined
 
   // 服务重启/退出前由 store 触发，命令式收起本对话框（卸载时自动注销）
   useListener(hooks['config.dialog.hidden'].on, disclosure.cancel)
