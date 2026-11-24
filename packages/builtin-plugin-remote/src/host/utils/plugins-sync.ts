@@ -172,8 +172,8 @@ function declaresDsh(root: string, name: string): boolean {
 /**
  * 清单是 JSONC：注释与尾逗号都要先摘掉再交给 JSON.parse。
  *
- * 尾逗号不能靠「逗号后面看一眼」判断：`["a", /* bundled *\/ ]` 里逗号后面是注释，
- * 注释摘掉之后才看得出它其实是尾逗号。所以记下逗号的位置，等下一个实义字符出现时再定。
+ * 尾逗号不能靠「逗号后面看一眼」判断：逗号和收尾括号之间可能夹着注释，注释摘掉之后
+ * 才看得出它是尾逗号。所以记下逗号的位置，等下一个实义字符出现时再定。
  */
 function stripJsonc(raw: string): string {
   let out = ''
