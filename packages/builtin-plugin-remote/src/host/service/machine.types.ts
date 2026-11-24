@@ -22,6 +22,7 @@ export interface MachineState {
   phase: 'disconnected' | 'testing' | 'connecting' | 'connected' | 'reconnecting' | 'given-up'
   connecting?: Promise<RemoteLink>
   installing?: Promise<RemoteInstallResult>
+  restarting?: Promise<void>
   session?: RemoteSession
   tunnel?: RemoteStreamHandle
   gateway?: MachineGatewayHandle

@@ -14,14 +14,17 @@ const mocks = vi.hoisted(() => ({
   getCoreCurrent: vi.fn(),
   loadRemoteMachines: vi.fn(),
   postMachinesDisconnect: vi.fn(),
+  postMachinesRestart: vi.fn(),
   writeClipboardText: vi.fn(),
   toast: vi.fn(),
+  reload: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@/apis/remote', () => ({
   getCoreCurrent: mocks.getCoreCurrent,
   postMachinesDisconnect: mocks.postMachinesDisconnect,
+  postMachinesRestart: mocks.postMachinesRestart,
 }))
 vi.mock('@/hooks/use-remote', () => ({ loadRemoteMachines: mocks.loadRemoteMachines }))
 vi.mock('@/utils/clipboard', () => ({ writeClipboardText: mocks.writeClipboardText }))
@@ -78,6 +81,7 @@ function renderRemoteApplication(machineId = 'build') {
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  Object.defineProperty(window, 'location', { configurable: true, writable: true, value: { reload: mocks.reload } })
   translations = createInstance()
   await translations.init({
     lng: 'en-US',
@@ -89,6 +93,7 @@ beforeEach(async () => {
   mocks.getCoreCurrent.mockResolvedValue({ item: targetOf() })
   mocks.loadRemoteMachines.mockResolvedValue({ enabled: true, machines: [machineOf()] })
   mocks.postMachinesDisconnect.mockResolvedValue({})
+  mocks.postMachinesRestart.mockResolvedValue({})
   mocks.writeClipboardText.mockResolvedValue(undefined)
 })
 
@@ -124,6 +129,15 @@ describe('远端窗口的「应用」面板', () => {
     expect(screen.queryByText('Running')).toBeNull()
   })
 
+  it('reports a machine list read failure instead of claiming the machine is disconnected', async () => {
+    mocks.loadRemoteMachines.mockRejectedValue(new Error('REMOTE_API_MISSING: 404'))
+    renderRemoteApplication()
+
+    expect(await screen.findByText('State unknown')).toBeTruthy()
+    expect(screen.queryByText('Disconnected')).toBeNull()
+    expect(await screen.findByText(/REMOTE_API_MISSING/)).toBeTruthy()
+  })
+
   it('copies the tunnel address', async () => {
     renderRemoteApplication()
 
@@ -142,11 +156,36 @@ describe('远端窗口的「应用」面板', () => {
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('open_external_url', { url: TUNNEL }))
   })
 
+  it('restarts the remote instance and reloads the document instead of restarting the local core', async () => {
+    renderRemoteApplication()
+
+    await waitFor(() => expect(addressInput().value).toBe(TUNNEL))
+    fireEvent.click(screen.getByTestId('dsh-config-remote-restart'))
+
+    await waitFor(() => expect(mocks.postMachinesRestart).toHaveBeenCalledWith({ machineId: 'build' }))
+    await waitFor(() => expect(mocks.reload).toHaveBeenCalledOnce())
+    expect(mocks.invoke).not.toHaveBeenCalledWith('begin_harness_restart', expect.anything())
+    expect(mocks.invoke).not.toHaveBeenCalledWith('shutdown_harness', expect.anything())
+  })
+
+  it('keeps the page as is and reports a failed remote restart', async () => {
+    mocks.postMachinesRestart.mockRejectedValue(new Error('REMOTE_INSTANCE_STOP_FAILED: 端口被占用'))
+    renderRemoteApplication()
+
+    await waitFor(() => expect(addressInput().value).toBe(TUNNEL))
+    fireEvent.click(screen.getByTestId('dsh-config-remote-restart'))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('remote.application_restart_failed', expect.objectContaining({ variant: 'danger' })))
+    expect(mocks.reload).not.toHaveBeenCalled()
+  })
+
   it('returns this window to the local document before disconnecting the machine', async () => {
     const order: string[] = []
     mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'navigate_remote_harness')
+      if (command === 'navigate_remote_harness') {
         order.push('navigate')
+        return undefined
+      }
     })
     mocks.postMachinesDisconnect.mockImplementation(async () => {
       order.push('disconnect')
@@ -154,17 +193,31 @@ describe('远端窗口的「应用」面板', () => {
     })
     renderRemoteApplication()
 
-    fireEvent.click(await screen.findByTestId('dsh-config-remote-disconnect'))
+    await waitFor(() => expect(addressInput().value).toBe(TUNNEL))
+    fireEvent.click(screen.getByTestId('dsh-config-remote-disconnect'))
 
     await waitFor(() => expect(mocks.postMachinesDisconnect).toHaveBeenCalledWith({ machineId: 'build' }))
     expect(order).toEqual(['navigate', 'disconnect'])
   })
 
+  it('does not disconnect the machine when the local navigation fails', async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'navigate_remote_harness')
+        throw new Error('HARNESS_NAVIGATE_FAILED')
+    })
+    renderRemoteApplication()
+
+    await waitFor(() => expect(addressInput().value).toBe(TUNNEL))
+    fireEvent.click(screen.getByTestId('dsh-config-remote-disconnect'))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('remote.application_disconnect_failed', expect.objectContaining({ variant: 'danger' })))
+    expect(mocks.postMachinesDisconnect).not.toHaveBeenCalled()
+  })
+
   it('keeps the local core lifecycle out of the remote window', async () => {
     renderRemoteApplication()
 
-    await screen.findByTestId('dsh-config-remote-address')
-    expect(screen.queryByRole('button', { name: 'Restart' })).toBeNull()
+    await waitFor(() => expect(addressInput().value).toBe(TUNNEL))
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
     expect(screen.queryByTestId('dsh-config-reload-page')).toBeNull()
     expect(mocks.invoke).not.toHaveBeenCalledWith('get_runtime_info')

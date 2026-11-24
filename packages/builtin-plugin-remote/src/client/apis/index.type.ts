@@ -13,6 +13,7 @@ export interface PostApiTauriRemoteMachinesTestResponse { ok?: false | true, ban
 export interface PostApiTauriRemoteMachinesConnectResponse { tunnelBaseUrl?: string, error?: string }
 export interface PostApiTauriRemoteMachinesDisconnectResponse { error?: string }
 export interface PostApiTauriRemoteMachinesInstallResponse { installed?: string[], dshRef?: string, dshVersion?: string, dshPath?: string, credentialsCopied?: false | true, credentialsError?: string, error?: string }
+export interface PostApiTauriRemoteMachinesRestartResponse { error?: string }
 export interface GetApiTauriRemoteMachinesEventsResponse { items?: { seq?: number, ts?: string, machineId?: string, stage?: string, line?: string, terminal?: string, reason?: string }[], nextSeq?: number, error?: string }
 export type GetApiTauriRemoteMachinesEventsQueryMachineId = string
 export type GetApiTauriRemoteMachinesEventsQuerySinceSeq = number
@@ -151,6 +152,9 @@ export interface PostApiTauriRemoteMachinesInstallBody {
   machineId?: string
   reinstall?: false | true
   ackProfileMismatch?: false | true
+}
+export interface PostApiTauriRemoteMachinesRestartBody {
+  machineId?: string
 }
 export interface PostApiTauriRemoteCoreInstallBody {
   machineId?: string

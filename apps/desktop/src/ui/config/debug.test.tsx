@@ -56,6 +56,7 @@ vi.mock('@/store/modules/harness-updater', () => ({
 vi.mock('@/apis/remote', () => ({
   getCoreCurrent: vi.fn(async () => ({ item: undefined })),
   postMachinesDisconnect: vi.fn(async () => ({})),
+  postMachinesRestart: vi.fn(async () => ({})),
 }))
 vi.mock('@/hooks/use-remote', () => ({
   loadRemoteMachines: vi.fn(async () => ({ enabled: true, machines: [] })),

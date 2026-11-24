@@ -1039,6 +1039,59 @@ export async function ensureRemoteInstance(
   )
 }
 
+/**
+ * 重启远端实例：停掉端口上的实例，再按同一份档案拉起并等它重新就绪。
+ *
+ * 只动实例，不动安装目录、也不重新规划安装：隧道与网关建在 SSH 会话上，实例重启
+ * 期间它们仍在，新实例起来后网关按请求重新取启动令牌即可恢复。因此这里既不重跑
+ * 安装脚本，也不取槽位锁——那是强制重装与切换核心的事。
+ */
+export async function restartRemoteInstance(
+  session: RemoteSession,
+  profile: MachineProfile,
+  config: Config,
+  hooks: BootstrapHooks = {},
+): Promise<string> {
+  const { onEvent, onProgress } = hooks
+  const target = `${profile.host}:${profile.remotePort}`
+  const profileName = safeProfileName(profile.profileName)
+  onEvent?.('launch', `重启远端实例（端口 ${profile.remotePort}，档案 ${profileName}）`)
+  const stopped = await session.exec(remoteInstanceStopCommand(profileName, profile.remotePort).join('\n'))
+  if (stopped.code !== 0)
+    return failBootstrap(onEvent, `remote instance stop failed on "${target}": ${describeExecFailure(stopped.code, stopped.stderr)}`, '重启失败')
+  onProgress?.({ phase: 'starting' })
+  const started = await session.exec(startCommandFor(profile))
+  if (started.code !== 0) {
+    const message = started.stdout.includes('REMOTE_NOT_INSTALLED')
+      ? `remote runtime incomplete on "${profile.host}" (REMOTE_NOT_INSTALLED)`
+      : `remote instance start failed on "${profile.host}": ${describeExecFailure(started.code, started.stderr)}`
+    return failBootstrap(onEvent, message, '重启失败')
+  }
+  for (let attempt = 0; attempt < config.healthPollAttempts; attempt++) {
+    onProgress?.({ phase: 'probing', attempt: attempt + 1, total: config.healthPollAttempts })
+    await sleep(config.healthPollIntervalMs)
+    let verdict: string | undefined
+    try {
+      verdict = await judgeReadiness(session, profile, config)
+    }
+    catch (error) {
+      return failBootstrap(onEvent, messageOf(error), '重启失败')
+    }
+    if (verdict !== undefined) {
+      emitReady(onEvent, target, verdict)
+      return target
+    }
+  }
+  const tail = await logTail(session, profile.remotePort)
+  return failBootstrap(
+    onEvent,
+    `remote dsh web did not become ready on "${target}" within ${config.healthPollAttempts} polls after restart; `
+    + `fallback probe: root ${await rootResponseVerdict(session, profile, config)}; `
+    + `remote log tail: ${tail}`,
+    '重启失败',
+  )
+}
+
 async function judgeReadiness(session: RemoteSession, profile: MachineProfile, config: Config): Promise<string | undefined> {
   const verdict = await probeReadiness(session, profile, config)
   if (verdict === undefined)

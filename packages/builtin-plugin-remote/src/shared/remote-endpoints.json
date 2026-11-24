@@ -19,6 +19,7 @@
   "POST /api/tauri/remote/machines/connect",
   "POST /api/tauri/remote/machines/disconnect",
   "POST /api/tauri/remote/machines/install",
+  "POST /api/tauri/remote/machines/restart",
   "POST /api/tauri/remote/machines/test",
   "POST /api/tauri/remote/settings",
   "POST /api/tauri/remote/sync/apply"

@@ -1,11 +1,11 @@
 import type { RemoteCoreTarget } from './remote-core.rows'
-import { ArrowsRotateRight, ArrowUpRightFromSquare, Copy, Power } from '@gravity-ui/icons'
-import { Button, Chip, Description, Input } from '@heroui/react'
+import { ArrowRotateRight, ArrowsRotateRight, ArrowUpRightFromSquare, Copy, Power } from '@gravity-ui/icons'
+import { Button, Chip, Description, Input, Spinner } from '@heroui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
-import { getCoreCurrent, postMachinesDisconnect } from '@/apis/remote'
+import { getCoreCurrent, postMachinesDisconnect, postMachinesRestart } from '@/apis/remote'
 import { Info } from '@/components/info'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
@@ -57,6 +57,8 @@ export function RemoteApplication({ machineId }: { machineId: string }) {
     ? target.slots.find(slot => slot.kind === 'installed' && slot.active)
     : undefined
   const version = activeSlot?.kind === 'installed' ? activeSlot.version : undefined
+  /** 机器列表读不出来时不能把「读不到」说成「已断开」 */
+  const machinesError = machinesQuery.error == null ? '' : String(machinesQuery.error)
 
   // 5. 使用 useMutation 封装动作流程
   const copyAddress = useMutation({
@@ -74,12 +76,23 @@ export function RemoteApplication({ machineId }: { machineId: string }) {
     },
   })
 
+  const restart = useMutation({
+    mutationFn: () => postMachinesRestart({ machineId }),
+    onSuccess: () => {
+      // 实例重启期间本窗口的文档已经断流，重新加载才会重新取到新实例的启动令牌。
+      globalThis.location.reload()
+    },
+    onError: (err: unknown) => {
+      console.error('[RemoteApplication] restart failed:', err)
+      toast(t('remote.application_restart_failed'), { variant: 'danger', description: String(err) })
+    },
+  })
+
   const disconnect = useMutation({
     mutationFn: async () => {
-      // 本窗口的文档正是经这条隧道加载的：先切回本机文档，再断开这台机器。
-      // 反过来做会把窗口留在一个再也收不到消息的页面上。
-      void invoke('navigate_remote_harness', { machineId: null })
-        .catch(error => console.error('[RemoteApplication] navigate local failed:', error))
+      // 本窗口的文档正是经这条隧道加载的：先把文档切回本机，再断开这台机器。
+      // 导航失败就停下——断开后窗口会停在一个再也收不到消息的页面上。
+      await invoke('navigate_remote_harness', { machineId: null })
       await postMachinesDisconnect({ machineId })
     },
     onSuccess: () => {
@@ -91,6 +104,8 @@ export function RemoteApplication({ machineId }: { machineId: string }) {
     },
   })
 
+  const busy = restart.isPending || disconnect.isPending
+
   return (
     <div className="space-y-3" data-testid="dsh-config-remote-application">
       <Panel.Header title={t('config.application')} testId="dsh-config-panel-title" />
@@ -99,9 +114,25 @@ export function RemoteApplication({ machineId }: { machineId: string }) {
           <span className="text-xs font-semibold uppercase tracking-wider text-muted">
             {t('ui.connection_status')}
           </span>
-          <Chip size="sm" variant="soft" color={STATE_COLOR[state] ?? 'default'} className="font-medium">
-            {t(`remote.state.${state}`)}
-          </Chip>
+          <If
+            cond={machinesQuery.isPending}
+            else={(
+              <If
+                cond={machinesError !== ''}
+                else={(
+                  <Chip size="sm" variant="soft" color={STATE_COLOR[state] ?? 'default'} className="font-medium" data-testid="dsh-config-remote-state">
+                    {t(`remote.state.${state}`)}
+                  </Chip>
+                )}
+              >
+                <Chip size="sm" variant="soft" color="danger" className="font-medium" data-testid="dsh-config-remote-state">
+                  {t('remote.application_state_unknown')}
+                </Chip>
+              </If>
+            )}
+          >
+            <Spinner size="sm" color="current" data-testid="dsh-config-remote-state-loading" />
+          </If>
         </div>
         <div className="flex gap-1.5">
           <Input
@@ -150,16 +181,28 @@ export function RemoteApplication({ machineId }: { machineId: string }) {
       <div className="flex items-center gap-2">
         <Button
           size="sm"
+          variant="tertiary"
+          className="flex-1"
+          isDisabled={busy || machine === undefined}
+          onPress={() => restart.mutate()}
+          data-testid="dsh-config-remote-restart"
+        >
+          <If cond={restart.isPending} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
+          {t('app.restart')}
+        </Button>
+        <Button
+          size="sm"
           variant="danger"
           className="flex-1"
-          isDisabled={disconnect.isPending}
+          isDisabled={busy}
           onPress={() => disconnect.mutate()}
           data-testid="dsh-config-remote-disconnect"
         >
-          <Power className="size-3.5" />
+          <If cond={disconnect.isPending} then={<Spinner size="sm" color="current" />} else={<Power className="size-3.5" />} />
           {t('remote.disconnect_active')}
         </Button>
       </div>
+      <p className="text-[10px] leading-4 text-muted/70">{t('remote.application_restart_hint')}</p>
       <div className="border-t border-line/30" />
       <div className="space-y-1">
         <Info term={t('ui.dsh_version')}>
@@ -173,6 +216,9 @@ export function RemoteApplication({ machineId }: { machineId: string }) {
       </div>
       <If cond={targetQuery.error != null}>
         <Description className="break-all text-[10px] text-danger">{String(targetQuery.error)}</Description>
+      </If>
+      <If cond={machinesError !== ''}>
+        <Description className="break-all text-[10px] text-danger">{machinesError}</Description>
       </If>
       <If cond={machine?.lastError !== undefined}>
         <Description className="break-all text-[10px] text-warning">{machine?.lastError}</Description>
