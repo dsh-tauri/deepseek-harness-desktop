@@ -4,18 +4,22 @@ import type { TunnelDeps } from '../service/tunnel.types'
 import type { MachineId, MachineProfile, RemoteHostContext, RemoteMachineEvent } from '../types/index'
 import type { Config } from './schema'
 import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import process from 'node:process'
-import { join } from 'pathe'
+import { dirname, join } from 'pathe'
 import { messageOf } from '../../shared/error'
 import { migrateDocument } from '../utils/migrate'
 import { EVENT_RING_CAPACITY } from './constants'
 
-const STATE_DIR = 'remote'
+/** #1624：`$DSH_HOME/remote` 归 ds-harness-remote 的旧版迁移，本插件改用带命名空间的目录。 */
+const STATE_DIR = 'remote.ssh'
+const PREVIOUS_STATE_DIR = 'remote'
 const LEGACY_STATE_DIR = 'ssh'
 const STATE_DOCUMENT = 'machines.json'
 const KNOWN_HOSTS_DOCUMENT = 'known-hosts.json'
 const ACCESS_DOCUMENT = 'access.json'
+export const BIN_DIR = 'bin'
 
 let hostInstance: RemoteHostContext | undefined
 
@@ -78,8 +82,12 @@ export function harnessHome(): string {
   return process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
 
-function stateDir(): string {
+export function stateDir(): string {
   return join(harnessHome(), STATE_DIR)
+}
+
+function previousStateDir(): string {
+  return join(harnessHome(), PREVIOUS_STATE_DIR)
 }
 
 function legacyStateDir(): string {
@@ -151,8 +159,8 @@ function isServicePort(port: unknown): port is number {
 }
 
 /**
- * 一次性幂等迁移 `$DSH_HOME/ssh/` → `$DSH_HOME/remote/`：进程内去重、旧文件保留为只读备份、
- * 目标已存在（含半迁移的空文件）即视为已迁移，失败只回可读原因、绝不阻断插件加载。
+ * 一次性幂等迁移：上一版现役目录 `$DSH_HOME/remote/` 整体搬进 `$DSH_HOME/remote.ssh/`，
+ * 最早的 `$DSH_HOME/ssh/` 只搬两份文档并保留旧文件；进程内去重，失败只回可读原因、绝不阻断插件加载。
  *
  * @returns 未迁移原因（旧文件损坏 / 写入失败）；全部成功或无需迁移时为 undefined。
  */
@@ -169,10 +177,12 @@ export function migrateLegacyState(): string | undefined {
     migrationWarning = messageOf(error)
     return migrationWarning
   }
+  const stranded = adoptPreviousStateDir(reasons)
   // 两份文档各自迁移：其中一份损坏或写不进去，不影响另一份被带过来。
-  if (current.statePath === undefined)
+  // 上一版目录里没能搬走的文档不能再由更旧的 ssh 备份顶上，否则旧状态会长期生效。
+  if (current.statePath === undefined && !stranded.has(STATE_DOCUMENT))
     migrateInto(join(legacyStateDir(), STATE_DOCUMENT), stateDocumentPath(), reasons)
-  if (current.knownHostsPath === undefined)
+  if (current.knownHostsPath === undefined && !stranded.has(KNOWN_HOSTS_DOCUMENT))
     migrateInto(join(legacyStateDir(), KNOWN_HOSTS_DOCUMENT), knownHostsFilePath(), reasons)
   migrationWarning = reasons.length === 0 ? undefined : reasons.join('; ')
   return migrationWarning
@@ -194,6 +204,61 @@ function migrateInto(source: string, target: string, reasons: string[]): void {
   catch (error) {
     reasons.push(messageOf(error))
   }
+}
+
+/**
+ * 把上一版现役目录里属于本插件的条目搬到各自的有效目标位置，并删掉腾空的目录。
+ * 该目录要完整让给 ds-harness-remote 的旧版迁移，留下任何一个文件都会让它报 STORAGE_CONFLICT（#1624）；
+ * 只搬自己写过的条目，`servers/` 之类他人数据原地不动。
+ *
+ * @returns 留在原处没搬走的条目名，调用方据此不再拿更旧的备份顶替它们。
+ */
+function adoptPreviousStateDir(reasons: string[]): Set<string> {
+  const stranded = new Set<string>()
+  const source = previousStateDir()
+  if (!existsSync(source))
+    return stranded
+  const moves: [string, string][] = [
+    [STATE_DOCUMENT, stateDocumentPath()],
+    [KNOWN_HOSTS_DOCUMENT, knownHostsFilePath()],
+    [ACCESS_DOCUMENT, accessDocumentPath()],
+    [BIN_DIR, join(stateDir(), BIN_DIR)],
+  ]
+  for (const [entry, target] of moves) {
+    const from = join(source, entry)
+    if (!existsSync(from))
+      continue
+    if (existsSync(target)) {
+      stranded.add(entry)
+      reasons.push(`旧状态目录的 ${entry} 未迁移：目标位置已有同名条目`)
+      continue
+    }
+    try {
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
+      renameSync(from, target)
+    }
+    catch (error) {
+      stranded.add(entry)
+      reasons.push(`旧状态目录的 ${entry} 未迁移：${failureCode(error)}`)
+    }
+  }
+  pruneEmptyDir(source)
+  return stranded
+}
+
+function pruneEmptyDir(dir: string): void {
+  try {
+    if (readdirSync(dir).length === 0)
+      rmdirSync(dir)
+  }
+  catch {
+    // keep: 目录可能刚被外部删除或仍被占用；腾空失败不影响本次启动
+  }
+}
+
+/** 搬迁失败原因只回错误码：这条原因经 `GET /settings` 下发到 web 载体，不下发 home 下的绝对路径。 */
+function failureCode(error: unknown): string {
+  return typeof error === 'object' && error !== null && 'code' in error ? String((error as { code: unknown }).code) : '未知原因'
 }
 
 export function sshDirPath(): string {

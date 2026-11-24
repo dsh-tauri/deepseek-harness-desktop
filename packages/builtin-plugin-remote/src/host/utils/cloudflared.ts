@@ -8,7 +8,7 @@ import process from 'node:process'
 import { promisify } from 'node:util'
 import { dirname, join } from 'pathe'
 import { messageOf } from '../../shared/error'
-import { harnessHome } from '../config/runtime'
+import { BIN_DIR, stateDir } from '../config/runtime'
 
 const execFileAsync = promisify(execFile)
 
@@ -22,9 +22,6 @@ const RELEASE_TIMEOUT_MS = 20_000
 const FALLBACK_VERSION = '2026.10.0'
 
 const MIRROR_PREFIX = 'https://ghfast.top/'
-
-const STATE_DIR = 'remote'
-const BIN_DIR = 'bin'
 
 const DOWNLOAD_TIMEOUT_MS = 120_000
 const VERSION_TIMEOUT_MS = 5_000
@@ -159,7 +156,7 @@ function installedBinaryPath(): string {
   const asset = cloudflaredAsset()
   if (asset === undefined)
     throw new Error(`不支持的平台：${process.platform}-${process.arch}；请自行安装 cloudflared 并设置 CLOUDFLARED_PATH`)
-  return join(harnessHome(), STATE_DIR, BIN_DIR, asset.executable)
+  return join(stateDir(), BIN_DIR, asset.executable)
 }
 
 async function runsCloudflared(binary: string): Promise<boolean> {
