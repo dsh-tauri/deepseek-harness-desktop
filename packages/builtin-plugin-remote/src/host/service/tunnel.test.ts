@@ -340,6 +340,34 @@ describe('cloudflared 假死探针', () => {
     expect(status.events.some(event => event.line.includes('判定假死后的重建不设上限'))).toBe(true)
   })
 
+  it('重建后的新进程只拿到域名不算恢复，探活未通过前仍不进入终态', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startProbed(tunnel)
+    host.status.mockReturnValue({ state: 'listening', port: ENTRY_PORT })
+
+    await failProbe(10)
+    expect(signals).toEqual(['SIGTERM'])
+
+    crash()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flush()
+    expect(host.spawn).toHaveBeenCalledTimes(2)
+    handlers?.onLine(METRICS_LINE)
+    handlers?.onLine(QUICK_LINE)
+    await flush()
+    expect((await tunnel.status()).state).toBe('running')
+
+    for (let index = 0; index < 6; index += 1) {
+      crash()
+      await vi.advanceTimersByTimeAsync(16_000)
+      await flush()
+    }
+
+    const status = await tunnel.status()
+    expect(status.state).toBe('starting')
+    expect(status.error).toBeUndefined()
+  })
+
   it('未识别到 metrics 地址时不启动探活，也不会误杀进程', async () => {
     const { tunnel } = await import('./tunnel')
     await startRunning(tunnel)

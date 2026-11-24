@@ -350,7 +350,6 @@ async function fail(reason: string): Promise<void> {
 
 async function ready(next: string, generation: number): Promise<void> {
   restartAttempt = 0
-  rebuilding = false
   degradedFrom = undefined
   setProgress({ stage: 'ready' })
   state = 'running'
@@ -462,9 +461,13 @@ async function exhaust(reason: string): Promise<void> {
 
 /** 探活只在拿到 metrics 地址后才有意义；地址迟到时由 onLine 补启，避免安全网永久不启用。 */
 function startProbe(generation: number): void {
-  stopProbe()
-  if (metricsAddress === undefined)
+  if (metricsAddress === undefined) {
+    // 没有探活通道时「拿到域名」是唯一可得的恢复信号；不在这里收尾，假死触发的重建
+    // 会永远停在启动中，连排障用的终态都到不了。
+    rebuilding = false
     return
+  }
+  stopProbe()
   // 探针跑在定时器里：任何逃逸异常都会变成未捕获异常直接结束宿主进程，
   // 那正是探针本该防止的事故，所以这里必须自己兜住。
   probeTimer = setInterval(() => {
