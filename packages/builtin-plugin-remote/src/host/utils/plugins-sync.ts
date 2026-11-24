@@ -193,6 +193,8 @@ function stripJsonc(raw: string): string {
       continue
     }
     if (char === '"') {
+      // 字符串本身就是「下一个实义字符」：待定的逗号是元素分隔符，不是尾逗号。
+      comma = -1
       inString = true
       out += char
       continue

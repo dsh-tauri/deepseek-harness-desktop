@@ -394,6 +394,15 @@ describe('捆绑插件集合按资源清单收敛', () => {
     expect(findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))?.pluginNames).toEqual(['dsh-tauri', 'dsh-tauri-ui'])
   })
 
+  it('相邻的字符串条目之间的逗号不能被当成尾逗号删掉', () => {
+    const resources = createResources({
+      manifest: `{ "plugins": { "built-in": ["dsh-tauri", "dsh-tauri-ui"] } }`,
+      plugins: ['dsh-tauri', 'dsh-tauri-ui'],
+    })
+
+    expect(findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))?.pluginNames).toEqual(['dsh-tauri', 'dsh-tauri-ui'])
+  })
+
   it('清单缺失时不把带 dsh 字段的目录当成捆绑插件', () => {
     const resources = createResources({ plugins: ['dsh-tauri'], legacy: ['dsh-tauri-panel'] })
 
