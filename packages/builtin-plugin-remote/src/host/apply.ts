@@ -52,7 +52,7 @@ export function apply(ctx: RemoteHostContext, config: RemoteConfig): void {
   ctx.effect(() => {
     const migrationFailure = migrateLegacyState()
     if (migrationFailure !== undefined)
-      ctx.logger?.warn?.(`${REMOTE_PLUGIN_NAME}: 旧状态目录迁移未完成，已按新目录空状态启动（旧文件未改动）: ${migrationFailure}`)
+      ctx.logger?.warn?.(`${REMOTE_PLUGIN_NAME}: 旧状态目录迁移未完成，已按新目录空状态启动（未搬走的旧文件保留在原处）: ${migrationFailure}`)
     void machine.start().catch(() => undefined)
     void access.restore().catch(() => undefined)
     void tunnel.restore().catch(() => undefined)

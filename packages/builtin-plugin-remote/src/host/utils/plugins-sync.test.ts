@@ -2,7 +2,7 @@ import type { MachineProfile } from '../types/index'
 import type { PluginSyncMarker } from './plugins-sync'
 import { Buffer } from 'node:buffer'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
@@ -10,14 +10,31 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { remotePidfile } from '../config/constants'
 import { startCommandFor } from '../service/bootstrap.utils'
 import { MachineId } from '../types/index'
-import { bundleContentHash, planPluginSync, pluginSyncApplyCommand, pluginSyncMarkerCommand } from './plugins-sync'
+import { bundleContentHash, findBundledPluginsTree, planPluginSync, pluginSyncApplyCommand, pluginSyncMarkerCommand, WIRE_SCRIPT, wiringStateOf } from './plugins-sync'
 
 const PROFILE = 'plugins-sync-test'
 const REMOTE_PORT = 41983
 const HASH = 'b7e9c1f2d4a6'
 const OURS: PluginSyncMarker = { hash: HASH, version: '0.6.7' }
+const NAMES = ['plugin-alpha']
+const WIRED = wiringStateOf(HASH, NAMES)
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v tar >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
+/** 接线脚本按目录建符号链接；Windows 未开开发者模式时建链接会被拒绝，只能在支持的平台跑。 */
+const SYMLINK_AVAILABLE = (() => {
+  const probe = mkdtempSync(join(tmpdir(), 'dsh-symlink-probe-'))
+  try {
+    mkdirSync(join(probe, 'target'))
+    symlinkSync(join(probe, 'target'), join(probe, 'link'), 'dir')
+    return true
+  }
+  catch {
+    return false
+  }
+  finally {
+    rmSync(probe, { recursive: true, force: true })
+  }
+})()
 const PKILL_AVAILABLE = spawnSync('pkill', ['-f', 'dsh-plugins-sync-probe-absent']).status === 1
 const PS_ARGS_AVAILABLE = spawnSync('sh', ['-c', 'ps -p $$ -o args= >/dev/null 2>&1']).status === 0
 
@@ -47,6 +64,7 @@ interface Sandbox {
 }
 
 const sandboxes: Sandbox[] = []
+const scratchDirs: string[] = []
 const startedPids: number[] = []
 let staging = ''
 let cachedArchive: Buffer | undefined
@@ -100,7 +118,7 @@ function startInstance(sandbox: Sandbox, env: Record<string, string> = {}): void
   expect(result.status, `远端实例启动失败: ${result.stderr}`).toBe(0)
 }
 
-function runSyncScript(sandbox: Sandbox, options: { shims?: string[], env?: Record<string, string>, expectedHash?: string, replaceTree?: boolean, treeHash?: string, treeVersion?: string } = {}) {
+function runSyncScript(sandbox: Sandbox, options: { shims?: string[], env?: Record<string, string>, expectedHash?: string, replaceTree?: boolean, treeHash?: string, treeVersion?: string, pluginNames?: string[] } = {}) {
   const replaceTree = options.replaceTree !== false
   const script = [...options.shims ?? [], pluginSyncApplyCommand({
     profileName: PROFILE,
@@ -109,6 +127,7 @@ function runSyncScript(sandbox: Sandbox, options: { shims?: string[], env?: Reco
     replaceTree,
     treeHash: options.treeHash ?? HASH,
     treeVersion: options.treeVersion ?? '0.6.7',
+    pluginNames: options.pluginNames ?? ['plugin-alpha'],
   })].join('\n')
   const result = spawnSync('sh', ['-c', script], {
     input: replaceTree ? archive() : Buffer.alloc(0),
@@ -180,11 +199,42 @@ function livenessOf(sandbox: Sandbox): string[] {
   return readFileSync(log, 'utf8').split('\n').filter(line => line === 'alive' || line === 'dead')
 }
 
+function scratch(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-plugins-sync-scratch-'))
+  scratchDirs.push(dir)
+  return dir
+}
+
+function writePackage(dir: string, manifest: Record<string, unknown>): void {
+  writeFileSync(join(ensureDirectory(dir), 'package.json'), JSON.stringify(manifest))
+}
+
+/** 造一份安装目录：与插件目录同级的资源清单 + `node_modules`。 */
+function createResources(options: { manifest?: string, plugins: string[], legacy?: string[] }): string {
+  const resources = ensureDirectory(join(scratch(), 'resources'))
+  const modules = ensureDirectory(join(resources, 'node_modules'))
+  writePackage(join(modules, 'dsh-tauri-remote'), { name: 'dsh-tauri-remote', version: '0.6.7', dsh: {} })
+  writePackage(join(modules, 'ssh2'), { name: 'ssh2', version: '1.16.0' })
+  for (const name of [...options.plugins, ...options.legacy ?? []])
+    writePackage(join(modules, name), { name, dsh: {} })
+  if (options.manifest !== undefined)
+    writeFileSync(join(resources, 'manifest.jsonc'), options.manifest)
+  return resources
+}
+
+function runWireScript(options: { base: string, profilePkg: string, statePath: string, allowlist: string[] }) {
+  const script = join(scratch(), '_wire.js')
+  writeFileSync(script, WIRE_SCRIPT)
+  return spawnSync(process.execPath, [script, options.profilePkg, options.base, options.statePath, HASH, JSON.stringify(options.allowlist)], { encoding: 'utf8' })
+}
+
 afterEach(() => {
   for (const pid of startedPids.splice(0))
     spawnSync('sh', ['-c', 'kill -9 "$1" 2>/dev/null || true', 'sh', String(pid)])
   for (const sandbox of sandboxes.splice(0))
     rmSync(dirname(sandbox.home), { recursive: true, force: true, maxRetries: 3 })
+  for (const dir of scratchDirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
   rmSync(staging, { recursive: true, force: true })
   staging = ''
   cachedArchive = undefined
@@ -230,28 +280,35 @@ describe('捆绑插件内容哈希', () => {
 
 describe('远端捆绑插件换树与接线怎么排', () => {
   it('远端还没有部署过捆绑插件时要换树也要接线', () => {
-    const plan = planPluginSync(undefined, OURS, undefined)
+    const plan = planPluginSync(undefined, OURS, undefined, NAMES)
 
     expect(plan.replaceTree).toBe(true)
     expect(plan.wireProfile).toBe(true)
   })
 
   it('远端已经是这份且本档案接过线时什么都不做', () => {
-    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, HASH)
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, WIRED, NAMES)
 
     expect(plan.replaceTree).toBe(false)
     expect(plan.wireProfile).toBe(false)
   })
 
   it('远端已经是这份但本档案没接过线时只补接线', () => {
-    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, undefined)
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, undefined, NAMES)
 
     expect(plan.replaceTree, '远端这份已经是本机这份，不该再换一遍').toBe(false)
     expect(plan.wireProfile, '本档案还没接过线，必须补上').toBe(true)
   })
 
+  it('远端这份没变但插件名单变了，也要重新接线', () => {
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, wiringStateOf(HASH, ['plugin-alpha', 'plugin-beta']), NAMES)
+
+    expect(plan.replaceTree).toBe(false)
+    expect(plan.wireProfile, '名单变了必须重新接线，否则旧插件不会从档案解绑').toBe(true)
+  })
+
   it('远端由更新版本的桌面部署时本机不换树', () => {
-    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, 'other-hash')
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, wiringStateOf('other-hash', NAMES), NAMES)
 
     expect(plan.replaceTree).toBe(false)
     expect(plan.wireProfile).toBe(false)
@@ -259,7 +316,7 @@ describe('远端捆绑插件换树与接线怎么排', () => {
   })
 
   it('远端由更新版本的桌面部署但本档案没接过线时只补接线，不动远端那份', () => {
-    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, undefined)
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, undefined, NAMES)
 
     expect(plan.replaceTree).toBe(false)
     expect(plan.wireProfile).toBe(true)
@@ -267,7 +324,7 @@ describe('远端捆绑插件换树与接线怎么排', () => {
   })
 
   it('本机版本更新时换树并接线', () => {
-    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.6' }, OURS, undefined)
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.6' }, OURS, undefined, NAMES)
 
     expect(plan.replaceTree).toBe(true)
     expect(plan.wireProfile).toBe(true)
@@ -275,8 +332,149 @@ describe('远端捆绑插件换树与接线怎么排', () => {
   })
 
   it('同一版本时按内容哈希定胜负，两端算出同一个结果', () => {
-    expect(planPluginSync({ hash: 'aaaa', version: '0.6.7' }, OURS, undefined).replaceTree).toBe(true)
-    expect(planPluginSync({ hash: 'zzzz', version: '0.6.7' }, OURS, undefined).replaceTree).toBe(false)
+    expect(planPluginSync({ hash: 'aaaa', version: '0.6.7' }, OURS, undefined, NAMES).replaceTree).toBe(true)
+    expect(planPluginSync({ hash: 'zzzz', version: '0.6.7' }, OURS, undefined, NAMES).replaceTree).toBe(false)
+  })
+})
+
+const RESOURCE_MANIFEST = `{
+  "plugins": {
+    // 已弃用的包：旧版本部署留下的残留
+    "depercated": ["dsh-tauri-panel",],
+    "built-in": [
+      { "id": "dsh-tauri", "spec": "dsh-tauri" },
+      { "id": "dsh-tauri-ui", "spec": "dsh-tauri-ui" },
+      { "id": "dsh-tauri-model", "spec": "dsh-tauri-model@0.3.0" },
+      { "id": "dsh-tauri-archive", "spec": "dsh-tauri-archive" },
+      { "id": "dsh-tauri-remote", "spec": "dsh-tauri-remote" },
+      { "id": "dsh-tauri-pet", "spec": "dsh-tauri-pet" },
+    ],
+  },
+}
+`
+
+describe('捆绑插件集合按资源清单收敛', () => {
+  it('只接清单声明的内置插件，插件目录里旧版本残留的包不接', () => {
+    const resources = createResources({
+      manifest: RESOURCE_MANIFEST,
+      plugins: ['dsh-tauri', 'dsh-tauri-ui', 'dsh-tauri-model', 'dsh-tauri-pet'],
+      legacy: ['dsh-tauri-panel', 'dsh-tauri-ssh-ui'],
+    })
+
+    const tree = findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))
+
+    expect(tree?.pluginNames).toEqual(['dsh-tauri', 'dsh-tauri-model', 'dsh-tauri-ui'])
+  })
+
+  it('只在发起端成立的插件不接进远端档案', () => {
+    const resources = createResources({
+      manifest: RESOURCE_MANIFEST,
+      plugins: ['dsh-tauri', 'dsh-tauri-pet'],
+    })
+
+    const tree = findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))
+
+    expect(tree?.pluginNames).not.toContain('dsh-tauri-pet')
+    expect(tree?.pluginNames).not.toContain('dsh-tauri-remote')
+  })
+
+  it('清单里的注释与尾逗号都能解析', () => {
+    const resources = createResources({
+      manifest: `{
+  "plugins": {
+    "built-in": [
+      { "spec": "dsh-tauri" }, // 内置
+      { "spec": "dsh-tauri-ui" }, /* 另一个 */
+    ],
+  },
+}`,
+      plugins: ['dsh-tauri', 'dsh-tauri-ui'],
+    })
+
+    expect(findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))?.pluginNames).toEqual(['dsh-tauri', 'dsh-tauri-ui'])
+  })
+
+  it('相邻的字符串条目之间的逗号不能被当成尾逗号删掉', () => {
+    const resources = createResources({
+      manifest: `{ "plugins": { "built-in": ["dsh-tauri", "dsh-tauri-ui"] } }`,
+      plugins: ['dsh-tauri', 'dsh-tauri-ui'],
+    })
+
+    expect(findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))?.pluginNames).toEqual(['dsh-tauri', 'dsh-tauri-ui'])
+  })
+
+  it('清单缺失时不把带 dsh 字段的目录当成捆绑插件', () => {
+    const resources = createResources({ plugins: ['dsh-tauri'], legacy: ['dsh-tauri-panel'] })
+
+    expect(findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))).toBeUndefined()
+  })
+
+  it('接线脚本收到的就是清单收敛后的插件名', () => {
+    const script = pluginSyncApplyCommand({
+      profileName: PROFILE,
+      remotePort: REMOTE_PORT,
+      expectedHash: '',
+      replaceTree: true,
+      treeHash: HASH,
+      treeVersion: '0.6.7',
+      pluginNames: ['dsh-tauri', 'dsh-tauri-ui'],
+    })
+
+    expect(script).toContain(`'["dsh-tauri","dsh-tauri-ui"]'`)
+  })
+})
+
+describe.skipIf(!SYMLINK_AVAILABLE)('接线脚本只接清单里的内置插件', () => {
+  it('旧版本残留的插件从远端档案解绑', () => {
+    const home = ensureDirectory(join(scratch(), 'home'))
+    const base = ensureDirectory(join(home, '.dsh-desktop', 'plugins', 'node_modules'))
+    for (const name of ['dsh-tauri', 'dsh-tauri-ui', 'dsh-tauri-panel'])
+      writePackage(join(base, name), { name, dsh: {} })
+    writePackage(join(base, 'h3'), { name: 'h3' })
+    const profileDir = ensureDirectory(join(home, '.dsh', 'profiles', PROFILE))
+    const profilePkg = join(profileDir, 'package.json')
+    writeFileSync(profilePkg, JSON.stringify({
+      name: 'dsh-remote',
+      dependencies: {
+        'dsh-tauri': `link:${join(base, 'dsh-tauri')}`,
+        'dsh-tauri-panel': `link:${join(base, 'dsh-tauri-panel')}`,
+      },
+      dsh: { profile: { bundles: ['dsh-tauri', 'dsh-tauri-panel'] } },
+    }))
+
+    const result = runWireScript({
+      base,
+      profilePkg,
+      statePath: join(home, '.dsh-desktop', 'profiles-sync', PROFILE),
+      allowlist: ['dsh-tauri', 'dsh-tauri-ui'],
+    })
+
+    expect(result.status, String(result.stderr)).toBe(0)
+    const doc = JSON.parse(readFileSync(profilePkg, 'utf8')) as { dependencies: Record<string, string>, dsh: { profile: { bundles: string[] } } }
+    expect(Object.keys(doc.dependencies).sort()).toEqual(['dsh-tauri', 'dsh-tauri-ui'])
+    expect([...doc.dsh.profile.bundles].sort()).toEqual(['dsh-tauri', 'dsh-tauri-ui'])
+    expect(existsSync(join(profileDir, 'node_modules', 'dsh-tauri-ui'))).toBe(true)
+    expect(existsSync(join(profileDir, 'node_modules', 'dsh-tauri-panel')), '旧包必须从档案解绑').toBe(false)
+  })
+
+  it('远端这份目录里没有的插件不接线', () => {
+    const home = ensureDirectory(join(scratch(), 'home'))
+    const base = ensureDirectory(join(home, '.dsh-desktop', 'plugins', 'node_modules'))
+    writePackage(join(base, 'dsh-tauri'), { name: 'dsh-tauri', dsh: {} })
+    const profileDir = ensureDirectory(join(home, '.dsh', 'profiles', PROFILE))
+    const profilePkg = join(profileDir, 'package.json')
+    writeFileSync(profilePkg, JSON.stringify({ name: 'dsh-remote' }))
+
+    const result = runWireScript({
+      base,
+      profilePkg,
+      statePath: join(home, '.dsh-desktop', 'profiles-sync', PROFILE),
+      allowlist: ['dsh-tauri', 'dsh-tauri-archive'],
+    })
+
+    expect(result.status, String(result.stderr)).toBe(0)
+    const doc = JSON.parse(readFileSync(profilePkg, 'utf8')) as { dependencies: Record<string, string> }
+    expect(Object.keys(doc.dependencies)).toEqual(['dsh-tauri'])
   })
 })
 
@@ -386,6 +584,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
       replaceTree: true,
       treeHash: HASH,
       treeVersion: '0.6.7',
+      pluginNames: ['plugin-alpha'],
     })
 
     expect(script).not.toContain(`bin.js --profile ${PROFILE} --host 127.0.0.1 --port ${REMOTE_PORT}`)
@@ -427,6 +626,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
       replaceTree: false,
       treeHash: 'other-hash',
       treeVersion: '0.6.8',
+      pluginNames: ['plugin-alpha'],
     })
 
     expect(wiring, '不换树时不该收插件包').not.toContain('tar -xzf')
@@ -449,7 +649,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const profilePkg = JSON.parse(readFileSync(join(sandbox.home, '.dsh', 'profiles', PROFILE, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }
     expect(profilePkg.dependencies?.['plugin-alpha'], '档案要接到远端这份插件目录上').toContain('plugin-alpha')
     expect(markerOf(sandbox)).toEqual({ hash: 'other-hash', version: '0.6.8' })
-    expect(profileStateOf(sandbox), '接线状态按档案单独记').toBe('other-hash')
+    expect(profileStateOf(sandbox), '接线状态按档案单独记').toBe(wiringStateOf('other-hash', NAMES))
   })
 
   it('每个档案的接线状态各记各的，互不影响', () => {
@@ -462,7 +662,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const result = runSyncScript(sandbox, { expectedHash: HASH })
 
     expect(result.status, `同步必须成功: ${result.stderr}`).toBe(0)
-    expect(profileStateOf(sandbox)).toBe(HASH)
+    expect(profileStateOf(sandbox)).toBe(WIRED)
     expect(profileStateOf(sandbox, 'other-profile'), '别的档案的接线状态不能被动').toBe('other-hash')
   })
 

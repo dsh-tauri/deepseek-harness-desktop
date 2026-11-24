@@ -1,6 +1,6 @@
 import type { RemoteCoreRow, RemoteCoreTarget } from './remote-core.rows'
 import type { GetApiTauriRemoteCoreProfilesResponse } from '@/apis/remote.types'
-import { ChevronRight, Copy, CircleArrowDown as DownloadIcon } from '@gravity-ui/icons'
+import { ArrowRotateRight, ChevronRight, Copy, CircleArrowDown as DownloadIcon } from '@gravity-ui/icons'
 import { Button, Checkbox, Chip, Description, Label, Spinner } from '@heroui/react'
 import { useToggle } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -119,6 +119,7 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
       <Panel.Loadable loading={targetQuery.isPending || profilesQuery.isPending} error={targetError || profilesError}>
         <If cond={machine !== undefined}>
           <div className="flex items-center gap-1.5 px-1">
+            <Label className="min-w-0 truncate text-sm font-medium text-ink">{machine?.name}</Label>
             <Chip size="sm" variant="soft" color="default">{t(`remote.state.${machine?.state}`)}</Chip>
             <If cond={target?.remoteProfile !== undefined}>
               <Description className="text-xs text-muted">
@@ -166,6 +167,57 @@ export function RemoteCoreList({ machineId }: { machineId: string }) {
           </If>
         </Panel.Loadable>
       </Panel.Loadable>
+    </div>
+  )
+}
+
+/** 远端机器上的核心面板：窗口挂在远端 SSH 时替代本机核心面板 */
+export function RemoteCoreSection({ machineId }: { machineId: string }) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [refreshing, toggleRefreshing] = useToggle()
+
+  async function onRefresh() {
+    if (refreshing)
+      return
+    toggleRefreshing(true)
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreTarget(machineId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreProfiles(machineId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.remoteCoreVersions }),
+      ])
+      toast(t('core.refreshed_toast'), {})
+    }
+    catch (err) {
+      console.error('[RemoteCoreSection] refresh failed:', err)
+      toast(t('core.refresh_failed'), {})
+    }
+    finally {
+      toggleRefreshing(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3" data-testid="dsh-core-remote-section">
+      <Panel.Header
+        title={t('core.title')}
+        description={t('core.remote_tooltip')}
+        testId="dsh-config-panel-title"
+        action={(
+          <Button
+            size="sm"
+            variant="tertiary"
+            isDisabled={refreshing}
+            aria-label={t('core.refresh')}
+            onPress={onRefresh}
+          >
+            <If cond={refreshing} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
+            {t('core.refresh')}
+          </Button>
+        )}
+      />
+      <RemoteCoreList machineId={machineId} />
     </div>
   )
 }
