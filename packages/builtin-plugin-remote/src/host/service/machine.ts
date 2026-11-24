@@ -246,11 +246,15 @@ export const machine = defineService({
     if (target.restarting !== undefined)
       throw new RemoteError('machine-install-failed', machineId, 'machine is restarting; wait for it to finish before installing')
     if (target.installing === undefined) {
-      if (options.force === true && target.link !== undefined)
-        await machine.disconnect(machineId)
-      target.progress = { phase: 'installing' }
-      emit(machineId)
-      const attempt = performInstall(machineId, profile, options, signal)
+      // 强制重装要先断开再装：断开可能要等上几秒，期间必须已经登记 installing，
+      // 否则另一个入口（重启）会在这段空档里进来停/起同一个实例。
+      const attempt = (async () => {
+        if (options.force === true && target.link !== undefined)
+          await machine.disconnect(machineId)
+        target.progress = { phase: 'installing' }
+        emit(machineId)
+        return performInstall(machineId, profile, options, signal)
+      })()
       target.installing = attempt.finally(() => {
         delete machineStates.get(machineId)?.installing
       })

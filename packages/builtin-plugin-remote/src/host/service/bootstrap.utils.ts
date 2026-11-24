@@ -771,13 +771,14 @@ export function safeProfileName(raw: string | undefined): string {
   return raw !== undefined && /^[\w-]+$/.test(raw) ? raw : DEFAULT_REMOTE_PROFILE
 }
 
-export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan): string {
+export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan, entry?: string): string {
   if (plan !== undefined)
     assertSupportedDshVersion(plan.dshVersion)
   if (profile.startCommand !== undefined)
     return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${remoteWebLog(profile.remotePort)}" 2>&1 < /dev/null & ) &`
   const node = `$HOME/${REMOTE_ROOT}/runtime/bin/node`
-  const dshBin = layoutDshEntry(plan)
+  // 入口可以显式给（远端实际装的那份），缺省按安装计划推断。
+  const dshBin = entry ?? layoutDshEntry(plan)
   const profileName = safeProfileName(profile.profileName)
   return [
     `ROOT="$HOME/${REMOTE_ROOT}"`,
@@ -1040,11 +1041,50 @@ export async function ensureRemoteInstance(
 }
 
 /**
+ * 重启远端实例的远端脚本：先占住活动槽位声明，再停实例、按实际装的那份入口拉起。
+ *
+ * 停与起必须在同一条脚本里、同一份声明之下：分两次 exec 的话，中间那段没有任何占用，
+ * 别的桌面客户端的安装或插件同步会插进来动同一个实例（本进程内的 restarting/installing
+ * 只挡得住自己）。入口也不能猜：ZIP 布局与 npm 布局的入口不同，猜错就是先停成功、
+ * 再起不来。
+ */
+export function buildRestartScript(profile: MachineProfile): string {
+  const profileName = safeProfileName(profile.profileName)
+  // 自定义启动命令不依赖受管入口，别拿入口检查把它挡下来。
+  const managed = profile.startCommand === undefined
+  const entrySection = managed
+    ? [
+        `if [ -f "$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}" ]; then DSH_BIN="$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}"`,
+        `elif [ -f "$ROOT/dependencies/dsh/${DSH_NPM_ENTRY}" ]; then DSH_BIN="$ROOT/dependencies/dsh/${DSH_NPM_ENTRY}"`,
+        'else echo "REMOTE_NOT_INSTALLED: 远端三件套未安装完整"; exit 1',
+        'fi',
+      ]
+    : []
+  const startSection = managed
+    ? startCommandFor(profile, undefined, '"$DSH_BIN"').split('\n')
+    : [startCommandFor(profile)]
+  return [
+    'set -eu',
+    `ROOT="$HOME/${REMOTE_ROOT}"`,
+    `TMP="$ROOT/tmp/restart.$$"`,
+    'mkdir -p "$ROOT/dependencies" "$TMP"',
+    // 占用声明的路径在拿到声明之前是空的：退出清理按它判断自己有没有占住槽位。
+    'CLAIM=""',
+    'cleanup() { rm -rf "$TMP"; rm -f "$CLAIM"; }',
+    'trap cleanup EXIT',
+    `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
+    ...remoteSlotClaimShell('dsh', { busyText: '远端实例正被其它操作改动（切换核心、强制重装或插件同步）' }),
+    ...remoteInstanceStopCommand(profileName, profile.remotePort),
+    ...entrySection,
+    ...startSection,
+  ].join('\n')
+}
+
+/**
  * 重启远端实例：停掉端口上的实例，再按同一份档案拉起并等它重新就绪。
  *
  * 只动实例，不动安装目录、也不重新规划安装：隧道与网关建在 SSH 会话上，实例重启
- * 期间它们仍在，新实例起来后网关按请求重新取启动令牌即可恢复。因此这里既不重跑
- * 安装脚本，也不取槽位锁——那是强制重装与切换核心的事。
+ * 期间它们仍在，新实例起来后网关按请求重新取启动令牌即可恢复。
  */
 export async function restartRemoteInstance(
   session: RemoteSession,
@@ -1056,15 +1096,12 @@ export async function restartRemoteInstance(
   const target = `${profile.host}:${profile.remotePort}`
   const profileName = safeProfileName(profile.profileName)
   onEvent?.('launch', `重启远端实例（端口 ${profile.remotePort}，档案 ${profileName}）`)
-  const stopped = await session.exec(remoteInstanceStopCommand(profileName, profile.remotePort).join('\n'))
-  if (stopped.code !== 0)
-    return failBootstrap(onEvent, `remote instance stop failed on "${target}": ${describeExecFailure(stopped.code, stopped.stderr)}`, '重启失败')
   onProgress?.({ phase: 'starting' })
-  const started = await session.exec(startCommandFor(profile))
-  if (started.code !== 0) {
-    const message = started.stdout.includes('REMOTE_NOT_INSTALLED')
+  const restarted = await session.exec(buildRestartScript(profile))
+  if (restarted.code !== 0) {
+    const message = restarted.stdout.includes('REMOTE_NOT_INSTALLED')
       ? `remote runtime incomplete on "${profile.host}" (REMOTE_NOT_INSTALLED)`
-      : `remote instance start failed on "${profile.host}": ${describeExecFailure(started.code, started.stderr)}`
+      : `remote instance restart failed on "${target}": ${describeExecFailure(restarted.code, restarted.stderr)}`
     return failBootstrap(onEvent, message, '重启失败')
   }
   for (let attempt = 0; attempt < config.healthPollAttempts; attempt++) {
