@@ -9,10 +9,16 @@ const host = vi.hoisted(() => ({
   status: vi.fn<(id: string) => { state: 'listening' | 'stopped', port: number } | undefined>(),
   resolveBinary: vi.fn<() => Promise<string>>(),
   spawn: vi.fn<(binary: string, args: string[], handlers: TunnelHandlers) => TunnelProcess>(),
+  probe: vi.fn<(address: string, timeoutMs: number) => Promise<{ healthy: boolean, reason?: string }>>(),
 }))
 
 vi.mock('dsh-tauri', () => ({ defineService: <T>(service: T): T => service }))
+vi.mock('../utils/cloudflared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/cloudflared')>()
+  return { ...actual, probeCloudflaredReady: host.probe }
+})
 vi.mock('../config/runtime', () => ({
+  harnessHome: () => '/tmp/dsh-home',
   localUpstream: () => 'http://127.0.0.1:3080',
   mintAuthenticatedUrl: async () => undefined,
   tunnelRuntimeDeps: (): TunnelDeps => ({
@@ -31,9 +37,12 @@ vi.mock('./access.utils', () => ({
 
 const ENTRY_PORT = 3089
 const QUICK_LINE = 'INF |  https://random-words-here.trycloudflare.com  |'
+const METRICS_LINE = 'INF Starting metrics server on 127.0.0.1:41143/metrics'
+const PROBE_INTERVAL_MS = 30_000
 
 let handlers: TunnelHandlers | undefined
 let settle: (() => void) | undefined
+let signals: NodeJS.Signals[] = []
 
 function fakeProcess(_binary: string, _args: string[], next: TunnelHandlers): TunnelProcess {
   handlers = next
@@ -43,7 +52,8 @@ function fakeProcess(_binary: string, _args: string[], next: TunnelHandlers): Tu
   return {
     pid: 4242,
     exited,
-    kill: (): void => {
+    kill: (signal): void => {
+      signals.push(signal)
       settle?.()
     },
   }
@@ -74,6 +84,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   handlers = undefined
   settle = undefined
+  signals = []
+  host.probe.mockReset()
+  host.probe.mockResolvedValue({ healthy: true })
   host.document = {
     version: 1,
     enabled: true,
@@ -218,6 +231,23 @@ describe('cloudflared 异常退出后的自愈', () => {
     expect((await tunnel.status()).state).toBe('error')
   })
 
+  it('进程退出后迟到的就绪日志不会把状态改回运行中', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startRunning(tunnel)
+    host.status.mockReturnValue({ state: 'listening', port: ENTRY_PORT })
+
+    crash()
+    await flush()
+    expect((await tunnel.status()).state).toBe('starting')
+
+    handlers?.onLine(QUICK_LINE)
+    await flush()
+
+    const status = await tunnel.status()
+    expect(status.state).toBe('starting')
+    expect(status.url).toBeUndefined()
+  })
+
   it('用户显式 stop 打断等待中的重试', async () => {
     const { tunnel } = await import('./tunnel')
     await startRunning(tunnel)
@@ -236,5 +266,89 @@ describe('cloudflared 异常退出后的自愈', () => {
     const status = await tunnel.status()
     expect(status.state).toBe('stopped')
     expect(status.error).toBeUndefined()
+  })
+})
+
+describe('cloudflared 假死探针', () => {
+  async function startProbed(tunnel: { start: (mode: 'quick') => Promise<void> }): Promise<void> {
+    await startRunning(tunnel)
+    handlers?.onLine(METRICS_LINE)
+    await flush()
+  }
+
+  async function failProbe(times: number): Promise<void> {
+    host.probe.mockResolvedValue({ healthy: false, reason: 'HTTP 503' })
+    for (let index = 0; index < times; index += 1) {
+      await vi.advanceTimersByTimeAsync(PROBE_INTERVAL_MS)
+      await flush()
+    }
+  }
+
+  it('连续 3 次探活失败降级为启动中，恢复后回到运行中', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startProbed(tunnel)
+    expect((await tunnel.status()).state).toBe('running')
+
+    await failProbe(2)
+    expect((await tunnel.status()).state).toBe('running')
+
+    await failProbe(1)
+    const degraded = await tunnel.status()
+    expect(degraded.state).toBe('starting')
+    expect(degraded.events.some(event => event.line.includes('健康探活连续 3 次失败'))).toBe(true)
+
+    host.probe.mockResolvedValue({ healthy: true })
+    await vi.advanceTimersByTimeAsync(PROBE_INTERVAL_MS)
+    await flush()
+
+    const recovered = await tunnel.status()
+    expect(recovered.state).toBe('running')
+    expect(recovered.events.some(event => event.line.includes('已自行恢复'))).toBe(true)
+    expect(signals).toEqual([])
+  })
+
+  it('连续 10 次探活失败判定假死并终止进程触发重建', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startProbed(tunnel)
+    host.status.mockReturnValue({ state: 'listening', port: ENTRY_PORT })
+
+    await failProbe(9)
+    expect(signals).toEqual([])
+
+    await failProbe(1)
+    expect(signals).toEqual(['SIGTERM'])
+    expect((await tunnel.status()).events.some(event => event.line.includes('判定连接器假死'))).toBe(true)
+  })
+
+  it('假死触发的重建链路不进入终态，网络恢复后仍会自愈', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startProbed(tunnel)
+    host.status.mockReturnValue({ state: 'listening', port: ENTRY_PORT })
+
+    await failProbe(10)
+    expect(signals).toEqual(['SIGTERM'])
+
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 16_000]) {
+      crash()
+      await vi.advanceTimersByTimeAsync(delay)
+      await flush()
+    }
+
+    const status = await tunnel.status()
+    expect(status.state).toBe('starting')
+    expect(status.error).toBeUndefined()
+    expect(status.events.some(event => event.line.includes('判定假死后的重建不设上限'))).toBe(true)
+  })
+
+  it('未识别到 metrics 地址时不启动探活，也不会误杀进程', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startRunning(tunnel)
+
+    await vi.advanceTimersByTimeAsync(PROBE_INTERVAL_MS * 12)
+    await flush()
+
+    expect(host.probe).not.toHaveBeenCalled()
+    expect(signals).toEqual([])
+    expect((await tunnel.status()).state).toBe('running')
   })
 })

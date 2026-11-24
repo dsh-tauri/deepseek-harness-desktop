@@ -2,7 +2,7 @@ import type { TunnelHandlers, TunnelProcess } from '../service/tunnel.types'
 import { Buffer } from 'node:buffer'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
 import { promisify } from 'node:util'
@@ -32,6 +32,10 @@ const EXTRACT_TIMEOUT_MS = 60_000
 
 const RE_VERSION = /^cloudflared version \d+\.\d+\.\d+/m
 const RE_QUICK_URL = /https:\/\/[a-z0-9][a-z0-9-]*\.trycloudflare\.com/
+const RE_METRICS_ADDRESS = /Starting metrics server on (\S+?)\/metrics/
+const RE_HOST_PORT = /^([\w.-]+|\[[\da-f:]+\]):(\d{1,5})$/i
+const CLOUDFLARED_LOG_NAME = 'cloudflared.log'
+const CLOUDFLARED_LOG_MAX_BYTES = 5 * 1024 * 1024
 
 /** 二进制准备阶段的进度：面板据此显示「下载中 x%」而不是静默等待。 */
 export interface CloudflaredProgress {
@@ -114,6 +118,71 @@ export function isCloudflaredVersion(output: string): boolean {
   return RE_VERSION.test(output)
 }
 
+/**
+ * cloudflared 自报的 metrics 地址（`INF Starting metrics server on 127.0.0.1:41143/metrics`）。
+ * 运行时健康探针只能从这里拿到入口；解析不到返回 undefined，调用方据此显式告警而不是静默停摆。
+ * 端口必须落在 1..65535：畸形地址会让 `fetch` 直接抛错，探针本身不能成为新的故障源。
+ */
+export function parseMetricsAddress(line: string): string | undefined {
+  const found = RE_METRICS_ADDRESS.exec(line)?.[1]
+  if (found === undefined)
+    return undefined
+  const parts = RE_HOST_PORT.exec(found)
+  if (parts === null)
+    return undefined
+  const port = Number(parts[2])
+  return Number.isInteger(port) && port >= 1 && port <= 65_535 ? found : undefined
+}
+
+/**
+ * 探活判据与 cloudflared 官方 `/ready` 语义一致：HTTP 200 且 `readyConnections > 0`。
+ * `readyConnections` 取自 `CountActiveConns()`，正常重连期间同样是 0，所以单次失败不能说明假死——
+ * 阈值分级由调用方决定。任何异常都折成不健康原因，绝不向外抛（探针跑在定时器里，抛错会拖垮宿主）。
+ */
+export async function probeCloudflaredReady(address: string, timeoutMs: number): Promise<{ healthy: boolean, reason?: string }> {
+  try {
+    const response = await fetch(`http://${address}/ready`, { signal: AbortSignal.timeout(timeoutMs) })
+    if (response.status !== 200)
+      return { healthy: false, reason: `HTTP ${response.status}` }
+    const body = await response.json() as { readyConnections?: unknown }
+    const connections = Number(body.readyConnections)
+    return connections > 0
+      ? { healthy: true }
+      : { healthy: false, reason: `HTTP 200 但 readyConnections=${String(body.readyConnections)}` }
+  }
+  catch (error) {
+    return { healthy: false, reason: messageOf(error) }
+  }
+}
+
+/**
+ * 子进程输出落盘（事故复盘时 journal 里查不到 cloudflared 日志，无法定位断连时间点）。
+ * Token 一律替换为 `***`：不依赖上游是否自行脱敏。超过上限轮转为 `.1` 并覆盖旧的。
+ * 写失败只吞掉——排障日志不能反噬隧道本身。
+ */
+export function cloudflaredLogSink(path: string, secret: string | null, maxBytes: number = CLOUDFLARED_LOG_MAX_BYTES): (text: string) => void {
+  let written = fileSize(path)
+  return (text) => {
+    const line = secret === null || secret === '' ? text : text.split(secret).join('***')
+    if (line === '')
+      return
+    const bytes = Buffer.byteLength(line, 'utf8')
+    try {
+      mkdirSync(dirname(path), { recursive: true })
+      if (written + bytes >= maxBytes) {
+        rmSync(`${path}.1`, { force: true })
+        renameSync(path, `${path}.1`)
+        written = 0
+      }
+      appendFileSync(path, line)
+      written += bytes
+    }
+    catch {
+      // keep: 日志落盘是排障辅助，任何写失败都不能反噬隧道本身
+    }
+  }
+}
+
 /** PATH 优先、数据目录次之、最后按平台下载；失败原因一律可读（含尝试过的地址）。 */
 export async function resolveCloudflared(onProgress?: CloudflaredProgressSink): Promise<string> {
   onProgress?.({ stage: 'check' })
@@ -133,14 +202,21 @@ export async function resolveCloudflared(onProgress?: CloudflaredProgressSink): 
 
 export function spawnCloudflared(binary: string, args: string[], handlers: TunnelHandlers, env?: NodeJS.ProcessEnv): TunnelProcess {
   const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...env === undefined ? {} : { env: { ...process.env, ...env } } })
+  const write = cloudflaredLogSink(join(harnessHome(), STATE_DIR, CLOUDFLARED_LOG_NAME), env?.TUNNEL_TOKEN?.trim() ?? null)
   const exited = new Promise<void>((resolve) => {
     child.once('exit', (code, signal) => {
       handlers.onExit(code, signal)
       resolve()
     })
   })
-  consumeLines(child.stdout, handlers.onLine)
-  consumeLines(child.stderr, handlers.onLine)
+  consumeLines(child.stdout, (line) => {
+    write(`${line}\n`)
+    handlers.onLine(line)
+  })
+  consumeLines(child.stderr, (line) => {
+    write(`${line}\n`)
+    handlers.onLine(line)
+  })
   return {
     pid: child.pid,
     exited,
@@ -155,6 +231,15 @@ export function spawnCloudflared(binary: string, args: string[], handlers: Tunne
 }
 
 // --- internal ---
+function fileSize(path: string): number {
+  try {
+    return existsSync(path) ? statSync(path).size : 0
+  }
+  catch {
+    return 0
+  }
+}
+
 function installedBinaryPath(): string {
   const asset = cloudflaredAsset()
   if (asset === undefined)
