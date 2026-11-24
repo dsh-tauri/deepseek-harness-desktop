@@ -6,7 +6,7 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import enUS from '@/i18n/locales/en-US.json'
-import { RemoteCoreList } from './remote-core'
+import { RemoteCoreList, RemoteCoreSection } from './remote-core'
 
 const mocks = vi.hoisted(() => ({
   getCoreCurrent: vi.fn(),
@@ -62,6 +62,19 @@ function renderRemoteCore(machineId = 'build') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   clients.add(client)
   const view = render(remoteCoreUi(machineId, client))
+  return { client, ...view }
+}
+
+function renderRemoteCoreSection(machineId = 'build') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.add(client)
+  const view = render(
+    <I18nextProvider i18n={translations}>
+      <QueryClientProvider client={client}>
+        <RemoteCoreSection machineId={machineId} />
+      </QueryClientProvider>
+    </I18nextProvider>,
+  )
   return { client, ...view }
 }
 
@@ -369,5 +382,39 @@ describe('远端核心清单', () => {
 
     expect(await screen.findByText('Remote core information is unavailable')).toBeTruthy()
     expect(screen.getByText('REMOTE_DSH_PACKAGE_UNREADABLE: permission denied')).toBeTruthy()
+  })
+})
+
+describe('远端核心面板', () => {
+  it('lists the cores of the machine the window is attached to', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', { availability: 'absent', slots: [] }),
+    })
+    renderRemoteCoreSection('build')
+
+    const section = await screen.findByTestId('dsh-core-remote-section')
+    expect(within(section).getByText('Harness Core')).toBeTruthy()
+    expect(within(section).getByText('Manage the core copies on the selected remote machine: view installed versions and download a specific version.')).toBeTruthy()
+    expect(await within(section).findByText('Build box')).toBeTruthy()
+    expect(await within(section).findByTestId('dsh-core-remote-list')).toBeTruthy()
+    expect(mocks.getCoreCurrent).toHaveBeenCalledWith({ machineId: 'build' })
+    expect(mocks.getCoreProfiles).toHaveBeenCalledWith({ machineId: 'build' })
+  })
+
+  it('refetches the remote core data from the panel header', async () => {
+    mocks.getCoreCurrent.mockResolvedValue({
+      item: targetOf('build', { availability: 'absent', slots: [] }),
+    })
+    renderRemoteCoreSection('build')
+
+    const section = await screen.findByTestId('dsh-core-remote-section')
+    await within(section).findByTestId('dsh-core-remote-list')
+    await waitFor(() => expect(mocks.getCoreCurrent).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Refresh' }))
+
+    await waitFor(() => expect(mocks.getCoreCurrent).toHaveBeenCalledTimes(2))
+    expect(mocks.getCoreVersions).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Core list refreshed', {}))
   })
 })
