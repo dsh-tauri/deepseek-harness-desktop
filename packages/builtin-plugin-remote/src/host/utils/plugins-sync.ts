@@ -17,18 +17,22 @@ const SYNC_MARKER = `${REMOTE_PLUGINS_DIR}/.sync.json`
 /** 接线状态按档案各放各的：接线是档案级的事，不放在共享的插件目录里。 */
 const PROFILE_STATE_DIR = `${REMOTE_ROOT}/profiles-sync`
 const REMOTE_PLUGIN_PACKAGE = 'dsh-tauri-remote'
+/** 只在发起端成立的插件：远端没有对应宿主，接过去只会多出用不了的入口。issue #1625 */
+const LAUNCHER_ONLY_PLUGINS = ['dsh-tauri-pet', 'dsh-tauri-remote']
 /** 换树脚本发现远端标记已变时的退出码：这轮判定作废，桌面端重新读标记再判。 */
 const MARKER_CHANGED_EXIT = 22
 const DECISION_ATTEMPTS = 3
 
 export const WIRE_SCRIPT = `const fs = require('fs')
 const path = require('path')
-const [profilePkg, base, profileStatePath, treeHash] = process.argv.slice(2)
-// 接线用的插件名从这份插件目录里读，不从本机带过来：远端这份可能是别的桌面部署的，
-// 插件名不一样时，按本机的名字接线会连到不存在的目录。
+const [profilePkg, base, profileStatePath, treeHash, allowlist] = process.argv.slice(2)
+// 接线集合以资源清单声明的内置插件为准：远端这份目录里可能留着旧版本部署的包，
+// 它们和新核心不兼容，接进档案就会 import failed。远端这份可能是别的桌面部署的，
+// 所以还要按远端实际目录取交集，不能只信本机的名字。issue #1625
+const allowed = new Set(JSON.parse(allowlist))
 const names = fs.existsSync(base)
   ? fs.readdirSync(base, { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && !entry.name.startsWith('@') && !entry.name.startsWith('.'))
+      .filter(entry => entry.isDirectory() && allowed.has(entry.name))
       .map(entry => entry.name)
       .filter(name => {
         try {
@@ -111,23 +115,104 @@ export function findBundledPluginsTree(ownPkgDir = dirname(realpathSync(fileURLT
       || !existsSync(join(root, 'ssh2', 'package.json'))) {
       continue
     }
-    const pluginNames = readdirSync(root, { withFileTypes: true })
-      .filter(entry => !entry.name.startsWith('@') && !entry.name.startsWith('.'))
-      .map(entry => entry.name)
-      .filter((name) => {
-        try {
-          const manifest = JSON.parse(readFileSync(join(root, name, 'package.json'), 'utf8')) as { dsh?: unknown }
-          return manifest.dsh !== undefined
-        }
-        catch {
-          return false
-        }
-      })
+    const declared = declaredBuiltinPlugins(root)
+    if (declared === undefined)
+      continue
+    const allowed = new Set(declared.filter(name => !LAUNCHER_ONLY_PLUGINS.includes(name)))
+    const pluginNames = readdirSync(root)
+      .filter(name => allowed.has(name) && declaresDsh(root, name))
       .sort()
     if (pluginNames.length > 0)
       return { root, pluginNames, version: bundledTreeVersion(root) }
   }
   return undefined
+}
+
+/**
+ * 资源清单（与插件目录同级的 `manifest.jsonc`）声明的内置插件包名。
+ *
+ * 插件目录会留下旧版本部署的包：它们同样带 `dsh` 字段，但和新核心不兼容，
+ * 接进远端档案后一启动就 import failed。清单缺失或没有声明时返回 undefined，
+ * 宁可不同步也不按「带 dsh 字段就算」把旧包接过去。issue #1625
+ */
+function declaredBuiltinPlugins(root: string): string[] | undefined {
+  try {
+    const raw = readFileSync(join(dirname(root), 'manifest.jsonc'), 'utf8')
+    const doc = JSON.parse(stripJsonc(raw.replace(/^\uFEFF/u, ''))) as { plugins?: Record<string, unknown> }
+    const entries = doc.plugins?.['built-in']
+    if (!Array.isArray(entries))
+      return undefined
+    const names = entries
+      .map(entry => typeof entry === 'string' ? entry : (entry as { spec?: unknown }).spec)
+      .filter((spec): spec is string => typeof spec === 'string' && spec !== '')
+      .map(packageNameOf)
+    return names.length > 0 ? names : undefined
+  }
+  catch {
+    return undefined
+  }
+}
+
+/** `dsh-third-kernel@0.1.0` 取 `dsh-third-kernel`；作用域包名里的 `@` 不是版本分隔。 */
+function packageNameOf(spec: string): string {
+  const at = spec.lastIndexOf('@')
+  return at > 0 ? spec.slice(0, at) : spec
+}
+
+function declaresDsh(root: string, name: string): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, name, 'package.json'), 'utf8')) as { dsh?: unknown }
+    return manifest.dsh !== undefined
+  }
+  catch {
+    return false
+  }
+}
+
+/** 清单是 JSONC：注释与尾逗号都要先摘掉再交给 JSON.parse。 */
+function stripJsonc(raw: string): string {
+  let out = ''
+  let inString = false
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw.charAt(index)
+    if (inString) {
+      out += char
+      if (char === '\\') {
+        out += raw.charAt(index + 1)
+        index += 1
+      }
+      else if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      out += char
+      continue
+    }
+    if (char === '/' && raw.charAt(index + 1) === '/') {
+      while (index < raw.length && raw.charAt(index) !== '\n')
+        index += 1
+      continue
+    }
+    if (char === '/' && raw.charAt(index + 1) === '*') {
+      index += 2
+      while (index + 1 < raw.length && !(raw.charAt(index) === '*' && raw.charAt(index + 1) === '/'))
+        index += 1
+      index += 1
+      continue
+    }
+    if (char === ',') {
+      let next = index + 1
+      while (next < raw.length && /\s/u.test(raw.charAt(next)))
+        next += 1
+      if (raw.charAt(next) === '}' || raw.charAt(next) === ']')
+        continue
+    }
+    out += char
+  }
+  return out
 }
 
 function bundledTreeVersion(root: string): string {
@@ -286,6 +371,8 @@ export function pluginSyncApplyCommand(options: {
   replaceTree: boolean
   treeHash: string
   treeVersion: string
+  /** 要接进档案的插件名：资源清单声明的内置插件，不含只在发起端成立的插件。 */
+  pluginNames: string[]
 }): string {
   const profile = `.dsh/profiles/${options.profileName}`
   return [
@@ -336,7 +423,7 @@ export function pluginSyncApplyCommand(options: {
       : []),
     // 接线：档案的 package.json 与 node_modules 指向这份插件目录。
     `[ -f "$HOME/${profile}/package.json" ] || "$HOME/${REMOTE_ROOT}/runtime/bin/node" "$HOME/${REMOTE_ROOT}/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile ${options.profileName} --from-default-profile web --help >/dev/null 2>&1`,
-    `"$HOME/${REMOTE_ROOT}/runtime/bin/node" "$TMP/_wire.js" "$HOME/${profile}/package.json" "$BASE/node_modules" "$HOME/${PROFILE_STATE_DIR}/${options.profileName}" "${options.treeHash}"`,
+    `"$HOME/${REMOTE_ROOT}/runtime/bin/node" "$TMP/_wire.js" "$HOME/${profile}/package.json" "$BASE/node_modules" "$HOME/${PROFILE_STATE_DIR}/${options.profileName}" "${options.treeHash}" '${JSON.stringify(options.pluginNames)}'`,
     // 这份目录的状态跟着目录走：换完树再写，写的就是现在这份。接线没成功就不写。
     ...(options.replaceTree
       ? [`printf '%s\\n' '{"hash":"${options.treeHash}","version":"${options.treeVersion}"}' > "$HOME/${SYNC_MARKER}"`]
@@ -387,6 +474,7 @@ export async function syncBundledPlugins(
       replaceTree: plan.replaceTree,
       treeHash: plan.treeHash,
       treeVersion: plan.treeVersion,
+      pluginNames: tree.pluginNames,
     })
     const applied = await session.exec(command, plan.replaceTree ? { stdinData: tar } : {})
     // 拿到占用声明时发现远端标记已经变了：这轮判定作废，重新读一次再判。
