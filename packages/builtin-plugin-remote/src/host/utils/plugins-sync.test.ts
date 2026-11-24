@@ -10,12 +10,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { remotePidfile } from '../config/constants'
 import { startCommandFor } from '../service/bootstrap.utils'
 import { MachineId } from '../types/index'
-import { bundleContentHash, findBundledPluginsTree, planPluginSync, pluginSyncApplyCommand, pluginSyncMarkerCommand, WIRE_SCRIPT } from './plugins-sync'
+import { bundleContentHash, findBundledPluginsTree, planPluginSync, pluginSyncApplyCommand, pluginSyncMarkerCommand, WIRE_SCRIPT, wiringStateOf } from './plugins-sync'
 
 const PROFILE = 'plugins-sync-test'
 const REMOTE_PORT = 41983
 const HASH = 'b7e9c1f2d4a6'
 const OURS: PluginSyncMarker = { hash: HASH, version: '0.6.7' }
+const NAMES = ['plugin-alpha']
+const WIRED = wiringStateOf(HASH, NAMES)
 
 const SHELL_AVAILABLE = spawnSync('sh', ['-c', 'command -v tar >/dev/null 2>&1 && command -v kill >/dev/null 2>&1']).status === 0
 /** 接线脚本按目录建符号链接；Windows 未开开发者模式时建链接会被拒绝，只能在支持的平台跑。 */
@@ -278,28 +280,35 @@ describe('捆绑插件内容哈希', () => {
 
 describe('远端捆绑插件换树与接线怎么排', () => {
   it('远端还没有部署过捆绑插件时要换树也要接线', () => {
-    const plan = planPluginSync(undefined, OURS, undefined)
+    const plan = planPluginSync(undefined, OURS, undefined, NAMES)
 
     expect(plan.replaceTree).toBe(true)
     expect(plan.wireProfile).toBe(true)
   })
 
   it('远端已经是这份且本档案接过线时什么都不做', () => {
-    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, HASH)
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, WIRED, NAMES)
 
     expect(plan.replaceTree).toBe(false)
     expect(plan.wireProfile).toBe(false)
   })
 
   it('远端已经是这份但本档案没接过线时只补接线', () => {
-    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, undefined)
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, undefined, NAMES)
 
     expect(plan.replaceTree, '远端这份已经是本机这份，不该再换一遍').toBe(false)
     expect(plan.wireProfile, '本档案还没接过线，必须补上').toBe(true)
   })
 
+  it('远端这份没变但插件名单变了，也要重新接线', () => {
+    const plan = planPluginSync({ hash: HASH, version: '0.6.7' }, OURS, wiringStateOf(HASH, ['plugin-alpha', 'plugin-beta']), NAMES)
+
+    expect(plan.replaceTree).toBe(false)
+    expect(plan.wireProfile, '名单变了必须重新接线，否则旧插件不会从档案解绑').toBe(true)
+  })
+
   it('远端由更新版本的桌面部署时本机不换树', () => {
-    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, 'other-hash')
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, wiringStateOf('other-hash', NAMES), NAMES)
 
     expect(plan.replaceTree).toBe(false)
     expect(plan.wireProfile).toBe(false)
@@ -307,7 +316,7 @@ describe('远端捆绑插件换树与接线怎么排', () => {
   })
 
   it('远端由更新版本的桌面部署但本档案没接过线时只补接线，不动远端那份', () => {
-    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, undefined)
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.8' }, OURS, undefined, NAMES)
 
     expect(plan.replaceTree).toBe(false)
     expect(plan.wireProfile).toBe(true)
@@ -315,7 +324,7 @@ describe('远端捆绑插件换树与接线怎么排', () => {
   })
 
   it('本机版本更新时换树并接线', () => {
-    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.6' }, OURS, undefined)
+    const plan = planPluginSync({ hash: 'other-hash', version: '0.6.6' }, OURS, undefined, NAMES)
 
     expect(plan.replaceTree).toBe(true)
     expect(plan.wireProfile).toBe(true)
@@ -323,8 +332,8 @@ describe('远端捆绑插件换树与接线怎么排', () => {
   })
 
   it('同一版本时按内容哈希定胜负，两端算出同一个结果', () => {
-    expect(planPluginSync({ hash: 'aaaa', version: '0.6.7' }, OURS, undefined).replaceTree).toBe(true)
-    expect(planPluginSync({ hash: 'zzzz', version: '0.6.7' }, OURS, undefined).replaceTree).toBe(false)
+    expect(planPluginSync({ hash: 'aaaa', version: '0.6.7' }, OURS, undefined, NAMES).replaceTree).toBe(true)
+    expect(planPluginSync({ hash: 'zzzz', version: '0.6.7' }, OURS, undefined, NAMES).replaceTree).toBe(false)
   })
 })
 
@@ -367,6 +376,22 @@ describe('捆绑插件集合按资源清单收敛', () => {
 
     expect(tree?.pluginNames).not.toContain('dsh-tauri-pet')
     expect(tree?.pluginNames).not.toContain('dsh-tauri-remote')
+  })
+
+  it('清单里的注释与尾逗号都能解析', () => {
+    const resources = createResources({
+      manifest: `{
+  "plugins": {
+    "built-in": [
+      { "spec": "dsh-tauri" }, // 内置
+      { "spec": "dsh-tauri-ui" }, /* 另一个 */
+    ],
+  },
+}`,
+      plugins: ['dsh-tauri', 'dsh-tauri-ui'],
+    })
+
+    expect(findBundledPluginsTree(join(resources, 'node_modules', 'dsh-tauri-remote'))?.pluginNames).toEqual(['dsh-tauri', 'dsh-tauri-ui'])
   })
 
   it('清单缺失时不把带 dsh 字段的目录当成捆绑插件', () => {
@@ -615,7 +640,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const profilePkg = JSON.parse(readFileSync(join(sandbox.home, '.dsh', 'profiles', PROFILE, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }
     expect(profilePkg.dependencies?.['plugin-alpha'], '档案要接到远端这份插件目录上').toContain('plugin-alpha')
     expect(markerOf(sandbox)).toEqual({ hash: 'other-hash', version: '0.6.8' })
-    expect(profileStateOf(sandbox), '接线状态按档案单独记').toBe('other-hash')
+    expect(profileStateOf(sandbox), '接线状态按档案单独记').toBe(wiringStateOf('other-hash', NAMES))
   })
 
   it('每个档案的接线状态各记各的，互不影响', () => {
@@ -628,7 +653,7 @@ describe.skipIf(!SHELL_AVAILABLE)('plugins-sync 远端换树脚本', () => {
     const result = runSyncScript(sandbox, { expectedHash: HASH })
 
     expect(result.status, `同步必须成功: ${result.stderr}`).toBe(0)
-    expect(profileStateOf(sandbox)).toBe(HASH)
+    expect(profileStateOf(sandbox)).toBe(WIRED)
     expect(profileStateOf(sandbox, 'other-profile'), '别的档案的接线状态不能被动').toBe('other-hash')
   })
 
