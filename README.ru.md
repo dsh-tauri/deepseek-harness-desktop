@@ -40,7 +40,7 @@
 </p>
 
 <p align="center">
-  <img src="./docs/images/hero-en.png" width="100%" alt="Баннер DSH Desktop" />
+  <img src="./docs/images/hero-en.png" width="100%" alt="Баннер DSH Desktop"  />
 </p>
 
 ## Возможности
