@@ -3,7 +3,7 @@ import type { TunnelProcess } from './tunnel.types'
 import { defineService } from 'dsh-tauri'
 import { messageOf } from '../../shared/error'
 import { localUpstream, mintAuthenticatedUrl, tunnelRuntimeDeps } from '../config/runtime'
-import { parseQuickTunnelUrl, tokenTunnelEnv, tunnelArgs } from '../utils/cloudflared'
+import { parseMetricsAddress, parseQuickTunnelUrl, probeCloudflaredReady, tokenTunnelEnv, tunnelArgs } from '../utils/cloudflared'
 import { readAccessDocument, writeAccessDocument } from './access.utils'
 import { gateway } from './gateway'
 
@@ -23,7 +23,21 @@ const PROGRESS_STEP_PERCENT = 5
 
 const PROGRESS_MIN_INTERVAL_MS = 400
 
-const RESTART_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000]
+const RESTART_MAX_DELAY_MS = 16_000
+
+const RESTART_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, RESTART_MAX_DELAY_MS]
+
+// 运行时健康探针：cloudflared 连接器"假死"（进程存活但边缘连接全掉）既不退出也不报错，
+// 只监听 onExit 的旧逻辑永远发现不了，面板一直显示运行中而公网地址实际已死。
+// /ready 在正常重连期间同样是 503，单次失败无法区分"假死"与"正在自行重连"，
+// 只有持续时长能区分，故两级升级：先可见降级，再强制重建。
+const HEALTH_PROBE_INTERVAL_MS = 30_000
+
+const HEALTH_PROBE_TIMEOUT_MS = 5_000
+
+const HEALTH_DEGRADED_FAILURES = 3
+
+const HEALTH_REBUILD_FAILURES = 10
 
 const NO_LOCAL_UPSTREAM = '无法确定本机 DSH 端口（宿主 webserver 未暴露端口且进程缺少 DSH_WEB_PORT），未启动隧道'
 
@@ -60,6 +74,30 @@ let lastProgressPercent = -1
 let restartTimer: NodeJS.Timeout | undefined
 
 let restartAttempt = 0
+
+let metricsAddress: string | undefined
+
+let probeTimer: NodeJS.Timeout | undefined
+
+let probeFailures = 0
+
+let probing = false
+
+/**
+ * 健康探针判定假死后触发的重建链路：此期间不允许进入终态，网络恢复后仍要自愈。
+ * 只有探活成功才清除——域名到达不证明边缘连接健康，且与 metrics 地址的先后顺序无关。
+ * 代价是替代进程若始终不报 metrics 地址，重建会一直停在「启动中」而不是转成 error，
+ * 与上游「健康重建永不进终态」的取舍一致；用户仍可手动停止。
+ */
+let rebuilding = false
+
+/** 降级前的状态：探活自行恢复时据此还原面板文案，避免长期停在「启动中」。 */
+let degradedFrom: RemoteTunnelState | undefined
+
+/** 已退出的代次：进程退出后仍可能吐出缓冲中的日志，迟到的就绪不得再把状态改回运行中。 */
+let exitedGeneration = -1
+
+let killTimer: NodeJS.Timeout | undefined
 
 export const tunnel = defineService({
   async status(): Promise<RemoteTunnelStatus> {
@@ -213,6 +251,9 @@ async function activate(): Promise<void> {
   state = 'starting'
   failure = undefined
   url = undefined
+  metricsAddress = undefined
+  rebuilding = false
+  degradedFrom = undefined
   setProgress({ stage: 'check' })
   try {
     const binary = await tunnelRuntimeDeps().resolveBinary(setProgress)
@@ -247,6 +288,8 @@ async function listenGateway(): Promise<number> {
 
 /// 代次由调用方持有并递增：spawn 抛错时不能把代次一起推进，否则重试会拿着失效代次被丢弃。
 function launch(config: RemoteTunnelConfig, executable: string, generation: number): void {
+  metricsAddress = undefined
+  exitedGeneration = -1
   setProgress({ stage: 'spawn' })
   const args = tunnelArgs(config.mode === 'token' ? undefined : `http://${ENTRY_HOST}:${bound}`)
   const env = config.mode === 'token' ? tokenTunnelEnv(config.token ?? '') : undefined
@@ -264,9 +307,17 @@ function launch(config: RemoteTunnelConfig, executable: string, generation: numb
 async function deactivate(reason: string | undefined): Promise<void> {
   activation += 1
   restartAttempt = 0
+  stopProbe()
+  metricsAddress = undefined
+  rebuilding = false
+  degradedFrom = undefined
   if (restartTimer !== undefined) {
     clearTimeout(restartTimer)
     restartTimer = undefined
+  }
+  if (killTimer !== undefined) {
+    clearTimeout(killTimer)
+    killTimer = undefined
   }
   progress = undefined
   lastProgressPercent = -1
@@ -302,21 +353,34 @@ async function fail(reason: string): Promise<void> {
   await deactivate(undefined)
 }
 
-async function ready(next: string): Promise<void> {
+async function ready(next: string, generation: number): Promise<void> {
   restartAttempt = 0
+  degradedFrom = undefined
   setProgress({ stage: 'ready' })
   state = 'running'
   url = next
   note('state', `公网隧道已就绪：${next}`)
+  if (metricsAddress === undefined)
+    note('state', '未识别到 cloudflared metrics 地址，健康探活将在地址出现后启用')
+  startProbe(generation)
 }
 
 function onLine(mode: RemoteTunnelMode, line: string, generation: number): void {
-  if (generation !== activation)
+  // 迟到的日志必须按代次丢弃：进程已退出后仍可能吐出缓冲输出，若照常走就绪判定，
+  // 会把状态改回运行中并让排定的重建再起一个 cloudflared（两个进程抢同一隧道）。
+  if (generation !== activation || generation === exitedGeneration)
     return
   const trimmed = line.trim()
   if (trimmed === '')
     return
   note('process', trimmed.slice(0, LINE_LIMIT))
+  if (metricsAddress === undefined) {
+    const address = parseMetricsAddress(trimmed)
+    if (address !== undefined) {
+      metricsAddress = address
+      startProbe(generation)
+    }
+  }
   if (mode !== 'quick' || state === 'running')
     return
   const found = parseQuickTunnelUrl(trimmed)
@@ -333,12 +397,18 @@ function onLine(mode: RemoteTunnelMode, line: string, generation: number): void 
     })
     return
   }
-  void ready(found)
+  void ready(found, generation)
 }
 
 function onExit(code: number | null, signal: NodeJS.Signals | null, generation: number): void {
   if (generation !== activation)
     return
+  exitedGeneration = generation
+  stopProbe()
+  if (killTimer !== undefined) {
+    clearTimeout(killTimer)
+    killTimer = undefined
+  }
   child = undefined
   if (stopping)
     return
@@ -351,8 +421,10 @@ function onExit(code: number | null, signal: NodeJS.Signals | null, generation: 
 /** 退避重建：重试期间保持 starting 且不写 failure，面板继续显示「启动中」而不是「异常」。 */
 function scheduleRestart(generation: number, reason: string): void {
   note('state', reason)
-  const delay = RESTART_DELAYS_MS[restartAttempt]
-  if (delay === undefined) {
+  const exhausted = restartAttempt >= RESTART_DELAYS_MS.length
+  // 健康探针触发的重建不设终态上限：长时断网时 cloudflared 自身也是无限退避重连，
+  // 这里保持同样语义，网络恢复后仍会自愈；退避仍随次数增长并封顶，不会变成重启风暴。
+  if (exhausted && !rebuilding) {
     void enqueue(async () => {
       if (generation !== activation)
         return
@@ -360,8 +432,11 @@ function scheduleRestart(generation: number, reason: string): void {
     })
     return
   }
+  const delay = RESTART_DELAYS_MS[restartAttempt] ?? RESTART_MAX_DELAY_MS
   restartAttempt += 1
-  note('state', `${delay / 1000} 秒后重建隧道（第 ${restartAttempt}/${RESTART_DELAYS_MS.length} 次）`)
+  note('state', exhausted
+    ? `${delay / 1000} 秒后继续重建隧道（已重建 ${restartAttempt} 次；判定假死后的重建不设上限，网络恢复后会自动重连）`
+    : `${delay / 1000} 秒后重建隧道（第 ${restartAttempt}/${RESTART_DELAYS_MS.length} 次）`)
   restartTimer = setTimeout(() => {
     restartTimer = undefined
     void enqueue(() => retry(generation))
@@ -387,6 +462,93 @@ async function exhaust(reason: string): Promise<void> {
   state = 'error'
   note('state', failure)
   await deactivate(undefined)
+}
+
+/** 探活只在拿到 metrics 地址后才有意义；地址迟到时由 onLine 补启，避免安全网永久不启用。 */
+function startProbe(generation: number): void {
+  if (metricsAddress === undefined)
+    return
+  stopProbe()
+  // 探针跑在定时器里：任何逃逸异常都会变成未捕获异常直接结束宿主进程，
+  // 那正是探针本该防止的事故，所以这里必须自己兜住。
+  probeTimer = setInterval(() => {
+    probeOnce(generation).catch(() => undefined)
+  }, HEALTH_PROBE_INTERVAL_MS)
+  probeTimer.unref()
+}
+
+function stopProbe(): void {
+  if (probeTimer !== undefined) {
+    clearInterval(probeTimer)
+    probeTimer = undefined
+  }
+  probeFailures = 0
+  probing = false
+}
+
+async function probeOnce(generation: number): Promise<void> {
+  const address = metricsAddress
+  if (probing || address === undefined || generation !== activation)
+    return
+  probing = true
+  let result: { healthy: boolean, reason?: string }
+  try {
+    result = await probeCloudflaredReady(address, HEALTH_PROBE_TIMEOUT_MS)
+  }
+  catch (error) {
+    result = { healthy: false, reason: messageOf(error) }
+  }
+  finally {
+    probing = false
+  }
+  // 退出后到达的探活结果必须作废：onExit 不推进代次，此时 state 是 starting 而非 stopped，
+  // 放行它会把 rebuilding 清掉、把状态还原成退出前的样子，重建上限随之重新生效。
+  if (generation !== activation || generation === exitedGeneration || state === 'stopped')
+    return
+  if (result.healthy) {
+    markHealthy()
+    return
+  }
+  probeFailures += 1
+  const reason = result.reason ?? '未知原因'
+  if (probeFailures === HEALTH_DEGRADED_FAILURES) {
+    // 第一级只让降级可见，不杀进程：/ready 为 503 也可能只是 cloudflared 正按自身退避重连，
+    // 过早介入会把本可自愈的故障变成人工故障。
+    degradedFrom = state
+    state = 'starting'
+    note('state', `健康探活连续 ${probeFailures} 次失败（${reason}）：连接器已无健康边缘连接，观察能否自行恢复（${probeFailures}/${HEALTH_REBUILD_FAILURES}）`)
+    return
+  }
+  if (probeFailures < HEALTH_REBUILD_FAILURES) {
+    note('state', `健康探活第 ${probeFailures}/${HEALTH_REBUILD_FAILURES} 次失败：${reason}`)
+    return
+  }
+  forceRebuild()
+}
+
+function markHealthy(): void {
+  if (probeFailures >= HEALTH_DEGRADED_FAILURES) {
+    note('state', `隧道健康探活已自行恢复（此前连续失败 ${probeFailures} 次）`)
+    if (degradedFrom !== undefined) {
+      state = degradedFrom
+      degradedFrom = undefined
+    }
+  }
+  probeFailures = 0
+  rebuilding = false
+}
+
+/** 第二级：持续不恢复即判定假死。只终止进程，重建交给既有 onExit → scheduleRestart 链路。 */
+function forceRebuild(): void {
+  const running = child
+  note('state', `健康探活连续 ${HEALTH_REBUILD_FAILURES} 次失败（约 ${Math.round(HEALTH_REBUILD_FAILURES * HEALTH_PROBE_INTERVAL_MS / 60_000)} 分钟）：判定连接器假死，终止进程以触发重建`)
+  rebuilding = true
+  stopProbe()
+  if (running === undefined)
+    return
+  running.kill('SIGTERM')
+  killTimer = setTimeout(() => running.kill('SIGKILL'), STOP_GRACE_MS)
+  killTimer.unref()
 }
 
 function hostOf(value: string): string | null {
