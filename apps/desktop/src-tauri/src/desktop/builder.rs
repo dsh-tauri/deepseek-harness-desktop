@@ -168,13 +168,16 @@ fn build_tray<R: Runtime>(app: &crate::AppHandle<R>) -> tauri::Result<()> {
         }
     }
 
+    // macOS 上不给托盘项设 tooltip：NSStatusItem 处于不可见状态（菜单栏图标被系统挤进
+    // 不可见区、或被收起）时，对应 tooltip 收不到 mouseExited，会滞留成一块悬浮在产品名
+    // 上的小药丸（NSToolTip 窗口，窗口层级 103），无视 app 前后台盖在其它窗口上面。
+    // 托盘菜单里已有「打开面板 / 退出」，这个 tooltip 不提供额外信息。
     #[cfg(target_os = "macos")]
     let _ = TrayIconBuilder::new()
         .icon(icon)
         .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip(crate::desktop::product_name(app))
         .on_menu_event(move |app, event| handle_menu_event(app, &event))
         .on_tray_icon_event(move |tray, event| handle_tray_icon_event(tray, &event))
         .build(app)?;
