@@ -396,6 +396,45 @@ describe('cloudflared 假死探针', () => {
     expect(status.error).toBeUndefined()
   })
 
+  it('进程退出后到达的探活结果不再清除重建模式', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startProbed(tunnel)
+    host.status.mockReturnValue({ state: 'listening', port: ENTRY_PORT })
+
+    await failProbe(10)
+    expect(signals).toEqual(['SIGTERM'])
+
+    crash()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flush()
+    expect(host.spawn).toHaveBeenCalledTimes(2)
+
+    handlers?.onLine(METRICS_LINE)
+    await flush()
+
+    let resolveProbe: ((value: { healthy: boolean }) => void) | undefined
+    host.probe.mockImplementation(() => new Promise((resolve) => {
+      resolveProbe = resolve
+    }))
+    await vi.advanceTimersByTimeAsync(PROBE_INTERVAL_MS)
+    await flush()
+
+    crash()
+    await flush()
+    resolveProbe?.({ healthy: true })
+    await flush()
+
+    for (let index = 0; index < 6; index += 1) {
+      crash()
+      await vi.advanceTimersByTimeAsync(16_000)
+      await flush()
+    }
+
+    const status = await tunnel.status()
+    expect(status.state).toBe('starting')
+    expect(status.error).toBeUndefined()
+  })
+
   it('未识别到 metrics 地址时不启动探活，也不会误杀进程', async () => {
     const { tunnel } = await import('./tunnel')
     await startRunning(tunnel)

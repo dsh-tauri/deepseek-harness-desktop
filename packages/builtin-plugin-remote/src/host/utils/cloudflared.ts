@@ -331,16 +331,37 @@ async function downloadInto(url: string, asset: CloudflaredAsset, target: string
   }
 }
 
-function consumeLines(stream: NodeJS.ReadableStream | null, listener: (line: string) => void): void {
+/**
+ * 跨 chunk 的行切分。流结束时必须 flush：子进程猝死时最后那行往往没有换行，
+ * 而它正是唯一能说明死因的诊断信息，丢掉等于白落盘。
+ */
+export function createLineReader(listener: (line: string) => void): { push: (chunk: string) => void, flush: () => void } {
+  let pending = ''
+  const emit = (line: string): void => {
+    if (line !== '')
+      listener(line)
+  }
+  return {
+    push(chunk) {
+      pending += chunk
+      const lines = pending.split('\n')
+      pending = lines.pop() ?? ''
+      for (const line of lines)
+        emit(line)
+    },
+    flush() {
+      const tail = pending
+      pending = ''
+      emit(tail)
+    },
+  }
+}
+
+export function consumeLines(stream: NodeJS.ReadableStream | null, listener: (line: string) => void): void {
   if (stream === null)
     return
-  let pending = ''
+  const reader = createLineReader(listener)
   stream.setEncoding('utf8')
-  stream.on('data', (chunk: string) => {
-    pending += chunk
-    const lines = pending.split('\n')
-    pending = lines.pop() ?? ''
-    for (const line of lines)
-      listener(line)
-  })
+  stream.on('data', (chunk: string) => reader.push(chunk))
+  stream.on('end', () => reader.flush())
 }

@@ -501,7 +501,9 @@ async function probeOnce(generation: number): Promise<void> {
   finally {
     probing = false
   }
-  if (generation !== activation || state === 'stopped')
+  // 退出后到达的探活结果必须作废：onExit 不推进代次，此时 state 是 starting 而非 stopped，
+  // 放行它会把 rebuilding 清掉、把状态还原成退出前的样子，重建上限随之重新生效。
+  if (generation !== activation || generation === exitedGeneration || state === 'stopped')
     return
   if (result.healthy) {
     markHealthy()

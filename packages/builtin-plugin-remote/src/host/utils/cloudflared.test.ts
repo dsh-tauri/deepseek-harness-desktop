@@ -1,8 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { PassThrough } from 'node:stream'
 import { join } from 'pathe'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cloudflaredLogSink, parseMetricsAddress, tunnelArgs } from './cloudflared'
+import { cloudflaredLogSink, consumeLines, createLineReader, parseMetricsAddress, tunnelArgs } from './cloudflared'
 
 const ENTRY = 'http://127.0.0.1:3089'
 
@@ -44,6 +45,58 @@ describe('parseMetricsAddress', () => {
 
   it('无关日志行不产生地址', () => {
     expect(parseMetricsAddress('INF Registered tunnel connection connIndex=0')).toBeUndefined()
+  })
+})
+
+describe('createLineReader', () => {
+  function collect(): { lines: string[], push: (chunk: string) => void, flush: () => void } {
+    const lines: string[] = []
+    const reader = createLineReader(line => lines.push(line))
+    return { lines, push: reader.push, flush: reader.flush }
+  }
+
+  it('跨 chunk 拼接被切断的行', () => {
+    const reader = collect()
+    reader.push('INF Star')
+    reader.push('ting metrics server\nINF next\n')
+    expect(reader.lines).toEqual(['INF Starting metrics server', 'INF next'])
+  })
+
+  it('流结束时交付末尾没有换行的那一行', () => {
+    const reader = collect()
+    reader.push('INF ok\nfatal: connection lost')
+    expect(reader.lines).toEqual(['INF ok'])
+    reader.flush()
+    expect(reader.lines).toEqual(['INF ok', 'fatal: connection lost'])
+  })
+
+  it('末尾空行不产生空记录，重复 flush 不重复交付', () => {
+    const reader = collect()
+    reader.push('only\n')
+    reader.flush()
+    reader.flush()
+    expect(reader.lines).toEqual(['only'])
+  })
+})
+
+describe('consumeLines', () => {
+  it('流结束时把末尾没有换行的那一行也交给调用方', async () => {
+    const lines: string[] = []
+    const stream = new PassThrough()
+    consumeLines(stream, line => lines.push(line))
+    stream.write('INF ok\nfatal: connection lost')
+    stream.end()
+    await new Promise(resolve => stream.once('close', resolve))
+    expect(lines).toEqual(['INF ok', 'fatal: connection lost'])
+  })
+
+  it('空流不产生任何记录', async () => {
+    const lines: string[] = []
+    const stream = new PassThrough()
+    consumeLines(stream, line => lines.push(line))
+    stream.end()
+    await new Promise(resolve => stream.once('close', resolve))
+    expect(lines).toEqual([])
   })
 })
 
