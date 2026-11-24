@@ -199,7 +199,7 @@ export async function resolveCloudflared(onProgress?: CloudflaredProgressSink): 
 
 export function spawnCloudflared(binary: string, args: string[], handlers: TunnelHandlers, env?: NodeJS.ProcessEnv): TunnelProcess {
   const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...env === undefined ? {} : { env: { ...process.env, ...env } } })
-  const write = cloudflaredLogSink(join(harnessHome(), STATE_DIR, CLOUDFLARED_LOG_NAME), env?.TUNNEL_TOKEN?.trim() ?? null)
+  const write = cloudflaredLogSink(join(stateDir(), CLOUDFLARED_LOG_NAME), env?.TUNNEL_TOKEN?.trim() ?? null)
   const exited = new Promise<void>((resolve) => {
     child.once('exit', (code, signal) => {
       handlers.onExit(code, signal)

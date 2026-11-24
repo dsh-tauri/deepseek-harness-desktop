@@ -18,7 +18,8 @@ vi.mock('../utils/cloudflared', async (importOriginal) => {
   return { ...actual, probeCloudflaredReady: host.probe }
 })
 vi.mock('../config/runtime', () => ({
-  harnessHome: () => '/tmp/dsh-home',
+  BIN_DIR: 'bin',
+  stateDir: () => '/tmp/dsh-home/remote.ssh',
   localUpstream: () => 'http://127.0.0.1:3080',
   mintAuthenticatedUrl: async () => undefined,
   tunnelRuntimeDeps: (): TunnelDeps => ({
