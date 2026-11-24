@@ -1,4 +1,6 @@
+import glob
 import json
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -10,6 +12,32 @@ import unittest
 SCRIPT = Path(__file__).with_name('fix-appimage-host-libs.sh')
 VALIDATOR = SCRIPT.read_text(encoding='utf-8').split("<<'PY_ELECTRON'\n", 1)[1].split('\nPY_ELECTRON', 1)[0]
 REQUIRED = ('main.cjs', 'preload.cjs', 'icudtl.dat', 'resources.pak', 'libffmpeg.so', 'libvulkan.so.1', 'libvk_swiftshader.so', 'vk_swiftshader_icd.json')
+GTK_HOOK = Path('apprun-hooks/linuxdeploy-plugin-gtk.sh')
+BUNDLED_IMMODULES = Path('usr/lib/gtk-3.0/3.0.0/immodules.cache')
+HOST_IMMODULES_GLOBS = ('/usr/lib*/gtk-3.0/3.0.0/immodules.cache', '/usr/lib/*-linux-gnu*/gtk-3.0/3.0.0/immodules.cache')
+GTK_HOOK_SOURCE = '''#! /usr/bin/env bash
+export APPDIR="${APPDIR:-"$(dirname "$(realpath "$0")")"}"
+export GTK_DATA_PREFIX="$APPDIR"
+export GTK_THEME="Adwaita:light"
+export GDK_BACKEND=x11 # Crash with Wayland backend on Wayland
+export GTK_EXE_PREFIX="$APPDIR/usr"
+export GTK_PATH="$APPDIR/usr/lib/gtk-3.0"
+export GTK_IM_MODULE_FILE="$APPDIR//usr/lib/gtk-3.0/3.0.0/immodules.cache"
+export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
+'''
+
+
+def pack_image(root, image, fs, runtime):
+    fs.unlink(missing_ok=True)
+    subprocess.run(['mksquashfs', str(root), str(fs), '-noappend', '-no-progress', '-quiet', '-processors', '1'], check=True)
+    image.write_bytes(runtime + fs.read_bytes())
+
+
+def host_immodules_caches():
+    found = []
+    for pattern in HOST_IMMODULES_GLOBS:
+        found.extend(candidate for candidate in sorted(glob.glob(pattern)) if os.path.isfile(candidate))
+    return found
 
 
 class AppImageTest(unittest.TestCase):
@@ -33,10 +61,26 @@ class AppImageTest(unittest.TestCase):
         for name in REQUIRED:
             (dist / name).write_bytes(b'preserve-electron-' + name.encode())
         (root / 'usr/lib/libwayland-client.so.0').write_bytes(b'old-host-library')
+        hook = root / GTK_HOOK
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text(GTK_HOOK_SOURCE, encoding='utf-8')
+        cache = root / BUNDLED_IMMODULES
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text('# Created by /usr/lib/x86_64-linux-gnu/libgtk-3-0/gtk-query-immodules-3.0 from gtk+-3.24.33\n', encoding='utf-8')
         return dist
 
     def validate(self, root):
         return subprocess.run([sys.executable, '-c', VALIDATOR, str(root)], capture_output=True, text=True)
+
+    def hook_immodules_cache(self, appdir, overrides=None, hook=None):
+        env = {'PATH': os.environ['PATH'], 'APPDIR': str(appdir)}
+        env.update(overrides or {})
+        result = subprocess.run(
+            ['bash', '-euo', 'pipefail', '-c', 'source "$1" >/dev/null 2>&1; env | sed -n \'s/^GTK_IM_MODULE_FILE=//p\'', '_', str(hook or (Path(appdir) / GTK_HOOK))],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
 
     def test_electron_contract(self):
         with tempfile.TemporaryDirectory() as work:
@@ -94,9 +138,7 @@ class AppImageTest(unittest.TestCase):
                 runtime = b'#!/bin/sh\nexit 1\n'
 
                 def pack():
-                    fs.unlink(missing_ok=True)
-                    subprocess.run(['mksquashfs', str(root), str(fs), '-noappend', '-no-progress', '-quiet', '-processors', '1'], check=True)
-                    image.write_bytes(runtime + fs.read_bytes())
+                    pack_image(root, image, fs, runtime)
 
                 pack()
                 result = subprocess.run(['bash', str(SCRIPT), '--require-removal', str(image)], capture_output=True, text=True)
@@ -133,6 +175,43 @@ class AppImageTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('--require-removal was requested', result.stderr)
                 self.assertEqual(image.read_bytes(), before)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'real SquashFS repacking requires Linux')
+    def test_gtk_hook_prefers_host_immodules_cache(self):
+        for tool in ('mksquashfs', 'unsquashfs'):
+            self.assertIsNotNone(shutil.which(tool), f'missing required tool: {tool}')
+        with tempfile.TemporaryDirectory() as work:
+            work = Path(work)
+            root = work / 'root'
+            self.fixture(root)
+            image = work / 'hook.AppImage'
+            runtime = b'#!/bin/sh\nexit 1\n'
+            pack_image(root, image, work / 'hook.squashfs', runtime)
+            result = subprocess.run(['bash', str(SCRIPT), '--require-removal', str(image)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            extracted = work / 'extracted'
+            subprocess.run(['unsquashfs', '-o', str(len(runtime)), '-d', str(extracted), str(image)], check=True, stdout=subprocess.DEVNULL)
+            host_caches = host_immodules_caches()
+            if host_caches:
+                self.assertIn(self.hook_immodules_cache(extracted), host_caches, '宿主自带 immodules.cache 时应优先使用它')
+            # runner 上通常有宿主 cache，回退分支靠把查找路径改到空目录来确定性命中。
+            isolated = work / 'isolated-hook'
+            isolated.write_text(
+                (extracted / GTK_HOOK).read_text(encoding='utf-8')
+                .replace('/usr/lib*/', f'{work}/absent/lib*/')
+                .replace('/usr/lib/*-linux-gnu*/', f'{work}/absent/lib/*-linux-gnu*/'),
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                self.hook_immodules_cache(extracted, hook=isolated),
+                str(extracted / BUNDLED_IMMODULES),
+                '宿主没有 immodules.cache 时应回退内置的',
+            )
+            self.assertEqual(
+                self.hook_immodules_cache(extracted, {'GTK_IM_MODULE_FILE': '/opt/custom/immodules.cache'}),
+                '/opt/custom/immodules.cache',
+                '用户显式指定的 GTK_IM_MODULE_FILE 不应被覆盖',
+            )
 
 
 if __name__ == '__main__':
