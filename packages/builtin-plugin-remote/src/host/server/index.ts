@@ -18,6 +18,7 @@ import machinesEvents from './routes/machines.events.get'
 import machinesGet from './routes/machines.get'
 import machinesInstall from './routes/machines.install.post'
 import machinesPost from './routes/machines.post'
+import machinesRestart from './routes/machines.restart.post'
 import machinesTest from './routes/machines.test.post'
 import sessionRole from './routes/session.role.get'
 import settingsGet from './routes/settings.get'
@@ -38,6 +39,7 @@ export const server = defineWebServer((app) => {
   app.post('/api/tauri/remote/machines/connect', machinesConnect)
   app.post('/api/tauri/remote/machines/disconnect', machinesDisconnect)
   app.post('/api/tauri/remote/machines/install', machinesInstall)
+  app.post('/api/tauri/remote/machines/restart', machinesRestart)
   app.get('/api/tauri/remote/machines/events', machinesEvents)
   app.get('/api/tauri/remote/core/current', coreCurrentGet)
   app.get('/api/tauri/remote/core/instance', coreInstanceGet)

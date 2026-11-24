@@ -53,6 +53,14 @@ vi.mock('@/store/modules/harness', () => ({
 vi.mock('@/store/modules/harness-updater', () => ({
   harnessUpdater: { $state: mocks.harnessUpdaterState, showToast: vi.fn(), handleUpdate: vi.fn() },
 }))
+vi.mock('@/apis/remote', () => ({
+  getCoreCurrent: vi.fn(async () => ({ item: undefined })),
+  postMachinesDisconnect: vi.fn(async () => ({})),
+  postMachinesRestart: vi.fn(async () => ({})),
+}))
+vi.mock('@/hooks/use-remote', () => ({
+  loadRemoteMachines: vi.fn(async () => ({ enabled: true, machines: [] })),
+}))
 vi.mock('@/store', () => ({
   store: {
     setting: { $state: mocks.settingState, update: mocks.update },
@@ -348,5 +356,30 @@ describe('配置面板的运行控制按钮', () => {
 
     const reload = await screen.findByRole('button', { name: 'app.reload_page' })
     expect((reload as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('配置面板按窗口归属分叉', () => {
+  it('本机窗口渲染本机核心面板', async () => {
+    renderDebug()
+
+    expect(await screen.findByTestId('dsh-config-reload-page')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-config-remote-application')).toBeNull()
+  })
+
+  it('远端窗口不渲染本机核心面板，也不读本机运行时信息', async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === 'get_remote_shell_state')
+        return Promise.resolve({ machineId: 'build' })
+      if (command === 'get_app_config')
+        return Promise.resolve({ ...mocks.settingState })
+      return Promise.resolve(null)
+    })
+    renderDebug()
+
+    expect(await screen.findByTestId('dsh-config-remote-application')).toBeTruthy()
+    expect(screen.queryByTestId('dsh-config-reload-page')).toBeNull()
+    expect(mocks.invoke).not.toHaveBeenCalledWith('get_runtime_info')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('get_cli_link_status')
   })
 })

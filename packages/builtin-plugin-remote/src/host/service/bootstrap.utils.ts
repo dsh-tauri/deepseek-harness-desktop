@@ -771,13 +771,14 @@ export function safeProfileName(raw: string | undefined): string {
   return raw !== undefined && /^[\w-]+$/.test(raw) ? raw : DEFAULT_REMOTE_PROFILE
 }
 
-export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan): string {
+export function startCommandFor(profile: MachineProfile, plan?: RemoteInstallPlan, entry?: string): string {
   if (plan !== undefined)
     assertSupportedDshVersion(plan.dshVersion)
   if (profile.startCommand !== undefined)
     return `mkdir -p "$HOME/.dsh" && ( ${profile.startCommand} >>"$HOME/${remoteWebLog(profile.remotePort)}" 2>&1 < /dev/null & ) &`
   const node = `$HOME/${REMOTE_ROOT}/runtime/bin/node`
-  const dshBin = layoutDshEntry(plan)
+  // 入口可以显式给（远端实际装的那份），缺省按安装计划推断。
+  const dshBin = entry ?? layoutDshEntry(plan)
   const profileName = safeProfileName(profile.profileName)
   return [
     `ROOT="$HOME/${REMOTE_ROOT}"`,
@@ -1036,6 +1037,95 @@ export async function ensureRemoteInstance(
     `remote dsh web did not become ready on "${target}" within ${config.healthPollAttempts} polls; `
     + `fallback probe: root ${await rootResponseVerdict(session, profile, config)}; `
     + `remote log tail: ${tail}`,
+  )
+}
+
+/**
+ * 重启远端实例的远端脚本：先占住活动槽位声明，再停实例、按实际装的那份入口拉起。
+ *
+ * 停与起必须在同一条脚本里、同一份声明之下：分两次 exec 的话，中间那段没有任何占用，
+ * 别的桌面客户端的安装或插件同步会插进来动同一个实例（本进程内的 restarting/installing
+ * 只挡得住自己）。入口也不能猜：ZIP 布局与 npm 布局的入口不同，猜错就是先停成功、
+ * 再起不来。
+ */
+export function buildRestartScript(profile: MachineProfile): string {
+  const profileName = safeProfileName(profile.profileName)
+  // 自定义启动命令不依赖受管入口，别拿入口检查把它挡下来。
+  const managed = profile.startCommand === undefined
+  const entrySection = managed
+    ? [
+        `if [ -f "$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}" ]; then DSH_BIN="$ROOT/dependencies/dsh/${DSH_ZIP_ENTRY}"`,
+        `elif [ -f "$ROOT/dependencies/dsh/${DSH_NPM_ENTRY}" ]; then DSH_BIN="$ROOT/dependencies/dsh/${DSH_NPM_ENTRY}"`,
+        'else echo "REMOTE_NOT_INSTALLED: 远端三件套未安装完整"; exit 1',
+        'fi',
+      ]
+    : []
+  const startSection = managed
+    ? startCommandFor(profile, undefined, '"$DSH_BIN"').split('\n')
+    : [startCommandFor(profile)]
+  return [
+    'set -eu',
+    `ROOT="$HOME/${REMOTE_ROOT}"`,
+    `TMP="$ROOT/tmp/restart.$$"`,
+    'mkdir -p "$ROOT/dependencies" "$TMP"',
+    // 占用声明的路径在拿到声明之前是空的：退出清理按它判断自己有没有占住槽位。
+    'CLAIM=""',
+    'cleanup() { rm -rf "$TMP"; rm -f "$CLAIM"; }',
+    'trap cleanup EXIT',
+    `log() { printf '${BOOTSTRAP_LOG_PREFIX}%s %s\\n' "$1" "$2"; }`,
+    ...remoteSlotClaimShell('dsh', { busyText: '远端实例正被其它操作改动（切换核心、强制重装或插件同步）' }),
+    ...remoteInstanceStopCommand(profileName, profile.remotePort),
+    ...entrySection,
+    ...startSection,
+  ].join('\n')
+}
+
+/**
+ * 重启远端实例：停掉端口上的实例，再按同一份档案拉起并等它重新就绪。
+ *
+ * 只动实例，不动安装目录、也不重新规划安装：隧道与网关建在 SSH 会话上，实例重启
+ * 期间它们仍在，新实例起来后网关按请求重新取启动令牌即可恢复。
+ */
+export async function restartRemoteInstance(
+  session: RemoteSession,
+  profile: MachineProfile,
+  config: Config,
+  hooks: BootstrapHooks = {},
+): Promise<string> {
+  const { onEvent, onProgress } = hooks
+  const target = `${profile.host}:${profile.remotePort}`
+  const profileName = safeProfileName(profile.profileName)
+  onEvent?.('launch', `重启远端实例（端口 ${profile.remotePort}，档案 ${profileName}）`)
+  onProgress?.({ phase: 'starting' })
+  const restarted = await session.exec(buildRestartScript(profile))
+  if (restarted.code !== 0) {
+    const message = restarted.stdout.includes('REMOTE_NOT_INSTALLED')
+      ? `remote runtime incomplete on "${profile.host}" (REMOTE_NOT_INSTALLED)`
+      : `remote instance restart failed on "${target}": ${describeExecFailure(restarted.code, restarted.stderr)}`
+    return failBootstrap(onEvent, message, '重启失败')
+  }
+  for (let attempt = 0; attempt < config.healthPollAttempts; attempt++) {
+    onProgress?.({ phase: 'probing', attempt: attempt + 1, total: config.healthPollAttempts })
+    await sleep(config.healthPollIntervalMs)
+    let verdict: string | undefined
+    try {
+      verdict = await judgeReadiness(session, profile, config)
+    }
+    catch (error) {
+      return failBootstrap(onEvent, messageOf(error), '重启失败')
+    }
+    if (verdict !== undefined) {
+      emitReady(onEvent, target, verdict)
+      return target
+    }
+  }
+  const tail = await logTail(session, profile.remotePort)
+  return failBootstrap(
+    onEvent,
+    `remote dsh web did not become ready on "${target}" within ${config.healthPollAttempts} polls after restart; `
+    + `fallback probe: root ${await rootResponseVerdict(session, profile, config)}; `
+    + `remote log tail: ${tail}`,
+    '重启失败',
   )
 }
 

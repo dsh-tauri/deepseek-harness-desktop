@@ -50,10 +50,10 @@ export function ConfigDialog(props: ConfigDialogProps) {
   ]
 
   const [activeTab, setActiveTab] = useState<ConfigTab>(props.tab ?? 'application')
-  /** 当前窗口挂在哪台远端机器上；非空表示本窗口的 dsh 文档来自该机器 */
+  /** 当前窗口挂在哪台远端机器上；非空表示本窗口的 dsh 文档来自该机器，undefined 表示还没查出来 */
   const remoteMachineId = useRemoteShellMachine()
   /** 远端窗口里档案/插件/数据管的是发起端本机状态，只给提示；核心面板改为管理这台远端机器 */
-  const remoteBlocked = remoteMachineId !== null
+  const remoteBlocked = remoteMachineId !== null && remoteMachineId !== undefined
 
   // 服务重启/退出前由 store 触发，命令式收起本对话框（卸载时自动注销）
   useListener(hooks['config.dialog.hidden'].on, disclosure.cancel)
@@ -112,7 +112,9 @@ export function ConfigDialog(props: ConfigDialogProps) {
                     {remoteBlocked ? <RemoteUnsupported title={t('config.plugins')} /> : <ConfigPlugin />}
                   </Case>
                   <Case cond="harness">
-                    {remoteMachineId !== null ? <RemoteCoreSection machineId={remoteMachineId} /> : <ConfigCore />}
+                    {remoteMachineId === undefined
+                      ? null
+                      : remoteMachineId === null ? <ConfigCore /> : <RemoteCoreSection machineId={remoteMachineId} />}
                   </Case>
                   <Case cond="dataDir">
                     {remoteBlocked ? <RemoteUnsupported title={t('config.dataDir')} /> : <ConfigDataDir />}

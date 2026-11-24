@@ -242,17 +242,47 @@ export const machine = defineService({
     requireCapabilities(machineId, profile, ['exec'])
     const target = ensureState(machineId)
     refuseWhileReconnecting(machineId, target)
+    // 重装与重启都会停掉端口上的实例：让它们互相排队，别把对方刚拉起的实例停掉。
+    if (target.restarting !== undefined)
+      throw new RemoteError('machine-install-failed', machineId, 'machine is restarting; wait for it to finish before installing')
     if (target.installing === undefined) {
-      if (options.force === true && target.link !== undefined)
-        await machine.disconnect(machineId)
-      target.progress = { phase: 'installing' }
-      emit(machineId)
-      const attempt = performInstall(machineId, profile, options, signal)
+      // 强制重装要先断开再装：断开可能要等上几秒，期间必须已经登记 installing，
+      // 否则另一个入口（重启）会在这段空档里进来停/起同一个实例。
+      const attempt = (async () => {
+        if (options.force === true && target.link !== undefined)
+          await machine.disconnect(machineId)
+        target.progress = { phase: 'installing' }
+        emit(machineId)
+        return performInstall(machineId, profile, options, signal)
+      })()
       target.installing = attempt.finally(() => {
         delete machineStates.get(machineId)?.installing
       })
     }
     return target.installing
+  },
+
+  /**
+   * 重启远端实例：停掉端口上的实例，再按同一份档案拉起并等它重新就绪。
+   *
+   * 隧道与网关建在 SSH 会话上，实例重启期间它们仍在，所以这里不重建连接、也不动
+   * 安装目录：新实例起来后网关按请求重新取启动令牌即可恢复。窗口里的文档会在这
+   * 期间断流，调用方负责重新加载。
+   */
+  async restart(machineId: MachineId): Promise<void> {
+    const profile = requireProfile(machineId)
+    requireCapabilities(machineId, profile, ['exec'])
+    const target = ensureState(machineId)
+    refuseWhileReconnecting(machineId, target)
+    if (target.installing !== undefined)
+      throw new RemoteError('machine-restart-failed', machineId, 'machine is installing; wait for it to finish before restarting the instance')
+    if (target.restarting === undefined) {
+      const attempt = performRestart(machineId, profile)
+      target.restarting = attempt.finally(() => {
+        delete machineStates.get(machineId)?.restarting
+      })
+    }
+    return target.restarting
   },
 
   async save(machineId: MachineId, row: MachineSaveRow, secrets?: MachineSecretWrite): Promise<void> {
@@ -803,6 +833,40 @@ function redacted(machineId: MachineId, text: string): string {
       out = out.replaceAll(secret, '***')
   }
   return out
+}
+
+async function performRestart(machineId: MachineId, profile: MachineProfile): Promise<void> {
+  const target = ensureState(machineId)
+  const generation = target.generation
+  const session = await openSessionOrFail(machineId, profile)
+  try {
+    target.progress = { phase: 'starting' }
+    emit(machineId)
+    await bootstrap.restart(session, profile, {
+      onEvent: (stage, line, options) => {
+        if (generation === target.generation)
+          events.append(machineId, stage, line, options)
+      },
+      onProgress: (progress) => {
+        if (generation !== target.generation)
+          return
+        target.progress = progress
+        emit(machineId)
+      },
+    })
+  }
+  catch (error) {
+    if (error instanceof RemoteError)
+      throw error
+    throw new RemoteError('machine-restart-failed', machineId, redacted(machineId, messageOf(error)))
+  }
+  finally {
+    if (generation === target.generation) {
+      delete target.progress
+      emit(machineId)
+    }
+    await session.close().catch(() => undefined)
+  }
 }
 
 async function performInstall(machineId: MachineId, profile: MachineProfile, options: { force?: boolean, ackProfileMismatch?: boolean }, signal?: AbortSignal): Promise<RemoteInstallResult> {

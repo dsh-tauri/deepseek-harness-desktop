@@ -58,6 +58,11 @@ export function postMachinesInstall(body: Types.PostApiTauriRemoteMachinesInstal
   return ofetch<Types.PostApiTauriRemoteMachinesInstallResponse>('/api/tauri/remote/machines/install', { method: 'post', body, ...options })
 }
 
+/** @method post */
+export function postMachinesRestart(body: Types.PostApiTauriRemoteMachinesRestartBody, options?: FetchOptions) {
+  return ofetch<Types.PostApiTauriRemoteMachinesRestartResponse>('/api/tauri/remote/machines/restart', { method: 'post', body, ...options })
+}
+
 /** @method get */
 export function getMachinesEvents(params?: Types.GetApiTauriRemoteMachinesEventsQuery, options?: FetchOptions) {
   return ofetch<Types.GetApiTauriRemoteMachinesEventsResponse>('/api/tauri/remote/machines/events', { method: 'get', ...params === undefined ? {} : { params }, ...options })

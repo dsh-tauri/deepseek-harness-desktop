@@ -142,6 +142,7 @@ export type RemoteErrorCode
     | 'machine-bootstrap-failed'
     | 'machine-dsh-missing'
     | 'machine-install-failed'
+    | 'machine-restart-failed'
     | 'machine-reconnecting'
     | 'machine-sync-failed'
     | 'machine-transport-unsupported'
