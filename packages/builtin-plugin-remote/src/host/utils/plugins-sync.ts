@@ -25,7 +25,7 @@ const DECISION_ATTEMPTS = 3
 
 export const WIRE_SCRIPT = `const fs = require('fs')
 const path = require('path')
-const [profilePkg, base, profileStatePath, treeHash, allowlist] = process.argv.slice(2)
+const [profilePkg, base, profileStatePath, wiringState, allowlist] = process.argv.slice(2)
 // 接线集合以资源清单声明的内置插件为准：远端这份目录里可能留着旧版本部署的包，
 // 它们和新核心不兼容，接进档案就会 import failed。远端这份可能是别的桌面部署的，
 // 所以还要按远端实际目录取交集，不能只信本机的名字。issue #1625
@@ -74,10 +74,10 @@ for (const name of Object.keys(doc.dependencies)) {
 }
 fs.writeFileSync(profilePkg, JSON.stringify(doc, null, 2) + '\\n')
 // 接线状态按档案记：接线是档案级的事，不写进共享的插件目录（那里放的是目录本身的状态）。
-if (profileStatePath && treeHash) {
+if (profileStatePath && wiringState) {
   fs.mkdirSync(path.dirname(profileStatePath), { recursive: true })
   const temp = profileStatePath + '.tmp'
-  fs.writeFileSync(temp, treeHash + '\\n')
+  fs.writeFileSync(temp, wiringState + '\\n')
   fs.renameSync(temp, profileStatePath)
 }
 console.log('wired ' + names.length + ' bundled plugins')
