@@ -368,6 +368,33 @@ describe('cloudflared 假死探针', () => {
     expect(status.error).toBeUndefined()
   })
 
+  it('域名先于 metrics 地址到达时也不清除重建模式', async () => {
+    const { tunnel } = await import('./tunnel')
+    await startProbed(tunnel)
+    host.status.mockReturnValue({ state: 'listening', port: ENTRY_PORT })
+
+    await failProbe(10)
+    crash()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flush()
+    expect(host.spawn).toHaveBeenCalledTimes(2)
+
+    handlers?.onLine(QUICK_LINE)
+    await flush()
+    handlers?.onLine(METRICS_LINE)
+    await flush()
+
+    for (let index = 0; index < 6; index += 1) {
+      crash()
+      await vi.advanceTimersByTimeAsync(16_000)
+      await flush()
+    }
+
+    const status = await tunnel.status()
+    expect(status.state).toBe('starting')
+    expect(status.error).toBeUndefined()
+  })
+
   it('未识别到 metrics 地址时不启动探活，也不会误杀进程', async () => {
     const { tunnel } = await import('./tunnel')
     await startRunning(tunnel)

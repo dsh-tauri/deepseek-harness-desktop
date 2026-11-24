@@ -83,7 +83,12 @@ let probeFailures = 0
 
 let probing = false
 
-/** 健康探针判定假死后触发的重建链路：此期间不允许进入终态，网络恢复后仍要自愈。 */
+/**
+ * 健康探针判定假死后触发的重建链路：此期间不允许进入终态，网络恢复后仍要自愈。
+ * 只有探活成功才清除——域名到达不证明边缘连接健康，且与 metrics 地址的先后顺序无关。
+ * 代价是替代进程若始终不报 metrics 地址，重建会一直停在「启动中」而不是转成 error，
+ * 与上游「健康重建永不进终态」的取舍一致；用户仍可手动停止。
+ */
 let rebuilding = false
 
 /** 降级前的状态：探活自行恢复时据此还原面板文案，避免长期停在「启动中」。 */
@@ -461,12 +466,8 @@ async function exhaust(reason: string): Promise<void> {
 
 /** 探活只在拿到 metrics 地址后才有意义；地址迟到时由 onLine 补启，避免安全网永久不启用。 */
 function startProbe(generation: number): void {
-  if (metricsAddress === undefined) {
-    // 没有探活通道时「拿到域名」是唯一可得的恢复信号；不在这里收尾，假死触发的重建
-    // 会永远停在启动中，连排障用的终态都到不了。
-    rebuilding = false
+  if (metricsAddress === undefined)
     return
-  }
   stopProbe()
   // 探针跑在定时器里：任何逃逸异常都会变成未捕获异常直接结束宿主进程，
   // 那正是探针本该防止的事故，所以这里必须自己兜住。
