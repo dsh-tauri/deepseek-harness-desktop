@@ -55,8 +55,8 @@ describe('远端实例重启', () => {
     expect(calls[0]).toBe('stop')
     expect(calls[1]).toBe('start')
     expect(calls).toContain('probe')
-    expect(events.some(event => event.startsWith('launch:重启远端实例'))).toBe(true)
-    expect(events.some(event => event === 'ready:远端实例已就绪 (build.example:41990):success')).toBe(true)
+    expect(events.find(event => event.startsWith('launch:重启远端实例'))).toBeDefined()
+    expect(events).toContain('ready:远端实例已就绪 (build.example:41990):success')
   })
 
   it('停不掉实例时明确失败，不会在旧实例还活着的时候去拉起新的', async () => {
@@ -68,7 +68,7 @@ describe('远端实例重启', () => {
     })).rejects.toThrow(/remote instance stop failed/)
 
     expect(calls).not.toContain('start')
-    expect(events.some(event => event.startsWith('failed:'))).toBe(true)
+    expect(events.find(event => event.startsWith('failed:'))).toBeDefined()
   })
 
   it('拉起失败时报告失败而不是当作已重启', async () => {
