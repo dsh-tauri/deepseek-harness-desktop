@@ -175,7 +175,7 @@ describe('远端窗口的「应用」面板', () => {
     await waitFor(() => expect(addressInput().value).toBe(TUNNEL))
     fireEvent.click(screen.getByTestId('dsh-config-remote-restart'))
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('remote.application_restart_failed', expect.objectContaining({ variant: 'danger' })))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Could not restart the remote instance', expect.objectContaining({ variant: 'danger' })))
     expect(mocks.reload).not.toHaveBeenCalled()
   })
 
@@ -210,7 +210,7 @@ describe('远端窗口的「应用」面板', () => {
     await waitFor(() => expect(addressInput().value).toBe(TUNNEL))
     fireEvent.click(screen.getByTestId('dsh-config-remote-disconnect'))
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('remote.application_disconnect_failed', expect.objectContaining({ variant: 'danger' })))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Could not disconnect the remote machine', expect.objectContaining({ variant: 'danger' })))
     expect(mocks.postMachinesDisconnect).not.toHaveBeenCalled()
   })
 

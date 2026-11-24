@@ -9,7 +9,7 @@ const PROFILE: MachineProfile = { id: 'build' as MachineProfile['id'], name: 'bu
 
 const CONFIG = { healthPollAttempts: 3, healthPollIntervalMs: 1, healthCheckTimeoutMs: 1000 } as Config
 
-const BOOT_HTML = `<html><head><script>globalThis.__DSH_BOOT__ = {"release":{"version":"0.33.1"},"entries":[{"url":"/plugins/dsh-tauri-ui/client.js"}]}</script></head></html>`
+const BOOT_HTML = `<html><head><script>globalThis['__DSH_BOOT__'] = {"release":{"version":"0.33.1"},"entries":[{"url":"/plugins/dsh-tauri-ui/client.js"}]}</script></head></html>`
 
 /** 按命令内容分派：停实例 / 拉起 / 就绪探测 / 端口监听身份。 */
 function sessionOf(overrides: { stop?: RemoteExecResult, start?: RemoteExecResult } = {}) {
@@ -24,13 +24,13 @@ function sessionOf(overrides: { stop?: RemoteExecResult, start?: RemoteExecResul
         calls.push('start')
         return overrides.start ?? { code: 0, stdout: '远端实例已拉起', stderr: '' }
       }
-      if (command.includes(`127.0.0.1:${PORT}/`)) {
-        calls.push('probe')
-        return { code: 0, stdout: BOOT_HTML, stderr: '' }
-      }
       if (command.includes('client.js')) {
         calls.push('bundle')
         return { code: 0, stdout: 'console.log(1)\n200', stderr: '' }
+      }
+      if (command.includes(`127.0.0.1:${PORT}/`)) {
+        calls.push('probe')
+        return { code: 0, stdout: BOOT_HTML, stderr: '' }
       }
       calls.push('listener')
       return { code: 1, stdout: '', stderr: 'REMOTE_DSH_LISTENER_TOOLS_MISSING' }
