@@ -27,7 +27,7 @@ function run(command, args, options = {}) {
 const realGit = run('bash', ['-c', 'command -v git']).trim()
 cpSync(join(root, '.copr'), join(repo, '.copr'), { recursive: true })
 put(join(repo, 'package.json'), '{\n  "version": "0.3.0-pre.alpha.2",\n  "packageManager": "pnpm@11.7.0"\n}\n')
-for (const file of ['apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/tauri.conf.json', 'packages/builtin-plugin-remote/src/host/utils/assets.ts']) {
+for (const file of ['apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/tauri.conf.json', 'packages/builtin-plugin-remote/src/host/utils/assets.ts', '.github/workflows/build-linux.yml']) {
   const dest = join(repo, file)
   mkdirSync(dirname(dest), { recursive: true })
   cpSync(join(root, file), dest)
@@ -76,6 +76,12 @@ check('SRPM fills Next metadata, picks highest release and includes required sub
   assert.match(spec, /Summary:\s+Desktop application for DeepSeek Harness \(dsh\)/)
   assert.match(spec, /MimeType=x-scheme-handler\/dsh/)
   assert.doesNotMatch(spec, /@[A-Z_]+@/)
+  const workflow = readFileSync(join(root, '.github/workflows/build-linux.yml'), 'utf8')
+  const expectedRust = (workflow.match(/^\s*toolchain:\s*([0-9][0-9.]*)\s*$/m) || workflow.match(/^\s*uses:\s*dtolnay\/rust-toolchain@([0-9][0-9.]*)\s*$/m))?.[1]
+  assert.ok(expectedRust, 'expected Rust version in build-linux.yml')
+  assert.match(spec, new RegExp(`rust_version=${expectedRust.replaceAll('.', '\\.')}\\b`))
+  assert.match(spec, /BuildRequires:\s+xz\b/)
+  assert.doesNotMatch(spec, /BuildRequires:\s+(?:cargo|rust)\b/)
   const files = run('bash', ['-c', 'tar -tzf source.tar.gz', '_'], { cwd: join(work, 'output') }).trim().split('\n')
   for (const name of ['tauri-runtime-electron', 'electron-rs', 'tauri-plugin-notifications']) {
     assert.ok(files.includes(`dsh-tauri-beta-0.3.0~pre.alpha.2/crates/${name}/Cargo.toml`))

@@ -15,8 +15,7 @@ URL:            https://github.com/dsh-tauri/deepseek-harness-desktop
 Source0:        %{name}-%{version}.tar.gz
 ExclusiveArch:  x86_64 aarch64
 
-BuildRequires:  cargo
-BuildRequires:  rust
+BuildRequires:  xz
 BuildRequires:  gcc
 BuildRequires:  make
 BuildRequires:  git-core
@@ -48,12 +47,25 @@ export CI=true
 export DSH_DISTRO_MANAGED=copr
 export CARGO_HOME="$PWD/.cargo-home"
 export npm_config_cache="$PWD/.npm-cache"
+rust_version=@RUST_VERSION@
 node_version=@NODE_VERSION@
 %ifarch x86_64
+rust_target=x86_64-unknown-linux-gnu
 node_arch=x64
 %else
+rust_target=aarch64-unknown-linux-gnu
 node_arch=arm64
 %endif
+rust_dist="rust-$rust_version-$rust_target"
+curl -fsSL --retry 3 -o "$rust_dist.tar.xz" "https://static.rust-lang.org/dist/$rust_dist.tar.xz"
+curl -fsSL --retry 3 -o "$rust_dist.tar.xz.sha256" "https://static.rust-lang.org/dist/$rust_dist.tar.xz.sha256"
+sha256sum -c "$rust_dist.tar.xz.sha256"
+tar -xJf "$rust_dist.tar.xz"
+"$rust_dist/install.sh" --prefix="$PWD/.rust" --components="rustc,cargo,rust-std-$rust_target" --disable-ldconfig
+rm -rf "$rust_dist" "$rust_dist.tar.xz" "$rust_dist.tar.xz.sha256"
+export PATH="$PWD/.rust/bin:$PATH"
+rustc --version
+cargo --version
 node_dist="node-$node_version-linux-$node_arch"
 curl -fsSL --retry 3 -o "$node_dist.tar.gz" "https://nodejs.org/dist/$node_version/$node_dist.tar.gz"
 curl -fsSL --retry 3 -o SHASUMS256.txt "https://nodejs.org/dist/$node_version/SHASUMS256.txt"
