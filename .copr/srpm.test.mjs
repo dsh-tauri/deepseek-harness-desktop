@@ -77,7 +77,7 @@ check('SRPM fills Next metadata, picks highest release and includes required sub
   assert.match(spec, /MimeType=x-scheme-handler\/dsh/)
   assert.doesNotMatch(spec, /@[A-Z_]+@/)
   const workflow = readFileSync(join(root, '.github/workflows/build-linux.yml'), 'utf8')
-  const expectedRust = (workflow.match(/^\s*toolchain:\s*([0-9][0-9.]*)\s*$/m) || workflow.match(/^\s*uses:\s*dtolnay\/rust-toolchain@([0-9][0-9.]*)\s*$/m))?.[1]
+  const expectedRust = (workflow.match(/^\s*toolchain:\s*(\d[\d.]*)\s*$/m) || workflow.match(/^\s*uses:\s*dtolnay\/rust-toolchain@(\d[\d.]*)\s*$/m))?.[1]
   assert.ok(expectedRust, 'expected Rust version in build-linux.yml')
   assert.match(spec, new RegExp(`rust_version=${expectedRust.replaceAll('.', '\\.')}\\b`))
   assert.match(spec, /BuildRequires:\s+xz\b/)
