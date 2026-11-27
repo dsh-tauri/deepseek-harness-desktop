@@ -54,6 +54,7 @@ summary=$(field apps/desktop/src-tauri/Cargo.toml 's/^description = "\([^"]*\)"$
 description=$summary
 scheme=$(field apps/desktop/src-tauri/tauri.conf.json '/"schemes": \[/,/\]/{s/^[[:space:]]*"\([a-z][a-z0-9+.-]*\)"[,]\{0,1\}$/\1/p;}' 'deep-link scheme')
 node_version=$(field packages/builtin-plugin-remote/src/host/utils/assets.ts "s/^export const NODE_VERSION = '\(v[0-9.]*\)'$/\1/p" NODE_VERSION)
+rust_version=$(field .github/workflows/build-linux.yml 's/^[[:space:]]*toolchain:[[:space:]]*\([0-9][0-9.]*\)[[:space:]]*$/\1/p; s/^[[:space:]]*uses:[[:space:]]*dtolnay\/rust-toolchain@\([0-9][0-9.]*\)[[:space:]]*$/\1/p' 'Rust toolchain')
 packager=$(repo log -1 --format='%an <%ae>')
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/dsh-copr.XXXXXX")
@@ -80,6 +81,7 @@ sed -e "s|@NAME@|$name|" \
     -e "s|@DESCRIPTION@|$description|" \
     -e "s|@SCHEME@|$scheme|" \
     -e "s|@NODE_VERSION@|$node_version|" \
+    -e "s|@RUST_VERSION@|$rust_version|" \
     -e "s|@PACKAGER@|$packager|" \
     -e "s|@DATE@|$(LC_ALL=C date '+%a %b %d %Y')|" \
     "$top/.copr/dsh-tauri.spec.in" > "$work/$name.spec"
